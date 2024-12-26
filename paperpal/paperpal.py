@@ -94,10 +94,13 @@ class PaperPal:
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
-        self.receiver_address = receiver_address
+        if "," in receiver_address:
+            self.receiver_address = receiver_address.split(",")
+        else:
+            self.receiver_address = receiver_address
         self.communication = GmailCommunication(sender_address=GMAIL_SENDER_ADDRESS,
                                                app_password=GMAIL_APP_PASSWORD,
-                                               receiver_address=receiver_address)
+                                               receiver_address=self.receiver_address)
         self.papers_db = PaperDatabase(data_path)
         self.embedding_model_name = embedding_model_name
         self.embedding_model = SentenceTransformerInference(embedding_model_name, trust_remote_code=trust_remote_code)

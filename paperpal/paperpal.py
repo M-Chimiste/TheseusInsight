@@ -3,6 +3,7 @@ import json
 import os
 import random
 import datetime
+import gc
 # Third-party imports
 from dotenv import load_dotenv
 import json_repair
@@ -344,6 +345,9 @@ class PaperPal:
         """Runs the PaperPal system."""
         data_df = self.download_and_process_papers()
         top_n_df = self.rank_papers(data_df)
+        del data_df
+        self.embedding_model = None
+        gc.collect()
         self.generate_newsletter(top_n_df)
         if self.model_type == "ollama":
             purge_ollama_cache(OLLAMA_URL, self.model_name)

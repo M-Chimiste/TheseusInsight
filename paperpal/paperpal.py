@@ -58,7 +58,7 @@ class PaperPal:
                  model_type="ollama",
                  model_name="hermes3",
                  orchestration_config="config/orchestration.json",
-                 embedding_model_name="Alibaba-NLP/gte-base-en-v1.5",
+                 embedding_model_name="joe32140/ModernBERT-base-msmarco",
                  trust_remote_code=True,
                  receiver_address=None,
                  max_new_tokens=1024,

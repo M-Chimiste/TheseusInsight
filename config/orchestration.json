@@ -25,7 +25,7 @@
     },
     "newsletter_sections_model":
     {
-        "model_name": "qwen2.5:32b",
+        "model_name": "qwen2.5:14b",
         "model_type": "ollama",
         "max_new_tokens": 4096,
         "temperature": 0.1,
@@ -33,7 +33,7 @@
     },
     "newsletter_intro_model":
     {
-        "model_name": "qwen2.5:32b",
+        "model_name": "qwen2.5:14b",
         "model_type": "ollama",
         "max_new_tokens": 4096,
         "temperature": 0.1,

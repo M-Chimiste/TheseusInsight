@@ -102,12 +102,17 @@ class GmailCommunication:
     
 
     def send_email(self):
-
         sender_address = self.sender_address
         receiver_address = self.receiver_address
         
         if not receiver_address:
             receiver_address = sender_address
+        
+        # Handle receiver_address as either string or list
+        if isinstance(receiver_address, str) and ',' in receiver_address:
+            receiver_address = [addr.strip() for addr in receiver_address.split(',')]
+        elif isinstance(receiver_address, str):
+            receiver_address = [receiver_address]
         
         app_password = self.app_password
         message = self.email_message
@@ -116,8 +121,10 @@ class GmailCommunication:
             session = smtplib.SMTP('smtp.gmail.com', 587)
             session.starttls()
             session.login(sender_address, app_password)
-            message_text  = message.as_string()
-            session.sendmail(sender_address, receiver_address, message_text)
+            message_text = message.as_string()
+            # Send to all recipients
+            for recipient in receiver_address:
+                session.sendmail(sender_address, recipient, message_text)
             session.quit()
         except Exception as e:
             raise Exception(f"Unable to send email with exception {str(e)}")

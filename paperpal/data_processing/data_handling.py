@@ -31,6 +31,11 @@ class Paper(BaseModel):
             raise ValueError('Score must be between 0 and 10')
         return v
 
+class Logs(BaseModel):
+    status_code: int  # Use normal API error codes
+    status: str
+    datetime_run: str | None = None  # Make it optional with None default
+
 class PaperDatabase:
     """
     PaperDatabase class for handling paper data storage and retrieval.
@@ -102,6 +107,12 @@ class PaperDatabase:
                                start_date TEXT NOT NULL,
                                end_date TEXT NOT NULL,
                                date_sent TEXT NOT NULL
+                            )''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS logs
+                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                               status_code INTEGER NOT NULL,
+                               status TEXT NOT NULL,
+                               datetime_run TEXT NOT NULL
                             )''')
     
     def insert_paper(self, paper: Paper):
@@ -185,4 +196,58 @@ class PaperDatabase:
             cursor.execute('''INSERT INTO newsletters (content, start_date, end_date, date_sent)
                               VALUES (?, ?, ?, ?)''',
                            (newsletter.content, newsletter.start_date, newsletter.end_date, newsletter.date_sent))
+
+    def insert_log(self, log: Logs):
+        """
+        Insert a new log entry into the database. The datetime_run will be automatically
+        set to the current time if not provided.
+
+        Args:
+            log (Logs): A Logs object containing the log information.
+
+        Raises:
+            ValueError: If any required field in the Logs object is missing or invalid.
+
+        Note:
+            This method uses a context manager to handle database transactions,
+            ensuring that the connection is properly committed or rolled back
+            in case of an error.
+        """
+        # Validate required fields
+        required_fields = ['status_code', 'status']
+        for field in required_fields:
+            if not hasattr(log, field) or getattr(log, field) is None:
+                raise ValueError(f"Log object is missing required field: {field}")
+
+        # Validate status_code is an integer
+        if not isinstance(log.status_code, int):
+            raise ValueError("status_code must be an integer")
+
+        # Generate current datetime if not provided
+        datetime_run = log.datetime_run or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        with self.get_cursor() as cursor:
+            cursor.execute('''INSERT INTO logs (status_code, status, datetime_run)
+                              VALUES (?, ?, ?)''',
+                           (log.status_code, log.status, datetime_run))
+
+    def get_recent_logs(self, limit: int = 100):
+        """
+        Retrieve the most recent log entries from the database.
+
+        Args:
+            limit (int): Maximum number of log entries to retrieve. Defaults to 100.
+
+        Returns:
+            list: A list of dictionaries containing log information, ordered by most recent first.
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute('''SELECT status_code, status, datetime_run 
+                             FROM logs 
+                             ORDER BY datetime_run DESC 
+                             LIMIT ?''', (limit,))
+            rows = cursor.fetchall()
+            return [{'status_code': row[0], 
+                    'status': row[1], 
+                    'datetime_run': row[2]} for row in rows]
 

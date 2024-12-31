@@ -74,19 +74,25 @@ class GmailCommunication:
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
             end_date = end_date.strftime("%B %d, %Y")
 
-        if isinstance(receiver_address, list):
-            receiver_address = ', '.join(receiver_address)
+        # Keep receiver_address as a list if it is one
+        if not receiver_address:  # we send the email to ourselves if we aren't sending it to someone else.
+            receiver_address = [sender_address]
+        elif isinstance(receiver_address, str):
+            receiver_address = [addr.strip() for addr in receiver_address.split(',')]
+        
+        # Remove sender's address from BCC list if it's there
+        receiver_address = [addr for addr in receiver_address if addr != sender_address]
+        
         if start_date == end_date:
             date_range = start_date
         else:
             date_range = f"{start_date} to {end_date}"
         
-        if not receiver_address:  # we send the email to ourselves if we aren't sending it to someone else.
-            receiver_address = sender_address
-        
         message = MIMEMultipart('alternative')
         message["From"] = sender_address
-        message["To"] = receiver_address
+        message["To"] = sender_address  # Set To as the sender address
+        if receiver_address:  # Only add BCC if there are other recipients
+            message["Bcc"] = ', '.join(receiver_address)
         message['Subject'] = f"PaperPal Paper Newsletter for {date_range}"
         
         # Create both plain text and HTML versions
@@ -99,33 +105,99 @@ class GmailCommunication:
         message.attach(html_part)
         
         self.email_message = message
-    
+        # Store the receiver list separately
+        self.receiver_list = receiver_address
+
 
     def send_email(self):
         sender_address = self.sender_address
-        receiver_address = self.receiver_address
-        
-        if not receiver_address:
-            receiver_address = sender_address
-        
-        # Handle receiver_address as either string or list
-        if isinstance(receiver_address, str) and ',' in receiver_address:
-            receiver_address = [addr.strip() for addr in receiver_address.split(',')]
-        elif isinstance(receiver_address, str):
-            receiver_address = [receiver_address]
-        
         app_password = self.app_password
         message = self.email_message
         
         try:
+            print(f"Attempting to send email from: {sender_address}")
+            print(f"Recipients list: {self.receiver_list}")
+            print(f"Message headers: {dict(message.items())}")  # Log message headers
+            
             session = smtplib.SMTP('smtp.gmail.com', 587)
+            print("Connected to SMTP server")
+            
             session.starttls()
+            print("Started TLS")
+            
             session.login(sender_address, app_password)
+            print("Logged in successfully")
+            
             message_text = message.as_string()
-            # Send to all recipients
-            for recipient in receiver_address:
-                session.sendmail(sender_address, recipient, message_text)
-            session.quit()
-        except Exception as e:
-            raise Exception(f"Unable to send email with exception {str(e)}")
+            
+            # Use the stored receiver list
+            for recipient in self.receiver_list:
+                try:
+                    print(f"Attempting to send to: {recipient}")
+                    session.sendmail(sender_address, recipient, message_text)
+                    print(f"Successfully sent email to: {recipient}")
+                except Exception as e:
+                    print(f"Failed to send to {recipient}: {str(e)}")
+                    raise
                 
+            session.quit()
+            print("SMTP session closed")
+            
+        except Exception as e:
+            error_msg = f"Unable to send email with exception {str(e)}"
+            print(f"Error details: {error_msg}")
+            # Try to send error notification without raising
+            try:
+                self.send_error_notification(error_msg)
+            except:
+                pass
+            raise Exception(error_msg)
+                
+
+    def send_error_notification(self, error_msg: str):
+        """
+        Send an error notification email to the sender.
+        
+        Args:
+            error_msg (str): The error message to send
+        """
+        try:
+            print(f"Attempting to send error notification to {self.sender_address}")
+            
+            message = MIMEMultipart('alternative')
+            message["From"] = self.sender_address
+            message["To"] = self.sender_address
+            message['Subject'] = "PaperPal Error Notification"
+            
+            error_content = f"""## PaperPal Error Report
+
+An error occurred during the PaperPal execution:
+
+{error_msg}
+"""
+            
+            text_part = MIMEText(error_content, 'plain')
+            html_content = markdown2.markdown(error_content)
+            html_part = MIMEText(html_content, 'html')
+            
+            message.attach(text_part)
+            message.attach(html_part)
+            
+            session = smtplib.SMTP('smtp.gmail.com', 587)
+            print("Connected to SMTP server for error notification")
+            
+            session.starttls()
+            print("Started TLS for error notification")
+            
+            session.login(self.sender_address, self.app_password)
+            print("Logged in successfully for error notification")
+            
+            message_text = message.as_string()
+            session.sendmail(self.sender_address, self.sender_address, message_text)
+            print("Error notification sent successfully")
+            
+            session.quit()
+            print("Error notification SMTP session closed")
+            
+        except Exception as e:
+            print(f"Failed to send error notification: {str(e)}")

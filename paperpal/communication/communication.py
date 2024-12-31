@@ -24,6 +24,18 @@ def construct_email_body(content,
                          start_date,
                          end_date,
                          urls_and_titles):
+    """
+    Construct the body of an email.
+
+    Args:
+        content (str): The content of the email
+        start_date (str): The start date of the newsletter
+        end_date (str): The end date of the newsletter
+        urls_and_titles (str): The URLs and titles of the references
+    
+    Returns:
+        str: The body of the email
+    """
     if start_date == end_date:
         date_range = start_date
     else:
@@ -39,12 +51,19 @@ def construct_email_body(content,
 
 
 class GmailCommunication:
-
-    def __init__(self, sender_address=None, receiver_address=None, app_password=None):
+    """
+    Class for sending emails via Gmail.
+    """
+    def __init__(self,
+                sender_address=None, 
+                receiver_address=None, 
+                app_password=None, 
+                verbose=False):
         self.sender_address = sender_address
         self.app_password = app_password
         self.receiver_address = receiver_address
         self.email_message = None
+        self.verbose = verbose
         
         if not self.app_password:
             self.app_password = os.getenv('GMAIL_APP_PASSWORD', None)
@@ -58,10 +77,13 @@ class GmailCommunication:
 
 
     def compose_message(self, content, start_date, end_date):
-        """Method to compose a MIMEMultipart Message
-
+        """
+        Compose an email message.
+        
         Args:
-            content (str): markdown formatted string content for generating an email
+            content (str): The content of the email
+            start_date (str): The start date of the newsletter
+            end_date (str): The end date of the newsletter
         """
         sender_address = self.sender_address
         receiver_address = self.receiver_address
@@ -110,39 +132,49 @@ class GmailCommunication:
 
 
     def send_email(self):
+        """
+        Send an email.
+        """
         sender_address = self.sender_address
         app_password = self.app_password
         message = self.email_message
-        
+
         try:
-            print(f"Attempting to send email from: {sender_address}")
-            print(f"Recipients list: {self.receiver_list}")
-            print(f"Message headers: {dict(message.items())}")  # Log message headers
-            
+            if self.verbose:
+                print(f"Attempting to send email from: {sender_address}")
+                print(f"Recipients list: {self.receiver_list}")
+                print(f"Message headers: {dict(message.items())}")
+
             session = smtplib.SMTP('smtp.gmail.com', 587)
-            print("Connected to SMTP server")
-            
+            if self.verbose:
+                print("Connected to SMTP server")
+
             session.starttls()
-            print("Started TLS")
-            
+            if self.verbose:
+                print("Started TLS")
+
             session.login(sender_address, app_password)
-            print("Logged in successfully")
-            
+            if self.verbose:
+                print("Logged in successfully")
+
             message_text = message.as_string()
-            
-            # Use the stored receiver list
-            for recipient in self.receiver_list:
-                try:
-                    print(f"Attempting to send to: {recipient}")
-                    session.sendmail(sender_address, recipient, message_text)
-                    print(f"Successfully sent email to: {recipient}")
-                except Exception as e:
-                    print(f"Failed to send to {recipient}: {str(e)}")
-                    raise
-                
+
+            # Send the email ONCE with all recipients in BCC
+            if self.receiver_list:
+                # Use the sender's address for 'To' and the receiver list for 'Bcc'
+                session.sendmail(sender_address, [sender_address] + self.receiver_list, message_text)
+                if self.verbose:
+                    print(f"Successfully sent email to all BCC recipients")
+            else:
+                session.sendmail(sender_address, sender_address, message_text)
+                if self.verbose:
+                    print(f"Successfully sent email to sender")
+
+
             session.quit()
-            print("SMTP session closed")
-            
+            if self.verbose:
+                print("SMTP session closed")
+
         except Exception as e:
             error_msg = f"Unable to send email with exception {str(e)}"
             print(f"Error details: {error_msg}")
@@ -184,20 +216,26 @@ An error occurred during the PaperPal execution:
             message.attach(html_part)
             
             session = smtplib.SMTP('smtp.gmail.com', 587)
-            print("Connected to SMTP server for error notification")
+            if self.verbose:
+                print("Connected to SMTP server for error notification")
             
             session.starttls()
-            print("Started TLS for error notification")
+            if self.verbose:
+                print("Started TLS for error notification")
             
             session.login(self.sender_address, self.app_password)
-            print("Logged in successfully for error notification")
+            if self.verbose:
+                print("Logged in successfully for error notification")
             
             message_text = message.as_string()
             session.sendmail(self.sender_address, self.sender_address, message_text)
-            print("Error notification sent successfully")
+            if self.verbose:
+                print("Error notification sent successfully")
             
             session.quit()
-            print("Error notification SMTP session closed")
+            if self.verbose:
+                print("Error notification SMTP session closed")
             
         except Exception as e:
-            print(f"Failed to send error notification: {str(e)}")
+            if self.verbose:
+                print(f"Failed to send error notification: {str(e)}")

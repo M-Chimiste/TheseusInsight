@@ -4,6 +4,7 @@ import os
 import random
 import datetime
 import gc
+import warnings
 # Third-party imports
 from dotenv import load_dotenv
 import json_repair
@@ -58,7 +59,7 @@ class PaperPal:
                  model_type="ollama",
                  model_name="hermes3",
                  orchestration_config="config/orchestration.json",
-                 embedding_model_name="joe32140/ModernBERT-base-msmarco",
+                 embedding_model_name="nomic-ai/modernbert-embed-base",
                  trust_remote_code=True,
                  receiver_address=None,
                  max_new_tokens=1024,
@@ -124,11 +125,23 @@ class PaperPal:
             raise
         # Load inference model/s
         if not use_different_models:
+            try:
+                with open(orchestration_config, 'r') as f:
+                    self.orchestration_config = json.load(f)
+                self.inference = self._load_inference_model(self.orchestration_config['newsletter_model']['model_type'],
+                                                            self.orchestration_config['newsletter_model']['model_name'],
+                                                            self.orchestration_config['newsletter_model']['max_new_tokens'],
+                                                            self.orchestration_config['newsletter_model']['temperature'],
+                                                            self.orchestration_config['newsletter_model'].get('num_ctx', None))
+            except Exception as e:
+                warnings.warn(f'Error loading orchestration config: {e}. Using parameters will be deprecated. Use a config file instead with the key "newsletter_model"')
             self.inference = self._load_inference_model(self.model_type, model_name, max_new_tokens, temperature)
         
         if use_different_models:
-            with open(orchestration_config, 'r') as file:
-                self.orchestration_config = json.load(file)
+            with open(orchestration_config, 'r') as f:
+                self.orchestration_config = json.load(f)
+            self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']
+            self.embedding_model = SentenceTransformerInference(embedding_model_name, trust_remote_code=self.orchestration_config['embedding_model']['trust_remote_code'])
             self.judge_model_config = self.orchestration_config['judge_model']
             self.newsletter_model_config = self.orchestration_config['newsletter_model']
             self.content_extraction_model_config = self.orchestration_config['content_extraction_model']

@@ -38,5 +38,11 @@
         "max_new_tokens": 4096,
         "temperature": 0.1,
         "num_ctx": 131072
+    },
+    "embedding_model":
+    {
+        "model_name": "nomic-ai/modernbert-embed-base",
+        "model_type": "sentence-transformers",
+        "trust_remote_code": true
     }
 }

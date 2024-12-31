@@ -162,17 +162,24 @@ class PaperPal:
 
     def _log_error(self, status_code: int, error: Exception):
         """
-        Helper method to log errors to the database.
+        Helper method to log errors to the database and send error notification.
         
         Args:
             status_code (int): HTTP status code representing the error type
             error (Exception): The exception that was raised
         """
+        error_msg = f"{type(error).__name__}: {str(error)}"
         log = Logs(
             status_code=status_code,
-            status=f"{type(error).__name__}: {str(error)}"
+            status=error_msg
         )
         self.papers_db.insert_log(log)
+        
+        # Send error notification email
+        try:
+            self.communication.send_error_notification(error_msg)
+        except Exception as e:
+            print(f"Failed to send error notification: {str(e)}")
 
     def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
         """Load the appropriate inference model based on model type.
@@ -382,10 +389,21 @@ class PaperPal:
                 self.papers_db.insert_newsletter(newsletter)
 
             email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles)
-            self.communication.compose_message(email_body, self.start_date, self.end_date)
-            self.communication.send_email()
+            try:
+                self.communication.compose_message(email_body, self.start_date, self.end_date)
+                self.communication.send_email()
+                # Log successful email sending
+                log = Logs(
+                    status_code=200,
+                    status=f"Successfully sent newsletter to {self.receiver_address}"
+                )
+                self.papers_db.insert_log(log)
+            except Exception as e:
+                self._log_error(500, e)
+                raise
+            
         except Exception as e:
-            self._log_error(500, e)  # 500 Internal Server Error
+            self._log_error(500, e)
             raise
 
 

@@ -5,6 +5,7 @@ import random
 import datetime
 import gc
 import warnings
+import shutil
 # Third-party imports
 from dotenv import load_dotenv
 import json_repair
@@ -442,6 +443,17 @@ class PaperPal:
         except Exception as e:
             self._log_error(500, e)  # 500 Internal Server Error
             raise
+        finally:
+            # Clean up temp_data folder regardless of success or failure
+            try:
+                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp_data')
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    if self.verbose:
+                        print("Cleaned up temp_data directory")
+            except Exception as cleanup_error:
+                print(f"Warning: Failed to clean up temp_data directory: {cleanup_error}")
+                self._log_error(500, cleanup_error)
         
 if __name__ == "__main__":
     paperpal = PaperPal(

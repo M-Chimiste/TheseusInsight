@@ -113,8 +113,7 @@ class GmailCommunication:
         message = MIMEMultipart('alternative')
         message["From"] = sender_address
         message["To"] = sender_address  # Set To as the sender address
-        if receiver_address:  # Only add BCC if there are other recipients
-            message["Bcc"] = ', '.join(receiver_address)
+        # Remove the BCC header - it will be handled during sendmail
         message['Subject'] = f"PaperPal Paper Newsletter for {date_range}"
         
         # Create both plain text and HTML versions

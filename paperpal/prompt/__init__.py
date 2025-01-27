@@ -14,3 +14,4 @@ from .system_prompts import (NEWSLETTER_SYSTEM_PROMPT,
                              SYSTEM_CONTENT_EXTRACTION_SUMMARY, 
                              SUMMARY_SYSTEM_PROMPT, 
                              RESEARCH_INTERESTS_SYSTEM_PROMPT)
+from .templates import *

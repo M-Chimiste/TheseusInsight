@@ -16,16 +16,17 @@ from docling.document_converter import DocumentConverter
 from .communication import GmailCommunication, construct_email_body
 from .data_processing import ProcessData, PaperDatabase, Paper, Newsletter
 from .data_processing.data_handling import PaperDatabase, Paper, Newsletter, Logs
-from .llm import SentenceTransformerInference
+from .inference import SentenceTransformerInference
+from .podcast import PaperPalPodcastGenerator
 from .pdf import MarkdownParser, ArxivData, parse_pdf_to_markdown
 from .prompt import (
     NEWSLETTER_SYSTEM_PROMPT,
     RESEARCH_INTERESTS_SYSTEM_PROMPT,
     SYSTEM_CONTENT_EXTRACTION_SUMMARY,
+    INSTRUCTION_TEMPLATES,
     general_summary_prompt,
     research_prompt,
     newsletter_context_prompt,
-    newsletter_final_prompt,
     newsletter_intro_prompt,
     SummaryPromptData,
     ResearchInterestsPromptData,
@@ -68,6 +69,29 @@ class PaperPal:
                  cosine_similarity_threshold=0.5,
                  db_saving=True,
                  data_path="data/papers.db",
+                 generate_podcast=True,
+                 intro_music_path=None,
+                 output_format: str = "mp3",
+                 output_dir: str = "output_audio",
+                 prefix: str = "podcast_segment",
+                 final_filename: str = "podcast_final",
+                 resolution: tuple = (1920, 1080),
+                 fps: int = 30,
+                 matrix_count=200,
+                 matrix_head_color="#e0ffe7",   # short hex for bright green
+                 matrix_tail_color="0x00b000",  # hex for (0,176,0)
+                 matrix_char_size=24,
+                 head_step_time=0.25,
+                 random_x_jitter=2.0,
+                 fade_time=5.0,
+                 head_glow_passes=3,
+                 head_glow_alpha_decay=50,
+                 head_spawn_delay_range=(1.0,3.0),
+                 wave_color="#d703fc",
+                 trail_colors=["#fc03b6", "#ba03fc", "#ce6bf2"], 
+                 glow_passes=3,
+                 glow_alpha_decay=40,
+                 line_width=6,
                  verbose=True):
         self.verbose = verbose
         self.research_interests_path = research_interests_path
@@ -114,6 +138,32 @@ class PaperPal:
         self.embedding_model = SentenceTransformerInference(embedding_model_name, trust_remote_code=trust_remote_code)
         self.cosine_similarity_threshold = cosine_similarity_threshold
         self.db_saving = db_saving
+        
+        # Podcast settings
+        self.generate_podcast = generate_podcast
+        self.intro_music_path = intro_music_path
+        self.output_format = output_format
+        self.output_dir = output_dir
+        self.prefix = prefix
+        self.final_filename = final_filename
+        self.resolution = resolution
+        self.fps = fps
+        self.matrix_count = matrix_count
+        self.matrix_head_color = matrix_head_color
+        self.matrix_tail_color = matrix_tail_color
+        self.matrix_char_size = matrix_char_size
+        self.head_step_time = head_step_time
+        self.random_x_jitter = random_x_jitter
+        self.fade_time = fade_time
+        self.head_glow_passes = head_glow_passes
+        self.head_glow_alpha_decay = head_glow_alpha_decay
+        self.head_spawn_delay_range = head_spawn_delay_range
+        self.wave_color = wave_color
+        self.trail_colors = trail_colors
+        self.glow_passes = glow_passes
+        self.glow_alpha_decay = glow_alpha_decay
+        self.line_width = line_width
+        
         # Load research interests
         try:
             with open(self.research_interests_path, 'r') as file:
@@ -173,6 +223,24 @@ class PaperPal:
                                                                     self.newsletter_intro_model_config['max_new_tokens'],
                                                                     self.newsletter_intro_model_config['temperature'],
                                                                     self.newsletter_intro_model_config.get('num_ctx', None))
+            if self.generate_podcast:
+                self.podcast_inference = self.orchestration_config.get('podcast_model', None)
+                if not self.podcast_inference:
+                    raise ValueError("Podcast model is not set. Please check your orchestration config file.")
+        if self.generate_podcast:
+            self.podcast_generator = PaperPalPodcastGenerator(
+                text_model=self.podcast_inference,
+                tts_provider=self.orchestration_config.get('tts_model', {}).get('tts_provider', 'kokoro'),
+                tts_model_path=self.orchestration_config.get('tts_model', {}).get('tts_model_path', 'models/Kokoro-82M'),
+                tts_model_name=self.orchestration_config.get('tts_model', {}).get('tts_model_name', 'kokoro-v0_19.pth'),
+                speaker_1_voice=self.orchestration_config.get('tts_model', {}).get('speaker_1_voice', 'af_bella'),
+                speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.15),
+                speaker_2_voice=self.orchestration_config.get('tts_model', {}).get('speaker_2_voice', 'am_adam'),
+                speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.15),
+                instructions_template=INSTRUCTION_TEMPLATES,
+                intro_music_path=self.intro_music_path,
+                verbose=self.verbose
+            )
 
     def _log_error(self, status_code: int, error: Exception):
         """
@@ -216,23 +284,23 @@ class PaperPal:
             if model_type == "anthropic":
                 if ANTHROPIC_API_KEY is None:
                     raise ValueError("Anthropic API key is not set. Please check your .env file and ensure ANTHROPIC_API_KEY is properly configured.")
-                from .llm.inference import AnthropicInference
+                from .inference.llm import AnthropicInference
                 return AnthropicInference(model_name, max_new_tokens, temperature)
             
             elif model_type == "openai":
                 if OPENAI_API_KEY is None:
                     raise ValueError("OpenAI API key is not set. Please check your .env file and ensure OPENAI_API_KEY is properly configured.")
-                from .llm.inference import OpenAIInference
+                from .inference.llm import OpenAIInference
                 return OpenAIInference(model_name, max_new_tokens, temperature)
 
             elif model_type == "gemini":
                 if GOOGLE_API_KEY is None:
                     raise ValueError("Google API key is not set. Please check your .env file and ensure GOOGLE_API_KEY is properly configured.")
-                from .llm.inference import GeminiInference
+                from .inference.llm import GeminiInference
                 return GeminiInference(model_name, max_new_tokens, temperature)
 
             elif model_type == "ollama":
-                from .llm.inference import OllamaInference
+                from .inference.llm import OllamaInference
                 kwargs = {
                     'model_name': model_name,
                     'max_new_tokens': max_new_tokens,
@@ -338,7 +406,7 @@ class PaperPal:
             raise
     
 
-    def generate_newsletter(self, top_n_df):
+    def generate_newsletter_and_podcast(self, top_n_df):
         """Generates a newsletter from the ranked papers."""
         try:
             # content = []
@@ -401,8 +469,42 @@ class PaperPal:
             )
             if self.db_saving:  
                 self.papers_db.insert_newsletter(newsletter)
+            if self.generate_podcast:
+                podcast_content = self.podcast_generator.generate_podcast(
+                    pdf_paths=top_n_df['url_pdf'],
+                    paperpal_sections=sections,
+                    output_format=self.output_format,
+                    output_dir=self.output_dir,
+                    prefix=self.prefix,
+                    final_filename=self.final_filename,
+                    verbose=self.verbose,
+                    visualizer=self.visualizer,
+                    # Visualizer Settings
+                    resolution=self.resolution,
+                    fps=self.fps,
+                    matrix_count=self.matrix_count,
+                    matrix_head_color=self.matrix_head_color,   # short hex for bright green
+                    matrix_tail_color=self.matrix_tail_color,  # hex for (0,176,0)
+                    matrix_char_size=self.matrix_char_size,
+                    head_step_time=self.head_step_time,
+                    random_x_jitter=self.random_x_jitter,
+                    fade_time=self.fade_time,
+                    head_glow_passes=self.head_glow_passes,
+                    head_glow_alpha_decay=self.head_glow_alpha_decay,
+                    head_spawn_delay_range=self.head_spawn_delay_range,
+                    wave_color=self.wave_color,
+                    trail_colors=self.trail_colors, 
+                    glow_passes=self.glow_passes,
+                    glow_alpha_decay=self.glow_alpha_decay,
+                    line_width=self.line_width)
+                
+            if self.visualizer:
+                podcast_path = podcast_content['visualizer_path']
+            else:
+                podcast_path = podcast_content['final_podcast_path']
 
-            email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles)
+            email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles, podcast_path)
+            
             try:
                 self.communication.compose_message(email_body, self.start_date, self.end_date)
                 self.communication.send_email()
@@ -429,7 +531,7 @@ class PaperPal:
             del data_df
             self.embedding_model = None
             gc.collect()
-            self.generate_newsletter(top_n_df)
+            self.generate_newsletter_and_podcast(top_n_df)
             if self.model_type == "ollama":
                 purge_ollama_cache(OLLAMA_URL, self.model_name)
             

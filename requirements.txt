@@ -1,22 +1,61 @@
-appdirs
-numpy
-pandas
-sentencepiece
-tqdm
-transformers
-jinja2
-python-dotenv
-anthropic
-openai
-pydantic
-json-repair
-llama-cpp-python
+# Core ML & Deep Learning
 torch
-torchao
-requests
-sentence-transformers
-ollama
-docling
-markdown2
+torchvision
+torchaudio
+transformers
+accelerate
+bitsandbytes
+einops
+numpy
+scipy
+
+# NLP & Text Processing
 spacy
 spacy-layout
+tiktoken
+phonemizer
+unidecode
+chardet
+lxml
+sentencepiece
+
+# Embeddings & Vector Search
+sentence-transformers
+FlagEmbedding
+
+# LLM & AI Services
+anthropic[bedrock]
+openai
+ollama
+langchain
+
+# Data Processing & Management
+pandas
+openpyxl
+json_repair
+tabulate
+pydantic
+tqdm
+numba>=0.56.4
+
+# PDF & Document Processing
+PyPDF2
+pymupdf
+docling
+
+# Web & API
+requests
+requests-aws4auth
+
+# Development & Utilities
+python-dotenv
+jupyterlab
+tenacity
+markdown2
+Jinja2
+munch
+appdirs
+
+# Media Processing
+pydub  # Audio
+moviepy  # Video

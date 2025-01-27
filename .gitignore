@@ -306,3 +306,10 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Visualizer
+output_audio/
+output_video/
+
+# Model
+model/

@@ -83,7 +83,7 @@ class PaperPal:
                  matrix_char_size=24,
                  head_step_time=0.25,
                  random_x_jitter=2.0,
-                 fade_time=5.0,
+                 fade_time=1.5,
                  head_glow_passes=3,
                  head_glow_alpha_decay=50,
                  head_spawn_delay_range=(1.0,3.0),

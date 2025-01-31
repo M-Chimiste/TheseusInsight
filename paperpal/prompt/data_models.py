@@ -12,3 +12,6 @@ class SummaryPromptData(BaseModel):
     questions: str
     content: str
 
+class PodcastPromptData(BaseModel):
+    podcast_content: str
+

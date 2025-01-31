@@ -59,3 +59,8 @@ appdirs
 # Media Processing
 pydub  # Audio
 moviepy  # Video
+
+# YouTube Integration
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

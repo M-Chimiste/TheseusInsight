@@ -36,6 +36,12 @@ SCRIPT_SCHEMA = """
 ]
 """
 
+PODCAST_SCHEMA = """
+{
+    "podcast_episode_description": "string - the description of the podcast episode"
+}
+"""
+
 RESEARCH_INTERESTS_SYSTEM_PROMPT = f"""You are a research assistant that answers in JSON. Here's the json schema you must adhere to:\n<schema>\n{INTERESTS_SCHEMA}\n</schema>"""
 
 NEWSLETTER_SYSTEM_PROMPT = f"""You are an expert scientific author that answers in JSON. Here's the json schema you must adhere to:\n<schema>\n{NEWSLETTER_SCHEMA}\n</schema>"""
@@ -44,3 +50,5 @@ SYSTEM_CONTENT_EXTRACTION_SUMMARY = f"""You are an expert AI which helps extract
 You only respond in JSON format. Here's the json schema you must adhere to:\n<schema>\n{SUMMARY_SCHEMA}\n</schema>."""
 
 SUMMARY_SYSTEM_PROMPT = """You are an expert summarizing AI. You respond in JSON with the following structure: <schema>{"summary": <summary_text>}</schema>."""
+
+PODCAST_SUMMARY_SYSTEM_PROMPT = """You are an expert podcast host writing the description of your podcast episode and you answer in JSON. Here's the json schema you must adhere to:\n<schema>\n{PODCAST_SCHEMA}\n</schema>"""

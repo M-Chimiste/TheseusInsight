@@ -83,6 +83,7 @@ class PaperPal:
                  matrix_char_size=24,
                  head_step_time=0.25,
                  random_x_jitter=2.0,
+                 head_saw_period=1.5,
                  fade_time=1.5,
                  head_glow_passes=3,
                  head_glow_alpha_decay=50,
@@ -92,9 +93,11 @@ class PaperPal:
                  glow_passes=3,
                  glow_alpha_decay=40,
                  line_width=6,
+                 font_path = "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
                  verbose=True,
                  generate_email=True,
-                 publish_podcast=False):
+                 publish_podcast=False,
+                ):
         self.verbose = verbose
         self.generate_email = generate_email
         self.research_interests_path = research_interests_path
@@ -156,6 +159,7 @@ class PaperPal:
         self.matrix_tail_color = matrix_tail_color
         self.matrix_char_size = matrix_char_size
         self.head_step_time = head_step_time
+        self.head_saw_period = head_saw_period
         self.random_x_jitter = random_x_jitter
         self.fade_time = fade_time
         self.head_glow_passes = head_glow_passes
@@ -166,6 +170,8 @@ class PaperPal:
         self.glow_passes = glow_passes
         self.glow_alpha_decay = glow_alpha_decay
         self.line_width = line_width
+        self.font_path = font_path
+        self.publish_podcast = publish_podcast
         
         # Load research interests
         try:
@@ -495,11 +501,13 @@ class PaperPal:
                     head_glow_passes=self.head_glow_passes,
                     head_glow_alpha_decay=self.head_glow_alpha_decay,
                     head_spawn_delay_range=self.head_spawn_delay_range,
+                    head_saw_period=self.head_saw_period,
                     wave_color=self.wave_color,
                     trail_colors=self.trail_colors, 
                     glow_passes=self.glow_passes,
                     glow_alpha_decay=self.glow_alpha_decay,
-                    line_width=self.line_width)
+                    line_width=self.line_width,
+                    font_path=self.font_path)
                 
             if self.visualizer:
                 podcast_path = podcast_content['visualizer_path']
@@ -509,17 +517,18 @@ class PaperPal:
             podcast = Podcast(
                 title=self.final_filename,
                 date=TODAY.strftime('%Y-%m-%d'),
-                script=podcast_content['dialogue']
+                script=podcast_content['dialogue'],
+                description=podcast_content['description'],
             )
             if self.db_saving:
                 self.papers_db.insert_podcast(podcast)
             if self.generate_email:
                 if self.publish_podcast:
-                    # TODO: Add podcast url programmatically
-                    podcast_url = "https://podcast.paperpal.ai"
-                else:
-                    podcast_url = None
-                email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles, podcast_path, podcast_url)
+                    if self.verbose:
+                        print("Publishing podcast to YouTube, this may take a while...")
+                    response = upload_video(podcast_path, podcast.title, podcast.description)
+                email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles)
+                
                 try:
                     self.communication.compose_message(email_body, self.start_date, self.end_date)
                     self.communication.send_email()

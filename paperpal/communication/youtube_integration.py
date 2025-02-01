@@ -13,7 +13,7 @@ from google.oauth2.credentials import Credentials
 # If modifying these scopes, delete the existing token.json.
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
-def get_authenticated_service(token_file="token.json"):
+def get_authenticated_service(token_file="client_secret.json"):
     """
     Authenticates and returns a YouTube API client service using environment variables
     for client ID and client secret.
@@ -21,12 +21,12 @@ def get_authenticated_service(token_file="token.json"):
     # 2) Build the client_config dictionary based on environment variables
     client_config = {
         "web": {
-            "client_id": os.getenv("CLIENT_ID"),
+            "client_id": os.getenv("CLIENT_ID", ""),
             "project_id": os.getenv("PROJECT_ID", ""),
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_secret": os.getenv("CLIENT_SECRET"),
+            "client_secret": os.getenv("CLIENT_SECRET", ""),
             "redirect_uris": [os.getenv("REDIRECT_URI", "http://localhost")]
         }
     }

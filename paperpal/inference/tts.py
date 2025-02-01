@@ -1,7 +1,6 @@
 import io
 import numpy as np
 import os
-import platform
 import re
 import torch
 import uuid
@@ -10,19 +9,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 from pydub import AudioSegment
 
-# Load models and voicepacks after making sure your espeak library is set up correctly
-from .kokoro import generate
-from .models import build_model
-
+from .pipeline import KPipeline
 load_dotenv()
-
-
-KOKORO_VOICE_NAME = [
-    'af', # Default voice is a 50-50 mix of Bella & Sarah
-    'af_bella', 'af_sarah', 'am_adam', 'am_michael',
-    'bf_emma', 'bf_isabella', 'bm_george', 'bm_lewis',
-    'af_nicole', 'af_sky',
-]
 
 
 def chunk_text_by_sentences(text: str, max_len: int = 4096):
@@ -85,98 +73,120 @@ def chunk_text_by_sentences(text: str, max_len: int = 4096):
     return chunks
 
 
-
 class KokoroTTSInference:
     """
-    TTSInference is a class that facilitates Text-to-Speech inference using
-    a specified model and voicepack.
-
-    Args:
-        model_path (str): The path to the Kokoro model file.
-        voice_name (str): The name of the voice to use. Defaults to "af".
-        speaker_speed (float): The speed multiplier for the speaker's speech rate.
-        verbose (bool): Whether to print verbose output.
-
-    Attributes:
-        device (str): The device on which Torch computations will be performed ('cuda' or 'cpu').
-        model (nn.Module): The loaded Kokoro model.
-        voice_name (str): The name of the voice used for inference.
-        voicepack (nn.Module): The loaded voicepack for the specified voice.
+    KokoroTTSInference uses the updated KPipeline to perform TTS synthesis.
+    
+    The new workflow no longer manually loads or builds the model.
+    Instead, the model and voice data are managed internally by KPipeline.
+    
+    The pipeline returns a generator of tuples (graphemes, phoneme_chunk, audio_chunk).
+    This class concatenates all the audio chunks into a single audio array and
+    also concatenates the phoneme strings.
+    
+    Example usage:
+    
+        pipeline = KPipeline(lang_code='a')  # make sure lang_code matches your voice!
+        generator = pipeline(
+            text,
+            voice='af_heart',
+            speed=1,
+        )
+        # The generator yields chunks; our invoke() method collects and concatenates them.
     """
-
-    def __init__(self, 
-                 model_path: str,
-                 model_name: str,
-                 voice_name: str = "af",
-                 speaker_speed: float = 1.0,
-                 verbose: bool = False):
+    def __init__(self, voice: str = 'af_heart', lang_code: str = 'a', verbose: bool = False):
         """
-        Initializes the TTSInference instance by:
-          - Constructing the full model path from model_path and model_name.
-          - Loading the model onto the correct device.
-          - Loading the requested voicepack from model_path/voices.
-        """
-        # Moving specialized imports into classes to avoid importing them globally  
-        IS_MAC = platform.system() == "Darwin"
-        if IS_MAC:
-            from phonemizer.backend.espeak.wrapper import EspeakWrapper
-            _ESPEAK_LIBRARY = '/opt/homebrew/bin/espeak'  #use the Path to the library.
-            EspeakWrapper.set_library(_ESPEAK_LIBRARY)
-
-        self.verbose = verbose
-        self.speaker_speed = speaker_speed
-
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        # MPS is missing an implementation so it wont work yet
-        # elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-        #     self.device = "mps"
-        else:
-            self.device = "cpu"
-        if self.verbose:
-            print(f"Using device: {self.device}")
-        full_model_path = os.path.join(model_path, model_name)
-        self.model = build_model(full_model_path, self.device)
-        self.voice_name = voice_name
-        if voice_name not in KOKORO_VOICE_NAME:
-            raise ValueError(f"Voice name '{voice_name}' not found. Choose from: {KOKORO_VOICE_NAME}")
-        voicepack_path = os.path.join(model_path, "voices", f"{voice_name}.pt")
-        self.voicepack = torch.load(voicepack_path, weights_only=True).to(self.device)
-        if self.verbose:
-            print(f"Loaded voice: {self.voice_name}")
-
-    def invoke(self, text: str, save_file: bool=True, file_path: str|None=None, format: str="wav"):
-        """
-        Generate speech from text using the loaded model and voicepack, then save it as an MP3 file.
-
+        Initializes the TTS inference instance by simply creating a KPipeline.
+        
         Args:
-            text (str): The text to convert to speech.
-            file_location (str): The file path (including .mp3) where the output audio will be saved.
-
-        Returns:
-            dict: The phonemes used in the generation process.
+            lang_code (str): Language code to use (e.g., 'a' for American English).
+            verbose (bool): If True, prints debugging information.
         """
-        formats = ["mp3", "wav", "ogg", "flac"]
-        if format not in formats:
-            raise ValueError(f"Format '{format}' not supported. Choose from: {formats}")
-        # Generate audio at 24kHz sample rate
-        audio, out_ps = generate(self.model, text, self.voicepack, lang=self.voice_name[0], speed=self.speaker_speed)
+        self.verbose = verbose
+        self.voice = voice
+        self.pipeline = KPipeline(lang_code=lang_code)
+        if self.verbose:
+            print(f"[KokoroTTSInference] Initialized KPipeline with lang_code='{lang_code}'")
 
-        # Save audio as an mp3 file (requires FFmpeg installed)
+    def invoke(self,
+               text: str,
+               voice: str = None,
+               speed: float = 1.0,
+               save_file: bool = False,
+               file_path: str | None = None,
+               format: str = "mp3"):
+        """
+        Generates speech from input text using the updated pipeline.
+        
+        The pipeline handles:
+          - Sentence splitting,
+          - G2P conversion with language-specific logic,
+          - Tokenization and chunking (each chunk is capped at ~510 tokens),
+          - Inference for each chunk.
+        
+        All audio chunks are concatenated into a single audio array.
+        
+        Args:
+            text (str): The text to be synthesized.
+            voice (str): The voice name to use (e.g., 'af_heart'). Must be in KOKORO_VOICE_NAME.
+            speed (float): Speed multiplier for synthesis.
+            split_pattern (str): Regular expression used to split the text into chunks.
+            save_file (bool): If True, saves the concatenated audio to disk.
+            file_path (str | None): Destination file path (required if save_file=True).
+            format (str): Audio file format for export (e.g., "wav", "mp3").
+        
+        Returns:
+            tuple: (final_audio, final_phoneme_output)
+                   final_audio is a float32 numpy array (range [-1, 1]),
+                   final_phoneme_output is a concatenated phoneme string.
+        """
+        # Lists to collect audio chunks and phoneme strings.
+        audio_chunks = []
+        phoneme_outputs = []
+        voice = voice or self.voice
+
+        # The pipeline's __call__ returns a generator yielding (graphemes, phoneme_chunk, audio_chunk).
+        for i, (gs, ps, audio_chunk) in enumerate(
+                self.pipeline(text, voice=voice, speed=speed)):
+            if self.verbose:
+                print(f"[KokoroTTSInference] Chunk {i}:")
+                print(f"  Graphemes: {gs}")
+                print(f"  Phonemes: {ps}")
+            if audio_chunk is not None:
+                # Ensure the audio chunk is on CPU and converted to a numpy array.
+                if isinstance(audio_chunk, torch.Tensor):
+                    audio_np = audio_chunk.cpu().numpy()
+                else:
+                    audio_np = audio_chunk
+                audio_chunks.append(audio_np)
+            phoneme_outputs.append(ps)
+
+        if not audio_chunks:
+            raise RuntimeError("No audio was generated by the pipeline.")
+
+        # Concatenate all audio chunks along the time dimension.
+        final_audio = np.concatenate(audio_chunks, axis=0)
+        # Concatenate all phoneme strings (with spaces between chunks).
+        final_phoneme_output = " ".join(phoneme_outputs)
+
+        # Convert final audio from float32 (range [-1,1]) to int16 for file export.
+        audio_int16 = (final_audio * 32767).astype(np.int16)
+        audio_segment = AudioSegment(
+            audio_int16.tobytes(),
+            frame_rate=24000,
+            sample_width=2,  # 16-bit audio
+            channels=1
+        )
+
         if save_file:
             if not file_path:
-                raise ValueError("file_location must be provided when save_file is True")
-            audio_np = (audio * 32767).astype(np.int16)  # if originally float32 in range -1..1
-            audio_segment = AudioSegment(
-                audio_np.tobytes(), 
-                frame_rate=24000,
-                sample_width=2,    # 16-bit
-                channels=1
-            )
+                raise ValueError("file_path must be provided when save_file is True.")
             audio_segment.export(file_path, format=format)
-        # Return phonemes for reference
-        return audio, out_ps
+            if self.verbose:
+                print(f"[KokoroTTSInference] Saved concatenated audio to {file_path}")
 
+        return final_audio, final_phoneme_output
+    
 
 class PollyTTSInference:
     """

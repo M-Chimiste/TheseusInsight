@@ -41,6 +41,7 @@ class Podcast(BaseModel):
     title: str
     date: str
     script: list
+    description: str
 
 class PaperDatabase:
     """
@@ -124,7 +125,8 @@ class PaperDatabase:
                               (id INTEGER PRIMARY KEY AUTOINCREMENT,
                                title TEXT NOT NULL,
                                date TEXT NOT NULL,
-                               script TEXT NOT NULL
+                               script TEXT NOT NULL,
+                               description TEXT NOT NULL
                             )''')
             
     def insert_podcast(self, podcast: Podcast):
@@ -134,9 +136,10 @@ class PaperDatabase:
         except ValueError:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO podcasts (title, date, script)
-                              VALUES (?, ?, ?)''',
-                           (podcast.title, podcast.date, json.dumps(podcast.script)))
+            cursor.execute('''INSERT INTO podcasts (title, date, script, description)
+                              VALUES (?, ?, ?, ?)''',
+                           (podcast.title, podcast.date, json.dumps(podcast.script), podcast.description))
+            
     def insert_paper(self, paper: Paper):
         """
         Insert a new paper into the database.

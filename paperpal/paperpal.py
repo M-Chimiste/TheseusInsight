@@ -13,12 +13,12 @@ from tqdm import tqdm
 from docling.document_converter import DocumentConverter
 
 # Local application imports
-from .communication import GmailCommunication, construct_email_body
-from .data_processing import ProcessData, PaperDatabase, Paper, Newsletter
+from .communication import GmailCommunication, construct_email_body, upload_video
+from .data_processing import ProcessData, PaperDatabase, Paper, Newsletter, Podcast
 from .data_processing.data_handling import PaperDatabase, Paper, Newsletter, Logs
 from .inference import SentenceTransformerInference
 from .podcast import PaperPalPodcastGenerator
-from .pdf import MarkdownParser, ArxivData, parse_pdf_to_markdown
+# from .pdf import MarkdownParser, ArxivData, parse_pdf_to_markdown
 from .prompt import (
     NEWSLETTER_SYSTEM_PROMPT,
     RESEARCH_INTERESTS_SYSTEM_PROMPT,
@@ -92,8 +92,11 @@ class PaperPal:
                  glow_passes=3,
                  glow_alpha_decay=40,
                  line_width=6,
-                 verbose=True):
+                 verbose=True,
+                 generate_email=True,
+                 publish_podcast=False):
         self.verbose = verbose
+        self.generate_email = generate_email
         self.research_interests_path = research_interests_path
         if start_date is None and end_date is None:
             self.start_date = get_n_days_ago(n_days)
@@ -502,21 +505,33 @@ class PaperPal:
                 podcast_path = podcast_content['visualizer_path']
             else:
                 podcast_path = podcast_content['final_podcast_path']
-
-            email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles, podcast_path)
             
-            try:
-                self.communication.compose_message(email_body, self.start_date, self.end_date)
-                self.communication.send_email()
-                # Log successful email sending
-                log = Logs(
-                    status_code=200,
-                    status=f"Successfully sent newsletter to {self.receiver_address}"
-                )
-                self.papers_db.insert_log(log)
-            except Exception as e:
-                self._log_error(500, e)
-                raise
+            podcast = Podcast(
+                title=self.final_filename,
+                date=TODAY.strftime('%Y-%m-%d'),
+                script=podcast_content['dialogue']
+            )
+            if self.db_saving:
+                self.papers_db.insert_podcast(podcast)
+            if self.generate_email:
+                if self.publish_podcast:
+                    # TODO: Add podcast url programmatically
+                    podcast_url = "https://podcast.paperpal.ai"
+                else:
+                    podcast_url = None
+                email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles, podcast_path, podcast_url)
+                try:
+                    self.communication.compose_message(email_body, self.start_date, self.end_date)
+                    self.communication.send_email()
+                    # Log successful email sending
+                    log = Logs(
+                        status_code=200,
+                        status=f"Successfully sent newsletter to {self.receiver_address}"
+                    )
+                    self.papers_db.insert_log(log)
+                except Exception as e:
+                    self._log_error(500, e)
+                    raise
             
         except Exception as e:
             self._log_error(500, e)

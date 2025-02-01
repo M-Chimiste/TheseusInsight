@@ -38,3 +38,6 @@ class DialogueOutput(BaseModel):
             merged_dialogue.extend(output.dialogue)
 
         return DialogueOutput(dialogue=merged_dialogue)
+
+class PodcastDescription(BaseModel):
+    podcast_episode_description: str = Field(..., description="The description of the podcast episode")

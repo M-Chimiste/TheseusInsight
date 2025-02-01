@@ -313,3 +313,6 @@ output_video/
 
 # Model
 model/
+
+# Google OAuth
+client_secret.json

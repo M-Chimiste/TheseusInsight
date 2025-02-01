@@ -28,6 +28,8 @@ anthropic[bedrock]
 openai
 ollama
 langchain
+soundfile
+kokoro
 
 # Data Processing & Management
 pandas

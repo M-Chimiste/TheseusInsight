@@ -12,8 +12,13 @@ from ..inference import (KokoroTTSInference,
                          OpenAITTSInference,
                         LLMModelFactory)
 from .visualizer import generate_visualizer_video
-from ..prompt import INSTRUCTION_TEMPLATES
-from ..data_model import Dialogue, DialogueItem, DialogueOutput
+from ..prompt import (INSTRUCTION_TEMPLATES, 
+                      PODCAST_SUMMARY_SYSTEM_PROMPT,
+                      podcast_description)
+from ..data_model import (Dialogue,
+                          DialogueItem,
+                          DialogueOutput,
+                          PodcastDescription)
 from ..pdf import SpacyLayoutDocProcessor
 from dotenv import load_dotenv
 from datetime import datetime
@@ -137,6 +142,31 @@ class PaperPalPodcastGenerator:
         outro = template["podcast_outro"]
         return intro, section, outro
     
+    def _get_podcast_description(self, text: str) -> str:
+        """
+        Get the podcast description from the text
+        """
+        system_prompt = PODCAST_SUMMARY_SYSTEM_PROMPT
+        user_prompt = podcast_description(text)
+        messages = [{"role": "user", "content": user_prompt}]
+
+        if self.text_inference.provider == "ollama":
+            raw_response = self.text_inference.invoke(
+                messages, 
+                system_prompt=system_prompt,
+                schema=PodcastDescription
+            )
+        
+        else:
+            if self.text_inference.provider == "anthropic":
+                messages.append({"role": "assistant", "content": "{"})
+            raw_response = self.text_inference.invoke(messages, system_prompt=system_prompt)
+            if self.text_inference.provider == "anthropic":
+                raw_response = "{" + raw_response
+
+        data = json_repair.loads(raw_response)
+        return data["podcast_episode_description"]
+
     def _get_dialogue(
         self,
         text: str,
@@ -590,6 +620,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         # Build final transcript string
         transcript_text = "\n".join(full_transcript)
 
+        description = self._get_podcast_description(transcript_text)
+
         # Define the single-file output name
         final_podcast_filename = f"{prefix}_final.{output_format}"
         final_podcast_path = os.path.join(output_dir, final_podcast_filename)
@@ -627,6 +659,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             "segments": ", ".join(segments),
             "final_podcast_path": final_podcast_path,
             "visualizer_path": output_filepath,
+            "description": description,
         }
 
     def _cleanup_segments(self, segments: List[str]):

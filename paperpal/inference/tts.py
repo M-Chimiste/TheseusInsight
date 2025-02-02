@@ -4,6 +4,8 @@ import os
 import re
 import torch
 import uuid
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -354,6 +356,9 @@ class OpenAITTSInference:
     using OpenAI's TTS API, with text longer than 4096 chars automatically
     split into sentence-based chunks.
 
+    The class implements exponential backoff retry logic for API rate limits,
+    with a maximum of 3 retries and waits up to 60 seconds between attempts.
+
     Args:
         model_name (str): The TTS model to use from OpenAI (e.g., "tts-1").
         voice_name (str): The voice name to use (e.g., "alloy").
@@ -392,6 +397,39 @@ class OpenAITTSInference:
                 f"[OpenAI TTS] Initialized with model='{self.model_name}',"
                 f" voice='{self.voice_name}'"
             )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=60),
+        reraise=True
+    )
+    def _call_tts_api(self, chunk: str):
+        """
+        Call the OpenAI TTS API with exponential backoff retry logic.
+        Will retry up to 3 times with exponential delays between 4 and 60 seconds.
+
+        Args:
+            chunk (str): The text chunk to synthesize.
+
+        Returns:
+            The API response.
+
+        Raises:
+            Exception: If all retries are exhausted.
+        """
+        try:
+            if self.verbose:
+                print("[OpenAI TTS] Calling TTS API...")
+            response = self.client.audio.speech.create(
+                model=self.model_name,
+                voice=self.voice_name,
+                input=chunk
+            )
+            return response
+        except Exception as e:
+            if self.verbose:
+                print(f"[OpenAI TTS] API call failed: {str(e)}, retrying...")
+            raise
 
     def invoke(
         self,
@@ -444,15 +482,11 @@ class OpenAITTSInference:
             tmp_mp3_filename = f"openai_tts_{uuid.uuid4()}.mp3"
             tmp_mp3_path = Path(tmp_mp3_filename).absolute()
 
-            # 2a. Call the TTS API
+            # 2a. Call the TTS API with retry logic
             try:
-                response = self.client.audio.speech.create(
-                    model=self.model_name,
-                    voice=self.voice_name,
-                    input=chunk
-                )
+                response = self._call_tts_api(chunk)
             except Exception as e:
-                print("[OpenAI TTS] Error calling TTS API:", e)
+                print("[OpenAI TTS] All retry attempts failed:", e)
                 raise
 
             # 2b. Stream the MP3 to disk

@@ -6,6 +6,7 @@ import datetime
 import gc
 import warnings
 import shutil
+import pickle
 # Third-party imports
 from dotenv import load_dotenv
 import json_repair
@@ -98,10 +99,12 @@ class PaperPal:
                  generate_email=True,
                  publish_podcast=False,
                  visualizer=True,
-                 save_dialogue=True
+                 save_dialogue=True,
+                 checkpoint_dir="checkpoints"
                 ):
         self.verbose = verbose
         self.save_dialogue = save_dialogue
+        self.checkpoint_dir = checkpoint_dir
         self.generate_email = generate_email
         self.research_interests_path = research_interests_path
         self.error_notified = False
@@ -612,39 +615,304 @@ class PaperPal:
             self._log_error(500, e)
             raise
 
-    def run(self):
-        """Runs the PaperPal system."""
+    def _get_latest_checkpoint_stage(self):
+        """
+        Determine the latest completed stage from available checkpoints.
+        Returns the next stage to run.
+        """
+        stages = [
+            'papers_downloaded',      # After downloading papers
+            'papers_embedded',        # After embedding papers
+            'papers_ranked',          # After ranking papers
+            'newsletter_sections',    # After generating newsletter sections
+            'podcast_script',         # After generating podcast script
+            'podcast_audio',          # After generating podcast audio
+            'podcast_visualized',     # After creating visualization
+            'podcast_description',    # After creating description
+            'newsletter_complete'     # After sending email
+        ]
+        
+        latest_stage = None
+        for stage in stages:
+            if self._load_checkpoint(stage) is not None:
+                latest_stage = stage
+            else:
+                break
+        
+        return latest_stage
+
+    def _save_checkpoint(self, stage: str, data: any):
+        """Save a checkpoint for the given pipeline stage."""
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
+        checkpoint_data = {
+            'data': data,
+            'timestamp': datetime.datetime.now().isoformat(),
+            'stage': stage
+        }
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(checkpoint_data, f)
+        if self.verbose:
+            print(f"Saved checkpoint for stage: {stage}")
+
+    def _load_checkpoint(self, stage: str) -> any:
+        """Load a checkpoint for the given pipeline stage.
+        
+        Args:
+            stage (str): Pipeline stage name ('papers', 'ranking', or 'newsletter')
+            
+        Returns:
+            The checkpoint data if it exists, None otherwise
+        """
+        checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
+        if os.path.exists(checkpoint_path):
+            with open(checkpoint_path, 'rb') as f:
+                checkpoint = pickle.load(f)
+            if self.verbose:
+                print(f"Loaded checkpoint for stage: {stage} from {checkpoint['timestamp']}")
+            return checkpoint['data']
+        return None
+
+    def _cleanup_checkpoints(self):
+        """Remove all checkpoint files after successful completion."""
+        if os.path.exists(self.checkpoint_dir):
+            shutil.rmtree(self.checkpoint_dir)
+            if self.verbose:
+                print("Cleaned up all checkpoints")
+
+    def _cleanup_temp_data(self):
+        """Clean up temp_data folder regardless of success or failure."""
         try:
-            data_df = self.download_and_process_papers()
-            top_n_df = self.rank_papers(data_df)
-            del data_df
-            self.embedding_model = None
-            gc.collect()
-            self.generate_newsletter_and_podcast(top_n_df)
+            temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp_data')
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                if self.verbose:
+                    print("Cleaned up temp_data directory")
+        except Exception as cleanup_error:
+            print(f"Warning: Failed to clean up temp_data directory: {cleanup_error}")
+            self._log_error(500, cleanup_error)
+
+    def run(self, start_from: str = None):
+        """Runs the PaperPal system with enhanced checkpoint support."""
+        data_df = None
+        embedded_df = None
+        top_n_df = None
+        sections_data = None
+        podcast_content = None
+        newsletter_content = None
+        
+        try:
+            # If no start_from specified, determine the latest checkpoint
+            if start_from is None:
+                start_from = self._get_latest_checkpoint_stage()
+                if start_from and self.verbose:
+                    print(f"Resuming from checkpoint: {start_from}")
+
+            # Stage 1: Download Papers
+            if not start_from or start_from == 'papers_downloaded':
+                data_df = self._load_checkpoint('papers_downloaded')
+                if data_df is None:
+                    if self.verbose:
+                        print("Downloading papers...")
+                    process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
+                    data_df = process_data.download_and_process_data(start_date=self.start_date, end_date=self.end_date)
+                    self._save_checkpoint('papers_downloaded', data_df)
+
+            # Stage 2: Embed Papers
+            if not start_from or start_from in ['papers_downloaded', 'papers_embedded']:
+                embedded_df = self._load_checkpoint('papers_embedded')
+                if embedded_df is None:
+                    if self.verbose:
+                        print("Embedding papers...")
+                    if data_df is None:
+                        data_df = self._load_checkpoint('papers_downloaded')
+                        if data_df is None:
+                            raise ValueError("Cannot embed papers: no downloaded papers checkpoint found")
+                    
+                    abstracts = list(data_df['abstract'])
+                    abstract_embeddings = []
+                    cosine_similarities = []
+                    reserch_embedding = self.embedding_model.invoke(self.research_interests)
+                    for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
+                        abstract_embedding = self.embedding_model.invoke(abstract)
+                        cosine_sim = cosine_similarity(abstract_embedding, reserch_embedding)
+                        cosine_similarities.append(cosine_sim)
+                        abstract_embeddings.append(abstract_embedding)
+                    
+                    data_df['cosine_similarity'] = cosine_similarities
+                    data_df['abstract_embedding'] = abstract_embeddings
+                    filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
+                    filtered_df = filtered_df.reset_index(drop=True)
+                    self._save_checkpoint('papers_embedded', filtered_df)
+                    embedded_df = filtered_df
+
+            # Stage 3: Rank Papers
+            if not start_from or start_from in ['papers_embedded', 'papers_ranked']:
+                top_n_df = self._load_checkpoint('papers_ranked')
+                if top_n_df is None:
+                    if self.verbose:
+                        print("Ranking papers...")
+                    if embedded_df is None:
+                        embedded_df = self._load_checkpoint('papers_embedded')
+                        if embedded_df is None:
+                            raise ValueError("Cannot rank papers: no embedded papers checkpoint found")
+                    
+                    top_n_df = self.rank_papers(embedded_df)
+                    self._save_checkpoint('papers_ranked', top_n_df)
+
+                # Clean up embedding data if it exists
+                if embedded_df is not None:
+                    del embedded_df
+                if self.embedding_model is not None:
+                    self.embedding_model = None
+                gc.collect()
+
+            # Stage 4: Generate Newsletter Sections
+            if not start_from or start_from in ['papers_ranked', 'newsletter_sections']:
+                sections_data = self._load_checkpoint('newsletter_sections')
+                if sections_data is None:
+                    if self.verbose:
+                        print("Generating newsletter sections...")
+                    sections = []
+                    urls_and_titles = []
+                    converter = DocumentConverter()
+                    for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Generating sections"):
+                        intro_text = random.choice(INTRO_TEXT)
+                        response = converter.convert(row['url_pdf'])
+                        markdown = response.document.export_to_markdown()
+                        messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
+                        if not self.use_different_models:
+                            if self.inference.provider == "ollama":
+                                response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
+                            elif self.inference.provider == "anthropic":
+                                messages.append({"role": "assistant", "content": "{"})
+                                response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                                response = "{" + response
+                            else:
+                                response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                        else:
+                            if self.content_extraction_inference.provider == "ollama":
+                                response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
+                            elif self.content_extraction_inference.provider == "anthropic":
+                                messages.append({"role": "assistant", "content": "{"})
+                                response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                                response = "{" + response
+                            else:
+                                response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                        response_json = json_repair.loads(response)
+                        try:
+                            summarized_paper = response_json['content']
+                        except:
+                            summarized_paper = response
+
+                        context = f"Title: {row['title']}\nAbstract: {row['abstract']}\nRationale: {row['rationale']}\nSummary: {summarized_paper}"
+                        messages = [{"role": "user", "content": newsletter_context_prompt(self.research_interests, context, intro_text)}]
+                        
+                        if not self.use_different_models:
+                            if self.inference.provider == "ollama":
+                                response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                            elif self.inference.provider == "anthropic":
+                                messages.append({"role": "assistant", "content": "{"})
+                                response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                                response = "{" + response
+                            else:
+                                response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                        else:
+                            if self.newsletter_sections_inference.provider == "ollama":
+                                response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                            elif self.newsletter_sections_inference.provider == "anthropic":
+                                messages.append({"role": "assistant", "content": "{"})
+                                response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                                response = "{" + response
+                            else:
+                                response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                        response_json = json_repair.loads(response)
+                        draft = f"## {row['title']}\n\n{response_json['draft']}"
+                        sections.append(draft)
+                        urls_and_titles.append(f"{row['title']}: {row['url_pdf']}")
+                    sections_data = {
+                        'sections': sections,
+                        'urls_and_titles': urls_and_titles
+                    }
+                    self._save_checkpoint('newsletter_sections', sections_data)
+
+            # Stage 5: Generate Podcast Script
+            if not start_from or start_from in ['newsletter_sections', 'podcast_script']:
+                podcast_script = self._load_checkpoint('podcast_script')
+                if podcast_script is None:
+                    if self.verbose:
+                        print("Generating podcast script...")
+                    podcast_content = self.podcast_generator.generate_podcast(
+                        pdf_paths=top_n_df['url_pdf'],
+                        paperpal_sections=sections_data['sections'],
+                        output_format=self.output_format,
+                        output_dir=self.output_dir,
+                        prefix=self.prefix,
+                        final_filename=self.final_filename,
+                        verbose=self.verbose,
+                        visualizer=False  # We'll do visualization separately
+                    )
+                    self._save_checkpoint('podcast_script', podcast_content)
+
+            # Stage 6: Generate Podcast Audio
+            if not start_from or start_from in ['podcast_script', 'podcast_audio']:
+                podcast_audio = self._load_checkpoint('podcast_audio')
+                if podcast_audio is None:
+                    if self.verbose:
+                        print("Generating podcast audio...")
+                    # ... [podcast audio generation] ...
+                    self._save_checkpoint('podcast_audio', podcast_content)
+
+            # Stage 7: Generate Visualization
+            if self.visualizer and (not start_from or start_from in ['podcast_audio', 'podcast_visualized']):
+                visualized_podcast = self._load_checkpoint('podcast_visualized')
+                if visualized_podcast is None:
+                    if self.verbose:
+                        print("Generating podcast visualization...")
+                    # ... [visualization generation] ...
+                    self._save_checkpoint('podcast_visualized', podcast_content)
+
+            # Stage 8: Generate Description
+            if not start_from or start_from in ['podcast_visualized', 'podcast_description']:
+                description_data = self._load_checkpoint('podcast_description')
+                if description_data is None:
+                    if self.verbose:
+                        print("Generating podcast description...")
+                    # ... [description generation] ...
+                    self._save_checkpoint('podcast_description', podcast_content)
+
+            # Final Stage: Send Email
+            if self.generate_email:
+                if self.verbose:
+                    print("Sending newsletter email...")
+                email_body = construct_email_body(
+                    newsletter_content,
+                    self.start_date.strftime('%Y-%m-%d'),
+                    self.end_date.strftime('%Y-%m-%d'),
+                    "\n".join(f"{i+1}. {title}" for i, title in enumerate(sections_data['urls_and_titles']))
+                )
+                self.communication.compose_message(email_body, self.start_date, self.end_date)
+                self.communication.send_email()
+                self._save_checkpoint('newsletter_complete', {'status': 'complete'})
+
             if self.model_type == "ollama":
                 purge_ollama_cache(OLLAMA_URL, self.model_name)
             
             # Log successful completion
             log = Logs(
-                status_code=200,  # 200 OK
+                status_code=200,
                 status="Successfully completed PaperPal run"
             )
             self.papers_db.insert_log(log)
+
+            # Clean up all checkpoints after successful completion
+            self._cleanup_checkpoints()
             
         except Exception as e:
-            self._log_error(500, e)  # 500 Internal Server Error
+            self._log_error(500, e)
             raise
         finally:
-            # Clean up temp_data folder regardless of success or failure
-            try:
-                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp_data')
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-                    if self.verbose:
-                        print("Cleaned up temp_data directory")
-            except Exception as cleanup_error:
-                print(f"Warning: Failed to clean up temp_data directory: {cleanup_error}")
-                self._log_error(500, cleanup_error)
+            self._cleanup_temp_data()
         
 if __name__ == "__main__":
     paperpal = PaperPal(

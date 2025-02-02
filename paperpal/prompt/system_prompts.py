@@ -38,7 +38,7 @@ SCRIPT_SCHEMA = """
 
 PODCAST_SCHEMA = """
 {
-    "podcast_episode_description": "string - the description of the podcast episode"
+    "description": "string - the description of the podcast episode"
 }
 """
 
@@ -51,4 +51,4 @@ You only respond in JSON format. Here's the json schema you must adhere to:\n<sc
 
 SUMMARY_SYSTEM_PROMPT = """You are an expert summarizing AI. You respond in JSON with the following structure: <schema>{"summary": <summary_text>}</schema>."""
 
-PODCAST_SUMMARY_SYSTEM_PROMPT = """You are an expert podcast host writing the description of your podcast episode and you answer in JSON. Here's the json schema you must adhere to:\n<schema>\n{PODCAST_SCHEMA}\n</schema>"""
+PODCAST_SUMMARY_SYSTEM_PROMPT = """You are an expert podcast host writing the description of your podcast episode and you answer only in JSON. Here's the json schema you must adhere to:\n<schema>\n{PODCAST_SCHEMA}\n</schema>"""

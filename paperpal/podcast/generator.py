@@ -163,7 +163,7 @@ class PaperPalPodcastGenerator:
                 raw_response = "{" + raw_response
 
         data = json_repair.loads(raw_response)
-        return data["podcast_episode_description"]
+        return data["description"]
 
     def _get_dialogue(
         self,

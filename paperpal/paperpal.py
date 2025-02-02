@@ -33,7 +33,7 @@ from .prompt import (
     NewsletterPromptData
 )
 from .utils import cosine_similarity, get_n_days_ago, TODAY, purge_ollama_cache
-
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", None)
@@ -97,9 +97,11 @@ class PaperPal:
                  verbose=True,
                  generate_email=True,
                  publish_podcast=False,
-                 visualizer=False,
+                 visualizer=True,
+                 save_dialogue=True
                 ):
         self.verbose = verbose
+        self.save_dialogue = save_dialogue
         self.generate_email = generate_email
         self.research_interests_path = research_interests_path
         self.error_notified = False
@@ -574,11 +576,14 @@ class PaperPal:
                 podcast_path = podcast_content['visualizer_path']
             else:
                 podcast_path = podcast_content['final_podcast_path']
-            
+            dialogue = json.dumps(podcast_content['dict_transcript'])
+            if self.save_dialogue:
+                with open(os.path.join(self.output_dir, f"{self.prefix}_dialogue.json"), "w") as f:
+                    json.dump({"dialogue": podcast_content['dict_transcript'], "description": podcast_content['description']}, f)
             podcast = Podcast(
                 title=self.final_filename,
                 date=TODAY.strftime('%Y-%m-%d'),
-                script=podcast_content['dialogue'],
+                script=dialogue,
                 description=podcast_content['description'],
             )
             if self.db_saving:

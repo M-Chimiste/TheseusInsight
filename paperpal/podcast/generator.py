@@ -454,13 +454,17 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             )
         else:
             output_filepath = "No Visualizer Output"
+
+        # Get the podcast description
+        description = self._get_podcast_description(transcript_text)
+
         return {
             "transcript": transcript_text,
             "dict_transcript": merged_script.model_dump(),
             "segments": ", ".join(segments),
             "final_podcast_path": final_podcast_path,
             "visualizer_path": output_filepath,
-
+            "description": description,
         }
 
     def regenerate_podcast_from_script(

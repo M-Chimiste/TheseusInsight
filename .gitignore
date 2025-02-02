@@ -330,3 +330,6 @@ music/
 
 # Scripts
 *.sh
+
+#checkpoints
+checkpoints/

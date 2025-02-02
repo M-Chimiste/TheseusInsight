@@ -316,3 +316,9 @@ model/
 
 # Google OAuth
 client_secret.json
+
+# Music
+music/
+
+# Scripts
+*.sh

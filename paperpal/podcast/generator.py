@@ -290,11 +290,13 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         head_glow_passes=3,
         head_glow_alpha_decay=50,
         head_spawn_delay_range=(1.0,3.0),
+        head_saw_period=0.5,
         wave_color="#d703fc",
         trail_colors=["#fc03b6", "#ba03fc", "#ce6bf2"], 
         glow_passes=3,
         glow_alpha_decay=40,
         line_width=6,
+        font_path=None
     ) -> Dict[str, str]:
         """
         Generates a podcast from a list of PDF files and paperpal sections.
@@ -331,6 +333,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             glow_passes (int, optional): The number of glow passes. Defaults to 3.
             glow_alpha_decay (int, optional): The alpha decay for the glow. Defaults to 40.
             line_width (int, optional): The width of the line. Defaults to 6.
+            font_path (str, optional): The path to the font for the visualizer. Defaults to None.
 
         Returns:
             Dict[str, str]: A dictionary containing the transcript, dictionary transcript, segments, final podcast path, and visualizer path.
@@ -441,11 +444,13 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 head_glow_passes=head_glow_passes,
                 head_glow_alpha_decay=head_glow_alpha_decay,
                 head_spawn_delay_range=head_spawn_delay_range,
+                head_saw_period=head_saw_period,
                 wave_color=wave_color,
                 trail_colors=trail_colors, 
                 glow_passes=glow_passes,
                 glow_alpha_decay=glow_alpha_decay,
                 line_width=line_width,
+                font_path=font_path
             )
         else:
             output_filepath = "No Visualizer Output"
@@ -478,6 +483,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         matrix_tail_color="0x00b000",  # hex for (0,176,0)
         matrix_char_size=24,
         head_step_time=0.25,
+        head_saw_period=1.5,
         random_x_jitter=2.0,
         fade_time=5.0,
         head_glow_passes=3,
@@ -643,6 +649,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 head_glow_passes=head_glow_passes,
                 head_glow_alpha_decay=head_glow_alpha_decay,
                 head_spawn_delay_range=head_spawn_delay_range,
+                head_saw_period=head_saw_period,
                 wave_color=wave_color,
                 trail_colors=trail_colors, 
                 glow_passes=glow_passes,

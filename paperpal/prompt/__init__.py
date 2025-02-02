@@ -13,4 +13,7 @@ from .data_models import (ResearchInterestsPromptData,
 from .system_prompts import (NEWSLETTER_SYSTEM_PROMPT,
                              SYSTEM_CONTENT_EXTRACTION_SUMMARY, 
                              SUMMARY_SYSTEM_PROMPT, 
-                             RESEARCH_INTERESTS_SYSTEM_PROMPT)
+                             RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                             PODCAST_SUMMARY_SYSTEM_PROMPT)
+from .templates import *
+from .podcast_prompts import *

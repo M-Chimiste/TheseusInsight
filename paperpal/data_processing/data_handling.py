@@ -1,4 +1,5 @@
 import os
+import json
 import datetime
 import sqlite3
 from pathlib import Path
@@ -35,6 +36,12 @@ class Logs(BaseModel):
     status_code: int  # Use normal API error codes
     status: str
     datetime_run: str | None = None  # Make it optional with None default
+
+class Podcast(BaseModel):
+    title: str
+    date: str
+    script: list
+    description: str
 
 class PaperDatabase:
     """
@@ -114,7 +121,25 @@ class PaperDatabase:
                                status TEXT NOT NULL,
                                datetime_run TEXT NOT NULL
                             )''')
-    
+            cursor.execute('''CREATE TABLE IF NOT EXISTS podcasts
+                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                               title TEXT NOT NULL,
+                               date TEXT NOT NULL,
+                               script TEXT NOT NULL,
+                               description TEXT NOT NULL
+                            )''')
+            
+    def insert_podcast(self, podcast: Podcast):
+        # Validate date formats
+        try:
+            datetime.datetime.strptime(podcast.date, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError("Dates must be in 'YYYY-MM-DD' format")
+        with self.get_cursor() as cursor:
+            cursor.execute('''INSERT INTO podcasts (title, date, script, description)
+                              VALUES (?, ?, ?, ?)''',
+                           (podcast.title, podcast.date, json.dumps(podcast.script), podcast.description))
+            
     def insert_paper(self, paper: Paper):
         """
         Insert a new paper into the database.

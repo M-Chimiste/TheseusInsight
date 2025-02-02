@@ -1,10 +1,13 @@
 import re
-from typing import Dict, Union, List
+from typing import Dict, Union, List, Tuple
 from pathlib import Path
 from docling.document_converter import DocumentConverter
 import requests
 import warnings
 import os
+import tiktoken
+from unidecode import unidecode
+from ..utils import clean_string, remove_markdown_tables
 
 
 def parse_pdf_to_markdown(pdf_path):
@@ -213,3 +216,112 @@ class ArxivData:
         if self.pdf_path and os.path.exists(self.pdf_path):
             os.remove(self.pdf_path)
         return markdown
+
+class FlatMarkdownParser:
+    """
+    FlatMarkdownParser parses markdown content into a list of strings,
+    binning content by a specified number of tokens using tiktoken.
+    Headers are included as markdown headers within the list.
+
+    If the entire content fits within the max_tokens limit, it's returned as a
+    single-element list. Otherwise, it's binned based on headers and token limits.
+
+    Args:
+        source (Union[str, Path]): The source of the markdown content.
+        max_tokens (int): The maximum number of tokens per content bin.
+
+    Attributes:
+        content (str): The raw markdown content.
+        max_tokens (int): The maximum number of tokens per content bin.
+        parsed_data (List[str]): The parsed list of content binned by tokens.
+        encoding (tiktoken.Encoding): The tiktoken encoding used for tokenization.
+
+    Methods:
+        _load_content(source: Union[str, Path]) -> str:
+            Loads the markdown content.
+        _extract_headers() -> List[str]:
+            Extracts headers from the markdown.
+        _parse_markdown() -> List[str]:
+            Parses the markdown content and returns a list.
+        _bin_content(header: str, text: str) -> List[str]:
+            Bins the text into chunks based on max_tokens, adding the header to each bin.
+        get_parsed_data() -> List[str]:
+            Returns the parsed data.
+    """
+
+    def __init__(self, 
+                 source: Union[str, Path],
+                 max_tokens: int = 60000,
+                 remove_tables: bool = True):
+        self.remove_tables = remove_tables
+        self.content = self._load_content(source)
+        self.max_tokens = max_tokens
+        self.encoding = tiktoken.get_encoding("cl100k_base")
+
+        # Internally, we store a list of (chunk_text, start_offset) 
+        # so we can easily enable or disable span logic in get_parsed_data.
+        self._parsed_tuples: List[Tuple[str,int]] = []
+
+        # Run parse
+        self._parse_markdown()
+
+        # Do a final cleanup pass
+        self._parsed_tuples = [(clean_string(txt), off) for (txt, off) in self._parsed_tuples]
+
+    def _load_content(self, source: Union[str, Path]) -> str:
+        if isinstance(source, Path):
+            with open(source, 'r') as f:
+                source = f.read()
+        source = unidecode(source)
+        if self.remove_tables:
+            source = remove_markdown_tables(source)
+        return source
+
+    def _parse_markdown(self):
+        """
+        If the entire doc fits within max_tokens, store as a single chunk (text, offset=0).
+        Otherwise, do naive chunking by lines. Adapt or improve as needed.
+        """
+        tokens = self.encoding.encode(self.content)
+        if len(tokens) <= self.max_tokens:
+            self._parsed_tuples.append((self.content, 0))
+            return
+
+        # A naive approach: we chunk by lines, respecting max_tokens. 
+        # (You might do more robust logic: headers, paragraphs, etc.)
+        lines = self.content.split('\n')
+        running_offset = 0
+        current_buffer = []
+        current_buffer_tokens = 0
+
+        for i, line in enumerate(lines):
+            line_with_break = (line + '\n') if i < len(lines) - 1 else line
+            line_tokens = len(self.encoding.encode(line_with_break))
+
+            if current_buffer_tokens + line_tokens > self.max_tokens:
+                # Flush existing buffer
+                chunk_str = ''.join(current_buffer)
+                self._parsed_tuples.append((chunk_str, running_offset))
+                running_offset += len(chunk_str)
+                current_buffer = [line_with_break]
+                current_buffer_tokens = line_tokens
+            else:
+                current_buffer.append(line_with_break)
+                current_buffer_tokens += line_tokens
+
+        # Flush remainder
+        if current_buffer:
+            chunk_str = ''.join(current_buffer)
+            self._parsed_tuples.append((chunk_str, running_offset))
+
+    def get_parsed_data(self, return_spans: bool = False) -> Union[List[str], List[Tuple[str,int]]]:
+        """
+        If return_spans=False, returns a List[str] (old behavior).
+        If return_spans=True, returns a List[(chunk_text, start_offset)].
+        """
+        if not return_spans:
+            # Old behavior: just the chunk text
+            return [txt for (txt, _) in self._parsed_tuples]
+        else:
+            # New behavior: text + offset
+            return self._parsed_tuples

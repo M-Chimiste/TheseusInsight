@@ -32,7 +32,6 @@ def construct_email_body(content,
         start_date (str): The start date of the newsletter
         end_date (str): The end date of the newsletter
         urls_and_titles (str): The URLs and titles of the references
-    
     Returns:
         str: The body of the email
     """
@@ -44,7 +43,7 @@ def construct_email_body(content,
 
 {content}
 
-##References:
+## References:
 {urls_and_titles}
 """
     return body

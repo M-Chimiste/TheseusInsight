@@ -44,5 +44,23 @@
         "model_name": "nomic-ai/modernbert-embed-base",
         "model_type": "sentence-transformers",
         "trust_remote_code": true
+    },
+    "podcast_model":
+    {
+        "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 8192,
+        "temperature": 0.1,
+        "num_ctx": 131072
+    },
+    "tts_model":
+    {
+        "tts_provider": "kokoro",
+        "tts_model_path": "models/Kokoro-82M",
+        "tts_model_name": "kokoro-v0_19.pth",
+        "speaker_1_voice": "af_bella",
+        "speaker_1_speed": 1.15,
+        "speaker_2_voice": "am_adam",
+        "speaker_2_speed": 1.15
     }
 }

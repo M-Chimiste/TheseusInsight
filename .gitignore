@@ -306,3 +306,27 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Visualizer
+output_audio/
+output_video/
+
+# Model
+model/
+
+# Google OAuth
+client_secret.json
+
+# Music and Media
+music/
+*.mp4
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.aac
+*.ogg
+
+
+# Scripts
+*.sh

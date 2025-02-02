@@ -97,10 +97,12 @@ class PaperPal:
                  verbose=True,
                  generate_email=True,
                  publish_podcast=False,
+                 visualizer=False,
                 ):
         self.verbose = verbose
         self.generate_email = generate_email
         self.research_interests_path = research_interests_path
+        self.error_notified = False
         if start_date is None and end_date is None:
             self.start_date = get_n_days_ago(n_days)
             self.end_date = TODAY
@@ -172,6 +174,7 @@ class PaperPal:
         self.line_width = line_width
         self.font_path = font_path
         self.publish_podcast = publish_podcast
+        self.visualizer = visualizer
         
         # Load research interests
         try:
@@ -266,11 +269,13 @@ class PaperPal:
         )
         self.papers_db.insert_log(log)
         
-        # Send error notification email
-        try:
-            self.communication.send_error_notification(error_msg)
-        except Exception as e:
-            print(f"Failed to send error notification: {str(e)}")
+        # Send error notification email only if we haven't sent one for this error yet
+        if not self.error_notified:
+            try:
+                self.communication.send_error_notification(error_msg)
+                self.error_notified = True
+            except Exception as e:
+                print(f"Failed to send error notification: {str(e)}")
 
     def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
         """Load the appropriate inference model based on model type.
@@ -375,9 +380,19 @@ class PaperPal:
                 try:
                     messages = [{"role": "user", "content": research_prompt(self.research_interests, abstract)}]
                     if not self.use_different_models:
-                        response = self.inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
+                        if self.inference.provider == "ollama":
+                            response = self.inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
+                        else:
+                            response = self.inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
                     else:
-                        response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
+                        if self.judge_inference.provider == "ollama":
+                            response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
+                        elif self.judge_inference.provider == "anthropic":
+                            messages.append({"role": "user", "assistant": "{"})
+                            response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
+                            response = "{" + response
+                        else:
+                            response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
                     response_json = json_repair.loads(response)
                     scores.append(int(response_json['score']))
                     related.append(bool(response_json['related']))
@@ -432,9 +447,23 @@ class PaperPal:
                     markdown = response.document.export_to_markdown()
                     messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
                     if not self.use_different_models:
-                        response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
+                        if self.inference.provider == "ollama":
+                            response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
+                        elif self.inference.provider == "anthropic":
+                            messages.append({"role": "user", "assistant": "{"})
+                            response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                            response = "{" + response
+                        else:
+                            response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
                     else:
-                        response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
+                        if self.content_extraction_inference.provider == "ollama":
+                            response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
+                        elif self.content_extraction_inference.provider == "anthropic":
+                            messages.append({"role": "user", "assistant": "{"})
+                            response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                            response = "{" + response
+                        else:
+                            response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
                     response_json = json_repair.loads(response)
                     try:
                         summarized_paper = response_json['content']
@@ -445,10 +474,23 @@ class PaperPal:
                     messages = [{"role": "user", "content": newsletter_context_prompt(self.research_interests, context, intro_text)}]
                     
                     if not self.use_different_models:
-                        response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                        if self.inference.provider == "ollama":
+                            response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                        elif self.inference.provider == "anthropic":
+                            messages.append({"role": "user", "assistant": "{"})
+                            response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                            response = "{" + response
+                        else:
+                            response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
                     else:
-                        response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                    
+                        if self.newsletter_sections_inference.provider == "ollama":
+                            response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                        elif self.newsletter_sections_inference.provider == "anthropic":
+                            messages.append({"role": "user", "assistant": "{"})
+                            response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                            response = "{" + response
+                        else:
+                            response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
                     response_json = json_repair.loads(response)
                     draft = f"## {row['title']}\n\n{response_json['draft']}"
                     sections.append(draft)
@@ -462,10 +504,25 @@ class PaperPal:
             intro_prompt = newsletter_intro_prompt(sections)
             if self.verbose:
                 print("Generating newsletter intro...")
+            messages = [{"role": "user", "content": intro_prompt}]
             if not self.use_different_models:
-                newsletter_intro = self.inference.invoke(messages=[{"role": "user", "content": intro_prompt}], system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                if self.inference.provider == "ollama":
+                    newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                elif self.inference.provider == "anthropic":
+                    messages.append({"role": "user", "assistant": "{"})
+                    newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                    newsletter_intro = "{" + newsletter_intro
+                else:
+                    newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
             else:
-                newsletter_intro = self.newsletter_intro_inference.invoke(messages=[{"role": "user", "content": intro_prompt}], system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                if self.newsletter_intro_inference.provider == "ollama":
+                    newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
+                elif self.newsletter_intro_inference.provider == "anthropic":
+                    messages.append({"role": "user", "assistant": "{"})
+                    newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                    newsletter_intro = "{" + newsletter_intro
+                else:
+                    newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
             try:
                 newsletter_intro_json = json_repair.loads(newsletter_intro)
                 newsletter_intro = newsletter_intro_json['draft']
@@ -549,7 +606,6 @@ class PaperPal:
         except Exception as e:
             self._log_error(500, e)
             raise
-
 
     def run(self):
         """Runs the PaperPal system."""

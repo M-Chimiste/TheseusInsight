@@ -9,7 +9,7 @@
     },
     "newsletter_model":
     {
-        "model_name": "hermes3",
+        "model_name": "hf.co/lmstudio-community/Qwen2.5-14B-Instruct-1M-GGUF:Q4_K_M",
         "model_type": "ollama",
         "max_new_tokens": 4096,
         "temperature": 0.1,
@@ -17,7 +17,7 @@
     },
     "content_extraction_model":
     {
-        "model_name": "hermes3",
+        "model_name": "hf.co/lmstudio-community/Qwen2.5-14B-Instruct-1M-GGUF:Q4_K_M",
         "model_type": "ollama",
         "max_new_tokens": 4096,
         "temperature": 0.1,
@@ -25,7 +25,7 @@
     },
     "newsletter_sections_model":
     {
-        "model_name": "qwen2.5:14b",
+        "model_name": "hf.co/lmstudio-community/Qwen2.5-14B-Instruct-1M-GGUF:Q4_K_M",
         "model_type": "ollama",
         "max_new_tokens": 4096,
         "temperature": 0.1,
@@ -33,8 +33,8 @@
     },
     "newsletter_intro_model":
     {
-        "model_name": "qwen2.5:14b",
-        "model_type": "ollama",
+        "model_name": "claude-3-5-sonnet-20240620",
+        "model_type": "anthropic",
         "max_new_tokens": 4096,
         "temperature": 0.1,
         "num_ctx": 131072
@@ -47,20 +47,19 @@
     },
     "podcast_model":
     {
-        "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q8_0",
-        "model_type": "ollama",
+        "model_name": "claude-3-5-sonnet-20240620",
+        "model_type": "anthropic",
         "max_new_tokens": 8192,
         "temperature": 0.1,
         "num_ctx": 131072
     },
     "tts_model":
     {
-        "tts_provider": "kokoro",
-        "tts_model_path": "models/Kokoro-82M",
-        "tts_model_name": "kokoro-v0_19.pth",
-        "speaker_1_voice": "af_bella",
+        "tts_provider": "openai",
+        "tts_model_name": "tts-1",
+        "speaker_1_voice": "alloy",
         "speaker_1_speed": 1.15,
-        "speaker_2_voice": "am_adam",
+        "speaker_2_voice": "echo",
         "speaker_2_speed": 1.15
     }
 }

@@ -141,7 +141,7 @@ class PaperPal:
         )
         self.papers_db = PaperDatabase(data_path)
         self.embedding_model_name = embedding_model_name
-        self.embedding_model = SentenceTransformerInference(embedding_model_name, trust_remote_code=trust_remote_code)
+        self.embedding_model = SentenceTransformerInference(embedding_model_name, remote_code=trust_remote_code)
         self.cosine_similarity_threshold = cosine_similarity_threshold
         self.db_saving = db_saving
         
@@ -201,7 +201,7 @@ class PaperPal:
             with open(orchestration_config, 'r') as f:
                 self.orchestration_config = json.load(f)
             self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']
-            self.embedding_model = SentenceTransformerInference(embedding_model_name, trust_remote_code=self.orchestration_config['embedding_model']['trust_remote_code'])
+            self.embedding_model = SentenceTransformerInference(embedding_model_name, remote_code=self.orchestration_config['embedding_model']['trust_remote_code'])
             self.judge_model_config = self.orchestration_config['judge_model']
             self.newsletter_model_config = self.orchestration_config['newsletter_model']
             self.content_extraction_model_config = self.orchestration_config['content_extraction_model']
@@ -237,15 +237,15 @@ class PaperPal:
                 if not self.podcast_inference:
                     raise ValueError("Podcast model is not set. Please check your orchestration config file.")
         if self.generate_podcast:
+            if self.verbose:
+                print("Initializing podcast generator...")
             self.podcast_generator = PaperPalPodcastGenerator(
                 text_model=self.podcast_inference,
                 tts_provider=self.orchestration_config.get('tts_model', {}).get('tts_provider', 'kokoro'),
-                tts_model_path=self.orchestration_config.get('tts_model', {}).get('tts_model_path', 'models/Kokoro-82M'),
-                tts_model_name=self.orchestration_config.get('tts_model', {}).get('tts_model_name', 'kokoro-v0_19.pth'),
                 speaker_1_voice=self.orchestration_config.get('tts_model', {}).get('speaker_1_voice', 'af_bella'),
-                speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.15),
+                speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.0),
                 speaker_2_voice=self.orchestration_config.get('tts_model', {}).get('speaker_2_voice', 'am_adam'),
-                speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.15),
+                speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.0),
                 instructions_template=INSTRUCTION_TEMPLATES,
                 intro_music_path=self.intro_music_path,
                 verbose=self.verbose
@@ -330,6 +330,8 @@ class PaperPal:
         """
         Downloads papers from PapersWithCode based on research interests and date range.
         """
+        if self.verbose:
+            print("Downloading and processing papers...")
         try:
             process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
             
@@ -339,7 +341,7 @@ class PaperPal:
             abstract_embeddings = []
             cosine_similarities = []
             reserch_embedding = self.embedding_model.invoke(self.research_interests)
-            for abstract in tqdm(abstracts, disable=not self.verbose):
+            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
                 abstract_embedding = self.embedding_model.invoke(abstract)
                 cosine_sim = cosine_similarity(abstract_embedding, reserch_embedding)
                 cosine_similarities.append(cosine_sim)
@@ -369,7 +371,7 @@ class PaperPal:
             scores = []
             related = []
             rationale = []
-            for abstract in tqdm(abstracts, disable=not self.verbose):
+            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Ranking papers"):
                 try:
                     messages = [{"role": "user", "content": research_prompt(self.research_interests, abstract)}]
                     if not self.use_different_models:
@@ -458,6 +460,8 @@ class PaperPal:
             urls_and_titles = "\n".join(f"{i+1}. {title}" for i, title in enumerate(urls_and_titles))
             sections = "\n".join(sections)
             intro_prompt = newsletter_intro_prompt(sections)
+            if self.verbose:
+                print("Generating newsletter intro...")
             if not self.use_different_models:
                 newsletter_intro = self.inference.invoke(messages=[{"role": "user", "content": intro_prompt}], system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
             else:
@@ -523,12 +527,9 @@ class PaperPal:
             if self.db_saving:
                 self.papers_db.insert_podcast(podcast)
             if self.generate_email:
-                if self.publish_podcast:
-                    if self.verbose:
-                        print("Publishing podcast to YouTube, this may take a while...")
-                    response = upload_video(podcast_path, podcast.title, podcast.description)
+                if self.verbose:
+                    print("Constructing email body...")
                 email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles)
-                
                 try:
                     self.communication.compose_message(email_body, self.start_date, self.end_date)
                     self.communication.send_email()
@@ -541,7 +542,10 @@ class PaperPal:
                 except Exception as e:
                     self._log_error(500, e)
                     raise
-            
+            if self.publish_podcast:
+                if self.verbose:
+                    print("Publishing podcast to YouTube, this may take a while...")
+                response = upload_video(podcast_path, podcast.title, podcast.description)
         except Exception as e:
             self._log_error(500, e)
             raise

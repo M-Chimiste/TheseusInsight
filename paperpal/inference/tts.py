@@ -94,7 +94,11 @@ class KokoroTTSInference:
         )
         # The generator yields chunks; our invoke() method collects and concatenates them.
     """
-    def __init__(self, voice: str = 'af_heart', lang_code: str = 'a', verbose: bool = False):
+    def __init__(self,
+                voice_name: str = 'af_heart',
+                lang_code: str = 'a',
+                speed: float = 1.0,
+                verbose: bool = False):
         """
         Initializes the TTS inference instance by simply creating a KPipeline.
         
@@ -103,15 +107,16 @@ class KokoroTTSInference:
             verbose (bool): If True, prints debugging information.
         """
         self.verbose = verbose
-        self.voice = voice
+        self.voice_name = voice_name
+        self.speed = speed
         self.pipeline = KPipeline(lang_code=lang_code)
         if self.verbose:
             print(f"[KokoroTTSInference] Initialized KPipeline with lang_code='{lang_code}'")
 
     def invoke(self,
                text: str,
-               voice: str = None,
-               speed: float = 1.0,
+               voice_name: str = None,
+               speed: float = None,
                save_file: bool = False,
                file_path: str | None = None,
                format: str = "mp3"):
@@ -143,11 +148,11 @@ class KokoroTTSInference:
         # Lists to collect audio chunks and phoneme strings.
         audio_chunks = []
         phoneme_outputs = []
-        voice = voice or self.voice
-
+        voice_name = voice_name or self.voice_name
+        speed = speed or self.speed
         # The pipeline's __call__ returns a generator yielding (graphemes, phoneme_chunk, audio_chunk).
         for i, (gs, ps, audio_chunk) in enumerate(
-                self.pipeline(text, voice=voice, speed=speed)):
+                self.pipeline(text, voice=voice_name, speed=speed)):
             if self.verbose:
                 print(f"[KokoroTTSInference] Chunk {i}:")
                 print(f"  Graphemes: {gs}")
@@ -217,7 +222,7 @@ class PollyTTSInference:
 
     def __init__(
         self,
-        voice_id: str = "Joanna",
+        voice_name: str = "Joanna",
         speaker_speed: float = 1.0,
         engine: str = "standard",
         verbose: bool = False,
@@ -244,10 +249,10 @@ class PollyTTSInference:
             aws_secret_access_key=self.secret_key,
             aws_session_token=self.session_token
         )
-        self.voice_id = voice_id
+        self.voice_name = voice_name
 
         if self.verbose:
-            print(f"[PollyTTS] Initialized. Voice={self.voice_id}, Engine={self.engine}, Region={self.region}")
+            print(f"[PollyTTS] Initialized. Voice={self.voice_name}, Engine={self.engine}, Region={self.region}")
 
     def invoke(
         self,
@@ -305,7 +310,7 @@ class PollyTTSInference:
                 response = self.polly_client.synthesize_speech(
                     TextType="ssml",
                     Text=ssml_text,
-                    VoiceId=self.voice_id,
+                    VoiceId=self.voice_name,
                     Engine=self.engine,
                     OutputFormat="mp3"
                 )

@@ -62,6 +62,15 @@ def parse_args():
     parser.add_argument("--end-date", type=str, default=None,
                        help="End date for paper retrieval")
     
+    parser.add_argument("--generate-email", action="store_true", default=True,
+                       help="Whether to generate an email")
+    
+    parser.add_argument("--publish-podcast", action="store_true", default=False,
+                       help="Whether to publish the podcast")
+    
+    parser.add_argument("--intro-music-path", type=str, default=None,
+                       help="Path to the intro music file")
+    
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -85,7 +94,10 @@ if __name__ == "__main__":
         data_path=args.data_path,
         verbose=args.verbose,
         start_date=args.start_date,
-        end_date=args.end_date
+        end_date=args.end_date,
+        generate_email=args.generate_email,
+        publish_podcast=args.publish_podcast,
+        intro_music_path=args.intro_music_path
     )
     
     paperpal.run()

@@ -97,27 +97,25 @@ class PaperPalPodcastGenerator:
         # Initialize TTS models based on provider
         if self.tts_provider == 'kokoro':
             self.tts_speaker_1 = KokoroTTSInference(
-                model_path=tts_model_path,
-                model_name=tts_model_name,
                 voice_name=speaker_1_voice,
-                speaker_speed=speaker_1_speed,
+                lang_code=speaker_1_voice[0],
+                speed=speaker_1_speed,
                 verbose=self.verbose
             )
             self.tts_speaker_2 = KokoroTTSInference(
-                model_path=tts_model_path,
-                model_name=tts_model_name,
                 voice_name=speaker_2_voice,
-                speaker_speed=speaker_2_speed,
+                lang_code=speaker_2_voice[0],
+                speed=speaker_2_speed,
                 verbose=self.verbose
             )
         elif self.tts_provider == 'polly':
             self.tts_speaker_1 = PollyTTSInference(
-                voice_id=speaker_1_voice,
+                voice_name=speaker_1_voice,
                 speaker_speed=speaker_1_speed,
                 verbose=self.verbose
             )
             self.tts_speaker_2 = PollyTTSInference(
-                voice_id=speaker_2_voice,
+                voice_name=speaker_2_voice,
                 speaker_speed=speaker_2_speed,
                 verbose=self.verbose
             )

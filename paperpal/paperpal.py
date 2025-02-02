@@ -83,11 +83,11 @@ class PaperPal:
                  matrix_char_size=24,
                  head_step_time=0.25,
                  random_x_jitter=2.0,
-                 head_saw_period=1.5,
                  fade_time=1.5,
                  head_glow_passes=3,
                  head_glow_alpha_decay=50,
                  head_spawn_delay_range=(1.0,3.0),
+                 head_saw_period=1.5,
                  wave_color="#d703fc",
                  trail_colors=["#fc03b6", "#ba03fc", "#ce6bf2"], 
                  glow_passes=3,
@@ -161,12 +161,12 @@ class PaperPal:
         self.matrix_tail_color = matrix_tail_color
         self.matrix_char_size = matrix_char_size
         self.head_step_time = head_step_time
-        self.head_saw_period = head_saw_period
         self.random_x_jitter = random_x_jitter
         self.fade_time = fade_time
         self.head_glow_passes = head_glow_passes
         self.head_glow_alpha_decay = head_glow_alpha_decay
         self.head_spawn_delay_range = head_spawn_delay_range
+        self.head_saw_period = head_saw_period
         self.wave_color = wave_color
         self.trail_colors = trail_colors
         self.glow_passes = glow_passes
@@ -388,7 +388,7 @@ class PaperPal:
                         if self.judge_inference.provider == "ollama":
                             response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
                         elif self.judge_inference.provider == "anthropic":
-                            messages.append({"role": "user", "assistant": "{"})
+                            messages.append({"role": "assistant", "content": "{"})
                             response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
                             response = "{" + response
                         else:
@@ -450,7 +450,7 @@ class PaperPal:
                         if self.inference.provider == "ollama":
                             response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
                         elif self.inference.provider == "anthropic":
-                            messages.append({"role": "user", "assistant": "{"})
+                            messages.append({"role": "assistant", "content": "{"})
                             response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
                             response = "{" + response
                         else:
@@ -459,7 +459,7 @@ class PaperPal:
                         if self.content_extraction_inference.provider == "ollama":
                             response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
                         elif self.content_extraction_inference.provider == "anthropic":
-                            messages.append({"role": "user", "assistant": "{"})
+                            messages.append({"role": "assistant", "content": "{"})
                             response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
                             response = "{" + response
                         else:
@@ -477,7 +477,7 @@ class PaperPal:
                         if self.inference.provider == "ollama":
                             response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
                         elif self.inference.provider == "anthropic":
-                            messages.append({"role": "user", "assistant": "{"})
+                            messages.append({"role": "assistant", "content": "{"})
                             response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
                             response = "{" + response
                         else:
@@ -486,7 +486,7 @@ class PaperPal:
                         if self.newsletter_sections_inference.provider == "ollama":
                             response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
                         elif self.newsletter_sections_inference.provider == "anthropic":
-                            messages.append({"role": "user", "assistant": "{"})
+                            messages.append({"role": "assistant", "content": "{"})
                             response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
                             response = "{" + response
                         else:
@@ -509,7 +509,7 @@ class PaperPal:
                 if self.inference.provider == "ollama":
                     newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
                 elif self.inference.provider == "anthropic":
-                    messages.append({"role": "user", "assistant": "{"})
+                    messages.append({"role": "assistant", "content": "{"})
                     newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
                     newsletter_intro = "{" + newsletter_intro
                 else:
@@ -518,7 +518,7 @@ class PaperPal:
                 if self.newsletter_intro_inference.provider == "ollama":
                     newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
                 elif self.newsletter_intro_inference.provider == "anthropic":
-                    messages.append({"role": "user", "assistant": "{"})
+                    messages.append({"role": "assistant", "content": "{"})
                     newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
                     newsletter_intro = "{" + newsletter_intro
                 else:

@@ -317,8 +317,16 @@ model/
 # Google OAuth
 client_secret.json
 
-# Music
+# Music and Media
 music/
+*.mp4
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.aac
+*.ogg
+
 
 # Scripts
 *.sh

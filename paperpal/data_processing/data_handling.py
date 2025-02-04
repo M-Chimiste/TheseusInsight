@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import BaseModel, field_validator
 from contextlib import contextmanager
 
+
 class Newsletter(BaseModel):
     content: str
     start_date: str
@@ -33,9 +34,9 @@ class Paper(BaseModel):
         return v
 
 class Logs(BaseModel):
-    status_code: int  # Use normal API error codes
+    status_code: int
     status: str
-    datetime_run: str | None = None  # Make it optional with None default
+    datetime_run: str | None = None
 
 class Podcast(BaseModel):
     title: str
@@ -43,39 +44,8 @@ class Podcast(BaseModel):
     script: list
     description: str
 
+
 class PaperDatabase:
-    """
-    PaperDatabase class for handling paper data storage and retrieval.
-
-    This class provides methods to interact with a SQLite database for storing
-    and retrieving paper information. It includes functionality to insert new
-    papers, retrieve papers based on various criteria, and manage the database
-    connection.
-
-    Attributes:
-        db_path (Path): The path to the SQLite database file.
-        conn (sqlite3.Connection): The database connection object.
-
-    Methods:
-        __init__(db_path: str = "papers.db"):
-            Initialize the PaperDatabase instance.
-        
-        _ensure_path_exists():
-            Ensure the database directory exists.
-        
-        get_cursor():
-            Context manager that yields a database cursor and handles transactions.
-        
-        _create_table():
-            Create the papers table if it doesn't exist.
-        
-        _create_connection():
-            Creates a connection to the papers database.
-
-        insert_paper(paper: Paper):
-            Insert a new paper into the database.
-        
-    """
     def __init__(self, db_path: str = "papers.db"):
         self.db_path = Path(db_path)
         self._ensure_path_exists()
@@ -128,7 +98,7 @@ class PaperDatabase:
                                script TEXT NOT NULL,
                                description TEXT NOT NULL
                             )''')
-            
+
     def insert_podcast(self, podcast: Podcast):
         # Validate date formats
         try:
@@ -141,29 +111,14 @@ class PaperDatabase:
                            (podcast.title, podcast.date, json.dumps(podcast.script), podcast.description))
             
     def insert_paper(self, paper: Paper):
-        """
-        Insert a new paper into the database.
-
-        Args:
-            paper (Paper): A Paper object containing the paper's information.
-
-        Raises:
-            ValueError: If any required field in the Paper object is missing or invalid.
-
-        Note:
-            This method uses a context manager to handle database transactions,
-            ensuring that the connection is properly committed or rolled back
-            in case of an error.
-        """
-
-        # Validate required fields
-        required_fields = ['title', 'abstract', 'date', 'date_run', 
-                           'score', 'rationale', 'related', 'cosine_similarity', 'url', 'embedding_model']
+        required_fields = [
+            'title', 'abstract', 'date', 'date_run', 
+            'score', 'rationale', 'related', 'cosine_similarity', 'url', 'embedding_model'
+        ]
         for field in required_fields:
             if not hasattr(paper, field) or getattr(paper, field) is None:
                 raise ValueError(f"Paper object is missing required field: {field}")
 
-        # Validate data types
         if not isinstance(paper.score, (int, float)):
             raise ValueError("Score must be a number")
         if not isinstance(paper.related, bool):
@@ -171,42 +126,28 @@ class PaperDatabase:
         if not isinstance(paper.cosine_similarity, float):
             raise ValueError("Cosine similarity must be a float")
 
-        # Validate date formats
+        # Validate date
         try:
             datetime.datetime.strptime(paper.date, '%Y-%m-%d')
             datetime.datetime.strptime(paper.date_run, '%Y-%m-%d')
         except ValueError:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
+
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO papers (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model)
-                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                           (paper.title, paper.abstract, paper.date, paper.date_run, 
-                            paper.score, paper.rationale, paper.related, paper.cosine_similarity, 
-                            paper.url, paper.embedding_model))
-    
+            cursor.execute('''INSERT INTO papers 
+                (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (paper.title, paper.abstract, paper.date, paper.date_run, 
+                 paper.score, paper.rationale, paper.related, paper.cosine_similarity, 
+                 paper.url, paper.embedding_model))
+
     def insert_newsletter(self, newsletter: Newsletter):
-        """
-        Insert a new newsletter into the database.
-
-        Args:
-            newsletter (Newsletter): A Newsletter object containing the newsletter's information.
-
-        Raises:
-            ValueError: If any required field in the Newsletter object is missing or invalid.
-
-        Note:
-            This method uses a context manager to handle database transactions,
-            ensuring that the connection is properly committed or rolled back
-            in case of an error.
-        """
-
-        # Validate required fields
         required_fields = ['content', 'start_date', 'end_date', 'date_sent']
         for field in required_fields:
             if not hasattr(newsletter, field) or getattr(newsletter, field) is None:
                 raise ValueError(f"Newsletter object is missing required field: {field}")
 
-        # Validate date formats
+        # Validate date format
         try:
             datetime.datetime.strptime(newsletter.start_date, '%Y-%m-%d')
             datetime.datetime.strptime(newsletter.end_date, '%Y-%m-%d')
@@ -214,41 +155,24 @@ class PaperDatabase:
         except ValueError:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
 
-        # Validate that start_date is not after end_date
+        # Validate order
         if newsletter.start_date > newsletter.end_date:
             raise ValueError("start_date cannot be after end_date")
+
         with self.get_cursor() as cursor:
             cursor.execute('''INSERT INTO newsletters (content, start_date, end_date, date_sent)
                               VALUES (?, ?, ?, ?)''',
                            (newsletter.content, newsletter.start_date, newsletter.end_date, newsletter.date_sent))
 
     def insert_log(self, log: Logs):
-        """
-        Insert a new log entry into the database. The datetime_run will be automatically
-        set to the current time if not provided.
-
-        Args:
-            log (Logs): A Logs object containing the log information.
-
-        Raises:
-            ValueError: If any required field in the Logs object is missing or invalid.
-
-        Note:
-            This method uses a context manager to handle database transactions,
-            ensuring that the connection is properly committed or rolled back
-            in case of an error.
-        """
-        # Validate required fields
         required_fields = ['status_code', 'status']
         for field in required_fields:
             if not hasattr(log, field) or getattr(log, field) is None:
                 raise ValueError(f"Log object is missing required field: {field}")
 
-        # Validate status_code is an integer
         if not isinstance(log.status_code, int):
             raise ValueError("status_code must be an integer")
 
-        # Generate current datetime if not provided
         datetime_run = log.datetime_run or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         with self.get_cursor() as cursor:
@@ -257,22 +181,68 @@ class PaperDatabase:
                            (log.status_code, log.status, datetime_run))
 
     def get_recent_logs(self, limit: int = 100):
-        """
-        Retrieve the most recent log entries from the database.
-
-        Args:
-            limit (int): Maximum number of log entries to retrieve. Defaults to 100.
-
-        Returns:
-            list: A list of dictionaries containing log information, ordered by most recent first.
-        """
         with self.get_cursor() as cursor:
             cursor.execute('''SELECT status_code, status, datetime_run 
                              FROM logs 
                              ORDER BY datetime_run DESC 
                              LIMIT ?''', (limit,))
             rows = cursor.fetchall()
-            return [{'status_code': row[0], 
-                    'status': row[1], 
-                    'datetime_run': row[2]} for row in rows]
+            return [
+                {
+                    'status_code': row[0],
+                    'status': row[1],
+                    'datetime_run': row[2]
+                }
+                for row in rows
+            ]
 
+    def fetch_all_podcasts(self):
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT id, title, date, script, description FROM podcasts ORDER BY id DESC")
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'date': row[2],
+                    'script': json.loads(row[3]),
+                    'description': row[4]
+                })
+            return result
+
+    def fetch_all_newsletters(self):
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT id, content, start_date, end_date, date_sent FROM newsletters ORDER BY id DESC")
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'content': row[1],
+                    'start_date': row[2],
+                    'end_date': row[3],
+                    'date_sent': row[4]
+                })
+            return result
+
+    def fetch_all_papers(self):
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model FROM papers ORDER BY id DESC")
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'date_run': row[4],
+                    'score': row[5],
+                    'rationale': row[6],
+                    'related': row[7],
+                    'cosine_similarity': row[8],
+                    'url': row[9],
+                    'embedding_model': row[10]
+                })
+            return result

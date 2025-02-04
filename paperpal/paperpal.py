@@ -1,16 +1,15 @@
-# Standard library imports
-import json
 import os
-import random
-import datetime
+import json
 import gc
-import warnings
 import shutil
 import pickle
-# Third-party imports
+import random
+import datetime
+import warnings
+from tqdm import tqdm
 from dotenv import load_dotenv
 import json_repair
-from tqdm import tqdm
+
 from docling.document_converter import DocumentConverter
 
 # Local application imports
@@ -19,7 +18,6 @@ from .data_processing import ProcessData, PaperDatabase, Paper, Newsletter, Podc
 from .data_processing.data_handling import PaperDatabase, Paper, Newsletter, Logs
 from .inference import SentenceTransformerInference
 from .podcast import PaperPalPodcastGenerator
-# from .pdf import MarkdownParser, ArxivData, parse_pdf_to_markdown
 from .prompt import (
     NEWSLETTER_SYSTEM_PROMPT,
     RESEARCH_INTERESTS_SYSTEM_PROMPT,
@@ -34,7 +32,7 @@ from .prompt import (
     NewsletterPromptData
 )
 from .utils import cosine_similarity, get_n_days_ago, TODAY, purge_ollama_cache
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", None)
@@ -44,12 +42,13 @@ GMAIL_SENDER_ADDRESS = os.getenv("GMAIL_SENDER_ADDRESS", None)
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", None)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 
-INTRO_TEXT = ["This fascinating study sheds light on...",
-              "This research shows that...",
-              "This paper explores...",
-              "This research discusses...",
-              "This paper investigates..."]
-
+INTRO_TEXT = [
+    "This fascinating study sheds light on...",
+    "This research shows that...",
+    "This paper explores...",
+    "This research discusses...",
+    "This paper investigates..."
+]
 
 class PaperPal:
     def __init__(self,
@@ -106,8 +105,25 @@ class PaperPal:
         self.save_dialogue = save_dialogue
         self.checkpoint_dir = checkpoint_dir
         self.generate_email = generate_email
-        self.research_interests_path = research_interests_path
-        self.error_notified = False
+        self.publish_podcast = publish_podcast
+        self.generate_podcast = generate_podcast
+        
+        # Email/Communication
+        if receiver_address:
+            if isinstance(receiver_address, str) and ',' in receiver_address:
+                self.receiver_address = [addr.strip() for addr in receiver_address.split(',')]
+            else:
+                self.receiver_address = receiver_address
+        else:
+            self.receiver_address = None
+
+        self.communication = GmailCommunication(
+            sender_address=GMAIL_SENDER_ADDRESS,
+            app_password=GMAIL_APP_PASSWORD,
+            receiver_address=self.receiver_address
+        )
+
+        # Dates
         if start_date is None and end_date is None:
             self.start_date = get_n_days_ago(n_days)
             self.end_date = TODAY
@@ -118,42 +134,26 @@ class PaperPal:
                 formats = ["%Y-%m-%d", "%m-%d-%Y"]
                 for fmt in formats:
                     try:
-                        return datetime.strptime(date_str, fmt).date()
+                        return datetime.datetime.strptime(date_str, fmt).date()
                     except ValueError:
                         continue
                 raise ValueError("Dates must be in YYYY-MM-DD or MM-DD-YYYY format")
 
             self.start_date = try_parse_date(start_date) or get_n_days_ago(n_days)
             self.end_date = try_parse_date(end_date) or TODAY
-        self.start_date = get_n_days_ago(n_days)
-        self.end_date = TODAY
-        self.use_different_models = use_different_models
+
         self.top_n = top_n
         self.model_type = model_type
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
-        if receiver_address:
-            if isinstance(receiver_address, str) and ',' in receiver_address:
-                self.receiver_address = [addr.strip() for addr in receiver_address.split(',')]
-            else:
-                self.receiver_address = receiver_address
-        else:
-            self.receiver_address = None
-        
-        self.communication = GmailCommunication(
-            sender_address=GMAIL_SENDER_ADDRESS,
-            app_password=GMAIL_APP_PASSWORD,
-            receiver_address=self.receiver_address
-        )
-        self.papers_db = PaperDatabase(data_path)
-        self.embedding_model_name = embedding_model_name
-        self.embedding_model = SentenceTransformerInference(embedding_model_name, remote_code=trust_remote_code)
         self.cosine_similarity_threshold = cosine_similarity_threshold
         self.db_saving = db_saving
         
+        # DB
+        self.papers_db = PaperDatabase(data_path)
+        
         # Podcast settings
-        self.generate_podcast = generate_podcast
         self.intro_music_path = intro_music_path
         self.output_format = output_format
         self.output_dir = output_dir
@@ -178,143 +178,131 @@ class PaperPal:
         self.glow_alpha_decay = glow_alpha_decay
         self.line_width = line_width
         self.font_path = font_path
-        self.publish_podcast = publish_podcast
         self.visualizer = visualizer
         
         # Load research interests
-        try:
-            with open(self.research_interests_path, 'r') as file:
-                self.research_interests = file.read().strip()
-        except FileNotFoundError as e:
-            self._log_error(404, e)  # 404 Not Found
-            raise
-        except IOError as e:
-            self._log_error(500, e)  # 500 Internal Server Error
-            raise
-        # Load inference model/s
-        if not use_different_models:
-            try:
-                with open(orchestration_config, 'r') as f:
-                    self.orchestration_config = json.load(f)
-                self.inference = self._load_inference_model(self.orchestration_config['newsletter_model']['model_type'],
-                                                            self.orchestration_config['newsletter_model']['model_name'],
-                                                            self.orchestration_config['newsletter_model']['max_new_tokens'],
-                                                            self.orchestration_config['newsletter_model']['temperature'],
-                                                            self.orchestration_config['newsletter_model'].get('num_ctx', None))
-            except Exception as e:
-                warnings.warn(f'Error loading orchestration config: {e}. Using parameters will be deprecated. Use a config file instead with the key "newsletter_model"')
-            self.inference = self._load_inference_model(self.model_type, model_name, max_new_tokens, temperature)
+        with open(research_interests_path, 'r') as f:
+            self.research_interests = f.read().strip()
         
+        # Inference models
+        self.use_different_models = use_different_models
         if use_different_models:
             with open(orchestration_config, 'r') as f:
                 self.orchestration_config = json.load(f)
+
+            # 1) Embedding model
             self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']
-            self.embedding_model = SentenceTransformerInference(embedding_model_name, remote_code=self.orchestration_config['embedding_model']['trust_remote_code'])
+            self.embedding_model = SentenceTransformerInference(
+                self.embedding_model_name, 
+                remote_code=self.orchestration_config['embedding_model']['trust_remote_code']
+            )
+            
+            # 2) Load specialized LLMs
             self.judge_model_config = self.orchestration_config['judge_model']
             self.newsletter_model_config = self.orchestration_config['newsletter_model']
             self.content_extraction_model_config = self.orchestration_config['content_extraction_model']
             self.newsletter_sections_model_config = self.orchestration_config['newsletter_sections_model']
             self.newsletter_intro_model_config = self.orchestration_config['newsletter_intro_model']
-            self.judge_inference = self._load_inference_model(self.judge_model_config['model_type'],
-                                                                self.judge_model_config['model_name'],
-                                                                self.judge_model_config['max_new_tokens'],
-                                                                self.judge_model_config['temperature'],
-                                                                self.judge_model_config.get('num_ctx', None))
-            self.newsletter_inference = self._load_inference_model(self.newsletter_model_config['model_type'],
-                                                                    self.newsletter_model_config['model_name'],
-                                                                    self.newsletter_model_config['max_new_tokens'],
-                                                                    self.newsletter_model_config['temperature'],
-                                                                    self.newsletter_model_config.get('num_ctx', None))
-            self.content_extraction_inference = self._load_inference_model(self.content_extraction_model_config['model_type'],
-                                                                    self.content_extraction_model_config['model_name'],
-                                                                    self.content_extraction_model_config['max_new_tokens'],
-                                                                    self.content_extraction_model_config['temperature'],
-                                                                    self.content_extraction_model_config.get('num_ctx', None))
-            self.newsletter_sections_inference = self._load_inference_model(self.newsletter_sections_model_config['model_type'],
-                                                                    self.newsletter_sections_model_config['model_name'],
-                                                                    self.newsletter_sections_model_config['max_new_tokens'],
-                                                                    self.newsletter_sections_model_config['temperature'],
-                                                                    self.newsletter_sections_model_config.get('num_ctx', None))
-            self.newsletter_intro_inference = self._load_inference_model(self.newsletter_intro_model_config['model_type'],
-                                                                    self.newsletter_intro_model_config['model_name'],
-                                                                    self.newsletter_intro_model_config['max_new_tokens'],
-                                                                    self.newsletter_intro_model_config['temperature'],
-                                                                    self.newsletter_intro_model_config.get('num_ctx', None))
+
+            self.judge_inference = self._load_inference_model(
+                self.judge_model_config['model_type'],
+                self.judge_model_config['model_name'],
+                self.judge_model_config['max_new_tokens'],
+                self.judge_model_config['temperature'],
+                self.judge_model_config.get('num_ctx')
+            )
+            self.newsletter_inference = self._load_inference_model(
+                self.newsletter_model_config['model_type'],
+                self.newsletter_model_config['model_name'],
+                self.newsletter_model_config['max_new_tokens'],
+                self.newsletter_model_config['temperature'],
+                self.newsletter_model_config.get('num_ctx')
+            )
+            self.content_extraction_inference = self._load_inference_model(
+                self.content_extraction_model_config['model_type'],
+                self.content_extraction_model_config['model_name'],
+                self.content_extraction_model_config['max_new_tokens'],
+                self.content_extraction_model_config['temperature'],
+                self.content_extraction_model_config.get('num_ctx')
+            )
+            self.newsletter_sections_inference = self._load_inference_model(
+                self.newsletter_sections_model_config['model_type'],
+                self.newsletter_sections_model_config['model_name'],
+                self.newsletter_sections_model_config['max_new_tokens'],
+                self.newsletter_sections_model_config['temperature'],
+                self.newsletter_sections_model_config.get('num_ctx')
+            )
+            self.newsletter_intro_inference = self._load_inference_model(
+                self.newsletter_intro_model_config['model_type'],
+                self.newsletter_intro_model_config['model_name'],
+                self.newsletter_intro_model_config['max_new_tokens'],
+                self.newsletter_intro_model_config['temperature'],
+                self.newsletter_intro_model_config.get('num_ctx')
+            )
+
+            # 3) Podcast model
             if self.generate_podcast:
                 self.podcast_inference = self.orchestration_config.get('podcast_model', None)
                 if not self.podcast_inference:
-                    raise ValueError("Podcast model is not set. Please check your orchestration config file.")
-        if self.generate_podcast:
-            if self.verbose:
-                print("Initializing podcast generator...")
+                    raise ValueError("Podcast model not set in orchestration config.")
+                self.podcast_generator = PaperPalPodcastGenerator(
+                    text_model=self.podcast_inference,
+                    tts_provider=self.orchestration_config.get('tts_model', {}).get('tts_provider', 'kokoro'),
+                    speaker_1_voice=self.orchestration_config.get('tts_model', {}).get('speaker_1_voice', 'af_bella'),
+                    speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.0),
+                    speaker_2_voice=self.orchestration_config.get('tts_model', {}).get('speaker_2_voice', 'am_adam'),
+                    speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.0),
+                    instructions_template=INSTRUCTION_TEMPLATES,
+                    intro_music_path=self.intro_music_path,
+                    verbose=self.verbose
+                )
+
+        else:
+            # Single model approach
+            from .inference.llm import OllamaInference  # Example if all local
+            self.embedding_model = SentenceTransformerInference(
+                embedding_model_name,
+                remote_code=trust_remote_code
+            )
+            self.inference = OllamaInference(
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                url=OLLAMA_URL
+            )
+            # Podcast generator re-using the same inference
             self.podcast_generator = PaperPalPodcastGenerator(
-                text_model=self.podcast_inference,
-                tts_provider=self.orchestration_config.get('tts_model', {}).get('tts_provider', 'kokoro'),
-                speaker_1_voice=self.orchestration_config.get('tts_model', {}).get('speaker_1_voice', 'af_bella'),
-                speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.0),
-                speaker_2_voice=self.orchestration_config.get('tts_model', {}).get('speaker_2_voice', 'am_adam'),
-                speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.0),
+                text_model=self.inference,
+                tts_provider='kokoro',  # or your default
+                speaker_1_voice='af_bella',
+                speaker_1_speed=1.0,
+                speaker_2_voice='am_adam',
+                speaker_2_speed=1.0,
                 instructions_template=INSTRUCTION_TEMPLATES,
                 intro_music_path=self.intro_music_path,
                 verbose=self.verbose
             )
 
-    def _log_error(self, status_code: int, error: Exception):
-        """
-        Helper method to log errors to the database and send error notification.
-        
-        Args:
-            status_code (int): HTTP status code representing the error type
-            error (Exception): The exception that was raised
-        """
-        error_msg = f"{type(error).__name__}: {str(error)}"
-        log = Logs(
-            status_code=status_code,
-            status=error_msg
-        )
-        self.papers_db.insert_log(log)
-        
-        # Send error notification email only if we haven't sent one for this error yet
-        if not self.error_notified:
-            try:
-                self.communication.send_error_notification(error_msg)
-                self.error_notified = True
-            except Exception as e:
-                print(f"Failed to send error notification: {str(e)}")
+        self.error_notified = False
 
     def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
-        """Load the appropriate inference model based on model type.
-        
-        Args:
-            model_type (str): Type of model to load ('anthropic', 'openai', or 'ollama')
-            model_name (str): Name of the specific model to load
-            max_new_tokens (int): Maximum number of tokens to generate
-            temperature (float): Temperature parameter for generation
-            
-        Returns:
-            The loaded inference model object
-            
-        Raises:
-            ValueError: If model_type is invalid or required API keys are missing
-        """
+        """Load the appropriate inference model based on model type."""
         try:
-            model_type = os.getenv("MODEL_TYPE") or model_type
-            
             if model_type == "anthropic":
                 if ANTHROPIC_API_KEY is None:
-                    raise ValueError("Anthropic API key is not set. Please check your .env file and ensure ANTHROPIC_API_KEY is properly configured.")
+                    raise ValueError("Anthropic API key is not set.")
                 from .inference.llm import AnthropicInference
                 return AnthropicInference(model_name, max_new_tokens, temperature)
             
             elif model_type == "openai":
                 if OPENAI_API_KEY is None:
-                    raise ValueError("OpenAI API key is not set. Please check your .env file and ensure OPENAI_API_KEY is properly configured.")
+                    raise ValueError("OpenAI API key is not set.")
                 from .inference.llm import OpenAIInference
                 return OpenAIInference(model_name, max_new_tokens, temperature)
 
             elif model_type == "gemini":
                 if GOOGLE_API_KEY is None:
-                    raise ValueError("Google API key is not set. Please check your .env file and ensure GOOGLE_API_KEY is properly configured.")
+                    raise ValueError("Google API key is not set.")
                 from .inference.llm import GeminiInference
                 return GeminiInference(model_name, max_new_tokens, temperature)
 
@@ -329,317 +317,26 @@ class PaperPal:
                 if num_ctx is not None:
                     kwargs['num_ctx'] = num_ctx
                 return OllamaInference(**kwargs)
+
             else:
-                raise ValueError(f"Invalid model type: {model_type}. Must be one of 'local', 'anthropic', 'openai', or 'ollama'.")
-        except Exception as e:
-            self._log_error(500, e)  # 500 Internal Server Error
-            raise
-        
-        
-    def download_and_process_papers(self):
-        """
-        Downloads papers from PapersWithCode based on research interests and date range.
-        """
-        if self.verbose:
-            print("Downloading and processing papers...")
-        try:
-            process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
-            
-            data_df = process_data.download_and_process_data(start_date=self.start_date, end_date=self.end_date)
-
-            abstracts = list(data_df['abstract'])
-            abstract_embeddings = []
-            cosine_similarities = []
-            reserch_embedding = self.embedding_model.invoke(self.research_interests)
-            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
-                abstract_embedding = self.embedding_model.invoke(abstract)
-                cosine_sim = cosine_similarity(abstract_embedding, reserch_embedding)
-                cosine_similarities.append(cosine_sim)
-                abstract_embeddings.append(abstract_embedding)
-            
-            data_df['cosine_similarity'] = cosine_similarities
-            data_df['abstract_embedding'] = abstract_embeddings
-            # Filter the dataframe based on cosine similarity threshold
-            filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
-
-            # Reset the index of the filtered dataframe
-            filtered_df = filtered_df.reset_index(drop=True)
-
-            # Update data_df with the filtered results
-            data_df = filtered_df
-
-            return data_df
-        except Exception as e:
-            self._log_error(500, e)  # 500 Internal Server Error
-            raise
-    
-
-    def rank_papers(self, data_df):
-        """Evaluates remaining papers and ranks them with the generative model."""
-        try:
-            abstracts = list(data_df['abstract'])
-            scores = []
-            related = []
-            rationale = []
-            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Ranking papers"):
-                try:
-                    messages = [{"role": "user", "content": research_prompt(self.research_interests, abstract)}]
-                    if not self.use_different_models:
-                        if self.inference.provider == "ollama":
-                            response = self.inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
-                        else:
-                            response = self.inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
-                    else:
-                        if self.judge_inference.provider == "ollama":
-                            response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=ResearchInterestsPromptData)
-                        elif self.judge_inference.provider == "anthropic":
-                            messages.append({"role": "assistant", "content": "{"})
-                            response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
-                            response = "{" + response
-                        else:
-                            response = self.judge_inference.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
-                    response_json = json_repair.loads(response)
-                    scores.append(int(response_json['score']))
-                    related.append(bool(response_json['related']))
-                    rationale.append(response_json['rationale'])
-                except Exception as e:
-                    self._log_error(500, e)  # 500 Internal Server Error
-                    raise
-            
-            data_df['score'] = scores
-            data_df['related'] = related
-            data_df['rationale'] = rationale
-            # Sort the DataFrame by score in descending order
-            data_df = data_df.sort_values(by='score', ascending=False)
-            top_n_df = data_df.head(self.top_n)
-
-            # Convert each row of the data_df to a Paper class and place them into a list
-            papers = []
-            for _, row in data_df.iterrows():
-                paper = Paper(
-                    title=row['title'],
-                    abstract=row['abstract'],
-                    url=row['url_pdf'],
-                    date_run=TODAY.strftime('%Y-%m-%d'),
-                    date=row['date'].strftime('%Y-%m-%d'),
-                    score=row['score'],
-                    related=row['related'],
-                    rationale=row['rationale'],
-                    cosine_similarity=row['cosine_similarity'],
-                    embedding_model=self.embedding_model_name
-                )
-                papers.append(paper)
-                if self.db_saving:
-                    self.papers_db.insert_paper(paper)
-            return top_n_df
-        except Exception as e:
-            self._log_error(500, e)  # 500 Internal Server Error
-            raise
-    
-
-    def generate_newsletter_and_podcast(self, top_n_df):
-        """Generates a newsletter from the ranked papers."""
-        try:
-            # content = []
-            sections = []
-            urls_and_titles = []
-            converter = DocumentConverter()
-            total_rows = len(top_n_df)
-            for i, (_, row) in enumerate(tqdm(top_n_df.iterrows(), total=total_rows, desc="Generating newsletter sections", disable=not self.verbose)):
-                try:
-                    intro_text = random.choice(INTRO_TEXT)
-                    response = converter.convert(row['url_pdf'])
-                    markdown = response.document.export_to_markdown()
-                    messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
-                    if not self.use_different_models:
-                        if self.inference.provider == "ollama":
-                            response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
-                        elif self.inference.provider == "anthropic":
-                            messages.append({"role": "assistant", "content": "{"})
-                            response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                            response = "{" + response
-                        else:
-                            response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                    else:
-                        if self.content_extraction_inference.provider == "ollama":
-                            response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
-                        elif self.content_extraction_inference.provider == "anthropic":
-                            messages.append({"role": "assistant", "content": "{"})
-                            response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                            response = "{" + response
-                        else:
-                            response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                    response_json = json_repair.loads(response)
-                    try:
-                        summarized_paper = response_json['content']
-                    except:
-                        summarized_paper = response
-
-                    context = f"Title: {row['title']}\nAbstract: {row['abstract']}\nRationale: {row['rationale']}\nSummary: {summarized_paper}"
-                    messages = [{"role": "user", "content": newsletter_context_prompt(self.research_interests, context, intro_text)}]
-                    
-                    if not self.use_different_models:
-                        if self.inference.provider == "ollama":
-                            response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                        elif self.inference.provider == "anthropic":
-                            messages.append({"role": "assistant", "content": "{"})
-                            response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                            response = "{" + response
-                        else:
-                            response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                    else:
-                        if self.newsletter_sections_inference.provider == "ollama":
-                            response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                        elif self.newsletter_sections_inference.provider == "anthropic":
-                            messages.append({"role": "assistant", "content": "{"})
-                            response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                            response = "{" + response
-                        else:
-                            response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                    response_json = json_repair.loads(response)
-                    draft = f"## {row['title']}\n\n{response_json['draft']}"
-                    sections.append(draft)
-                    urls_and_titles.append(f"{row['title']}: {row['url_pdf']}")
-                except Exception as e:
-                    self._log_error(500, e)  # 500 Internal Server Error
-                    raise
-            # Format urls and titles as numbered markdown list
-            urls_and_titles = "\n".join(f"{i+1}. {title}" for i, title in enumerate(urls_and_titles))
-            sections = "\n".join(sections)
-            intro_prompt = newsletter_intro_prompt(sections)
-            if self.verbose:
-                print("Generating newsletter intro...")
-            messages = [{"role": "user", "content": intro_prompt}]
-            if not self.use_different_models:
-                if self.inference.provider == "ollama":
-                    newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                elif self.inference.provider == "anthropic":
-                    messages.append({"role": "assistant", "content": "{"})
-                    newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                    newsletter_intro = "{" + newsletter_intro
-                else:
-                    newsletter_intro = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-            else:
-                if self.newsletter_intro_inference.provider == "ollama":
-                    newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                elif self.newsletter_intro_inference.provider == "anthropic":
-                    messages.append({"role": "assistant", "content": "{"})
-                    newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                    newsletter_intro = "{" + newsletter_intro
-                else:
-                    newsletter_intro = self.newsletter_intro_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-            try:
-                newsletter_intro_json = json_repair.loads(newsletter_intro)
-                newsletter_intro = newsletter_intro_json['draft']
-            except:
-                newsletter_intro = newsletter_intro
-            
-            newsletter_content = f"{newsletter_intro}\n{sections}"
-            
-            newsletter = Newsletter(
-                content=newsletter_content,
-                start_date=self.start_date.strftime('%Y-%m-%d'),
-                end_date=self.end_date.strftime('%Y-%m-%d'),
-                date_sent=TODAY.strftime('%Y-%m-%d')
-            )
-            if self.db_saving:  
-                self.papers_db.insert_newsletter(newsletter)
-            if self.generate_podcast:
-                podcast_content = self.podcast_generator.generate_podcast(
-                    pdf_paths=top_n_df['url_pdf'],
-                    paperpal_sections=sections,
-                    output_format=self.output_format,
-                    output_dir=self.output_dir,
-                    prefix=self.prefix,
-                    final_filename=self.final_filename,
-                    verbose=self.verbose,
-                    visualizer=self.visualizer,
-                    # Visualizer Settings
-                    resolution=self.resolution,
-                    fps=self.fps,
-                    matrix_count=self.matrix_count,
-                    matrix_head_color=self.matrix_head_color,   # short hex for bright green
-                    matrix_tail_color=self.matrix_tail_color,  # hex for (0,176,0)
-                    matrix_char_size=self.matrix_char_size,
-                    head_step_time=self.head_step_time,
-                    random_x_jitter=self.random_x_jitter,
-                    fade_time=self.fade_time,
-                    head_glow_passes=self.head_glow_passes,
-                    head_glow_alpha_decay=self.head_glow_alpha_decay,
-                    head_spawn_delay_range=self.head_spawn_delay_range,
-                    head_saw_period=self.head_saw_period,
-                    wave_color=self.wave_color,
-                    trail_colors=self.trail_colors, 
-                    glow_passes=self.glow_passes,
-                    glow_alpha_decay=self.glow_alpha_decay,
-                    line_width=self.line_width,
-                    font_path=self.font_path)
-                
-            if self.visualizer:
-                podcast_path = podcast_content['visualizer_path']
-            else:
-                podcast_path = podcast_content['final_podcast_path']
-            dialogue = json.dumps(podcast_content['dict_transcript'])
-            if self.save_dialogue:
-                with open(os.path.join(self.output_dir, f"{self.prefix}_dialogue.json"), "w") as f:
-                    json.dump({"dialogue": podcast_content['dict_transcript'], "description": podcast_content['description']}, f)
-            podcast = Podcast(
-                title=self.final_filename,
-                date=TODAY.strftime('%Y-%m-%d'),
-                script=dialogue,
-                description=podcast_content['description'],
-            )
-            if self.db_saving:
-                self.papers_db.insert_podcast(podcast)
-            if self.generate_email:
-                if self.verbose:
-                    print("Constructing email body...")
-                email_body = construct_email_body(newsletter_content, self.start_date.strftime('%Y-%m-%d'), self.end_date.strftime('%Y-%m-%d'), urls_and_titles)
-                try:
-                    self.communication.compose_message(email_body, self.start_date, self.end_date)
-                    self.communication.send_email()
-                    # Log successful email sending
-                    log = Logs(
-                        status_code=200,
-                        status=f"Successfully sent newsletter to {self.receiver_address}"
-                    )
-                    self.papers_db.insert_log(log)
-                except Exception as e:
-                    self._log_error(500, e)
-                    raise
-            if self.publish_podcast:
-                if self.verbose:
-                    print("Publishing podcast to YouTube, this may take a while...")
-                response = upload_video(podcast_path, podcast.title, podcast.description)
+                raise ValueError(f"Invalid model type: {model_type}")
         except Exception as e:
             self._log_error(500, e)
             raise
 
-    def _get_latest_checkpoint_stage(self):
-        """
-        Determine the latest completed stage from available checkpoints.
-        Returns the next stage to run.
-        """
-        stages = [
-            'papers_downloaded',      # After downloading papers
-            'papers_embedded',        # After embedding papers
-            'papers_ranked',          # After ranking papers
-            'newsletter_sections',    # After generating newsletter sections
-            'podcast_script',         # After generating podcast script
-            'podcast_audio',          # After generating podcast audio
-            'podcast_visualized',     # After creating visualization
-            'podcast_description',    # After creating description
-            'newsletter_complete'     # After sending email
-        ]
-        
-        latest_stage = None
-        for stage in stages:
-            if self._load_checkpoint(stage) is not None:
-                latest_stage = stage
-            else:
-                break
-        
-        return latest_stage
+    def _log_error(self, status_code: int, error: Exception):
+        """Helper to log errors to the database and optionally send an email."""
+        error_msg = f"{type(error).__name__}: {str(error)}"
+        log = Logs(status_code=status_code, status=error_msg)
+        self.papers_db.insert_log(log)
+
+        # Send error notification email only once per run
+        if not self.error_notified:
+            try:
+                self.communication.send_error_notification(error_msg)
+                self.error_notified = True
+            except Exception as e:
+                print(f"Failed to send error notification: {str(e)}")
 
     def _save_checkpoint(self, stage: str, data: any):
         """Save a checkpoint for the given pipeline stage."""
@@ -656,34 +353,41 @@ class PaperPal:
             print(f"Saved checkpoint for stage: {stage}")
 
     def _load_checkpoint(self, stage: str) -> any:
-        """Load a checkpoint for the given pipeline stage.
-        
-        Args:
-            stage (str): Pipeline stage name ('papers', 'ranking', or 'newsletter')
-            
-        Returns:
-            The checkpoint data if it exists, None otherwise
-        """
+        """Load a checkpoint for the given pipeline stage."""
         checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
         if os.path.exists(checkpoint_path):
-            with open(checkpoint_path, 'rb') as f:
-                checkpoint = pickle.load(f)
-            if self.verbose:
-                print(f"Loaded checkpoint for stage: {stage} from {checkpoint['timestamp']}")
-            return checkpoint['data']
+            try:
+                with open(checkpoint_path, 'rb') as f:
+                    checkpoint = pickle.load(f)
+                if self.verbose:
+                    print(f"Loaded checkpoint for stage: {stage} from {checkpoint['timestamp']}")
+                return checkpoint['data']
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error loading checkpoint for stage {stage}: {str(e)}")
+                return None
+        if self.verbose:
+            print(f"No checkpoint found for stage: {stage}")
         return None
 
     def _cleanup_checkpoints(self):
         """Remove all checkpoint files after successful completion."""
         if os.path.exists(self.checkpoint_dir):
-            shutil.rmtree(self.checkpoint_dir)
-            if self.verbose:
-                print("Cleaned up all checkpoints")
+            try:
+                shutil.rmtree(self.checkpoint_dir)
+                if self.verbose:
+                    print("Cleaned up all checkpoints")
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error cleaning up checkpoints: {str(e)}")
 
     def _cleanup_temp_data(self):
-        """Clean up temp_data folder regardless of success or failure."""
+        """Clean up temp_data folder (if it exists)."""
         try:
-            temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp_data')
+            temp_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'temp_data'
+            )
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
                 if self.verbose:
@@ -692,242 +396,504 @@ class PaperPal:
             print(f"Warning: Failed to clean up temp_data directory: {cleanup_error}")
             self._log_error(500, cleanup_error)
 
+    def rank_papers(self, data_df):
+        """Given embedded papers, use judge model to score them."""
+        try:
+            abstracts = list(data_df['abstract'])
+            scores, related, rationale = [], [], []
+            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Ranking papers"):
+                messages = [
+                    {"role": "user", "content": research_prompt(self.research_interests, abstract)}
+                ]
+                # Depending on single-model or multi-model
+                if not self.use_different_models:
+                    # Example for Ollama only:
+                    if self.inference.provider == "ollama":
+                        response = self.inference.invoke(
+                            messages=messages,
+                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                            schema=ResearchInterestsPromptData
+                        )
+                    else:
+                        # For other providers
+                        response = self.inference.invoke(
+                            messages=messages,
+                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
+                        )
+                else:
+                    if self.judge_inference.provider == "ollama":
+                        response = self.judge_inference.invoke(
+                            messages=messages,
+                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                            schema=ResearchInterestsPromptData
+                        )
+                    else:
+                        # E.g. Anthropic or OpenAI
+                        response = self.judge_inference.invoke(
+                            messages=messages,
+                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
+                        )
+
+                response_json = json_repair.loads(response)
+                scores.append(int(response_json['score']))
+                related.append(bool(response_json['related']))
+                rationale.append(response_json['rationale'])
+
+            data_df['score'] = scores
+            data_df['related'] = related
+            data_df['rationale'] = rationale
+            data_df = data_df.sort_values(by='score', ascending=False)
+            top_n_df = data_df.head(self.top_n)
+
+            # Save all to DB if enabled
+            for _, row in data_df.iterrows():
+                paper = Paper(
+                    title=row['title'],
+                    abstract=row['abstract'],
+                    url=row['url_pdf'],
+                    date_run=TODAY.strftime('%Y-%m-%d'),
+                    date=row['date'].strftime('%Y-%m-%d'),
+                    score=row['score'],
+                    related=row['related'],
+                    rationale=row['rationale'],
+                    cosine_similarity=row['cosine_similarity'],
+                    embedding_model=self.embedding_model_name
+                )
+                if self.db_saving:
+                    self.papers_db.insert_paper(paper)
+
+            return top_n_df
+        except Exception as e:
+            self._log_error(500, e)
+            raise
+
     def run(self, start_from: str = None):
-        """Runs the PaperPal system with enhanced checkpoint support."""
+        """
+        Unified pipeline with checkpoints. 
+        Harmonizes the old generate_newsletter_and_podcast() features:
+         - Save newsletter to DB
+         - Send email
+         - Generate podcast (audio + optional visualizer)
+         - Save dialogue JSON
+         - Insert podcast into DB
+         - Optionally publish to YouTube
+        """
         data_df = None
         embedded_df = None
         top_n_df = None
         sections_data = None
-        podcast_content = None
         newsletter_content = None
+        podcast_content = None
         
         try:
-            # If no start_from specified, determine the latest checkpoint
-            if start_from is None:
-                start_from = self._get_latest_checkpoint_stage()
-                if start_from and self.verbose:
-                    print(f"Resuming from checkpoint: {start_from}")
-
+            # -----------
             # Stage 1: Download Papers
-            if not start_from or start_from == 'papers_downloaded':
+            # -----------
+            if start_from is None:
+                # no stage specified, do we have an existing checkpoint for 'papers_downloaded'?
                 data_df = self._load_checkpoint('papers_downloaded')
                 if data_df is None:
                     if self.verbose:
-                        print("Downloading papers...")
+                        print("No 'papers_downloaded' checkpoint. Starting fresh: downloading papers.")
                     process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
-                    data_df = process_data.download_and_process_data(start_date=self.start_date, end_date=self.end_date)
+                    data_df = process_data.download_and_process_data(self.start_date, self.end_date)
                     self._save_checkpoint('papers_downloaded', data_df)
+            else:
+                # If we have a forced stage, see if the user wants to skip some
+                if start_from == 'papers_downloaded':
+                    data_df = self._load_checkpoint('papers_downloaded')
+                    if data_df is None:
+                        if self.verbose:
+                            print("Forcing download stage.")
+                        process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
+                        data_df = process_data.download_and_process_data(self.start_date, self.end_date)
+                        self._save_checkpoint('papers_downloaded', data_df)
 
+            # -----------
             # Stage 2: Embed Papers
-            if not start_from or start_from in ['papers_downloaded', 'papers_embedded']:
+            # -----------
+            if start_from is None or start_from in ['papers_downloaded', 'papers_embedded']:
                 embedded_df = self._load_checkpoint('papers_embedded')
                 if embedded_df is None:
-                    if self.verbose:
-                        print("Embedding papers...")
                     if data_df is None:
                         data_df = self._load_checkpoint('papers_downloaded')
                         if data_df is None:
-                            raise ValueError("Cannot embed papers: no downloaded papers checkpoint found")
-                    
+                            raise ValueError("No downloaded papers found to embed.")
+                    if self.verbose:
+                        print("Embedding papers...")
+
                     abstracts = list(data_df['abstract'])
                     abstract_embeddings = []
                     cosine_similarities = []
                     reserch_embedding = self.embedding_model.invoke(self.research_interests)
+
                     for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
                         abstract_embedding = self.embedding_model.invoke(abstract)
-                        cosine_sim = cosine_similarity(abstract_embedding, reserch_embedding)
-                        cosine_similarities.append(cosine_sim)
+                        sim = cosine_similarity(abstract_embedding, reserch_embedding)
+                        cosine_similarities.append(sim)
                         abstract_embeddings.append(abstract_embedding)
-                    
+
                     data_df['cosine_similarity'] = cosine_similarities
                     data_df['abstract_embedding'] = abstract_embeddings
+
+                    # Filter by threshold
                     filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
                     filtered_df = filtered_df.reset_index(drop=True)
+                    
+                    # Save checkpoint
                     self._save_checkpoint('papers_embedded', filtered_df)
                     embedded_df = filtered_df
 
+            # -----------
             # Stage 3: Rank Papers
-            if not start_from or start_from in ['papers_embedded', 'papers_ranked']:
+            # -----------
+            if start_from is None or start_from in ['papers_embedded', 'papers_ranked']:
                 top_n_df = self._load_checkpoint('papers_ranked')
                 if top_n_df is None:
-                    if self.verbose:
-                        print("Ranking papers...")
                     if embedded_df is None:
                         embedded_df = self._load_checkpoint('papers_embedded')
                         if embedded_df is None:
-                            raise ValueError("Cannot rank papers: no embedded papers checkpoint found")
-                    
+                            raise ValueError("No embedded papers found to rank.")
+                    if self.verbose:
+                        print("Ranking papers...")
+
                     top_n_df = self.rank_papers(embedded_df)
                     self._save_checkpoint('papers_ranked', top_n_df)
 
-                # Clean up embedding data if it exists
-                if embedded_df is not None:
-                    del embedded_df
-                if self.embedding_model is not None:
-                    self.embedding_model = None
+                # free memory from embeddings if needed
+                del embedded_df
                 gc.collect()
 
+            # -----------
             # Stage 4: Generate Newsletter Sections
-            if not start_from or start_from in ['papers_ranked', 'newsletter_sections']:
+            # -----------
+            if start_from is None or start_from in ['papers_ranked', 'newsletter_sections']:
                 sections_data = self._load_checkpoint('newsletter_sections')
                 if sections_data is None:
+                    if top_n_df is None:
+                        top_n_df = self._load_checkpoint('papers_ranked')
+                        if top_n_df is None:
+                            raise ValueError("No ranked papers found to generate newsletter sections.")
+
                     if self.verbose:
-                        print("Generating newsletter sections...")
+                        print("Generating newsletter sections (paper-by-paper) ...")
+
+                    converter = DocumentConverter()
                     sections = []
                     urls_and_titles = []
-                    converter = DocumentConverter()
-                    for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Generating sections"):
+
+                    for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Sections"):
                         intro_text = random.choice(INTRO_TEXT)
+                        
+                        # Convert PDF to markdown
                         response = converter.convert(row['url_pdf'])
                         markdown = response.document.export_to_markdown()
+
+                        # Summarize the PDF content
                         messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
                         if not self.use_different_models:
                             if self.inference.provider == "ollama":
-                                response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
-                            elif self.inference.provider == "anthropic":
-                                messages.append({"role": "assistant", "content": "{"})
-                                response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                                response = "{" + response
+                                resp = self.inference.invoke(
+                                    messages=messages,
+                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
+                                    schema=SummaryPromptData
+                                )
                             else:
-                                response = self.inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
+                                resp = self.inference.invoke(
+                                    messages=messages,
+                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
+                                )
                         else:
                             if self.content_extraction_inference.provider == "ollama":
-                                response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY, schema=SummaryPromptData)
-                            elif self.content_extraction_inference.provider == "anthropic":
-                                messages.append({"role": "assistant", "content": "{"})
-                                response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                                response = "{" + response
+                                resp = self.content_extraction_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
+                                    schema=SummaryPromptData
+                                )
                             else:
-                                response = self.content_extraction_inference.invoke(messages=messages, system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY)
-                        response_json = json_repair.loads(response)
-                        try:
-                            summarized_paper = response_json['content']
-                        except:
-                            summarized_paper = response
+                                resp = self.content_extraction_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
+                                )
 
-                        context = f"Title: {row['title']}\nAbstract: {row['abstract']}\nRationale: {row['rationale']}\nSummary: {summarized_paper}"
-                        messages = [{"role": "user", "content": newsletter_context_prompt(self.research_interests, context, intro_text)}]
-                        
+                        resp_json = json_repair.loads(resp)
+                        summarized_paper = resp_json.get('content', resp)
+
+                        # Now produce the "newsletter section" for that paper
+                        context = (
+                            f"Title: {row['title']}\n"
+                            f"Abstract: {row['abstract']}\n"
+                            f"Rationale: {row['rationale']}\n"
+                            f"Summary: {summarized_paper}"
+                        )
+                        messages = [
+                            {"role": "user", 
+                             "content": newsletter_context_prompt(self.research_interests, context, intro_text)}
+                        ]
                         if not self.use_different_models:
                             if self.inference.provider == "ollama":
-                                response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                            elif self.inference.provider == "anthropic":
-                                messages.append({"role": "assistant", "content": "{"})
-                                response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                                response = "{" + response
+                                resp = self.inference.invoke(
+                                    messages=messages,
+                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                    schema=NewsletterPromptData
+                                )
                             else:
-                                response = self.inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
+                                resp = self.inference.invoke(
+                                    messages=messages,
+                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                                )
                         else:
                             if self.newsletter_sections_inference.provider == "ollama":
-                                response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT, schema=NewsletterPromptData)
-                            elif self.newsletter_sections_inference.provider == "anthropic":
-                                messages.append({"role": "assistant", "content": "{"})
-                                response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                                response = "{" + response
+                                resp = self.newsletter_sections_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                    schema=NewsletterPromptData
+                                )
                             else:
-                                response = self.newsletter_sections_inference.invoke(messages=messages, system_prompt=NEWSLETTER_SYSTEM_PROMPT)
-                        response_json = json_repair.loads(response)
-                        draft = f"## {row['title']}\n\n{response_json['draft']}"
+                                resp = self.newsletter_sections_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                                )
+
+                        resp_json = json_repair.loads(resp)
+                        draft = f"## {row['title']}\n\n{resp_json['draft']}"
                         sections.append(draft)
                         urls_and_titles.append(f"{row['title']}: {row['url_pdf']}")
+
                     sections_data = {
                         'sections': sections,
                         'urls_and_titles': urls_and_titles
                     }
                     self._save_checkpoint('newsletter_sections', sections_data)
 
-            # Stage 5: Generate Podcast Script
-            if not start_from or start_from in ['newsletter_sections', 'podcast_script']:
-                podcast_script = self._load_checkpoint('podcast_script')
-                if podcast_script is None:
+            # -----------
+            # Stage 5: Generate Full Newsletter Content
+            # -----------
+            if start_from is None or start_from in ['newsletter_sections', 'newsletter_content']:
+                newsletter_content = self._load_checkpoint('newsletter_content')
+                if newsletter_content is None:
+                    if sections_data is None:
+                        sections_data = self._load_checkpoint('newsletter_sections')
+                        if sections_data is None:
+                            raise ValueError("No newsletter sections found to build the final newsletter.")
+                    
                     if self.verbose:
-                        print("Generating podcast script...")
+                        print("Building the final newsletter content + intro ...")
+
+                    sections = sections_data['sections']
+                    joined_sections = "\n\n".join(sections)
+                    intro_prompt = newsletter_intro_prompt(joined_sections)
+                    messages = [{"role": "user", "content": intro_prompt}]
+
+                    # Model call for the newsletter's intro
+                    if not self.use_different_models:
+                        if self.inference.provider == "ollama":
+                            resp = self.inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                schema=NewsletterPromptData
+                            )
+                        else:
+                            resp = self.inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                            )
+                    else:
+                        if self.newsletter_intro_inference.provider == "ollama":
+                            resp = self.newsletter_intro_inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                schema=NewsletterPromptData
+                            )
+                        else:
+                            resp = self.newsletter_intro_inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                            )
+
+                    try:
+                        resp_json = json_repair.loads(resp)
+                        intro_text = resp_json['draft']
+                    except:
+                        intro_text = resp
+
+                    # Final newsletter
+                    newsletter_content = intro_text + "\n\n" + joined_sections
+                    self._save_checkpoint('newsletter_content', newsletter_content)
+
+                    # Save to DB
+                    if self.db_saving:
+                        newsletter = Newsletter(
+                            content=newsletter_content,
+                            start_date=self.start_date.strftime('%Y-%m-%d'),
+                            end_date=self.end_date.strftime('%Y-%m-%d'),
+                            date_sent=TODAY.strftime('%Y-%m-%d')
+                        )
+                        self.papers_db.insert_newsletter(newsletter)
+
+            # -----------
+            # Stage 6: Send Email (if generate_email=True)
+            # -----------
+            if self.generate_email:
+                if newsletter_content is None:
+                    newsletter_content = self._load_checkpoint('newsletter_content')
+                    if newsletter_content is None:
+                        raise ValueError("Cannot send email: no newsletter content found.")
+
+                if sections_data is None:
+                    sections_data = self._load_checkpoint('newsletter_sections')
+                    if sections_data is None:
+                        raise ValueError("No sections data found to build email links.")
+
+                if self.verbose:
+                    print("Sending newsletter email...")
+
+                # Construct a simple bulleted list of links
+                urls_and_titles_bulleted = "\n".join(
+                    f"{i+1}. {title}" for i, title in enumerate(sections_data['urls_and_titles'])
+                )
+                email_body = construct_email_body(
+                    newsletter_content,
+                    self.start_date.strftime('%Y-%m-%d'),
+                    self.end_date.strftime('%Y-%m-%d'),
+                    urls_and_titles_bulleted
+                )
+                try:
+                    self.communication.compose_message(email_body, self.start_date, self.end_date)
+                    self.communication.send_email()
+                    # Log successful email
+                    self.papers_db.insert_log(
+                        Logs(status_code=200, status=f"Successfully sent newsletter to {self.receiver_address}")
+                    )
+                except Exception as e:
+                    self._log_error(500, e)
+                    raise
+
+            # -----------
+            # Stage 7: Generate Podcast (if generate_podcast=True)
+            # -----------
+            if self.generate_podcast:
+                # Part A: Generate Podcast Script + Audio
+                podcast_content = self._load_checkpoint('podcast_script')
+                if podcast_content is None:
+                    # If we haven't built any script yet, let's do it
+                    if self.verbose:
+                        print("Generating podcast script & audio...")
+
+                    if top_n_df is None:
+                        top_n_df = self._load_checkpoint('papers_ranked')
+                        if top_n_df is None:
+                            raise ValueError("Cannot generate podcast: no ranked papers found.")
+                    if sections_data is None:
+                        sections_data = self._load_checkpoint('newsletter_sections')
+                        if sections_data is None:
+                            raise ValueError("Cannot generate podcast: no newsletter sections found.")
+
                     podcast_content = self.podcast_generator.generate_podcast(
-                        pdf_paths=top_n_df['url_pdf'],
+                        pdf_paths=list(top_n_df['url_pdf']),
                         paperpal_sections=sections_data['sections'],
                         output_format=self.output_format,
                         output_dir=self.output_dir,
                         prefix=self.prefix,
                         final_filename=self.final_filename,
                         verbose=self.verbose,
-                        visualizer=False  # We'll do visualization separately
+                        visualizer=False  # We'll do visualization in next step
                     )
                     self._save_checkpoint('podcast_script', podcast_content)
 
-            # Stage 6: Generate Podcast Audio
-            if not start_from or start_from in ['podcast_script', 'podcast_audio']:
-                podcast_audio = self._load_checkpoint('podcast_audio')
-                if podcast_audio is None:
-                    if self.verbose:
-                        print("Generating podcast audio...")
-                    # ... [podcast audio generation] ...
-                    self._save_checkpoint('podcast_audio', podcast_content)
-
-            # Stage 7: Generate Visualization
-            if self.visualizer and (not start_from or start_from in ['podcast_audio', 'podcast_visualized']):
+                # Part B: Visualization (if visualizer=True)
                 visualized_podcast = self._load_checkpoint('podcast_visualized')
-                if visualized_podcast is None:
+                if self.visualizer and visualized_podcast is None:
                     if self.verbose:
                         print("Generating podcast visualization...")
-                    # ... [visualization generation] ...
+
+                    # We re-run generate_podcast with visualizer=True
+                    # so it merges the final audio with the animation
+                    podcast_content = self.podcast_generator.generate_podcast(
+                        pdf_paths=list(top_n_df['url_pdf']),
+                        paperpal_sections=sections_data['sections'],
+                        output_format=self.output_format,
+                        output_dir=self.output_dir,
+                        prefix=self.prefix,
+                        final_filename=self.final_filename,
+                        verbose=self.verbose,
+                        visualizer=True,
+                        resolution=self.resolution,
+                        fps=self.fps,
+                        matrix_count=self.matrix_count,
+                        matrix_head_color=self.matrix_head_color,
+                        matrix_tail_color=self.matrix_tail_color,
+                        matrix_char_size=self.matrix_char_size,
+                        head_step_time=self.head_step_time,
+                        random_x_jitter=self.random_x_jitter,
+                        fade_time=self.fade_time,
+                        head_glow_passes=self.head_glow_passes,
+                        head_glow_alpha_decay=self.head_glow_alpha_decay,
+                        head_spawn_delay_range=self.head_spawn_delay_range,
+                        head_saw_period=self.head_saw_period,
+                        wave_color=self.wave_color,
+                        trail_colors=self.trail_colors,
+                        glow_passes=self.glow_passes,
+                        glow_alpha_decay=self.glow_alpha_decay,
+                        line_width=self.line_width,
+                        font_path=self.font_path
+                    )
                     self._save_checkpoint('podcast_visualized', podcast_content)
+                
+                # Save the final script / transcript in DB and optional JSON
+                if podcast_content:
+                    if self.save_dialogue:
+                        if self.verbose:
+                            print("Saving podcast dialogue to JSON...")
+                        dialogue_path = os.path.join(self.output_dir, f"{self.prefix}_dialogue.json")
+                        with open(dialogue_path, "w", encoding="utf-8") as f:
+                            json.dump({
+                                "dialogue": podcast_content['dict_transcript'],
+                                "description": podcast_content['description']
+                            }, f, ensure_ascii=False, indent=2)
 
-            # Stage 8: Generate Description
-            if not start_from or start_from in ['podcast_visualized', 'podcast_description']:
-                description_data = self._load_checkpoint('podcast_description')
-                if description_data is None:
-                    if self.verbose:
-                        print("Generating podcast description...")
-                    # ... [description generation] ...
-                    self._save_checkpoint('podcast_description', podcast_content)
+                    # Insert a record in the DB for the final podcast
+                    if self.db_saving:
+                        podcast = Podcast(
+                            title=self.final_filename,
+                            date=TODAY.strftime('%Y-%m-%d'),
+                            script=json.dumps(podcast_content['dict_transcript']),
+                            description=podcast_content['description']
+                        )
+                        self.papers_db.insert_podcast(podcast)
 
-            # Final Stage: Send Email
-            if self.generate_email:
-                if self.verbose:
-                    print("Sending newsletter email...")
-                email_body = construct_email_body(
-                    newsletter_content,
-                    self.start_date.strftime('%Y-%m-%d'),
-                    self.end_date.strftime('%Y-%m-%d'),
-                    "\n".join(f"{i+1}. {title}" for i, title in enumerate(sections_data['urls_and_titles']))
-                )
-                self.communication.compose_message(email_body, self.start_date, self.end_date)
-                self.communication.send_email()
-                self._save_checkpoint('newsletter_complete', {'status': 'complete'})
+                    # Part C: Publish to YouTube if requested
+                    if self.publish_podcast:
+                        video_path = (podcast_content['visualizer_path']
+                                      if self.visualizer else
+                                      podcast_content['final_podcast_path'])
+                        if self.verbose:
+                            print("Publishing to YouTube, this may take a while...")
+                        try:
+                            upload_video(
+                                video_path,
+                                title=self.final_filename,
+                                description=podcast_content['description']
+                            )
+                        except Exception as up_e:
+                            self._log_error(500, up_e)
+                            raise
 
+            # -----------
+            # Final Step: Mark completion, purge + cleanup
+            # -----------
+            self._save_checkpoint('newsletter_complete', {'status': 'complete'})
             if self.model_type == "ollama":
                 purge_ollama_cache(OLLAMA_URL, self.model_name)
-            
-            # Log successful completion
-            log = Logs(
-                status_code=200,
-                status="Successfully completed PaperPal run"
-            )
-            self.papers_db.insert_log(log)
 
-            # Clean up all checkpoints after successful completion
+            # Log final success
+            self.papers_db.insert_log(Logs(status_code=200, status="Successfully completed PaperPal run"))
+
+            # Optionally remove all checkpoints on success
             self._cleanup_checkpoints()
-            
+
         except Exception as e:
             self._log_error(500, e)
             raise
         finally:
             self._cleanup_temp_data()
-        
-if __name__ == "__main__":
-    paperpal = PaperPal(
-                 research_interests_path="config/research_interests.txt",
-                 n_days=7,
-                 top_n=10,
-                 model_type="ollama",
-                 model_name="hermes3",
-                 embedding_model_name="Alibaba-NLP/gte-base-en-v1.5",
-                 trust_remote_code=True,
-                 receiver_address=None,
-                 max_new_tokens=1024,
-                 temperature=0.1,
-                 cosine_similarity_threshold=0.5,
-                 db_saving=True,
-                 data_path="data/papers.db",
-                 verbose=True)
-    paperpal.run()

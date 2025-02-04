@@ -425,7 +425,9 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         final_podcast_path = os.path.join(output_dir, final_podcast_filename)
 
         # Combine segments and cleanup
-
+        # Get the podcast description
+        description = self._get_podcast_description(transcript_text)
+        
         self._combine_audio_segments(segments, final_podcast_path, output_format)
         if visualizer:
             output_filepath=f"{final_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_visualizer.mp4"
@@ -455,8 +457,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         else:
             output_filepath = "No Visualizer Output"
 
-        # Get the podcast description
-        description = self._get_podcast_description(transcript_text)
+        
 
         return {
             "transcript": transcript_text,

@@ -11,12 +11,17 @@ PaperPal is a tool for sorting and analyzing research papers based on your perso
 - Automated email notifications with research digests in Markdown format
 - Customizable research interests
 - Embedding-based paper filtering with configurable similarity thresholds
+- Automated podcast generation with TTS support (Kokoro, Amazon Polly, or OpenAI)
+- Matrix-style audio visualizations for podcasts
+- Checkpoint system for resuming long-running processes
 
 ## Requirements
 
 - A machine with good computational resources if you are not using a LLM with an API. CPU and MPS are supported through Ollama. Check out the [Ollama](https://ollama.com/) website for more information.
 - PyTorch 2.4+
 - CUDA 11.7+ (for GPU support)
+- FFmpeg (for audio/video processing)
+- Pygame (for visualizations)
 
 ## Installation
 
@@ -40,6 +45,9 @@ PaperPal is a tool for sorting and analyzing research papers based on your perso
      GMAIL_SENDER_ADDRESS=your_gmail_address
      GMAIL_APP_PASSWORD=your_gmail_app_password
      OLLAMA_URL=http://localhost:11434
+     AWS_ACCESS_KEY_ID=your_aws_key           # For Amazon Polly TTS
+     AWS_SECRET_ACCESS_KEY=your_aws_secret    # For Amazon Polly TTS
+     REGION_NAME=your_aws_region              # For Amazon Polly TTS (default: us-east-1)
      ```
 
 4. Configure Gmail:
@@ -54,6 +62,7 @@ The main script to run PaperPal is `run_paperpal.py`. You can run it with defaul
 # Run with default settings
 python run_paperpal.py
 ```
+
 ### Running with Custom Parameters
 
 ```bash
@@ -80,6 +89,72 @@ python run_paperpal.py --n-days 14 --top-n 20 --model-name llama2
 - `--verbose`: Enable verbose output (default: True)
 - `--start-date`: Start date for paper retrieval (default: None)
 - `--end-date`: End date for paper retrieval (default: None)
+
+Additional podcast and visualization arguments:
+- `--generate-podcast`: Generate a podcast from the newsletter (default: True)
+- `--intro-music-path`: Path to intro music for podcast (default: None)
+- `--output-format`: Audio output format (default: "mp3")
+- `--output-dir`: Directory for audio output (default: "output_audio")
+- `--visualizer`: Generate matrix-style visualization (default: True)
+- `--resolution`: Video resolution (default: (1920, 1080))
+- `--fps`: Frames per second (default: 30)
+- `--matrix-count`: Number of matrix columns (default: 200)
+- `--font-path`: Custom font path for matrix text (default: system font)
+
+### Checkpoint System
+
+PaperPal includes a robust checkpoint system that allows you to resume from where you left off if the process is interrupted. The system automatically saves progress after completing each major stage:
+
+1. Paper Download
+2. Paper Embedding
+3. Paper Ranking
+4. Newsletter Section Generation
+5. Podcast Script Generation
+6. Podcast Audio Generation
+7. Podcast Visualization
+8. Podcast Description
+9. Newsletter Completion
+
+Checkpoints are automatically managed:
+- Saved in the `checkpoints` directory
+- Automatically loaded when restarting
+- Cleaned up after successful completion
+- Include timestamps for tracking
+
+## Podcast Generation
+
+PaperPal can generate audio podcasts from your research newsletters using various TTS providers:
+
+### TTS Providers
+- **Kokoro**: Local TTS engine with multiple voices
+- **Amazon Polly**: AWS-based TTS with natural voices
+- **OpenAI**: High-quality TTS from OpenAI
+
+### Visualization
+The podcast can be accompanied by a matrix-style visualization that includes:
+- Falling matrix characters synchronized with audio
+- Audio waveform overlay
+- Customizable colors and effects
+- Configurable resolution and FPS
+
+Configure podcast generation in `config/orchestration.json`:
+```json
+{
+    "podcast_model": {
+        "model_name": "your_model",
+        "model_type": "your_provider",
+        "max_new_tokens": 4096,
+        "temperature": 0.1
+    },
+    "tts_model": {
+        "tts_provider": "kokoro",
+        "speaker_1_voice": "af_bella",
+        "speaker_1_speed": 1.0,
+        "speaker_2_voice": "am_adam",
+        "speaker_2_speed": 1.0
+    }
+}
+```
 
 ## Using Multiple Models
 

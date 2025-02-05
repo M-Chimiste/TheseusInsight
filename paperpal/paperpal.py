@@ -13,12 +13,12 @@ import json_repair
 from docling.document_converter import DocumentConverter
 
 # Local application imports
-from .communication import GmailCommunication, construct_email_body, upload_video
-from .data_processing import ProcessData, PaperDatabase, Paper, Newsletter, Podcast
-from .data_processing.data_handling import PaperDatabase, Paper, Newsletter, Logs
-from .inference import SentenceTransformerInference
-from .podcast import PaperPalPodcastGenerator
-from .prompt import (
+from paperpal.communication import GmailCommunication, construct_email_body, upload_video
+from paperpal.data_processing import ProcessData, PaperDatabase, Paper, Newsletter, Podcast
+from paperpal.data_processing.data_handling import PaperDatabase, Paper, Newsletter, Logs
+from paperpal.inference import SentenceTransformerInference
+from paperpal.podcast import PaperPalPodcastGenerator
+from paperpal.prompt import (
     NEWSLETTER_SYSTEM_PROMPT,
     RESEARCH_INTERESTS_SYSTEM_PROMPT,
     SYSTEM_CONTENT_EXTRACTION_SUMMARY,
@@ -31,7 +31,7 @@ from .prompt import (
     ResearchInterestsPromptData,
     NewsletterPromptData
 )
-from .utils import cosine_similarity, get_n_days_ago, TODAY, purge_ollama_cache
+from paperpal.utils import cosine_similarity, get_n_days_ago, TODAY, purge_ollama_cache
 
 load_dotenv()
 

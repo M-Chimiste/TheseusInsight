@@ -1,4 +1,6 @@
 import os
+os.environ['SDL_VIDEODRIVER'] = 'dummy'  # Set dummy video driver before pygame import
+
 import math
 import random
 import numpy as np
@@ -116,7 +118,7 @@ class FadeChar:
 # 5) DISCRETE HEAD: Moves in discrete steps (one char height per step).
 #    Each step spawns the old character behind it and picks a new one.
 #    The head is drawn with a glow in head_color.
-#    A sawtooth modulation is applied to the head’s brightness.
+#    A sawtooth modulation is applied to the head's brightness.
 # --------------------------------------------------------------------
 class DiscreteHead:
     def __init__(self, x, birth_time, font, head_color=(0,255,0), tail_color=(0,180,0),
@@ -265,58 +267,81 @@ class NeonWaveVisualizer:
                  line_width=3,
                  # font:
                  font_path=None):
-        self.width, self.height = resolution
-        self.fps = fps
-        self.line_width = line_width
-
+        """Initialize pygame and load audio data"""
         pygame.init()
-        pygame.display.set_mode((1,1), 0, 32)
-        self.surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-
-        self.audio_data, self.framerate = load_audio_wave_data(audio_path)
-        self.audio_duration = len(self.audio_data) / float(self.framerate)
-
-        if font_path is not None:
-            self.font = pygame.font.Font(font_path, matrix_char_size)
-        else:
+        
+        # Create an offscreen surface instead of a window
+        self.screen = pygame.Surface(resolution)
+        self.width, self.height = resolution
+        
+        # Initialize timing variables
+        self.prev_time = 0.0
+        
+        # Load font
+        try:
+            if font_path:
+                self.font = pygame.font.Font(font_path, matrix_char_size)
+            else:
+                self.font = pygame.font.Font(None, matrix_char_size)
+        except:
+            print("Warning: Failed to load custom font, using default")
             self.font = pygame.font.Font(None, matrix_char_size)
-        char_height = self.font.get_height()
 
-        self.columns = []
-        for _ in range(matrix_count):
-            x_pos = random.randint(0, self.width-1)
-            col = DiscreteMatrixColumn(x_pos, self.height, self.font,
-                                       head_color=matrix_head_color,
-                                       tail_color=matrix_tail_color,
-                                       char_height=char_height,
-                                       head_step_time=head_step_time,
-                                       random_x_jitter=random_x_jitter,
-                                       fade_time=fade_time,
-                                       head_glow_passes=head_glow_passes,
-                                       head_glow_alpha_decay=head_glow_alpha_decay,
-                                       head_spawn_delay_range=head_spawn_delay_range,
-                                       head_saw_period=head_saw_period)
-            self.columns.append(col)
+        # Parse colors if they're hex strings
+        self.matrix_head_color = parse_color(matrix_head_color)
+        self.matrix_tail_color = parse_color(matrix_tail_color)
+        self.wave_color = parse_color(wave_color)
+        self.trail_colors = [parse_color(c) for c in trail_colors]
 
-        self.wave_color = wave_color
-        self.trail_colors = trail_colors
+        # Store parameters
+        self.fps = fps
+        self.frame_time = 1.0/fps
+        self.matrix_count = matrix_count
+        self.head_step_time = head_step_time
+        self.random_x_jitter = random_x_jitter
+        self.fade_time = fade_time
+        self.head_glow_passes = head_glow_passes
+        self.head_glow_alpha_decay = head_glow_alpha_decay
+        self.head_spawn_delay_range = head_spawn_delay_range
+        self.head_saw_period = head_saw_period
         self.glow_passes = glow_passes
         self.glow_alpha_decay = glow_alpha_decay
-
-        self.prev_time = 0.0
+        self.line_width = line_width
+        
+        # Load audio data
+        self.audio_data, self.framerate = load_audio_wave_data(audio_path)
+        self.duration = len(self.audio_data) / float(self.framerate)
+        
+        # Create matrix columns
+        spacing = self.width / (matrix_count + 1)
+        self.columns = []
+        for i in range(matrix_count):
+            x = spacing * (i + 1)
+            self.columns.append(DiscreteMatrixColumn(
+                x, self.height, self.font,
+                head_color=self.matrix_head_color,
+                tail_color=self.matrix_tail_color,
+                char_height=matrix_char_size,
+                head_step_time=head_step_time,
+                random_x_jitter=random_x_jitter,
+                fade_time=fade_time,
+                head_glow_passes=head_glow_passes,
+                head_glow_alpha_decay=head_glow_alpha_decay,
+                head_spawn_delay_range=head_spawn_delay_range,
+                head_saw_period=head_saw_period
+            ))
 
     def make_frame(self, t):
-        dt = t - self.prev_time
-        if dt < 0:
-            dt = 0
+        """Generate a frame at time t"""
+        dt = t - self.prev_time if t > 0 else self.frame_time
         self.prev_time = t
 
-        self.surface.fill((0,0,0,255))
+        self.screen.fill((0,0,0,255))
         for col in self.columns:
             col.update(dt, t)
-            col.draw(self.surface, t)
+            col.draw(self.screen, t)
         self.draw_wave(t)
-        frame = pygame.surfarray.array3d(self.surface)
+        frame = pygame.surfarray.array3d(self.screen)
         frame = np.swapaxes(frame, 0, 1)
         return frame
 
@@ -344,7 +369,7 @@ class NeonWaveVisualizer:
                 alpha_val = 0
             wave_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
             pygame.draw.lines(wave_surf, self.wave_color + (alpha_val,), False, wave_points, self.line_width)
-            self.surface.blit(wave_surf, (0, 0))
+            self.screen.blit(wave_surf, (0, 0))
 
         for i, color in enumerate(self.trail_colors):
             shift = (i+1) * samples_per_frame * 0.02
@@ -363,7 +388,7 @@ class NeonWaveVisualizer:
                 if alpha_val < 0:
                     alpha_val = 0
                 pygame.draw.lines(trail_surf, color + (alpha_val,), False, points_trail, self.line_width)
-            self.surface.blit(trail_surf, (0, 0))
+            self.screen.blit(trail_surf, (0, 0))
 
 # --------------------------------------------------------------------
 # 8) GENERATE VIDEO FUNCTION (WITH COLOR PARSING)
@@ -376,11 +401,11 @@ def generate_visualizer_video(audio_filepath, output_filepath, resolution=(1280,
                               matrix_char_size=24,
                               head_step_time=0.3,
                               random_x_jitter=3.0,
-                              fade_time=5.0,
+                              fade_time=3.0,
                               head_glow_passes=3,
                               head_glow_alpha_decay=50,
                               head_spawn_delay_range=(2.0,5.0),
-                              head_saw_period=0.5,
+                              head_saw_period=1.5,
                               line_width=3,
                               # wave parameters:
                               wave_color=(0,255,128),        # can be tuple or hex string
@@ -388,7 +413,9 @@ def generate_visualizer_video(audio_filepath, output_filepath, resolution=(1280,
                               glow_passes=3,
                               glow_alpha_decay=40,
                               # font:
-                              font_path=None):
+                              font_path="/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+                              # progress tracking:
+                              progress_callback=None):
     """
     Creates an MP4 with:
       - Discrete matrix columns whose heads move step-by-step (one char at a time)
@@ -399,11 +426,17 @@ def generate_visualizer_video(audio_filepath, output_filepath, resolution=(1280,
       - Audio from 'audio_filepath'.
     Color parameters can be provided as (R,G,B) tuples or as hex strings.
     """
+    if progress_callback:
+        progress_callback("Initializing", 0)
+
     matrix_head_color = parse_color(matrix_head_color)
     matrix_tail_color = parse_color(matrix_tail_color)
     wave_color = parse_color(wave_color)
     parsed_trail_colors = [parse_color(c) for c in trail_colors]
     trail_colors = parsed_trail_colors
+
+    if progress_callback:
+        progress_callback("Loading audio", 25)
 
     vis = NeonWaveVisualizer(audio_filepath, resolution, fps,
                              matrix_count=matrix_count,
@@ -423,11 +456,22 @@ def generate_visualizer_video(audio_filepath, output_filepath, resolution=(1280,
                              glow_alpha_decay=glow_alpha_decay,
                              line_width=line_width,
                              font_path=font_path)
-    duration = vis.audio_duration
+
+    if progress_callback:
+        progress_callback("Creating video clip", 50)
+
+    duration = vis.duration
     clip = VideoClip(lambda t: vis.make_frame(t), duration=duration)
     audio_clip = AudioFileClip(audio_filepath)
     clip = clip.with_audio(audio_clip)
+
+    if progress_callback:
+        progress_callback("Encoding video", 75)
+
     clip.write_videofile(output_filepath, fps=fps, codec="libx264", audio_codec="aac")
+
+    if progress_callback:
+        progress_callback("Completed", 100)
 
 # --------------------------------------------------------------------
 # 9) EXAMPLE USAGE

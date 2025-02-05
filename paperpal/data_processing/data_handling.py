@@ -46,58 +46,74 @@ class Podcast(BaseModel):
 
 
 class PaperDatabase:
-    def __init__(self, db_path: str = "papers.db"):
-        self.db_path = Path(db_path)
-        self._ensure_path_exists()
-        self.conn = self._create_connection()
-        self._create_table()
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        # Ensure parent directory exists
+        Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
+        self._initialize_db()
 
-    def _create_connection(self):
-        return sqlite3.connect(str(self.db_path))
-    
-    def _ensure_path_exists(self):
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def _initialize_db(self):
+        """Initialize the database and create tables if they don't exist."""
+        with self.get_cursor() as cursor:
+            # Create papers table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS papers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    abstract TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    date_run TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    rationale TEXT NOT NULL,
+                    related BOOLEAN NOT NULL,
+                    cosine_similarity REAL NOT NULL,
+                    url TEXT NOT NULL,
+                    embedding_model TEXT NOT NULL
+                )
+            ''')
+
+            # Create logs table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    status_code INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    datetime_run TEXT
+                )
+            ''')
+
+            # Create newsletters table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS newsletters (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    date_sent TEXT NOT NULL
+                )
+            ''')
+
+            # Create podcasts table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS podcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    script TEXT NOT NULL,
+                    description TEXT NOT NULL
+                )
+            ''')
 
     @contextmanager
     def get_cursor(self):
-        with self._create_connection() as conn:
-            yield conn.cursor()
-
-    def _create_table(self):
-        with self.get_cursor() as cursor:
-            cursor.execute('''CREATE TABLE IF NOT EXISTS papers
-                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                               title TEXT NOT NULL,
-                               abstract TEXT NOT NULL,
-                               date TEXT NOT NULL,
-                               date_run TEXT NOT NULL,
-                               score REAL NOT NULL,
-                               rationale TEXT NOT NULL,
-                               related BOOLEAN NOT NULL,
-                               cosine_similarity REAL NOT NULL,
-                               url TEXT NOT NULL,
-                               embedding_model TEXT NOT NULL
-                            )''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS newsletters
-                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                               content TEXT NOT NULL,
-                               start_date TEXT NOT NULL,
-                               end_date TEXT NOT NULL,
-                               date_sent TEXT NOT NULL
-                            )''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS logs
-                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                               status_code INTEGER NOT NULL,
-                               status TEXT NOT NULL,
-                               datetime_run TEXT NOT NULL
-                            )''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS podcasts
-                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                               title TEXT NOT NULL,
-                               date TEXT NOT NULL,
-                               script TEXT NOT NULL,
-                               description TEXT NOT NULL
-                            )''')
+        """Context manager for database connections."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            yield cursor
+            conn.commit()
+        finally:
+            conn.close()
 
     def insert_podcast(self, podcast: Podcast):
         # Validate date formats
@@ -210,6 +226,11 @@ class PaperDatabase:
                     'description': row[4]
                 })
             return result
+
+    def delete_podcast(self, title: str):
+        """Delete a podcast from the database by its title."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM podcasts WHERE title = ?", (title,))
 
     def fetch_all_newsletters(self):
         with self.get_cursor() as cursor:

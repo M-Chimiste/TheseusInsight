@@ -62,23 +62,15 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
         </AccordionSummary>
         <AccordionDetails>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <FormControl fullWidth>
-              <InputLabel>Model Name</InputLabel>
-              <Select
-                value={config.text_model.model_name}
-                label="Model Name"
-                onChange={(e) =>
-                  handleTextModelChange('model_name', e.target.value)
-                }
-              >
-                <MenuItem value="claude-3-5-sonnet-20240620">
-                  Claude 3.5 Sonnet
-                </MenuItem>
-                <MenuItem value="claude-3-5-opus-20240620">
-                  Claude 3.5 Opus
-                </MenuItem>
-              </Select>
-            </FormControl>
+            <TextField
+              fullWidth
+              label="Model Name"
+              value={config.text_model.model_name}
+              onChange={(e) =>
+                handleTextModelChange('model_name', e.target.value)
+              }
+              helperText="Enter the name of the model to use"
+            />
 
             <FormControl fullWidth>
               <InputLabel>Model Type</InputLabel>
@@ -90,6 +82,9 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                 }
               >
                 <MenuItem value="anthropic">Anthropic</MenuItem>
+                <MenuItem value="openai">OpenAI</MenuItem>
+                <MenuItem value="ollama">Ollama</MenuItem>
+                <MenuItem value="gemini">Gemini</MenuItem>
               </Select>
             </FormControl>
 
@@ -118,6 +113,20 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                   parseInt(e.target.value)
                 )
               }
+            />
+
+            <TextField
+              fullWidth
+              type="number"
+              label="Context Length"
+              value={config.text_model.num_ctx}
+              onChange={(e) =>
+                handleTextModelChange(
+                  'num_ctx',
+                  parseInt(e.target.value)
+                )
+              }
+              helperText="Maximum context length (important for Ollama models)"
             />
           </Box>
         </AccordionDetails>

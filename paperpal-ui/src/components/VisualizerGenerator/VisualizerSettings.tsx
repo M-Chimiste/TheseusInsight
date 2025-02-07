@@ -24,14 +24,21 @@ const resolutionPresets = [
 ];
 
 const fontOptions = [
+  { label: 'Hiragino Kaku Gothic W3', value: '/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc', default: true },
   { label: 'System Default', value: '' },
-  { label: 'Hiragino Kaku Gothic W3', value: '/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc' },
 ];
 
 const VisualizerSettings: React.FC<VisualizerSettingsProps> = ({
   config,
   onChange,
 }) => {
+  // Set default font when component mounts
+  React.useEffect(() => {
+    if (!config.font_path) {
+      handleChange('font_path', fontOptions[0].value);
+    }
+  }, []);
+
   const handleChange = (field: keyof VisualizerConfig, value: any) => {
     onChange({
       ...config,

@@ -13,6 +13,7 @@ import {
   AccordionSummary,
   AccordionDetails,
   Slider,
+  Grid,
 } from '@mui/material';
 import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
 import { PodcastGenerationConfig } from '../../types/api';
@@ -27,18 +28,54 @@ const fontOptions = [
   { label: 'Hiragino Kaku Gothic W3', value: '/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc' },
 ];
 
+const TTS_PROVIDERS = [
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Kokoro', value: 'kokoro' }
+] as const;
+
+const OPENAI_VOICES = [
+  { label: 'Sage', value: 'sage' },
+  { label: 'Ash', value: 'ash' },
+  { label: 'Alloy', value: 'alloy' },
+  { label: 'Echo', value: 'echo' },
+  { label: 'Fable', value: 'fable' },
+  { label: 'Onyx', value: 'onyx' },
+  { label: 'Nova', value: 'nova' },
+  { label: 'Shimmer', value: 'shimmer' }
+] as const;
+
+const KOKORO_VOICES = [
+  { label: 'Heart', value: 'af_heart' },
+  { label: 'Alloy', value: 'af_alloy' },
+  { label: 'Aoede', value: 'af_aoede' },
+  { label: 'Bella', value: 'af_bella' },
+  { label: 'Adam', value: 'am_adam' },
+  { label: 'Echo', value: 'am_echo' },
+  { label: 'Eric', value: 'am_eric' },
+  { label: 'Michael', value: 'am_michael' },
+  { label: 'Fenrir', value: 'am_fenrir'},
+  { label: 'Sky', value: 'am_sky' }
+] as const;
+
 const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   config,
   onChange,
 }) => {
-  const handleChange = (
-    field: keyof PodcastGenerationConfig,
-    value: any
-  ) => {
-    onChange({
-      ...config,
-      [field]: value,
-    });
+  const handleChange = (field: keyof PodcastGenerationConfig, value: any) => {
+    const newConfig = { ...config, [field]: value };
+    
+    // Reset voices when changing TTS provider
+    if (field === 'tts_provider') {
+      if (value === 'openai') {
+        newConfig.speaker_1_voice = 'sage';
+        newConfig.speaker_2_voice = 'ash';
+      } else {
+        newConfig.speaker_1_voice = 'af_heart';
+        newConfig.speaker_2_voice = 'am_adam';
+      }
+    }
+    
+    onChange(newConfig);
   };
 
   const handleTextModelChange = (
@@ -53,6 +90,8 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
       },
     });
   };
+
+  const currentVoices = config.tts_provider === 'openai' ? OPENAI_VOICES : KOKORO_VOICES;
 
   return (
     <Box>
@@ -145,8 +184,11 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                 label="TTS Provider"
                 onChange={(e) => handleChange('tts_provider', e.target.value)}
               >
-                <MenuItem value="kokoro">Kokoro</MenuItem>
-                <MenuItem value="elevenlabs">ElevenLabs</MenuItem>
+                {TTS_PROVIDERS.map((provider) => (
+                  <MenuItem key={provider.value} value={provider.value}>
+                    {provider.label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
 
@@ -155,14 +197,13 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
               <Select
                 value={config.speaker_1_voice}
                 label="Speaker 1 Voice"
-                onChange={(e) =>
-                  handleChange('speaker_1_voice', e.target.value)
-                }
+                onChange={(e) => handleChange('speaker_1_voice', e.target.value)}
               >
-                <MenuItem value="af_bella">Bella (Female)</MenuItem>
-                <MenuItem value="af_charlie">Charlie (Female)</MenuItem>
-                <MenuItem value="am_adam">Adam (Male)</MenuItem>
-                <MenuItem value="am_brian">Brian (Male)</MenuItem>
+                {currentVoices.map((voice) => (
+                  <MenuItem key={voice.value} value={voice.value}>
+                    {voice.label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
 
@@ -185,14 +226,13 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
               <Select
                 value={config.speaker_2_voice}
                 label="Speaker 2 Voice"
-                onChange={(e) =>
-                  handleChange('speaker_2_voice', e.target.value)
-                }
+                onChange={(e) => handleChange('speaker_2_voice', e.target.value)}
               >
-                <MenuItem value="af_bella">Bella (Female)</MenuItem>
-                <MenuItem value="af_charlie">Charlie (Female)</MenuItem>
-                <MenuItem value="am_adam">Adam (Male)</MenuItem>
-                <MenuItem value="am_brian">Brian (Male)</MenuItem>
+                {currentVoices.map((voice) => (
+                  <MenuItem key={voice.value} value={voice.value}>
+                    {voice.label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
 

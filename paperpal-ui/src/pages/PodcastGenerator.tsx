@@ -18,6 +18,35 @@ import GenerationProgress from '../components/PodcastGenerator/GenerationProgres
 
 const steps = ['Upload Files', 'Configure Settings', 'Generate Podcast'];
 
+const TTS_PROVIDERS = [
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Kokoro', value: 'kokoro' }
+] as const;
+
+const OPENAI_VOICES = [
+  { label: 'Sage', value: 'sage' },
+  { label: 'Ash', value: 'ash' },
+  { label: 'Alloy', value: 'alloy' },
+  { label: 'Echo', value: 'echo' },
+  { label: 'Fable', value: 'fable' },
+  { label: 'Onyx', value: 'onyx' },
+  { label: 'Nova', value: 'nova' },
+  { label: 'Shimmer', value: 'shimmer' }
+] as const;
+
+const KOKORO_VOICES = [
+  { label: 'Heart', value: 'af_heart' },
+  { label: 'Alloy', value: 'af_alloy' },
+  { label: 'Aoede', value: 'af_aoede' },
+  { label: 'Bella', value: 'af_bella' },
+  { label: 'Adam', value: 'am_adam' },
+  { label: 'Echo', value: 'am_echo' },
+  { label: 'Eric', value: 'am_eric' },
+  { label: 'Michael', value: 'am_michael' },
+  { label: 'Fenrir', value: 'am_fenrir'},
+  { label: 'Sky', value: 'am_sky' }
+] as const;
+
 const PodcastGenerator: React.FC = () => {
   const [activeStep, setActiveStep] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
@@ -30,11 +59,11 @@ const PodcastGenerator: React.FC = () => {
       temperature: 0.1,
       num_ctx: 131072
     },
-    tts_provider: "kokoro",
-    speaker_1_voice: "af_bella",
-    speaker_1_speed: 1.15,
-    speaker_2_voice: "am_adam",
-    speaker_2_speed: 1.15,
+    tts_provider: "openai",
+    speaker_1_voice: "alloy",
+    speaker_1_speed: 1.0,
+    speaker_2_voice: "echo",
+    speaker_2_speed: 1.0,
     output_format: "mp3",
     visualizer: false,
     resolution: [1920, 1080],

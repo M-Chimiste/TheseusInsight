@@ -75,7 +75,6 @@ export interface PodcastGenerationConfig {
 
 export interface PodcastGenerationRequest {
   texts: string[];
-  paperpal_sections: string[];
   config?: PodcastGenerationConfig;
 }
 

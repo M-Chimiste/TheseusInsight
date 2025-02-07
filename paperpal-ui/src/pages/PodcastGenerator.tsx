@@ -24,8 +24,8 @@ const PodcastGenerator: React.FC = () => {
   const [urls, setUrls] = useState<string[]>([]);
   const [config, setConfig] = useState<PodcastGenerationConfig>({
     text_model: {
-      model_name: "claude-3-5-sonnet-20240620",
-      model_type: "anthropic",
+      model_name: "gemini-2.0-flash",
+      model_type: "gemini",
       max_new_tokens: 8192,
       temperature: 0.1,
       num_ctx: 131072
@@ -56,8 +56,8 @@ const PodcastGenerator: React.FC = () => {
       const formData = new FormData();
       
       // Add files to form data
-      files.forEach((file, index) => {
-        formData.append(`file_${index}`, file);
+      files.forEach((file) => {
+        formData.append('files', file);
       });
       
       // Add URLs as a JSON string

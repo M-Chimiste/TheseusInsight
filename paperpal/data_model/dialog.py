@@ -41,3 +41,6 @@ class DialogueOutput(BaseModel):
 
 class PodcastDescription(BaseModel):
     podcast_episode_description: str = Field(..., description="The description of the podcast episode")
+
+class ContentSummary(BaseModel):
+    summary: str = Field(..., description="The summary of the text")

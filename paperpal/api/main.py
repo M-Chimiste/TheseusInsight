@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from paperpal.api.routers import pdf, script, podcast, visualizer
 
+
 app = FastAPI(
     title="PaperPal API",
     description="API for PaperPal podcast generation and visualization",

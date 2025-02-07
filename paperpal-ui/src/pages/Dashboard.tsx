@@ -62,8 +62,10 @@ const Dashboard: React.FC = () => {
                 transition: 'transform 0.2s',
                 '&:hover': {
                   transform: 'translateY(-4px)',
+                  cursor: 'pointer',
                 },
               }}
+              onClick={() => navigate(path)}
             >
               <CardContent sx={{ flexGrow: 1 }}>
                 <Box
@@ -87,7 +89,6 @@ const Dashboard: React.FC = () => {
                 <Button
                   size="large"
                   startIcon={icon}
-                  onClick={() => navigate(path)}
                   sx={{ ml: 1, mb: 1 }}
                 >
                   Get Started

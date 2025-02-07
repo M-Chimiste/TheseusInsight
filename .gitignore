@@ -333,3 +333,5 @@ music/
 
 #checkpoints
 checkpoints/
+
+paperpal/api/scripts/*.json

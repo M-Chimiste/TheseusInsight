@@ -1,65 +1,57 @@
 {
-    "judge_model":
-    {
-        "model_name": "llama3.2:3b-instruct-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 1024,
-        "temperature": 0.1,
-        "num_ctx": 4096
-    },
-    "newsletter_model":
-    {
-        "model_name": "hf.co/lmstudio-community/Qwen2.5-14B-Instruct-1M-GGUF:Q4_K_M",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "content_extraction_model":
-    {
-        "model_name": "hf.co/lmstudio-community/Qwen2.5-14B-Instruct-1M-GGUF:Q4_K_M",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_sections_model":
-    {
-        "model_name": "hf.co/lmstudio-community/Qwen2.5-14B-Instruct-1M-GGUF:Q4_K_M",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_intro_model":
-    {
-        "model_name": "claude-3-5-sonnet-20240620",
-        "model_type": "anthropic",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "embedding_model":
-    {
-        "model_name": "nomic-ai/modernbert-embed-base",
-        "model_type": "sentence-transformers",
-        "trust_remote_code": true
-    },
-    "podcast_model":
-    {
-        "model_name": "claude-3-5-sonnet-20240620",
-        "model_type": "anthropic",
-        "max_new_tokens": 8192,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "tts_model":
-    {
-        "tts_provider": "openai",
-        "tts_model_name": "tts-1",
-        "speaker_1_voice": "alloy",
-        "speaker_1_speed": 1.15,
-        "speaker_2_voice": "echo",
-        "speaker_2_speed": 1.15
-    }
+  "judge_model": {
+    "model_name": "llama3.2:3b-instruct-q8_0",
+    "model_type": "ollama",
+    "max_new_tokens": 512,
+    "temperature": 0.1,
+    "num_ctx": 4096
+  },
+  "newsletter_model": {
+    "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q4_K_M",
+    "model_type": "ollama",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072
+  },
+  "content_extraction_model": {
+    "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q4_K_M",
+    "model_type": "ollama",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072
+  },
+  "newsletter_sections_model": {
+    "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q4_K_M",
+    "model_type": "ollama",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072
+  },
+  "newsletter_intro_model": {
+    "model_name": "gemini-2.0-flash",
+    "model_type": "gemini",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072
+  },
+  "embedding_model": {
+    "model_name": "nomic-ai/modernbert-embed-base",
+    "model_type": "sentence-transformers",
+    "trust_remote_code": true
+  },
+  "podcast_model": {
+    "model_name": "gemini-2.0-flash",
+    "model_type": "gemini",
+    "max_new_tokens": 8192,
+    "temperature": 0.1,
+    "num_ctx": 131072
+  },
+  "tts_model": {
+    "tts_provider": "openai",
+    "tts_model_name": "tts-1",
+    "speaker_1_voice": "sage",
+    "speaker_1_speed": 1.0,
+    "speaker_2_voice": "ash",
+    "speaker_2_speed": 1.0
+  }
 }

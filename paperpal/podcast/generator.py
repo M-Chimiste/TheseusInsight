@@ -283,6 +283,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         final_filename: str = "podcast_final",
         verbose: bool = None,
         visualizer: bool = False,
+        intro_music_path: str = None,
         # Visualizer Settings
         resolution: tuple = (1920, 1080),
         fps: int = 30,
@@ -322,6 +323,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             final_filename (str, optional): The name of the final combined podcast file. Defaults to "podcast_final".
             verbose (bool, optional): If True, prints verbose output. Defaults to None.
             visualizer (bool, optional): If True, generates a visualizer video. Defaults to False.
+            intro_music_path (str, optional): The path to the intro music file. Defaults to None.
             resolution (tuple, optional): The resolution of the visualizer video. Defaults to (1920, 1080).
             fps (int, optional): The frames per second of the visualizer video. Defaults to 30.
             matrix_count (int, optional): The number of matrices in the visualizer. Defaults to 200.
@@ -344,6 +346,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         Returns:
             Dict[str, str]: A dictionary containing the transcript, dictionary transcript, segments, final podcast path, and visualizer path.
         """
+        intro_music_path = intro_music_path or self.intro_music_path
         verbose = self.verbose or verbose
         scripts = [] # list of scripts
 
@@ -434,7 +437,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         # Get the podcast description
         description = self._get_podcast_description(transcript_text)
         
-        self._combine_audio_segments(segments, final_podcast_path, output_format)
+        self._combine_audio_segments(segments, final_podcast_path, output_format, intro_music_path)
         if visualizer:
             output_filepath=f"{final_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_visualizer.mp4"
             generate_visualizer_video(
@@ -486,6 +489,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         speaker_2_speed: float = None,
         final_filename: str = "podcast_final",
         visualizer: bool = False,
+        intro_music_path: str = None,
         # Visualizer Settings
         resolution: tuple = (1920, 1080),
         fps: int = 30,
@@ -546,6 +550,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         Returns:
             Dict[str, str]: A dictionary containing the transcript, dictionary transcript, segments, final podcast path, and visualizer path.
         """
+        intro_music_path = intro_music_path or self.intro_music_path
         dialogue_obj = self._validate_dialogue_data(dialogue_dict)
         if not dialogue_obj:
             raise ValueError("Invalid dialogue dictionary format")
@@ -642,7 +647,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         final_podcast_path = os.path.join(output_dir, final_podcast_filename)
 
         # Combine segments and cleanup
-        self._combine_audio_segments(segments, final_podcast_path, output_format)
+        self._combine_audio_segments(segments, final_podcast_path, output_format, intro_music_path)
         if visualizer:
             output_filepath=f"{final_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_visualizer.mp4"
             generate_visualizer_video(
@@ -695,7 +700,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 if self.verbose:
                     print(f"Failed to clean up segment {segment_path}: {e}")
 
-    def _combine_audio_segments(self, segments: List[str], output_path: str, output_format: str) -> None:
+    def _combine_audio_segments(self, segments: List[str], output_path: str, output_format: str, intro_music_path: str = None) -> None:
         """
         Combine audio segments and clean up individual files.
         
@@ -704,10 +709,10 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             output_path (str): Path to save the combined audio
             output_format (str): Audio format (mp3, wav, etc.)
         """
-        
+        intro_music_path = intro_music_path or self.intro_music_path
         combined_audio = AudioSegment.empty()
-        if self.intro_music_path:
-            combined_audio += AudioSegment.from_file(self.intro_music_path, format=output_format)
+        if intro_music_path:
+            combined_audio += AudioSegment.from_file(intro_music_path, format=output_format)
         # Combine all segments
         for seg_path in segments:
             combined_audio += AudioSegment.from_file(seg_path, format=output_format)
@@ -1005,6 +1010,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         final_filename: str = "podcast_final",
         verbose: bool = None,
         visualizer: bool = False,
+        intro_music_path: str = None,
         # Visualizer Settings
         resolution: tuple = (1920, 1080),
         fps: int = 30,
@@ -1030,6 +1036,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         """
         Generate a podcast from the provided PDF paths.
         """
+        intro_music_path = intro_music_path or self.intro_music_path
         try:
             # Create output directory if it doesn't exist
             output_dir = Path(output_dir)
@@ -1117,7 +1124,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 
             # Combine segments
             final_audio_path = f"{output_dir}/{final_filename}.{output_format}"
-            self._combine_audio_segments(segments, final_audio_path, output_format)
+            self._combine_audio_segments(segments, final_audio_path, output_format, intro_music_path)
             
             # Clean up segments
             self._cleanup_segments(segments)
@@ -1180,6 +1187,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         speaker_2_speed: float = None,
         final_filename: str = "podcast_final",
         visualizer: bool = False,
+        intro_music_path: str = None,
         # Visualizer Settings
         resolution: tuple = (1920, 1080),
         fps: int = 30,
@@ -1219,6 +1227,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             speaker_2_speed (float, optional): The speed factor for speaker 2's voice. Defaults to None.
             final_filename (str, optional): The final filename for the podcast. Defaults to "podcast_final".
             visualizer (bool, optional): Whether to generate a visualizer video. Defaults to False.
+            intro_music_path (str, optional): The path to the intro music file. Defaults to None.
             resolution (tuple, optional): The resolution of the visualizer video. Defaults to (1920, 1080).
             fps (int, optional): The frames per second of the visualizer video. Defaults to 30.
             matrix_count (int, optional): The number of matrices in the visualizer. Defaults to 200.
@@ -1240,6 +1249,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         Returns:
             Dict[str, str]: A dictionary containing the transcript, dictionary transcript, segments, final podcast path, and visualizer path.
         """
+        intro_music_path = intro_music_path or self.intro_music_path
         dialogue_obj = self._validate_dialogue_data(dialogue_dict)
         if not dialogue_obj:
             raise ValueError("Invalid dialogue dictionary format")
@@ -1336,7 +1346,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         final_podcast_path = os.path.join(output_dir, final_podcast_filename)
 
         # Combine segments and cleanup
-        self._combine_audio_segments(segments, final_podcast_path, output_format)
+        self._combine_audio_segments(segments, final_podcast_path, output_format, intro_music_path)
         if visualizer:
             output_filepath=f"{final_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_visualizer.mp4"
             generate_visualizer_video(
@@ -1389,7 +1399,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 if self.verbose:
                     print(f"Failed to clean up segment {segment_path}: {e}")
 
-    def _combine_audio_segments(self, segments: List[str], output_path: str, output_format: str) -> None:
+    def _combine_audio_segments(self, segments: List[str], output_path: str, output_format: str, intro_music_path: str = None) -> None:
         """
         Combine audio segments and clean up individual files.
         
@@ -1398,10 +1408,10 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             output_path (str): Path to save the combined audio
             output_format (str): Audio format (mp3, wav, etc.)
         """
-        
+        intro_music_path = intro_music_path or self.intro_music_path
         combined_audio = AudioSegment.empty()
-        if self.intro_music_path:
-            combined_audio += AudioSegment.from_file(self.intro_music_path, format=output_format)
+        if intro_music_path:
+            combined_audio += AudioSegment.from_file(intro_music_path, format=output_format)
         # Combine all segments
         for seg_path in segments:
             combined_audio += AudioSegment.from_file(seg_path, format=output_format)

@@ -13,6 +13,7 @@ import {
   Add as AddIcon,
   Visibility as VisibilityIcon,
   Dashboard as DashboardIcon,
+  Science as ScienceIcon,
 } from '@mui/icons-material';
 
 const Navigation: React.FC = () => {
@@ -27,6 +28,7 @@ const Navigation: React.FC = () => {
     { path: '/editor', label: 'Script Editor', icon: <EditIcon /> },
     { path: '/generator', label: 'New Podcast', icon: <AddIcon /> },
     { path: '/visualizer', label: 'Visualizer', icon: <VisibilityIcon /> },
+    { path: '/paperpal', label: 'Run PaperPal', icon: <ScienceIcon /> },
   ];
 
   return (

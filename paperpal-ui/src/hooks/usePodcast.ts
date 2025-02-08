@@ -1,7 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from './useAPI';
 import {
-  PodcastGenerationRequest,
   PodcastGenerationResponse,
   PodcastGenerationConfig,
   Script,

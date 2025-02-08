@@ -16,7 +16,7 @@ import {
   Grid,
 } from '@mui/material';
 import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
-import { PodcastGenerationConfig } from '../../types/api';
+import { PodcastGenerationConfig, VisualizerConfig } from '../../types/api';
 
 interface ConfigurationPanelProps {
   config: PodcastGenerationConfig;
@@ -88,6 +88,19 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
         ...config.text_model,
         [field]: value,
       },
+    });
+  };
+
+  const handleVisualizerConfigChange = <K extends keyof VisualizerConfig>(
+    field: K,
+    value: VisualizerConfig[K]
+  ) => {
+    onChange({
+      ...config,
+      visualizer_config: {
+        ...config.visualizer_config,
+        [field]: value
+      }
     });
   };
 
@@ -289,26 +302,30 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
               <>
                 <Box sx={{ display: 'flex', gap: 2 }}>
                   <TextField
+                    fullWidth
                     label="Width"
                     type="number"
-                    value={config.resolution[0]}
-                    onChange={(e) =>
-                      handleChange('resolution', [
+                    value={config.visualizer_config.resolution[0]}
+                    onChange={(e) => {
+                      const newResolution: [number, number] = [
                         parseInt(e.target.value),
-                        config.resolution[1],
-                      ])
-                    }
+                        config.visualizer_config.resolution[1]
+                      ];
+                      handleVisualizerConfigChange('resolution', newResolution);
+                    }}
                   />
                   <TextField
+                    fullWidth
                     label="Height"
                     type="number"
-                    value={config.resolution[1]}
-                    onChange={(e) =>
-                      handleChange('resolution', [
-                        config.resolution[0],
-                        parseInt(e.target.value),
-                      ])
-                    }
+                    value={config.visualizer_config.resolution[1]}
+                    onChange={(e) => {
+                      const newResolution: [number, number] = [
+                        config.visualizer_config.resolution[0],
+                        parseInt(e.target.value)
+                      ];
+                      handleVisualizerConfigChange('resolution', newResolution);
+                    }}
                   />
                 </Box>
 
@@ -316,20 +333,16 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                   fullWidth
                   type="number"
                   label="FPS"
-                  value={config.fps}
-                  onChange={(e) =>
-                    handleChange('fps', parseInt(e.target.value))
-                  }
+                  value={config.visualizer_config.fps}
+                  onChange={(e) => handleVisualizerConfigChange('fps', parseInt(e.target.value))}
                 />
 
                 <TextField
                   fullWidth
                   type="number"
                   label="Matrix Count"
-                  value={config.matrix_count || 200}
-                  onChange={(e) =>
-                    handleChange('matrix_count', parseInt(e.target.value))
-                  }
+                  value={config.visualizer_config.matrix_count}
+                  onChange={(e) => handleVisualizerConfigChange('matrix_count', parseInt(e.target.value))}
                   inputProps={{ min: 50, max: 500 }}
                 />
 
@@ -380,6 +393,85 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
               </>
             )}
           </Box>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion 
+        expanded={config.visualizer} 
+        disabled={!config.visualizer}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>Visualizer Settings</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="Matrix Head Color"
+                type="color"
+                value={config.visualizer_config.matrix_head_color.startsWith('#') ? 
+                  config.visualizer_config.matrix_head_color : 
+                  '#' + config.visualizer_config.matrix_head_color.substring(2)}
+                onChange={(e) => handleVisualizerConfigChange('matrix_head_color', e.target.value)}
+              />
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="Matrix Tail Color"
+                type="color"
+                value={config.visualizer_config.matrix_tail_color.startsWith('#') ? 
+                  config.visualizer_config.matrix_tail_color : 
+                  '#' + config.visualizer_config.matrix_tail_color.substring(2)}
+                onChange={(e) => handleVisualizerConfigChange('matrix_tail_color', e.target.value)}
+              />
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="Wave Color"
+                type="color"
+                value={config.visualizer_config.wave_color}
+                onChange={(e) => handleVisualizerConfigChange('wave_color', e.target.value)}
+              />
+            </Grid>
+
+            <Grid item xs={12}>
+              <Typography variant="subtitle1" gutterBottom>
+                Trail Colors
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                {config.visualizer_config.trail_colors.map((color: string, index: number) => (
+                  <TextField
+                    key={index}
+                    label={`Trail Color ${index + 1}`}
+                    type="color"
+                    value={color}
+                    onChange={(e) => {
+                      const newColors = [...config.visualizer_config.trail_colors];
+                      newColors[index] = e.target.value;
+                      handleVisualizerConfigChange('trail_colors', newColors);
+                    }}
+                    sx={{ width: '150px' }}
+                  />
+                ))}
+              </Box>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                type="number"
+                label="Line Width"
+                value={config.visualizer_config.line_width}
+                onChange={(e) => handleVisualizerConfigChange('line_width', parseInt(e.target.value))}
+                InputProps={{ inputProps: { min: 1, max: 10 } }}
+              />
+            </Grid>
+          </Grid>
         </AccordionDetails>
       </Accordion>
     </Box>

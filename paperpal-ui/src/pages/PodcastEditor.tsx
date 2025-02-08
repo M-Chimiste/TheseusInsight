@@ -22,7 +22,6 @@ import {
 } from '@mui/icons-material';
 import { useListScripts, useDeleteScript } from '../hooks/useScript';
 import ScriptEditor from '../components/ScriptEditor/ScriptEditor';
-import { Script } from '../types/api';
 
 const PodcastEditor: React.FC = () => {
   const [selectedScript, setSelectedScript] = useState<string | null>(null);

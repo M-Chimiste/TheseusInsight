@@ -9,6 +9,7 @@ import warnings
 from tqdm import tqdm
 from dotenv import load_dotenv
 import json_repair
+from typing import Optional, Callable
 
 from docling.document_converter import DocumentConverter
 
@@ -467,7 +468,10 @@ class PaperPal:
             self._log_error(500, e)
             raise
 
-    def run(self, start_from: str = None):
+    def run(self, 
+            start_from: str = None, 
+            progress_callback: Optional[Callable[[str, float, str], None]] = None
+           ):
         """
         Unified pipeline with checkpoints. 
         Harmonizes the old generate_newsletter_and_podcast() features:
@@ -489,6 +493,9 @@ class PaperPal:
             # -----------
             # Stage 1: Download Papers
             # -----------
+            if progress_callback:
+                progress_callback("download", 0, "Starting paper download")
+                
             if start_from is None:
                 # no stage specified, do we have an existing checkpoint for 'papers_downloaded'?
                 data_df = self._load_checkpoint('papers_downloaded')
@@ -509,9 +516,15 @@ class PaperPal:
                         data_df = process_data.download_and_process_data(self.start_date, self.end_date)
                         self._save_checkpoint('papers_downloaded', data_df)
 
+            if progress_callback:
+                progress_callback("download", 100, "Paper download complete")
+
             # -----------
             # Stage 2: Embed Papers
             # -----------
+            if progress_callback:
+                progress_callback("embed", 0, "Starting paper embedding")
+                
             if start_from is None or start_from in ['papers_downloaded', 'papers_embedded']:
                 embedded_df = self._load_checkpoint('papers_embedded')
                 if embedded_df is None:
@@ -543,6 +556,9 @@ class PaperPal:
                     # Save checkpoint
                     self._save_checkpoint('papers_embedded', filtered_df)
                     embedded_df = filtered_df
+
+            if progress_callback:
+                progress_callback("embed", 100, "Paper embedding complete")
 
             # -----------
             # Stage 3: Rank Papers

@@ -18,61 +18,52 @@ import GenerationProgress from '../components/PodcastGenerator/GenerationProgres
 
 const steps = ['Upload Files', 'Configure Settings', 'Generate Podcast'];
 
-const TTS_PROVIDERS = [
-  { label: 'OpenAI', value: 'openai' },
-  { label: 'Kokoro', value: 'kokoro' }
-] as const;
-
-const OPENAI_VOICES = [
-  { label: 'Sage', value: 'sage' },
-  { label: 'Ash', value: 'ash' },
-  { label: 'Alloy', value: 'alloy' },
-  { label: 'Echo', value: 'echo' },
-  { label: 'Fable', value: 'fable' },
-  { label: 'Onyx', value: 'onyx' },
-  { label: 'Nova', value: 'nova' },
-  { label: 'Shimmer', value: 'shimmer' }
-] as const;
-
-const KOKORO_VOICES = [
-  { label: 'Heart', value: 'af_heart' },
-  { label: 'Alloy', value: 'af_alloy' },
-  { label: 'Aoede', value: 'af_aoede' },
-  { label: 'Bella', value: 'af_bella' },
-  { label: 'Adam', value: 'am_adam' },
-  { label: 'Echo', value: 'am_echo' },
-  { label: 'Eric', value: 'am_eric' },
-  { label: 'Michael', value: 'am_michael' },
-  { label: 'Fenrir', value: 'am_fenrir'},
-  { label: 'Sky', value: 'am_sky' }
-] as const;
+const defaultConfig: PodcastGenerationConfig = {
+  text_model: {
+    model_name: "gemini-2.0-flash",
+    model_type: "gemini",
+    max_new_tokens: 8192,
+    temperature: 0.1,
+    num_ctx: 131072
+  },
+  tts_provider: "openai",
+  speaker_1_voice: "sage",
+  speaker_1_speed: 1.0,
+  speaker_2_voice: "ash",
+  speaker_2_speed: 1.0,
+  output_format: "mp3",
+  visualizer: false,
+  visualizer_config: {
+    resolution: [1920, 1080],
+    fps: 30,
+    matrix_count: 200,
+    matrix_head_color: "#00ff00",
+    matrix_tail_color: "#004400",
+    matrix_char_size: 24,
+    head_step_time: 0.25,
+    random_x_jitter: 2.0,
+    fade_time: 1.5,
+    head_glow_passes: 3,
+    head_glow_alpha_decay: 50,
+    head_spawn_delay_range: [1.0, 3.0],
+    head_saw_period: 1.5,
+    wave_color: "#ff00ff",
+    trail_colors: ["#ff0088", "#8800ff", "#ff88ff"],
+    glow_passes: 3,
+    glow_alpha_decay: 40,
+    line_width: 6,
+    font_path: "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc"
+  },
+  fade_time: 3.0,
+  head_saw_period: 1.5,
+  font_path: ""
+};
 
 const PodcastGenerator: React.FC = () => {
   const [activeStep, setActiveStep] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
   const [urls, setUrls] = useState<string[]>([]);
-  const [config, setConfig] = useState<PodcastGenerationConfig>({
-    text_model: {
-      model_name: "gemini-2.0-flash",
-      model_type: "gemini",
-      max_new_tokens: 8192,
-      temperature: 0.1,
-      num_ctx: 131072
-    },
-    tts_provider: "openai",
-    speaker_1_voice: "alloy",
-    speaker_1_speed: 1.0,
-    speaker_2_voice: "echo",
-    speaker_2_speed: 1.0,
-    output_format: "mp3",
-    visualizer: false,
-    resolution: [1920, 1080],
-    fps: 30,
-    matrix_count: 200,
-    fade_time: 3.0,
-    head_saw_period: 1.5,
-    font_path: ""
-  });
+  const [config, setConfig] = useState<PodcastGenerationConfig>(defaultConfig);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 

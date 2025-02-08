@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   Box,
   Grid,
@@ -32,19 +32,20 @@ const VisualizerSettings: React.FC<VisualizerSettingsProps> = ({
   config,
   onChange,
 }) => {
-  // Set default font when component mounts
-  React.useEffect(() => {
-    if (!config.font_path) {
-      handleChange('font_path', fontOptions[0].value);
-    }
-  }, []);
-
-  const handleChange = (field: keyof VisualizerConfig, value: any) => {
+  // Define handleChange with useCallback before using it
+  const handleChange = useCallback((field: keyof VisualizerConfig, value: any) => {
     onChange({
       ...config,
       [field]: value,
     });
-  };
+  }, [onChange, config]);
+
+  // Now use handleChange in useEffect
+  useEffect(() => {
+    if (!config.font_path) {
+      handleChange('font_path', fontOptions[0].value);
+    }
+  }, [config.font_path, handleChange]);
 
   return (
     <Box>

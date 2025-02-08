@@ -25,6 +25,81 @@
 - Added default font selection in VisualizerSettings
 - Updated TTS provider options to specifically support OpenAI and Kokoro
 - Added voice selection based on TTS provider
+- Added PaperPal component with configuration UI
+- Added file upload support for research interests and orchestration config
+- Added email recipient management
+- Added date range selection for paper retrieval
+- Added visualizer configuration options
+- Added FastAPI endpoint for running PaperPal
+- Added progress tracking callbacks to PaperPal
+- Added file upload handling for configuration files
+- Added frontend progress tracking for PaperPal execution
+- Added PaperPal API hook for status monitoring
+- Added GenerationProgress component for PaperPal
+- Added file validation for PaperPal configuration
+- Added file preview functionality for research interests and orchestration config
+- Added input validation for email addresses and date ranges
+- Fixed TypeScript errors in PaperPal components
+- Added proper types for PaperPal configuration and status
+- Added missing dependencies for date picker and JSON viewer
+- Fixed remaining TypeScript errors in PaperPal components
+- Added proper state management for GenerationProgress
+- Added missing dependencies for date picker and JSON viewer
+- Fixed ESLint warnings and unused imports
+- Fixed useEffect dependencies in VisualizerSettings
+- Fixed JSON viewer compatibility in FilePreview
+- Cleaned up unused constants and imports
+- Fixed hook dependencies and function definitions in VisualizerSettings
+- Cleaned up unused imports and variables
+- Improved component organization for voice-related constants
+- Fixed PaperPal component routing and visibility
+- Added proper styling to PaperPal page
+- Ensured all required dependencies are installed
+- Fixed date picker dependency issues
+- Added LocalizationProvider at app level
+- Removed duplicate LocalizationProvider from PaperPal component
+- Fixed date-fns and date picker compatibility issues
+- Cleaned up unused imports and variables
+- Removed unused lazy-loaded components
+- Replaced @mui/x-date-pickers with react-datepicker
+- Removed problematic date-fns dependency
+- Simplified date picker implementation
+- Added audio settings section with TTS options
+- Added intro music upload functionality
+- Added similarity threshold and YouTube publishing options
+- Added additional visualizer settings (resolution, font, colors)
+- Added character size and line width controls
+- Added dual speaker TTS configuration
+- Added voice speed controls for both speakers
+- Updated TTS provider to handle both speakers consistently
+- Added color pickers for matrix head and tail
+- Added wave color picker
+- Added dynamic trail colors management with add functionality
+- Fixed trail colors picker to properly update UI
+- Improved color format handling for trail colors
+- Aligned visualizer color settings with existing VisualizerGenerator
+- Fixed color format handling for matrix head and tail colors
+- Updated default colors to match existing visualizer
+- Removed trail colors "Add" button to prevent invalid configurations
+- Fixed trail colors to exactly three colors as per visualizer requirements
+- Added detailed error logging for PaperPal API communication
+- Improved error handling in PaperPal submission
+- Added request/response debugging information
+- Added detailed request/response logging for API debugging
+- Added proper error handling with response text logging
+- Updated API endpoint configuration
+- Fixed config file paths to point to correct project location
+- Updated file validation to handle both uploaded files and existing config files
+- Added proper path handling in API requests
+- Added visualizer color settings to podcast generator
+- Added line width control to podcast generator
+- Reused visualization controls from visualizer component
+- Fixed TypeScript errors in PodcastGenerationConfig
+- Added proper typing for visualizer configuration
+- Fixed type errors in trail colors mapping
+- Fixed type errors in PodcastGenerator configuration
+- Updated visualization settings to use visualizer_config consistently
+- Added proper typing for visualizer configuration handlers
 
 ## What needs to be implemented next
 - Testing of the visualization generation pipeline
@@ -32,6 +107,10 @@
 - Add progress tracking for podcast generation
 - Add file cleanup for old generated files
 - Further UI/UX improvements
+- Add backend API endpoint for running PaperPal
+- Add progress tracking for PaperPal execution
+- Add validation for configuration files
+- Add preview for research interests and orchestration config
 
 ## Debug Log
 - Fixed: Pydantic V2 import error (`parse_raw_as` removal)
@@ -45,3 +124,34 @@
 - Added: Full card click navigation in Dashboard
 - Added: Default font selection in VisualizerSettings component
 - Added: TTS provider selection between OpenAI and Kokoro with corresponding voice options
+- Added: PaperPal configuration UI with file uploads and email management
+- Added: FastAPI endpoint for PaperPal with progress tracking
+- Added: Frontend progress tracking for PaperPal with real-time updates
+- Added: File validation and preview functionality for PaperPal configuration files
+- Fixed: TypeScript errors in PaperPal components
+- Fixed: Missing dependencies and type declarations
+- Fixed: GenerationProgress component state management
+- Fixed: Missing dependencies for UI components
+- Fixed: ESLint warnings about unused imports and dependencies
+- Fixed: JSON viewer compatibility issues in FilePreview
+- Fixed: useEffect and useCallback implementation in VisualizerSettings
+- Fixed: Removed unused imports and improved code organization
+- Fixed: PaperPal component visibility and routing
+- Fixed: Date picker dependency version mismatch
+- Fixed: date-fns version compatibility with @mui/x-date-pickers
+- Fixed: Removed unused imports and variables in multiple components
+- Fixed: Date picker dependency issues by switching to react-datepicker
+- Added: Complete configuration options for PaperPal audio and visualization
+- Added: Dual speaker configuration for TTS with speed controls
+- Added: Complete color management for matrix and wave effects
+- Fixed: Trail colors picker UI update and color format handling
+- Fixed: Color picker consistency with VisualizerGenerator component
+- Fixed: Removed ability to add trail colors beyond the required three
+- Added: Detailed logging for PaperPal API communication debugging
+- Added: Comprehensive API request/response logging for debugging
+- Fixed: Config file paths to use correct project structure
+- Added: Visualization settings in podcast generator configuration
+- Fixed: Added missing visualizer_config to PodcastGenerationConfig type
+- Fixed: Added proper typing for trail colors in ConfigurationPanel
+- Fixed: Type errors in PodcastGenerator visualization settings
+- Fixed: Consistent use of visualizer_config throughout components

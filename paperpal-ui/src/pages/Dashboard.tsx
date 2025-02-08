@@ -13,6 +13,7 @@ import {
   Edit as EditIcon,
   Add as AddIcon,
   Visibility as VisibilityIcon,
+  Science as ScienceIcon,
 } from '@mui/icons-material';
 
 const Dashboard: React.FC = () => {
@@ -39,6 +40,13 @@ const Dashboard: React.FC = () => {
       path: '/visualizer',
       icon: <VisibilityIcon fontSize="large" />,
       color: '#00FF80',
+    },
+    {
+      title: 'Run PaperPal',
+      description: 'Generate newsletters and podcasts from research papers.',
+      path: '/paperpal',
+      icon: <ScienceIcon fontSize="large" />,
+      color: '#03a1fc',
     },
   ];
 

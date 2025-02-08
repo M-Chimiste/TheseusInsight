@@ -58,16 +58,14 @@ export interface PodcastGenerationConfig {
     temperature: number;
     num_ctx: number;
   };
-  tts_provider: string;
+  tts_provider: 'openai' | 'kokoro';
   speaker_1_voice: string;
   speaker_1_speed: number;
   speaker_2_voice: string;
   speaker_2_speed: number;
   output_format: string;
   visualizer: boolean;
-  resolution: [number, number];
-  fps: number;
-  matrix_count: number;
+  visualizer_config: VisualizerConfig;
   fade_time: number;
   head_saw_period: number;
   font_path: string;
@@ -133,4 +131,23 @@ export interface TaskStatus {
     status: 'pending' | 'processing' | 'completed' | 'failed';
     progress?: number;
   }[];
+}
+
+export interface PaperPalConfig {
+  researchInterestsPath: string;
+  orchestrationConfigPath: string;
+  nDays: number;
+  topN: number;
+  startDate: Date | null;
+  endDate: Date | null;
+  emails: string[];
+  visualizerConfig: VisualizerConfig;
+}
+
+export interface PaperPalStatus {
+  status: 'initializing' | 'running' | 'completed' | 'failed';
+  stage: string;
+  progress: number;
+  message: string;
+  error?: string;
 } 

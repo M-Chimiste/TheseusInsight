@@ -1,260 +1,179 @@
 # PaperPal
 
-PaperPal is a tool for sorting and analyzing research papers based on your personal research interests. It's designed to be accessible and customizable, allowing users to adapt it for their specific needs.
+PaperPal is a multi-purpose project that processes PDF research papers, ranks them against your research interests, generates personalized newsletters, and can also produce podcast episodes (including optional visualized audio). It uses a combination of FastAPI endpoints, language models (LLMs), text-to-speech engines, and various utility scripts.
 
-## Key Features
+## Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture and Modules](#architecture-and-modules)
+- [Installation](#installation)
+- [Environment Variables](#environment-variables)
+- [Running the API](#running-the-api)
+- [Key Endpoints](#key-endpoints)
+  - [PDF Uploads](#pdf-uploads)
+  - [Podcast Generation](#podcast-generation)
+  - [Script Management](#script-management)
+  - [Visualizer Generation](#visualizer-generation)
+  - [PaperPal Run Orchestration](#paperpal-run-orchestration)
+- [Using PaperPal as a Library](#using-paperpal-as-a-library)
+  - [Core Workflow](#core-workflow)
+  - [Example Usage](#example-usage)
+- [License](#license)
+- [Credits](#credits)
 
-- Integration with various language models (Llama 3.1, OpenAI, Anthropic, Gemini) for paper summarization and recommendation
-- Support for using different models for different tasks (judging, content extraction, newsletter generation) based on configuration
-- Automated paper downloads from Papers with Code
-- Saving outputs to a SQLite database
-- Automated email notifications with research digests in Markdown format
-- Customizable research interests
-- Embedding-based paper filtering with configurable similarity thresholds
-- Automated podcast generation with TTS support (Kokoro, Amazon Polly, or OpenAI)
-- Matrix-style audio visualizations for podcasts
-- Checkpoint system for resuming long-running processes
+---
 
-## Requirements
+## Overview
 
-- A machine with good computational resources if you are not using a LLM with an API. CPU and MPS are supported through Ollama. Check out the [Ollama](https://ollama.com/) website for more information.
-- PyTorch 2.4+
-- CUDA 11.7+ (for GPU support)
-- FFmpeg (for audio/video processing)
-- Pygame (for visualizations)
+PaperPal is designed to automate tasks around recent research papers. It:
+
+1. **Fetches & parses** papers from [paperswithcode.com](https://paperswithcode.com/) dumps within a date range.
+2. **Embeds** papers, checks their relevance to your research interests, and ranks them with large language models.
+3. **Generates** personalized newsletters describing those papers.
+4. **Produces** a TTS-based podcast from PDF or textual content, optionally with a dynamic visualizer video.
+5. **Sends** the newsletter via Gmail (if configured), and can optionally upload podcast videos to YouTube.
+
+It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) for summarization, ranking, or conversation tasks, and can use different TTS providers (Polly, OpenAI TTS, or [KokoroTTS](https://github.com/fakeyh/kokoro-tts)).
+
+---
+
+## Features
+
+- **FastAPI** server with endpoints to handle:
+  - Uploading PDFs
+  - Generating scripts & podcasts
+  - Managing TTS visualizer generation
+  - Checking generation status, downloading results
+  - Handling a “PaperPal run” that orchestrates the entire pipeline
+- **In-memory or SQLite** database for:
+  - Storing references to papers
+  - Saving newsletters
+  - Tracking podcasts & logs
+- **Flexible LLM usage**: can switch among Anthropic, OpenAI, Ollama, or Gemini for inference tasks.
+- **TTS**: Choose KokoroTTS, Amazon Polly, or OpenAI TTS. Generate final MP3 or WAV files.
+- **Podcast**: Compose multi-speaker dialogues automatically, then convert them to TTS, merge segments into a final audio file, and optionally create a matrix-based visualizer.
+- **Newsletter**: Summarizes new relevant papers, providing references and sending them via email.
+
+---
+
+## Architecture and Modules
+
+```
+api/
+  routers/
+    pdf.py          # Handles PDF upload
+    podcast.py      # Long-running tasks to generate podcasts
+    script.py       # Script management for saved dialogues
+    visualizer.py   # Endpoint to generate video visualizers from audio
+  main.py           # FastAPI entrypoint
+  paperpal_routes.py# Endpoint to orchestrate PaperPal runs
+
+communication/
+  __init__.py
+  communication.py  # Gmail email sending
+  youtube_integration.py # YouTube uploading
+
+data_model/
+  dialog.py         # Pydantic models for dialogues
+  __init__.py
+
+data_processing/
+  data_handling.py  # SQLite DB interactions (papers, newsletters, podcasts)
+  paperswithcode.py # Download JSON dump from paperswithcode.com
+  __init__.py
+
+inference/
+  llm.py            # LLM classes for Anthropic, OpenAI, Ollama, Gemini, etc.
+  pipeline.py       # TTS pipeline (Kokoro-based) logic
+  tts.py            # TTS classes for Kokoro, Polly, OpenAI TTS
+  __init__.py
+
+pdf/
+  parsers.py        # PDF -> Markdown parsers (using docling)
+  processing.py     # Table & figure extraction from PDFs
+  __init__.py
+
+podcast/
+  generator.py      # Higher-level logic to generate podcast from text
+  visualizer.py     # Visualizer logic (pygame + moviepy)
+  __init__.py
+
+prompt/
+  prompting.py      # Jinja2-based prompt decorator
+  data_models.py
+  newsletter_prompts.py
+  podcast_prompts.py
+  system_prompts.py
+  templates.py
+  __init__.py
+
+paperpal.py         # Main class orchestrating the entire pipeline
+utils.py            # Cosine similarity, date helpers, other utilities
+__init__.py         # Root init
+```
+
+**Key classes include:**
+- `PaperPal`: A higher-level orchestrator to download, embed, rank, generate newsletters, produce podcasts, and optionally email or upload final artifacts.
+- `GeneralPodcastGenerator` & `PaperPalPodcastGenerator`: Tools to assemble multi-speaker dialogues from PDF or text, convert them to TTS, and optionally produce a matrix-based visualizer.
+- Various FastAPI routers for structured endpoints.
+
+---
 
 ## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/M-Chimiste/PaperPal.git
-   cd PaperPal
-   ```
-
-2. Install the requirements:
+1. **Clone or download** this repository.
+2. **Install dependencies**. For example:
    ```bash
    pip install -r requirements.txt
    ```
+   (Make sure your environment has the relevant TTS/LLM dependencies.)
 
-3. Set up your environment variables:
-   - Create a `.env` file in the project root and add your API keys:
-     ```
-     ANTHROPIC_API_KEY=your_anthropic_key
-     OPENAI_API_KEY=your_openai_key
-     GOOGLE_API_KEY=your_google_api_key
-     GMAIL_SENDER_ADDRESS=your_gmail_address
-     GMAIL_APP_PASSWORD=your_gmail_app_password
-     OLLAMA_URL=http://localhost:11434
-     AWS_ACCESS_KEY_ID=your_aws_key           # For Amazon Polly TTS
-     AWS_SECRET_ACCESS_KEY=your_aws_secret    # For Amazon Polly TTS
-     REGION_NAME=your_aws_region              # For Amazon Polly TTS (default: us-east-1)
-     ```
+3. **(Optional) Configure LLM & TTS providers** as described in the Environment Variables section.
 
-4. Configure Gmail:
-   - To use Gmail for sending emails, you need to set up an application password. Follow [these instructions](https://support.google.com/mail/answer/185833?hl=en) to create an app password for Gmail.
-   - Add your Gmail address and app password to the `.env` file as shown above.
+---
 
-## Usage
+## Running the API
 
-The main script to run PaperPal is `run_paperpal.py`. You can run it with default settings or customize various parameters:
+Run the FastAPI app using uvicorn:
 
 ```bash
-# Run with default settings
-python run_paperpal.py
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Running with Custom Parameters
+View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-```bash
-python run_paperpal.py --n-days 14 --top-n 20 --model-name llama2
-```
+---
 
-### Available Arguments
+## Key Endpoints
 
-- `--research-interests-path`: Path to research interests file (default: "config/research_interests.txt")
-- `--n-days`: Number of days to look back for papers (default: 7)
-- `--top-n`: Number of top papers to return (default: 5)
-- `--use-different-models`: Use different models for different tasks (default: True)
-- `--model-type`: Type of model to use (default: "ollama")
-- `--model-name`: Name of the model to use (default: "hermes3")
-- `--orchestration-config`: Path to config for multiple models (default: "config/orchestration.json")
-- `--embedding-model-name`: Name of the embedding model (default: "Alibaba-NLP/gte-base-en-v1.5")
-- `--trust-remote-code`: Whether to trust remote code (default: True)
-- `--receiver-address`: Email address for notifications (default: None)
-- `--max-new-tokens`: Maximum number of new tokens to generate (default: 1024)
-- `--temperature`: Temperature for text generation (default: 0.1)
-- `--cosine-similarity-threshold`: Threshold for cosine similarity (default: 0.5)
-- `--db-saving`: Whether to save results to database (default: True)
-- `--data-path`: Path to the database file (default: "data/papers.db")
-- `--verbose`: Enable verbose output (default: True)
-- `--start-date`: Start date for paper retrieval (default: None)
-- `--end-date`: End date for paper retrieval (default: None)
+### PDF Uploads
+- **`POST /api/pdf/upload`**  Upload a single PDF file.
+- **`POST /api/pdf/batch-upload`**  Upload multiple PDFs.
 
-Additional podcast and visualization arguments:
-- `--generate-podcast`: Generate a podcast from the newsletter (default: True)
-- `--intro-music-path`: Path to intro music for podcast (default: None)
-- `--output-format`: Audio output format (default: "mp3")
-- `--output-dir`: Directory for audio output (default: "output_audio")
-- `--visualizer`: Generate matrix-style visualization (default: True)
-- `--resolution`: Video resolution (default: (1920, 1080))
-- `--fps`: Frames per second (default: 30)
-- `--matrix-count`: Number of matrix columns (default: 200)
-- `--font-path`: Custom font path for matrix text (default: system font)
+### Podcast Generation
+- **`POST /api/podcast/generate`**  Generate a podcast from PDFs or text.
+- **`GET /api/podcast/status/{task_id}`**  Check status of a podcast generation task.
+- **`GET /api/podcast/download/{filename}`**  Download the final podcast file.
 
-### Checkpoint System
+### Visualizer Generation
+- **`POST /api/visualizer/generate`**  Generate a visualizer video.
+- **`GET /api/visualizer/status/{task_id}`**  Check visualizer generation status.
 
-PaperPal includes a robust checkpoint system that allows you to resume from where you left off if the process is interrupted. The system automatically saves progress after completing each major stage:
-
-1. Paper Download
-2. Paper Embedding
-3. Paper Ranking
-4. Newsletter Section Generation
-5. Podcast Script Generation
-6. Podcast Audio Generation
-7. Podcast Visualization
-8. Podcast Description
-9. Newsletter Completion
-
-Checkpoints are automatically managed:
-- Saved in the `checkpoints` directory
-- Automatically loaded when restarting
-- Cleaned up after successful completion
-- Include timestamps for tracking
-
-## Podcast Generation
-
-PaperPal can generate audio podcasts from your research newsletters using various TTS providers:
-
-### TTS Providers
-- **Kokoro**: Local TTS engine with multiple voices
-- **Amazon Polly**: AWS-based TTS with natural voices
-- **OpenAI**: High-quality TTS from OpenAI
-
-### Visualization
-The podcast can be accompanied by a matrix-style visualization that includes:
-- Falling matrix characters synchronized with audio
-- Audio waveform overlay
-- Customizable colors and effects
-- Configurable resolution and FPS
-
-Configure podcast generation in `config/orchestration.json`:
-```json
-{
-    "podcast_model": {
-        "model_name": "your_model",
-        "model_type": "your_provider",
-        "max_new_tokens": 4096,
-        "temperature": 0.1
-    },
-    "tts_model": {
-        "tts_provider": "kokoro",
-        "speaker_1_voice": "af_bella",
-        "speaker_1_speed": 1.0,
-        "speaker_2_voice": "am_adam",
-        "speaker_2_speed": 1.0
-    }
-}
-```
-
-## Using Multiple Models
-
-PaperPal supports the use of multiple models for different tasks. This is configured via the `config/orchestration.json` file and leveraged by the `PaperPal` class.
-
-#### Configure `orchestration.json`
-
-Define different models for specific tasks in the `config/orchestration.json` file:
-
-```json
-{
-    "judge_model": {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 1024,
-        "temperature": 0.1,
-        "num_ctx": 4096
-    },
-    "newsletter_model": {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "content_extraction_model": {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_sections_model": {
-        "model_name": "qwen2.5:32b",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_intro_model": {
-        "model_name": "qwen2.5:32b",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-}
-```
-
-Each task can be configured with:
-- `model_name`: The specific model to use
-- `model_type`: The type of model ("ollama", "anthropic", "openai", or "gemini")
-- `max_new_tokens`: Maximum number of tokens to generate
-- `temperature`: Temperature for text generation
-- `num_ctx`: Context window size (optional, mainly for local models)
-
-### Task-Specific Models
-
-PaperPal now supports different models for various tasks:
-
-- **Judge Model**: Evaluates papers against research interests
-- **Newsletter Model**: Generates the overall newsletter structure
-- **Content Extraction Model**: Extracts and summarizes content from papers
-- **Newsletter Sections Model**: Generates individual paper sections
-- **Newsletter Intro Model**: Creates the newsletter introduction
-
-## Email Formatting
-
-PaperPal now supports Markdown formatting in email newsletters:
-- Headers and sections are properly formatted
-- Links are clickable
-- Text styling (bold, italic) is preserved
-
-## Configuration
-
-- **Model Selection**: Set the `MODEL_TYPE` environment variable to "ollama", "anthropic", "openai", or "gemini" to choose the default model type.
-- **Orchestration**: Configure different models for different tasks in `config/orchestration.json`.
-- **Email**: Configure Gmail API access or modify `communication.py` for other email providers.
-- **Research Interests**: Update `config/research_interests.txt` with your research interests.
-
-## Customization
-
-- **Prompts**: Modify prompts in `paperpal/prompts.py` to adjust the AI's behavior.
-- **Inference**: Add or modify inference methods in `paperpal/inference.py` for different models.
-- **Model Orchestration**: Configure different models for different tasks in `config/orchestration.json`.
-
-## Database
-
-PaperPal uses SQLite to store paper information and generated newsletters. The database schema can be found in `paperpal/data_handling.py`.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+---
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the LICENSE file for details.
+This project is licensed under the [Apache License 2.0](LICENSE) unless otherwise stated in specific files.
 
-## Acknowledgements
+---
 
-- [Papers with Code](https://paperswithcode.com/) for providing the research paper data
-- [Hugging Face](https://huggingface.co/) for transformer models and tokenizers
-- [Ollama](https://ollama.com/) for local model support
+## Credits
+
+- [paperswithcode.com](https://paperswithcode.com/) for research paper data.
+- [Docling](https://github.com/doclingjs/docling) for document parsing.
+- [pydub](https://github.com/jiaaro/pydub) for audio processing.
+- [KokoroTTS](https://github.com/fakeyh/kokoro-tts), [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
+- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [SQLite](https://www.sqlite.org/) for backend processing.
+
+PaperPal is maintained by [M. Chimiste](https://github.com/fakeyh) & contributors.
+

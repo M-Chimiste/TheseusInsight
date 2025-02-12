@@ -47,6 +47,7 @@ class PaperPalPodcastGenerator:
         speaker_2_speed: float = 1.15,
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
+        pause_duration: float = 0.5,
         verbose: bool = False
     ):
         """
@@ -62,6 +63,8 @@ class PaperPalPodcastGenerator:
             speaker_2_voice (str): Voice ID for speaker 2 (provider-specific)
             speaker_2_speed (float): Speed factor for speaker 2
             instructions_template (dict): Instructions template to use for prompting
+            intro_music_path (str): Path to intro music file
+            pause_duration (float): Duration of silence in seconds to add between major segments
             verbose (bool): Whether to print verbose output
         """
         self.verbose = verbose
@@ -69,6 +72,7 @@ class PaperPalPodcastGenerator:
         self.tts_provider = tts_provider.lower()
         self.instructions_template = instructions_template
         self.intro_music_path = intro_music_path
+        self.pause_duration = pause_duration
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
         
         # Validate TTS provider
@@ -498,7 +502,6 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         matrix_tail_color="0x00b000",  # hex for (0,176,0)
         matrix_char_size=24,
         head_step_time=0.25,
-        head_saw_period=1.5,
         random_x_jitter=2.0,
         fade_time=5.0,
         head_glow_passes=3,
@@ -708,14 +711,24 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             segments (List[str]): List of paths to audio segments
             output_path (str): Path to save the combined audio
             output_format (str): Audio format (mp3, wav, etc.)
+            intro_music_path (str): Optional path to intro music file
         """
         intro_music_path = intro_music_path or self.intro_music_path
         combined_audio = AudioSegment.empty()
+        
+        # Add intro music if provided
         if intro_music_path:
             combined_audio += AudioSegment.from_file(intro_music_path, format=output_format)
-        # Combine all segments
-        for seg_path in segments:
-            combined_audio += AudioSegment.from_file(seg_path, format=output_format)
+        
+        # Combine all segments with pauses between them
+        for i, seg_path in enumerate(segments):
+            segment = AudioSegment.from_file(seg_path, format=output_format)
+            combined_audio += segment
+            
+            # Add pause after each segment except the last one
+            if i < len(segments) - 1:
+                silence = AudioSegment.silent(duration=int(self.pause_duration * 1000))  # Convert seconds to milliseconds
+                combined_audio += silence
         
         # Export combined audio
         combined_audio.export(output_path, format=output_format)
@@ -742,6 +755,7 @@ class GeneralPodcastGenerator:
         speaker_2_speed: float = 1.15,
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
+        pause_duration: float = 0.5,
         verbose: bool = False
     ):
         """
@@ -757,6 +771,8 @@ class GeneralPodcastGenerator:
             speaker_2_voice (str): Voice ID for speaker 2 (provider-specific)
             speaker_2_speed (float): Speed factor for speaker 2
             instructions_template (dict): Instructions template to use for prompting
+            intro_music_path (str): Path to intro music file
+            pause_duration (float): Duration of silence in seconds to add between major segments
             verbose (bool): Whether to print verbose output
         """
         self.verbose = verbose
@@ -764,6 +780,7 @@ class GeneralPodcastGenerator:
         self.tts_provider = tts_provider.lower()
         self.instructions_template = instructions_template
         self.intro_music_path = intro_music_path
+        self.pause_duration = pause_duration
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
         
         # Validate TTS provider
@@ -1407,14 +1424,24 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             segments (List[str]): List of paths to audio segments
             output_path (str): Path to save the combined audio
             output_format (str): Audio format (mp3, wav, etc.)
+            intro_music_path (str): Optional path to intro music file
         """
         intro_music_path = intro_music_path or self.intro_music_path
         combined_audio = AudioSegment.empty()
+        
+        # Add intro music if provided
         if intro_music_path:
             combined_audio += AudioSegment.from_file(intro_music_path, format=output_format)
-        # Combine all segments
-        for seg_path in segments:
-            combined_audio += AudioSegment.from_file(seg_path, format=output_format)
+        
+        # Combine all segments with pauses between them
+        for i, seg_path in enumerate(segments):
+            segment = AudioSegment.from_file(seg_path, format=output_format)
+            combined_audio += segment
+            
+            # Add pause after each segment except the last one
+            if i < len(segments) - 1:
+                silence = AudioSegment.silent(duration=int(self.pause_duration * 1000))  # Convert seconds to milliseconds
+                combined_audio += silence
         
         # Export combined audio
         combined_audio.export(output_path, format=output_format)

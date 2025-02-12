@@ -14,6 +14,7 @@ import {
   AccordionDetails,
   Slider,
   Grid,
+  Button,
 } from '@mui/material';
 import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
 import { PodcastGenerationConfig, VisualizerConfig } from '../../types/api';
@@ -285,6 +286,39 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                 <MenuItem value="wav">WAV</MenuItem>
               </Select>
             </FormControl>
+
+            <Box>
+              <Typography variant="subtitle1" gutterBottom>
+                Intro Music
+              </Typography>
+              <input
+                accept="audio/*"
+                style={{ display: 'none' }}
+                id="intro-music-upload"
+                type="file"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleChange('intro_music_file', file);
+                  }
+                }}
+              />
+              <label htmlFor="intro-music-upload">
+                <Button variant="outlined" component="span" fullWidth>
+                  {config.intro_music_file ? config.intro_music_file.name : 'Upload Intro Music'}
+                </Button>
+              </label>
+              {config.intro_music_file && (
+                <Button 
+                  color="error" 
+                  onClick={() => handleChange('intro_music_file', null)}
+                  sx={{ mt: 1 }}
+                  fullWidth
+                >
+                  Remove Intro Music
+                </Button>
+              )}
+            </Box>
 
             <FormControlLabel
               control={

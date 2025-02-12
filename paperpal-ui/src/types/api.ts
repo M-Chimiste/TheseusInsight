@@ -58,13 +58,14 @@ export interface PodcastGenerationConfig {
     temperature: number;
     num_ctx: number;
   };
-  tts_provider: 'openai' | 'kokoro';
+  tts_provider: string;
   speaker_1_voice: string;
   speaker_1_speed: number;
   speaker_2_voice: string;
   speaker_2_speed: number;
   output_format: string;
   visualizer: boolean;
+  intro_music_file: File | null;
   visualizer_config: VisualizerConfig;
   fade_time: number;
   head_saw_period: number;

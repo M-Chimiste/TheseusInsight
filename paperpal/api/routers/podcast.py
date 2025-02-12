@@ -65,6 +65,9 @@ class PodcastGenerationConfig(BaseModel):
     fade_time: float = 3.0
     head_saw_period: float = 1.5
     font_path: str = ""
+    
+    # Insert a half-second pause at the end of each major podcast segment
+    pause_duration: float = 0.5
 
 class PodcastGenerationRequest(BaseModel):
     texts: List[str]
@@ -75,7 +78,8 @@ async def generate_podcast(
     background_tasks: BackgroundTasks,
     config: str = Form(...),
     urls: str = Form(default="[]"),
-    files: List[UploadFile] = File(default=[])
+    files: List[UploadFile] = File(default=[]),
+    intro_music_file: UploadFile = File(default=None)
 ):
     """
     Generate a podcast from the provided files, URLs and configuration.
@@ -89,6 +93,15 @@ async def generate_podcast(
         
         # Save uploaded files to temporary location
         temp_files = []
+        intro_music_path = None
+        
+        # Save intro music if provided
+        if intro_music_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_file:
+                content = await intro_music_file.read()
+                temp_file.write(content)
+                intro_music_path = temp_file.name
+        
         for file in files:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
                 content = await file.read()
@@ -121,7 +134,8 @@ async def generate_podcast(
             speaker_1_voice=config_obj.speaker_1_voice,
             speaker_1_speed=config_obj.speaker_1_speed,
             speaker_2_voice=config_obj.speaker_2_voice,
-            speaker_2_speed=config_obj.speaker_2_speed
+            speaker_2_speed=config_obj.speaker_2_speed,
+            pause_duration=config_obj.pause_duration
         )
         
         # Define background task with progress tracking
@@ -143,6 +157,7 @@ async def generate_podcast(
                     fade_time=config_obj.fade_time,
                     head_saw_period=config_obj.head_saw_period,
                     font_path=config_obj.font_path,
+                    intro_music_path=intro_music_path,
                     progress_callback=lambda step, prog: progress_callback(task_id, step, prog)
                 )
                 
@@ -204,13 +219,19 @@ async def generate_podcast(
                     "description": None
                 })
             finally:
-                # Only clean up the temporary PDF files, not the output files
+                # Clean up the temporary PDF files and intro music file
                 for temp_file in temp_files:
                     try:
                         if os.path.exists(temp_file):
                             os.unlink(temp_file)
                     except Exception as e:
                         print(f"Failed to clean up temp file {temp_file}: {str(e)}")
+                
+                if intro_music_path and os.path.exists(intro_music_path):
+                    try:
+                        os.unlink(intro_music_path)
+                    except Exception as e:
+                        print(f"Failed to clean up intro music file: {str(e)}")
         
         # Start the background task
         background_tasks.add_task(generate_with_progress)
@@ -244,7 +265,8 @@ async def regenerate_podcast(script: Script, config: PodcastGenerationConfig):
             speaker_1_voice=config.speaker_1_voice,
             speaker_1_speed=config.speaker_1_speed,
             speaker_2_voice=config.speaker_2_voice,
-            speaker_2_speed=config.speaker_2_speed
+            speaker_2_speed=config.speaker_2_speed,
+            pause_duration=config.pause_duration
         )
         
         timestamp = int(time.time())

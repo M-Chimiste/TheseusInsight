@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from paperpal.api.routers import pdf, script, podcast, visualizer
-from .paperpal_routes import router as paperpal_router
+from paperpal.api.paperpal_routes import router as paperpal_router
 
 
 app = FastAPI(

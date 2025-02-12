@@ -33,6 +33,7 @@ const defaultConfig: PodcastGenerationConfig = {
   speaker_2_speed: 1.0,
   output_format: "mp3",
   visualizer: false,
+  intro_music_file: null,
   visualizer_config: {
     resolution: [1920, 1080],
     fps: 30,
@@ -82,6 +83,11 @@ const PodcastGenerator: React.FC = () => {
       
       // Add URLs as a JSON string
       formData.append('urls', JSON.stringify(urls));
+      
+      // Add intro music file if exists
+      if (config.intro_music_file) {
+        formData.append('intro_music_file', config.intro_music_file);
+      }
       
       // Add config as JSON string
       formData.append('config', JSON.stringify(config));

@@ -1,6 +1,6 @@
-# PaperPal
+# TheseusInsight (Formerly PaperPal)
 
-PaperPal is a tool for sorting and analyzing research papers based on your personal research interests. It's designed to be accessible and customizable, allowing users to adapt it for their specific needs.
+TheseusInsight is a tool for sorting and analyzing research papers based on your personal research interests. It's designed to be accessible and customizable, allowing users to adapt it for their specific needs.
 
 ## Key Features
 
@@ -12,6 +12,9 @@ PaperPal is a tool for sorting and analyzing research papers based on your perso
 - Customizable research interests
 - Embedding-based paper filtering with configurable similarity thresholds
 
+## Note
+I'm in the process of renaming this repository and application. Readme will eventially change from PaperPal to TheseusInsight.
+
 ## Requirements
 
 - A machine with good computational resources if you are not using a LLM with an API. CPU and MPS are supported through Ollama. Check out the [Ollama](https://ollama.com/) website for more information.
@@ -22,8 +25,8 @@ PaperPal is a tool for sorting and analyzing research papers based on your perso
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/M-Chimiste/PaperPal.git
-   cd PaperPal
+   git clone https://github.com/M-Chimiste/TheseusInsight.git
+   cd TheseusInsight
    ```
 
 2. Install the requirements:

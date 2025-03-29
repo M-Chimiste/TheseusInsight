@@ -70,7 +70,7 @@ class PaperPal:
                  cosine_similarity_threshold=0.5,
                  db_saving=True,
                  data_path="data/papers.db",
-                 generate_podcast=True,
+                 generate_podcast=False,
                  intro_music_path=None,
                  output_format: str = "mp3",
                  output_dir: str = "output_audio",

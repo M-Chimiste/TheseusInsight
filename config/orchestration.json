@@ -1,27 +1,27 @@
 {
   "judge_model": {
-    "model_name": "llama3.2:3b-instruct-q8_0",
+    "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
     "max_new_tokens": 512,
     "temperature": 0.1,
     "num_ctx": 4096
   },
   "newsletter_model": {
-    "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q4_K_M",
+    "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072
   },
   "content_extraction_model": {
-    "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q4_K_M",
+    "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072
   },
   "newsletter_sections_model": {
-    "model_name": "hf.co/lmstudio-community/Qwen2.5-7B-Instruct-1M-GGUF:Q4_K_M",
+    "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
@@ -35,7 +35,7 @@
     "num_ctx": 131072
   },
   "embedding_model": {
-    "model_name": "nomic-ai/modernbert-embed-base",
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
     "model_type": "sentence-transformers",
     "trust_remote_code": true
   },

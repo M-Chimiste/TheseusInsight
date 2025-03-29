@@ -113,6 +113,8 @@ class GmailCommunication:
         message["From"] = sender_address
         message["To"] = sender_address  # Set To as the sender address
         # Remove the BCC header - it will be handled during sendmail
+        if "Bcc" in message:
+            del message["Bcc"]
         message['Subject'] = f"PaperPal Paper Newsletter for {date_range}"
         
         # Create both plain text and HTML versions

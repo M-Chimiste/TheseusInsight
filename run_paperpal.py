@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument("--top-n", type=int, default=5,
                        help="Number of top papers to return")
     
-    parser.add_argument("--use-different-models", action="store_true", default=True,
+    parser.add_argument("--use-different-models", type=bool, default=True,
                        help="Whether to use different models for different tasks")
     
     parser.add_argument("--model-type", type=str, default="ollama",
@@ -29,10 +29,10 @@ def parse_args():
                        help="Path to orchestration config file for multiple models")
     
     parser.add_argument("--embedding-model-name", type=str, 
-                       default="Alibaba-NLP/gte-base-en-v1.5",
+                       default="Alibaba-NLP/gte-modernbert-base",
                        help="Name of the embedding model")
     
-    parser.add_argument("--trust-remote-code", action="store_true", default=True,
+    parser.add_argument("--trust-remote-code", type=bool, default=True,
                        help="Whether to trust remote code")
     
     parser.add_argument("--receiver-address", type=str, default=None,
@@ -47,13 +47,13 @@ def parse_args():
     parser.add_argument("--cosine-similarity-threshold", type=float, default=0.5,
                        help="Threshold for cosine similarity")
     
-    parser.add_argument("--db-saving", action="store_true", default=True,
+    parser.add_argument("--db-saving", type=bool, default=True,
                        help="Whether to save results to database")
     
     parser.add_argument("--data-path", type=str, default="data/papers.db",
                        help="Path to the database file")
     
-    parser.add_argument("--verbose", action="store_true", default=True,
+    parser.add_argument("--verbose", type=bool, default=True,
                        help="Whether to print verbose output")
     
     parser.add_argument("--start-date", type=str, default=None,
@@ -62,14 +62,17 @@ def parse_args():
     parser.add_argument("--end-date", type=str, default=None,
                        help="End date for paper retrieval")
     
-    parser.add_argument("--generate-email", action="store_true", default=True,
+    parser.add_argument("--generate-email", type=bool, default=True,
                        help="Whether to generate an email")
     
-    parser.add_argument("--publish-podcast", action="store_true", default=False,
+    parser.add_argument("--publish-podcast", type=bool, default=False,
                        help="Whether to publish the podcast")
     
     parser.add_argument("--intro-music-path", type=str, default=None,
                        help="Path to the intro music file")
+    
+    parser.add_argument("--generate-podcast", type=bool, default=False,
+                       help="Whether to generate a podcast")
     
     return parser.parse_args()
 
@@ -97,7 +100,8 @@ if __name__ == "__main__":
         end_date=args.end_date,
         generate_email=args.generate_email,
         publish_podcast=args.publish_podcast,
-        intro_music_path=args.intro_music_path
+        intro_music_path=args.intro_music_path,
+        generate_podcast=args.generate_podcast
     )
     
     paperpal.run()

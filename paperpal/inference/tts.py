@@ -1,27 +1,39 @@
+# Standard library imports
 import io
-import numpy as np
 import os
 import re
-import torch
 import uuid
-import time
+import warnings
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+# Third-party imports
+import numpy as np
+import soundfile as sf
+import torch
+from dotenv import load_dotenv
+from pydub import AudioSegment
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from dotenv import load_dotenv
-from pathlib import Path
-from pydub import AudioSegment
-
+# Local imports
+from dia.model import Dia
 from .pipeline import KPipeline
+
 load_dotenv()
 
+_WHISPER_PIPE = None
 
-def chunk_text_by_sentences(text: str, max_len: int = 4096):
-    """
-    Splits a text into chunks by sentence, ensuring that
-    each chunk does not exceed max_len characters.
+def chunk_text_by_sentences(text: str, max_len: int = 4096) -> List[str]:
+    """Splits a text into chunks by sentence, ensuring each chunk does not exceed max_len characters.
     
-    If a single sentence is longer than max_len, it will
-    be forcibly split into sub-chunks of max_len.
+    If a single sentence is longer than max_len, it will be forcibly split into sub-chunks of max_len.
+    
+    Args:
+        text: The input text to be chunked.
+        max_len: Maximum length of each chunk in characters.
+        
+    Returns:
+        List of text chunks, each not exceeding max_len characters.
     """
     # Split text by sentence-ending punctuation. This is a simple approach,
     # you may want to refine with a better sentence tokenizer if needed.
@@ -76,8 +88,7 @@ def chunk_text_by_sentences(text: str, max_len: int = 4096):
 
 
 class KokoroTTSInference:
-    """
-    KokoroTTSInference uses the updated KPipeline to perform TTS synthesis.
+    """KokoroTTSInference uses the updated KPipeline to perform TTS synthesis.
     
     The new workflow no longer manually loads or builds the model.
     Instead, the model and voice data are managed internally by KPipeline.
@@ -86,8 +97,13 @@ class KokoroTTSInference:
     This class concatenates all the audio chunks into a single audio array and
     also concatenates the phoneme strings.
     
-    Example usage:
-    
+    Args:
+        voice_name: Name of the voice to use (default: 'af_heart').
+        lang_code: Language code to use (e.g., 'a' for American English).
+        speed: Speed factor for synthesis.
+        verbose: If True, prints debugging information.
+        
+    Example:
         pipeline = KPipeline(lang_code='a')  # make sure lang_code matches your voice!
         generator = pipeline(
             text,
@@ -115,37 +131,41 @@ class KokoroTTSInference:
         if self.verbose:
             print(f"[KokoroTTSInference] Initialized KPipeline with lang_code='{lang_code}'")
 
-    def invoke(self,
-               text: str,
-               voice_name: str = None,
-               speed: float = None,
-               save_file: bool = False,
-               file_path: str | None = None,
-               format: str = "mp3"):
-        """
-        Generates speech from input text using the updated pipeline.
+    def invoke(
+        self,
+        text: str,
+        voice_name: str = None,
+        speed: float = None,
+        save_file: bool = False,
+        file_path: str | None = None,
+        format: str = "mp3"
+    ) -> Tuple[np.ndarray, str]:
+        """Generates speech from input text using the updated pipeline.
         
         The pipeline handles:
-          - Sentence splitting,
-          - G2P conversion with language-specific logic,
-          - Tokenization and chunking (each chunk is capped at ~510 tokens),
-          - Inference for each chunk.
+          - Sentence splitting
+          - G2P conversion with language-specific logic
+          - Tokenization and chunking (each chunk is capped at ~510 tokens)
+          - Inference for each chunk
         
         All audio chunks are concatenated into a single audio array.
         
         Args:
-            text (str): The text to be synthesized.
-            voice (str): The voice name to use (e.g., 'af_heart'). Must be in KOKORO_VOICE_NAME.
-            speed (float): Speed multiplier for synthesis.
-            split_pattern (str): Regular expression used to split the text into chunks.
-            save_file (bool): If True, saves the concatenated audio to disk.
-            file_path (str | None): Destination file path (required if save_file=True).
-            format (str): Audio file format for export (e.g., "wav", "mp3").
+            text: The text to be synthesized.
+            voice_name: The voice name to use (e.g., 'af_heart'). Must be in KOKORO_VOICE_NAME.
+            speed: Speed multiplier for synthesis.
+            save_file: If True, saves the concatenated audio to disk.
+            file_path: Destination file path (required if save_file=True).
+            format: Audio file format for export (e.g., "wav", "mp3").
         
         Returns:
-            tuple: (final_audio, final_phoneme_output)
-                   final_audio is a float32 numpy array (range [-1, 1]),
-                   final_phoneme_output is a concatenated phoneme string.
+            A tuple containing:
+                - final_audio: float32 numpy array (range [-1, 1])
+                - final_phoneme_output: concatenated phoneme string
+                
+        Raises:
+            RuntimeError: If no audio was generated by the pipeline.
+            ValueError: If file_path is not provided when save_file is True.
         """
         # Lists to collect audio chunks and phoneme strings.
         audio_chunks = []
@@ -196,30 +216,31 @@ class KokoroTTSInference:
     
 
 class PollyTTSInference:
-    """
-    PollyTTSInference is a class that facilitates Text-to-Speech inference using
-    Amazon Polly, automatically chunking long text and concatenating the results.
-
-    Environment Variables (via dotenv):
-        AWS_ACCESS_KEY_ID
-        AWS_SECRET_ACCESS_KEY
-        AWS_SESSION_TOKEN (optional)
-        REGION_NAME (default: 'us-east-1')
-
+    """PollyTTSInference facilitates Text-to-Speech inference using Amazon Polly.
+    
+    Automatically chunks long text and concatenates the results.
+    
     Args:
-        voice_id (str): Name of the Amazon Polly voice (default: "Joanna").
-        speaker_speed (float): Speed factor (via SSML <prosody> tag).
-        engine (str): Polly engine ("standard" or "neural").
-        verbose (bool): Print debug logs if True.
-        max_chars (int): Max chunk size in characters. For SSML, 1500 is typical.
-
+        voice_name: Name of the Amazon Polly voice (default: "Joanna").
+        speaker_speed: Speed factor (via SSML <prosody> tag).
+        engine: Polly engine ("standard" or "neural").
+        verbose: Print debug logs if True.
+        max_chars: Max chunk size in characters. For SSML, 1500 is typical.
+        
     Attributes:
-        region (str): AWS region.
-        voice_id (str): Polly voice name.
-        speaker_speed (float): Speed factor for speech.
-        polly_client (boto3.client): Boto3 Polly client.
-        engine (str): "standard" or "neural" engine.
-        max_chars (int): Maximum number of characters per chunk.
+        region: AWS region.
+        voice_name: Polly voice name.
+        speaker_speed: Speed factor for speech.
+        polly_client: Boto3 Polly client.
+        engine: "standard" or "neural" engine.
+        max_chars: Maximum number of characters per chunk.
+        
+    Note:
+        Requires environment variables (via dotenv):
+            AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY
+            AWS_SESSION_TOKEN (optional)
+            REGION_NAME (default: 'us-east-1')
     """
 
     def __init__(
@@ -351,27 +372,24 @@ class PollyTTSInference:
 
 
 class OpenAITTSInference:
-    """
-    OpenAITTSInference is a class that facilitates Text-to-Speech inference
-    using OpenAI's TTS API, with text longer than 4096 chars automatically
-    split into sentence-based chunks.
-
-    The class implements exponential backoff retry logic for API rate limits,
-    with a maximum of 3 retries and waits up to 60 seconds between attempts.
-
+    """OpenAITTSInference facilitates Text-to-Speech inference using OpenAI's TTS API.
+    
+    Handles text longer than 4096 chars by automatically splitting into sentence-based chunks.
+    Implements exponential backoff retry logic for API rate limits.
+    
     Args:
-        model_name (str): The TTS model to use from OpenAI (e.g., "tts-1").
-        voice_name (str): The voice name to use (e.g., "alloy").
-        speaker_speed (float): Speed factor for speech (currently no effect in OpenAI TTS).
-        verbose (bool): If True, prints debug statements.
-
+        model_name: The TTS model to use from OpenAI (e.g., "tts-1").
+        voice_name: The voice name to use (e.g., "alloy").
+        speaker_speed: Speed factor for speech (currently no effect in OpenAI TTS).
+        verbose: If True, prints debug statements.
+        
     Attributes:
-        model_name (str): Model used for TTS (e.g., "tts-1").
-        voice_name (str): Voice name (e.g., "alloy").
-        speaker_speed (float): Speed factor (not yet supported in OpenAI TTS).
-        verbose (bool): Controls debug logging.
-        client (OpenAI): The OpenAI client instance.
-        max_chars (int): Maximum text length allowed per TTS API call (4096).
+        model_name: Model used for TTS (e.g., "tts-1").
+        voice_name: Voice name (e.g., "alloy").
+        speaker_speed: Speed factor (not yet supported in OpenAI TTS).
+        verbose: Controls debug logging.
+        client: The OpenAI client instance.
+        max_chars: Maximum text length allowed per TTS API call (4096).
     """
 
     def __init__(
@@ -517,3 +535,277 @@ class OpenAITTSInference:
         # 5. Return the final audio data and empty phoneme data
         out_ps = {}
         return audio_data, out_ps
+
+
+def _lazy_whisper(lang_hint: Optional[str] = None):
+    """Returns a cached Hugging Face Whisper pipeline.
+    
+    Loads large-v3-turbo model on first call; subsequent calls reuse the same weights.
+    
+    Args:
+        lang_hint: Optional language hint for the model.
+        
+    Returns:
+        A Hugging Face pipeline instance for speech recognition.
+    """
+    global _WHISPER_PIPE
+    if _WHISPER_PIPE is None:
+        from transformers import (  # heavy import – keep local
+            AutoModelForSpeechSeq2Seq,
+            AutoProcessor,
+            pipeline,
+        )
+
+        model_id = "openai/whisper-large-v3-turbo"
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+        if torch.cuda.is_available():
+            print(f"[DiaTTS] Loading Whisper ({model_id}) on CUDA …")
+        else:
+            print(f"[DiaTTS] Loading Whisper ({model_id}) on CPU … "
+                  "(may be slow)")
+
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+        ).to(device)
+
+        processor = AutoProcessor.from_pretrained(model_id)
+
+        _WHISPER_PIPE = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+
+    return _WHISPER_PIPE
+
+
+def _transcribe_with_whisper(audio_path: str, language: Optional[str] = None) -> str:
+    """Returns Whisper transcription for the given audio file.
+    
+    Args:
+        audio_path: Path to the audio file (mono or stereo).
+        language: Optional language hint for transcription.
+        
+    Returns:
+        Transcribed text as a string.
+    """
+    pipe = _lazy_whisper(language)
+    result = pipe(
+        audio_path,
+        generate_kwargs={"language": language} if language else None,
+    )
+    return result["text"].strip()
+
+
+class DiaTTSInference:
+    """Dia TTS wrapper with optional two-speaker voice cloning.
+    
+    Args:
+        model_name: Name of the Dia model to use.
+        speaker_samples: Mapping for "S1"/"S2":
+            - "alice.wav" → transcript auto-generated by Whisper
+            - ("Hi, I'm Alice.", "alice.wav") → transcript supplied
+            - None → no cloning (random Dia voice)
+        device: Device to run inference on (e.g., "cuda:0", "cpu").
+        verbose: If True, prints debug information.
+        max_chars: Maximum characters per chunk.
+        whisper_lang_hint: Optional language hint for Whisper transcription.
+        
+    Example:
+        ```python
+        tts = DiaTTSInference(
+            speaker_samples={"S1": "alice.wav", "S2": ("Hello!", "bob.mp3")},
+            verbose=True
+        )
+        audio_np, _ = tts.invoke(my_script, save_file=True, file_path="out.wav")
+        ```
+    """
+
+    _TAG_RE = re.compile(r"\[(S[12])\]")
+
+    def __init__(
+        self,
+        model_name: str = "nari-labs/Dia-1.6B",
+        *,
+        speaker_samples: Optional[Dict[str, str | Tuple[str, str]]] = None,
+        device: Optional[torch.device | str] = None,
+        verbose: bool = False,
+        max_chars: Optional[int] = None,
+        whisper_lang_hint: Optional[str] = None,
+    ):
+        """Initialize the Dia TTS wrapper.
+        
+        Args:
+            model_name: Name of the Dia model to use.
+            speaker_samples: Mapping for speaker voice cloning.
+            device: Device to run inference on.
+            verbose: If True, prints debug information.
+            max_chars: Maximum characters per chunk.
+            whisper_lang_hint: Optional language hint for Whisper.
+        """
+        self.verbose = verbose
+        self.whisper_lang_hint = whisper_lang_hint
+        self.model = Dia.from_pretrained(model_name, device=device)
+        self.device = self.model.device
+        self.max_chars = max_chars or self.model.config.data.text_length
+
+        # normalise + (if needed) auto‑transcribe cloning samples  -------------
+        self.speaker_samples: Dict[str, Optional[Tuple[str, str]]] = {"S1": None, "S2": None}
+        if speaker_samples:
+            for tag, val in speaker_samples.items():
+                if tag not in ("S1", "S2"):
+                    warnings.warn(f"[DiaTTS] unknown speaker tag '{tag}' – skipped")
+                    continue
+                if val is None:
+                    self.speaker_samples[tag] = None
+                elif isinstance(val, tuple):
+                    self.speaker_samples[tag] = val
+                else:
+                    # val is an audio path → make Whisper transcript
+                    trans = _transcribe_with_whisper(val, whisper_lang_hint)
+                    if self.verbose:
+                        print(f"[DiaTTS] Whisper transcript for {tag}: {trans}")
+                    self.speaker_samples[tag] = (trans, val)
+
+        if self.verbose:
+            msg = ", ".join(
+                f"{k}:{'clone' if v else 'random'}" for k, v in self.speaker_samples.items()
+            )
+            print(f"[DiaTTS] ready on {self.device} (max_chars={self.max_chars}) – {msg}")
+
+    @staticmethod
+    def _split_by_speaker(txt: str) -> List[Tuple[str, str]]:
+        """Split text into speaker-tagged segments.
+        
+        Args:
+            txt: Input text with speaker tags [S1] and [S2].
+            
+        Returns:
+            List of tuples (speaker_tag, utterance_text).
+        """
+        parts = DiaTTSInference._TAG_RE.split(txt)
+        seq, cur, buf = [], None, []
+        for tok in parts:
+            if tok in ("S1", "S2"):
+                if cur and buf:
+                    seq.append((cur, "".join(buf).strip()))
+                    buf = []
+                cur = tok
+            else:
+                buf.append(tok)
+        if cur and buf:
+            seq.append((cur, "".join(buf).strip()))
+        return seq
+
+    @staticmethod
+    def _concat_audio(arr: List[np.ndarray]) -> np.ndarray:
+        """Concatenate audio arrays.
+        
+        Args:
+            arr: List of numpy arrays containing audio samples.
+            
+        Returns:
+            Single concatenated numpy array.
+        """
+        return arr[0] if len(arr) == 1 else np.concatenate(arr, 0)
+
+    def invoke(
+        self,
+        text: str,
+        *,
+        temperature: float = 1.3,
+        top_p: float = 0.95,
+        cfg_scale: float = 3.0,
+        save_file: bool = False,
+        file_path: Optional[str] = None,
+        format: str = "wav",
+        speaker_samples_override: Optional[Dict[str, str | Tuple[str, str]]] = None
+    ) -> Tuple[np.ndarray, Dict]:
+        """Generates speech from input text with optional voice cloning.
+        
+        Args:
+            text: The text to synthesize.
+            temperature: Sampling temperature (higher = more random).
+            top_p: Nucleus sampling probability threshold.
+            cfg_scale: Classifier-free guidance scale.
+            save_file: If True, saves the audio to disk.
+            file_path: Output file path (required if save_file=True).
+            format: Audio format ("wav", "mp3", etc.).
+            speaker_samples_override: Optional one-shot override of speaker samples.
+            
+        Returns:
+            A tuple containing:
+                - final_audio: float32 numpy array of audio samples
+                - empty_dict: Currently returns empty dict for compatibility
+                
+        Raises:
+            ValueError: If file_path is not provided when save_file is True.
+        """
+        # choose which samples set to use
+        if speaker_samples_override is None:
+            speaker_samples = self.speaker_samples
+        else:
+            # light merge – override whatever keys provided
+            speaker_samples = {**self.speaker_samples, **speaker_samples_override}
+
+       
+        segments: List[np.ndarray] = []
+        chunks = (
+            chunk_text_by_sentences(text, self.max_chars)
+            if len(text) > self.max_chars
+            else [text]
+        )
+
+        for chunk in chunks:
+            blocks = self._split_by_speaker(chunk)
+            if not blocks:
+                segments.append(
+                    self.model.generate(chunk, temperature=temperature, top_p=top_p, cfg_scale=cfg_scale)
+                )
+                continue
+
+            for spk, utter in blocks:
+                sample = speaker_samples.get(spk)
+                if sample:
+                    trans, wav = sample
+                    prompt = f"[{spk}] {trans} {utter}"
+                    audio_np = self.model.generate(
+                        prompt,
+                        temperature=temperature,
+                        top_p=top_p,
+                        cfg_scale=cfg_scale,
+                        audio_prompt_path=wav
+                    )
+                else:
+                    audio_np = self.model.generate(
+                        f"[{spk}] {utter}",
+                        temperature=temperature,
+                        top_p=top_p,
+                        cfg_scale=cfg_scale
+                    )
+                segments.append(audio_np)
+
+        final_audio = self._concat_audio(segments).astype(np.float32)
+
+        if save_file:
+            if not file_path:
+                raise ValueError("file_path required when save_file=True")
+            if format.lower() == "wav":
+                sf.write(file_path, final_audio, 44100)
+            else:
+                int16 = (final_audio * 32767).astype(np.int16)
+                AudioSegment(int16.tobytes(), frame_rate=44100, sample_width=2, channels=1).export(
+                    file_path, format=format
+                )
+            if self.verbose:
+                print(f"[DiaTTS] saved → {file_path}")
+
+        return final_audio, {}

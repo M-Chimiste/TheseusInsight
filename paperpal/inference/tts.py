@@ -24,10 +24,6 @@ load_dotenv()
 
 #: Tuple of audio formats accepted by all engines.
 SUPPORTED_AUDIO_FORMATS: Tuple[str, ...] = ("wav", "mp3", "ogg", "flac")
-
-# ────────────────────────────────────────────────────────────────────────────
-# Factory registry and abstract base class
-# ────────────────────────────────────────────────────────────────────────────
 _TTS_REGISTRY: Dict[str, Type["TTSInference"]] = {}
 _WHISPER_PIPE = None
 
@@ -46,6 +42,133 @@ def register_tts(name: str):
         return cls
     return _wrapper
 
+
+def _lazy_whisper(lang_hint: Optional[str] = None):
+    """Returns a cached Hugging Face Whisper pipeline.
+    
+    Loads large-v3-turbo model on first call; subsequent calls reuse the same weights.
+    
+    Args:
+        lang_hint: Optional language hint for the model.
+        
+    Returns:
+        A Hugging Face pipeline instance for speech recognition.
+    """
+    global _WHISPER_PIPE
+    if _WHISPER_PIPE is None:
+        from transformers import (  # heavy import – keep local
+            AutoModelForSpeechSeq2Seq,
+            AutoProcessor,
+            pipeline,
+        )
+
+        model_id = "openai/whisper-large-v3-turbo"
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+        if torch.cuda.is_available():
+            print(f"[DiaTTS] Loading Whisper ({model_id}) on CUDA …")
+        else:
+            print(f"[DiaTTS] Loading Whisper ({model_id}) on CPU … "
+                  "(may be slow)")
+
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+        ).to(device)
+
+        processor = AutoProcessor.from_pretrained(model_id)
+
+        _WHISPER_PIPE = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+
+    return _WHISPER_PIPE
+
+
+def _transcribe_with_whisper(audio_path: str, language: Optional[str] = None) -> str:
+    """Returns Whisper transcription for the given audio file.
+    
+    Args:
+        audio_path: Path to the audio file (mono or stereo).
+        language: Optional language hint for transcription.
+        
+    Returns:
+        Transcribed text as a string.
+    """
+    pipe = _lazy_whisper(language)
+    result = pipe(
+        audio_path,
+        generate_kwargs={"language": language} if language else None,
+    )
+    return result["text"].strip()
+
+
+
+def chunk_text_by_sentences(text: str, max_len: int = 4096) -> List[str]:
+    """Splits a text into chunks by sentence, ensuring each chunk does not exceed max_len characters.
+    
+    If a single sentence is longer than max_len, it will be forcibly split into sub-chunks of max_len.
+    
+    Args:
+        text: The input text to be chunked.
+        max_len: Maximum length of each chunk in characters.
+        
+    Returns:
+        List of text chunks, each not exceeding max_len characters.
+    """
+    sentences = re.split(r'([.?!])', text)
+
+    chunks = []
+    current_chunk = []
+
+    def flush_current_chunk():
+        """Helper to push the current_chunk into chunks list."""
+        if current_chunk:
+            chunk_text = "".join(current_chunk).strip()
+            if chunk_text:
+                chunks.append(chunk_text)
+    
+    for i in range(0, len(sentences), 2):
+        s = sentences[i].strip()
+        punct = sentences[i+1] if (i+1 < len(sentences)) else ""
+
+        # Rebuild the sentence
+        sentence_with_punct = (s + punct).strip()
+        if not sentence_with_punct:
+            continue
+
+        # Check if adding this sentence to current_chunk will exceed max_len
+        prospective_size = len("".join(current_chunk)) + len(sentence_with_punct)
+        if prospective_size <= max_len:
+            current_chunk.append(sentence_with_punct)
+        else:
+            # If current_chunk is not empty, flush it
+            flush_current_chunk()
+            current_chunk = []
+
+            # If the single sentence itself is longer than max_len, forcibly split
+            if len(sentence_with_punct) > max_len:
+                # We'll do naive sub-chunking of that single sentence
+                start_idx = 0
+                while start_idx < len(sentence_with_punct):
+                    end_idx = min(start_idx + max_len, len(sentence_with_punct))
+                    sub_chunk = sentence_with_punct[start_idx:end_idx]
+                    chunks.append(sub_chunk.strip())
+                    start_idx = end_idx
+            else:
+                current_chunk.append(sentence_with_punct)
+
+    # Flush any remaining text
+    flush_current_chunk()
+    return chunks
 
 class TTSInference(ABC):
     """Abstract base class for all PaperPal TTS engines."""
@@ -86,70 +209,6 @@ def create_tts(engine: str, **kwargs) -> "TTSInference":
             f"Available: {list(_TTS_REGISTRY)}"
         ) from exc
     return cls(**kwargs)
-
-
-def chunk_text_by_sentences(text: str, max_len: int = 4096) -> List[str]:
-    """Splits a text into chunks by sentence, ensuring each chunk does not exceed max_len characters.
-    
-    If a single sentence is longer than max_len, it will be forcibly split into sub-chunks of max_len.
-    
-    Args:
-        text: The input text to be chunked.
-        max_len: Maximum length of each chunk in characters.
-        
-    Returns:
-        List of text chunks, each not exceeding max_len characters.
-    """
-    # Split text by sentence-ending punctuation. This is a simple approach,
-    # you may want to refine with a better sentence tokenizer if needed.
-    # We'll keep the delimiters so we don't lose them (e.g., '.', '?', '!')
-    sentences = re.split(r'([.?!])', text)
-
-    chunks = []
-    current_chunk = []
-
-    def flush_current_chunk():
-        """Helper to push the current_chunk into chunks list."""
-        if current_chunk:
-            chunk_text = "".join(current_chunk).strip()
-            if chunk_text:
-                chunks.append(chunk_text)
-    
-    for i in range(0, len(sentences), 2):
-        # sentence[i] is the text up to the punctuation
-        # sentence[i+1] (if exists) is the punctuation
-        s = sentences[i].strip()
-        punct = sentences[i+1] if (i+1 < len(sentences)) else ""
-
-        # Rebuild the sentence
-        sentence_with_punct = (s + punct).strip()
-        if not sentence_with_punct:
-            continue
-
-        # Check if adding this sentence to current_chunk will exceed max_len
-        prospective_size = len("".join(current_chunk)) + len(sentence_with_punct)
-        if prospective_size <= max_len:
-            current_chunk.append(sentence_with_punct)
-        else:
-            # If current_chunk is not empty, flush it
-            flush_current_chunk()
-            current_chunk = []
-
-            # If the single sentence itself is longer than max_len, forcibly split
-            if len(sentence_with_punct) > max_len:
-                # We'll do naive sub-chunking of that single sentence
-                start_idx = 0
-                while start_idx < len(sentence_with_punct):
-                    end_idx = min(start_idx + max_len, len(sentence_with_punct))
-                    sub_chunk = sentence_with_punct[start_idx:end_idx]
-                    chunks.append(sub_chunk.strip())
-                    start_idx = end_idx
-            else:
-                current_chunk.append(sentence_with_punct)
-
-    # Flush any remaining text
-    flush_current_chunk()
-    return chunks
 
 
 @register_tts("kokoro")
@@ -432,7 +491,6 @@ class PollyTTSInference(TTSInference):
         samples = np.array(final_audio_segment.get_array_of_samples())
         audio_data = samples.astype(np.float32) / 32767.0
 
-        # Optional: Save the final audio
         if save_file:
             if not file_path:
                 raise ValueError("Must provide file_path if save_file=True.")
@@ -440,10 +498,8 @@ class PollyTTSInference(TTSInference):
             if self.verbose:
                 print(f"[PollyTTS] Combined audio saved to {file_path}")
 
-        # Polly does not provide phoneme data in standard calls
-        out_ps = {}
 
-        return audio_data, out_ps
+        return audio_data, {}
 
 
 @register_tts("openai")
@@ -611,77 +667,7 @@ class OpenAITTSInference(TTSInference):
             if self.verbose:
                 print(f"[OpenAI TTS] Audio saved to {file_path}")
 
-        # 5. Return the final audio data and empty phoneme data
-        out_ps = {}
-        return audio_data, out_ps
-
-
-def _lazy_whisper(lang_hint: Optional[str] = None):
-    """Returns a cached Hugging Face Whisper pipeline.
-    
-    Loads large-v3-turbo model on first call; subsequent calls reuse the same weights.
-    
-    Args:
-        lang_hint: Optional language hint for the model.
-        
-    Returns:
-        A Hugging Face pipeline instance for speech recognition.
-    """
-    global _WHISPER_PIPE
-    if _WHISPER_PIPE is None:
-        from transformers import (  # heavy import – keep local
-            AutoModelForSpeechSeq2Seq,
-            AutoProcessor,
-            pipeline,
-        )
-
-        model_id = "openai/whisper-large-v3-turbo"
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-        if torch.cuda.is_available():
-            print(f"[DiaTTS] Loading Whisper ({model_id}) on CUDA …")
-        else:
-            print(f"[DiaTTS] Loading Whisper ({model_id}) on CPU … "
-                  "(may be slow)")
-
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-        ).to(device)
-
-        processor = AutoProcessor.from_pretrained(model_id)
-
-        _WHISPER_PIPE = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            torch_dtype=torch_dtype,
-            device=device,
-        )
-
-    return _WHISPER_PIPE
-
-
-def _transcribe_with_whisper(audio_path: str, language: Optional[str] = None) -> str:
-    """Returns Whisper transcription for the given audio file.
-    
-    Args:
-        audio_path: Path to the audio file (mono or stereo).
-        language: Optional language hint for transcription.
-        
-    Returns:
-        Transcribed text as a string.
-    """
-    pipe = _lazy_whisper(language)
-    result = pipe(
-        audio_path,
-        generate_kwargs={"language": language} if language else None,
-    )
-    return result["text"].strip()
+        return audio_data, {}
 
 
 @register_tts("dia")

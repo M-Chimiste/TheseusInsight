@@ -7,28 +7,28 @@
     "num_ctx": 4096
   },
   "newsletter_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_name": "gemma3:27b-it-qat",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072
   },
   "content_extraction_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_name": "gemma3:27b-it-qat",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072
   },
   "newsletter_sections_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_name": "gemma3:27b-it-qat",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072
   },
   "newsletter_intro_model": {
-    "model_name": "gemini-2.0-flash",
+    "model_name": "gemini-2.5-pro-preview-03-25",
     "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.1,

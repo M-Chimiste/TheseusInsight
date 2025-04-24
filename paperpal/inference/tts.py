@@ -1,7 +1,6 @@
 # Standard library imports
 import io
 import os
-import random
 import re
 import uuid
 import warnings
@@ -17,9 +16,6 @@ from dotenv import load_dotenv
 from pydub import AudioSegment
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Local imports
-from dia.model import Dia
-from .pipeline import KPipeline
 
 load_dotenv()
 
@@ -28,22 +24,6 @@ SUPPORTED_AUDIO_FORMATS: Tuple[str, ...] = ("wav", "mp3", "ogg", "flac")
 _TTS_REGISTRY: Dict[str, Type["TTSInference"]] = {}
 _WHISPER_PIPE = None
 
-
-def _set_global_seed(seed: int) -> None:
-    """
-    Set Python, NumPy and PyTorch RNGs so that subsequent sampling
-    inside Dia / other engines becomes reproducible.
-
-    Args
-    ----
-    seed : int
-        Any deterministic seed value.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
 
 def register_tts(name: str):
@@ -63,15 +43,21 @@ def register_tts(name: str):
 
 
 def _lazy_whisper(lang_hint: Optional[str] = None):
-    """Returns a cached Hugging Face Whisper pipeline.
-    
-    Loads large-v3-turbo model on first call; subsequent calls reuse the same weights.
-    
+    """Return a cached Whisper automatic‑speech‑recognition pipeline.
+
+    The first call downloads and initialises the
+    ``openai/whisper-large-v3-turbo`` checkpoint (preferring CUDA, then
+    Metal, then CPU).  The resulting Hugging Face pipeline object is stored
+    globally, so subsequent calls are essentially free.
+
     Args:
-        lang_hint: Optional language hint for the model.
-        
+        lang_hint (str | None): Optional BCP‑47 language tag that tells
+            Whisper which language to expect in the input audio.  If
+            ``None``, Whisper will perform language detection.
+
     Returns:
-        A Hugging Face pipeline instance for speech recognition.
+        transformers.pipelines.audio_utils.AudioPipeline: Ready‑to‑use
+        Whisper pipeline for speech‑to‑text inference.
     """
     global _WHISPER_PIPE
     if _WHISPER_PIPE is None:
@@ -82,21 +68,32 @@ def _lazy_whisper(lang_hint: Optional[str] = None):
         )
 
         model_id = "openai/whisper-large-v3-turbo"
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
+        # Prefer CUDA → MPS → CPU
         if torch.cuda.is_available():
-            print(f"[DiaTTS] Loading Whisper ({model_id}) on CUDA …")
+            device_for_model = torch.device("cuda")
+            device_for_pipeline = 0               # HF pipeline convention
+            torch_dtype = torch.float16
+            backend = "CUDA"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device_for_model = torch.device("mps")
+            device_for_pipeline = torch.device("mps")
+            torch_dtype = torch.float16
+            backend = "MPS"
         else:
-            print(f"[DiaTTS] Loading Whisper ({model_id}) on CPU … "
-                  "(may be slow)")
+            device_for_model = torch.device("cpu")
+            device_for_pipeline = -1              # CPU
+            torch_dtype = torch.float32
+            backend = "CPU"
+
+        print(f"[DiaTTS] Loading Whisper ({model_id}) on {backend} …"
+              + (" (may be slow)" if backend == "CPU" else ""))
 
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id,
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=True,
             use_safetensors=True,
-        ).to(device)
+        ).to(device_for_model)
 
         processor = AutoProcessor.from_pretrained(model_id)
 
@@ -106,21 +103,23 @@ def _lazy_whisper(lang_hint: Optional[str] = None):
             tokenizer=processor.tokenizer,
             feature_extractor=processor.feature_extractor,
             torch_dtype=torch_dtype,
-            device=device,
+            device=device_for_pipeline,
         )
 
     return _WHISPER_PIPE
 
 
 def _transcribe_with_whisper(audio_path: str, language: Optional[str] = None) -> str:
-    """Returns Whisper transcription for the given audio file.
-    
+    """Transcribe an audio file with Whisper.
+
     Args:
-        audio_path: Path to the audio file (mono or stereo).
-        language: Optional language hint for transcription.
-        
+        audio_path (str): Path to a mono or stereo audio file.  Any format
+            supported by ffmpeg/torchaudio is accepted.
+        language (str | None): Optional BCP‑47 language hint.  Passed through
+            to :func:`_lazy_whisper`.
+
     Returns:
-        Transcribed text as a string.
+        str: The transcription text with leading/trailing whitespace removed.
     """
     pipe = _lazy_whisper(language)
     result = pipe(
@@ -131,16 +130,20 @@ def _transcribe_with_whisper(audio_path: str, language: Optional[str] = None) ->
 
 
 def chunk_text_by_sentences(text: str, max_len: int = 4096) -> List[str]:
-    """Splits a text into chunks by sentence, ensuring each chunk does not exceed max_len characters.
-    
-    If a single sentence is longer than max_len, it will be forcibly split into sub-chunks of max_len.
-    
+    """Split *text* into chunks no longer than *max_len* characters.
+
+    The algorithm tokenises by sentence terminators (``. ? !``).  If a single
+    sentence still exceeds *max_len*, the sentence itself is broken into
+    contiguous sub‑strings.
+
     Args:
-        text: The input text to be chunked.
-        max_len: Maximum length of each chunk in characters.
-        
+        text (str): Input text.
+        max_len (int, optional): Maximum chunk length in characters.
+            Defaults to ``4096``.
+
     Returns:
-        List of text chunks, each not exceeding max_len characters.
+        list[str]: List of sentence‑level chunks, each stripped of leading
+        and trailing whitespace.
     """
     sentences = re.split(r'([.?!])', text)
 
@@ -267,6 +270,7 @@ class KokoroTTSInference(TTSInference):
             lang_code (str): Language code to use (e.g., 'a' for American English).
             verbose (bool): If True, prints debugging information.
         """
+        from .pipeline import KPipeline
         self.verbose = verbose
         self.voice_name = voice_name
         self.speed = speed
@@ -688,224 +692,251 @@ class OpenAITTSInference(TTSInference):
         return audio_data, {}
 
 
-@register_tts("dia")
-class DiaTTSInference(TTSInference):
-    """Dia TTS wrapper with optional two-speaker voice cloning.
-    
-    Args:
-        model_name: Name of the Dia model to use.
-        speaker_samples: Mapping for "S1"/"S2":
-            - "alice.wav" → transcript auto-generated by Whisper
-            - ("Hi, I'm Alice.", "alice.wav") → transcript supplied
-            - None → no cloning (random Dia voice)
-        seed: Optional[int] = 42,
-            Global random seed for deterministic sampling (default: 42). Set to None to disable deterministic seeding.
-        device: Device to run inference on (e.g., "cuda:0", "cpu").
-        verbose: If True, prints debug information.
-        max_chars: Maximum characters per chunk.
-        whisper_lang_hint: Optional language hint for Whisper transcription.
-        
-    Example:
-        ```python
-        tts = DiaTTSInference(
-            speaker_samples={"S1": "alice.wav", "S2": ("Hello!", "bob.mp3")},
-            verbose=True
-        )
-        audio_np, _ = tts.invoke(my_script, save_file=True, file_path="out.wav")
-        ```
-    """
 
-    _TAG_RE = re.compile(r"\[(S[12])\]")
+# ---------------------------------------------------------------------------
+@register_tts("orpheus")
+class OrpheusTTSInference(TTSInference):
+    """Inference wrapper for the open-source **Orpheus** TTS model.
+
+    It supports:
+      • **Named voices** - e.g. ``"tara"``, ``"leo"``.
+      • **Zer-shot voice cloning** - pass one or more reference WAV paths
+        via *clone_voice_samples*.
+
+    The class streams audio from :class:`orpheus_tts.OrpheusModel`,
+    concatenates the int-16 chunks, converts them to a ``float32`` NumPy
+    array in the range ``[-1, 1]``, and optionally writes the result to
+    disk.
+    """
 
     def __init__(
         self,
-        model_name: str = "nari-labs/Dia-1.6B",
-        *,
-        speaker_samples: Optional[Dict[str, str | Tuple[str, str]]] = None,
-        seed: Optional[int] = 42,
-        device: Optional[torch.device | str] = None,
+        model_name: str = "canopylabs/orpheus-tts-0.1-finetune-prod",
+        voice_name: str = "tara",
+        sample_rate: int = 24_000,
         verbose: bool = False,
-        max_chars: Optional[int] = None,
-        whisper_lang_hint: Optional[str] = None,
+        **engine_kwargs,
     ):
-        """Initialize the Dia TTS wrapper.
-        
-        Args:
-            model_name: Name of the Dia model to use.
-            speaker_samples: Mapping for speaker voice cloning.
-            seed: Optional random seed for deterministic sampling.
-            device: Device to run inference on.
-            verbose: If True, prints debug information.
-            max_chars: Maximum characters per chunk.
-            whisper_lang_hint: Optional language hint for Whisper.
-        """
+        from orpheus_tts import OrpheusModel
+        self.sample_rate = sample_rate
+        self.voice_name = voice_name
         self.verbose = verbose
-        # Apply deterministic seed (if provided) **before** any generation happens
-        if seed is not None:
-            _set_global_seed(seed)
-            if self.verbose:
-                print(f"[DiaTTS] Global RNG seed set to {seed}")
-        self.seed = seed
-        self.whisper_lang_hint = whisper_lang_hint
-        self.model = Dia.from_pretrained(model_name, device=device)
-        self.device = self.model.device
-        self.max_chars = max_chars or self.model.config.data.text_length
 
-        # normalise + (if needed) auto‑transcribe cloning samples  -------------
-        self.speaker_samples: Dict[str, Optional[Tuple[str, str]]] = {"S1": None, "S2": None}
-        if speaker_samples:
-            for tag, val in speaker_samples.items():
-                if tag not in ("S1", "S2"):
-                    warnings.warn(f"[DiaTTS] unknown speaker tag '{tag}' – skipped")
-                    continue
-                if val is None:
-                    self.speaker_samples[tag] = None
-                elif isinstance(val, tuple):
-                    self.speaker_samples[tag] = val
-                else:
-                    # val is an audio path → make Whisper transcript
-                    trans = _transcribe_with_whisper(val, whisper_lang_hint)
-                    if self.verbose:
-                        print(f"[DiaTTS] Whisper transcript for {tag}: {trans}")
-                    self.speaker_samples[tag] = (trans, val)
+        # Lazily load the Orpheus backend (vLLM + SNAC decoder under the hood)
+        self.engine = OrpheusModel(model_name=model_name, **engine_kwargs)
 
-        if self.verbose:
-            msg = ", ".join(
-                f"{k}:{'clone' if v else 'random'}" for k, v in self.speaker_samples.items()
-            )
-            print(f"[DiaTTS] ready on {self.device} (max_chars={self.max_chars}) – {msg}")
-
-    @staticmethod
-    def _split_by_speaker(txt: str) -> List[Tuple[str, str]]:
-        """Split text into speaker-tagged segments.
-        
-        Args:
-            txt: Input text with speaker tags [S1] and [S2].
-            
-        Returns:
-            List of tuples (speaker_tag, utterance_text).
-        """
-        parts = DiaTTSInference._TAG_RE.split(txt)
-        seq, cur, buf = [], None, []
-        for tok in parts:
-            if tok in ("S1", "S2"):
-                if cur and buf:
-                    seq.append((cur, "".join(buf).strip()))
-                    buf = []
-                cur = tok
-            else:
-                buf.append(tok)
-        if cur and buf:
-            seq.append((cur, "".join(buf).strip()))
-        return seq
-
-    @staticmethod
-    def _concat_audio(arr: List[np.ndarray]) -> np.ndarray:
-        """Concatenate audio arrays.
-        
-        Args:
-            arr: List of numpy arrays containing audio samples.
-            
-        Returns:
-            Single concatenated numpy array.
-        """
-        return arr[0] if len(arr) == 1 else np.concatenate(arr, 0)
-
+    # ------------------------------------------------------------------ #
     def invoke(
         self,
         text: str,
-        *,
-        temperature: float = 1.3,
-        top_p: float = 0.95,
-        cfg_scale: float = 3.0,
+        voice_name: str | None = None,
+        clone_voice_samples: Optional[List[str]] = None,
+        clone_transcripts: Optional[List[str]] = None,
         save_file: bool = False,
-        file_path: Optional[str] = None,
+        file_path: str | None = None,
         format: str = "wav",
-        speaker_samples_override: Optional[Dict[str, str | Tuple[str, str]]] = None
+        **generation_kwargs,
     ) -> Tuple[np.ndarray, Dict]:
-        """Generates speech from input text with optional voice cloning.
-        
-        Args:
-            text: The text to synthesize.
-            temperature: Sampling temperature (higher = more random).
-            top_p: Nucleus sampling probability threshold.
-            cfg_scale: Classifier-free guidance scale.
-            save_file: If True, saves the audio to disk.
-            file_path: Output file path (required if save_file=True).
-            format: Audio format ("wav", "mp3", etc.).
-            speaker_samples_override: Optional one-shot override of speaker samples.
-            
-        Returns:
-            A tuple containing:
-                - final_audio: float32 numpy array of audio samples
-                - empty_dict: Currently returns empty dict for compatibility
-                
-        Raises:
-            ValueError: If file_path is not provided when save_file is True.
+        """Generate speech from *text*.
+
+        Parameters
+        ----------
+        text:
+            The text to synthesise.
+        voice_name:
+            One of the built-in Orpheus voices (defaults to *self.voice_name*).
+        clone_voice_samples:
+            Optional list of WAV paths for zero-shot voice cloning.
+        save_file:
+            If *True*, export the final audio to *file_path*.
+        file_path:
+            Destination path used when *save_file* is *True*.
+        format:
+            Output audio container (``wav``, ``mp3``, ``ogg``, ``flac``).
+        **generation_kwargs:
+            Extra keyword arguments forwarded to
+            :py:meth:`orpheus_tts.OrpheusModel.generate_speech`.
+
+        Returns
+        -------
+        audio_data:
+            ``float32`` NumPy array, mono, normalised to ``[-1, 1]``.
+        metadata:
+            Empty ``dict`` (reserved for future extensions).
         """
-        # Validate output format
         if format.lower() not in SUPPORTED_AUDIO_FORMATS:
             raise ValueError(
                 f"Format '{format}' not supported. "
                 f"Choose from: {SUPPORTED_AUDIO_FORMATS}"
             )
-        # choose which samples set to use
-        if speaker_samples_override is None:
-            speaker_samples = self.speaker_samples
-        else:
-            # light merge – override whatever keys provided
-            speaker_samples = {**self.speaker_samples, **speaker_samples_override}
 
-       
-        segments: List[np.ndarray] = []
-        chunks = (
-            chunk_text_by_sentences(text, self.max_chars)
-            if len(text) > self.max_chars
-            else [text]
-        )
+        voice_name = voice_name or self.voice_name
 
-        for chunk in chunks:
-            blocks = self._split_by_speaker(chunk)
-            if not blocks:
-                segments.append(
-                    self.model.generate(chunk, temperature=temperature, top_p=top_p, cfg_scale=cfg_scale)
+        # ------------------------------------------------------------------
+        # Handle voice‑cloning references
+        if clone_voice_samples:
+            # Normalise transcripts list length to match samples list length.
+            transcripts: List[str] = clone_transcripts[:] if clone_transcripts else []
+            if len(transcripts) < len(clone_voice_samples):
+                if self.verbose:
+                    print("[OrpheusTTS] Auto‑transcribing reference audio with Whisper…")
+                for i, wav_path in enumerate(clone_voice_samples[len(transcripts):], start=len(transcripts)):
+                    try:
+                        tr_text = _transcribe_with_whisper(wav_path)
+                    except Exception as exc:
+                        warnings.warn(f"Whisper failed on '{wav_path}': {exc}")
+                        tr_text = ""
+                    transcripts.append(tr_text)
+
+            if len(transcripts) != len(clone_voice_samples):
+                raise ValueError(
+                    "clone_voice_samples and clone_transcripts must have the same length "
+                    f"(got {len(clone_voice_samples)} samples vs {len(transcripts)} transcripts)."
                 )
-                continue
 
-            for spk, utter in blocks:
-                sample = speaker_samples.get(spk)
-                if sample:
-                    trans, wav = sample
-                    prompt = f"[{spk}] {trans} {utter}"
-                    audio_np = self.model.generate(
-                        prompt,
-                        temperature=temperature,
-                        top_p=top_p,
-                        cfg_scale=cfg_scale,
-                        audio_prompt_path=wav
-                    )
-                else:
-                    audio_np = self.model.generate(
-                        f"[{spk}] {utter}",
-                        temperature=temperature,
-                        top_p=top_p,
-                        cfg_scale=cfg_scale
-                    )
-                segments.append(audio_np)
+            # Add to generation kwargs expected by OrpheusModel
+            gen_kwargs = {
+                "prompt": text,
+                "voice": voice_name,
+                **generation_kwargs,
+            }
+            gen_kwargs["clone_voice_samples"] = clone_voice_samples
+            gen_kwargs["clone_transcripts"] = transcripts
+        else:
+            # Build argument dict understood by OrpheusModel
+            gen_kwargs: Dict[str, any] = {
+                "prompt": text,
+                "voice": voice_name,
+                **generation_kwargs,
+            }
 
-        final_audio = self._concat_audio(segments).astype(np.float32)
+        if self.verbose:
+            print(f"[OrpheusTTS] Synthesising with voice='{voice_name}'…")
+
+        # Collect streamed audio chunks (each chunk is raw int16 bytes)
+        audio_chunks: List[bytes] = []
+        for chunk in self.engine.generate_speech(**gen_kwargs):
+            audio_chunks.append(chunk)
+
+        if not audio_chunks:
+            raise RuntimeError("Orpheus produced no audio.")
+
+        audio_bytes = b''.join(audio_chunks)
+
+        # Convert to float32 numpy array in [-1, 1]
+        samples_i16 = np.frombuffer(audio_bytes, dtype=np.int16)
+        audio_data = samples_i16.astype(np.float32) / 32767.0
+
+        # Optionally save to disk
+        if save_file:
+            if not file_path:
+                raise ValueError("file_path must be provided when save_file=True.")
+            segment = AudioSegment(
+                audio_bytes,
+                frame_rate=self.sample_rate,
+                sample_width=2,   # 16‑bit
+                channels=1,
+            )
+            segment.export(file_path, format=format)
+            if self.verbose:
+                print(f"[OrpheusTTS] Saved audio to {file_path}")
+
+        return audio_data, {}
+
+@register_tts("orpheus-cpp")
+class OrpheusCppInference(TTSInference):
+    """TTS wrapper for **orpheus-cpp** (llama.cpp backend, Metal-friendly).
+
+    *No voice-cloning yet* – only built-in voices like ``"tara"`` or ``"leo"``.
+    """
+
+    def __init__(
+        self,
+        voice_name: str = "tara",
+        lang: str = "en",
+        sample_rate: int = 24_000,
+        verbose: bool = False,
+        **engine_kwargs,
+    ):
+        from orpheus_cpp import OrpheusCpp
+        self.voice_name = voice_name
+        self.lang = lang
+        self.sample_rate = sample_rate
+        self.verbose = verbose
+
+        # OrpheusCpp automatically chooses MPS on Apple Silicon or CPU.
+        self.engine = OrpheusCpp(verbose=verbose, lang=lang, **engine_kwargs)
+
+    # ------------------------------------------------------------------ #
+    def invoke(
+        self,
+        text: str,
+        voice_name: str | None = None,
+        save_file: bool = False,
+        file_path: str | None = None,
+        format: str = "wav",
+        **generation_kwargs,
+    ) -> Tuple[np.ndarray, Dict]:
+        """Generate speech from *text* using the **orpheus‑cpp** backend.
+
+        Args:
+            text (str): Text to be synthesised.
+            voice_name (str | None): Built‑in Orpheus voice ID.  If
+                ``None``, the instance default is used.
+            save_file (bool, optional): If ``True``, the generated audio is
+                written to *file_path*.  Defaults to ``False``.
+            file_path (str | None, optional): Destination path when
+                *save_file* is ``True``.  Ignored otherwise.
+            format (str, optional): Output container (``'wav'``,
+                ``'mp3'``, ``'ogg'`` or ``'flac'``).  Defaults to ``'wav'``.
+            **generation_kwargs: Extra keyword arguments forwarded to
+                :py:meth:`orpheus_cpp.OrpheusCpp.stream_tts_sync`.
+
+        Returns:
+            tuple[np.ndarray, dict]: A two‑tuple ``(audio, meta)`` where
+            ``audio`` is a **float32** NumPy array normalised to ``[-1, 1]``
+            and ``meta`` is an empty dictionary (reserved for future
+            extensions).
+
+        Raises:
+            ValueError: If *format* is unsupported or *file_path* is missing
+                when *save_file* is ``True``.
+            RuntimeError: If the backend returns no audio chunks.
+        """
+        if format.lower() not in SUPPORTED_AUDIO_FORMATS:
+            raise ValueError(
+                f"Format '{format}' not supported. "
+                f"Choose from: {SUPPORTED_AUDIO_FORMATS}"
+            )
+
+        voice_id = voice_name or self.voice_name
+        if self.verbose:
+            print(f"[OrpheusCpp] Synthesising with voice_id='{voice_id}'…")
+
+        # Collect streamed int-16 chunks
+        chunks: list[np.ndarray] = []
+        for sr, chunk in self.engine.stream_tts_sync(
+            text, options={"voice_id": voice_id, **generation_kwargs}
+        ):
+            self.sample_rate = sr  # backend tells us
+            chunks.append(chunk)
+
+        if not chunks:
+            raise RuntimeError("OrpheusCpp produced no audio.")
+
+        audio_i16 = np.concatenate(chunks, axis=1).squeeze()
+        audio_f32 = audio_i16.astype(np.float32) / 32767.0
 
         if save_file:
             if not file_path:
-                raise ValueError("file_path required when save_file=True")
-            if format.lower() == "wav":
-                sf.write(file_path, final_audio, 44100)
-            else:
-                int16 = (final_audio * 32767).astype(np.int16)
-                AudioSegment(int16.tobytes(), frame_rate=44100, sample_width=2, channels=1).export(
-                    file_path, format=format
-                )
+                raise ValueError("file_path must be provided when save_file=True.")
+            AudioSegment(
+                audio_i16.tobytes(),
+                frame_rate=self.sample_rate,
+                sample_width=2,
+                channels=1,
+            ).export(file_path, format=format)
             if self.verbose:
-                print(f"[DiaTTS] saved → {file_path}")
+                print(f"[OrpheusCpp] Saved audio to {file_path}")
 
-        return final_audio, {}
+        return audio_f32, {}

@@ -15,7 +15,7 @@ from docling.document_converter import DocumentConverter
 
 # Local application imports
 from paperpal.communication import GmailCommunication, construct_email_body, upload_video
-from paperpal.data_processing import ProcessData, PaperDatabase, Paper, Newsletter, Podcast
+from paperpal.data_processing import ArxivData, PaperDatabase, Paper, Newsletter, Podcast
 from paperpal.data_processing.data_handling import PaperDatabase, Paper, Newsletter, Logs
 from paperpal.inference import SentenceTransformerInference
 from paperpal.podcast import PaperPalPodcastGenerator
@@ -469,8 +469,8 @@ class PaperPal:
             raise
 
     def run(self, 
-            start_from: str = None, 
-            progress_callback: Optional[Callable[[str, float, str], None]] = None
+            start_from: str | None = None, 
+            progress_callback: Callable[[str, float, str], None]|None = None
            ):
         """
         Unified pipeline with checkpoints. 
@@ -496,13 +496,13 @@ class PaperPal:
             if progress_callback:
                 progress_callback("download", 0, "Starting paper download")
                 
-            if start_from is None:
+            if not start_from:
                 # no stage specified, do we have an existing checkpoint for 'papers_downloaded'?
                 data_df = self._load_checkpoint('papers_downloaded')
                 if data_df is None:
                     if self.verbose:
                         print("No 'papers_downloaded' checkpoint. Starting fresh: downloading papers.")
-                    process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
+                    process_data = ArxivData(start_date=self.start_date, end_date=self.end_date)
                     data_df = process_data.download_and_process_data(self.start_date, self.end_date)
                     self._save_checkpoint('papers_downloaded', data_df)
             else:
@@ -512,7 +512,7 @@ class PaperPal:
                     if data_df is None:
                         if self.verbose:
                             print("Forcing download stage.")
-                        process_data = ProcessData(start_date=self.start_date, end_date=self.end_date)
+                        process_data = ArxivData(start_date=self.start_date, end_date=self.end_date)
                         data_df = process_data.download_and_process_data(self.start_date, self.end_date)
                         self._save_checkpoint('papers_downloaded', data_df)
 

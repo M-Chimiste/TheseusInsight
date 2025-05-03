@@ -1,4 +1,4 @@
-from arxiv_harvester import ArxivOAHarvester
+from arxiv_harvester import ArxivOAIHarvester
 from datetime import datetime, timedelta
 import pandas as pd
 
@@ -61,7 +61,7 @@ class ArxivDataProcessor:
         if not end_date:
             raise ValueError("End date is required")
         
-        harvester = ArxivOAHarvester(
+        harvester = ArxivOAIHarvester(
             category=self.category,
             subcategories=self.subcategories,
             date_from=end_date,

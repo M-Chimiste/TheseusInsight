@@ -72,4 +72,3 @@ google-auth-oauthlib
 fastapi
 uvicorn
 python-multipart
-arxiv-harvester[pandas] @git+https://github.com/M-Chimiste/arxiv-harvester.git

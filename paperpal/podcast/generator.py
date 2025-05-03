@@ -1,9 +1,8 @@
 import os
-import re
-import time
 import json_repair
 from pathlib import Path
-from typing import List, Literal, Dict, Optional
+from typing import List, Dict, Optional
+from dataclasses import dataclass
 from pydantic import ValidationError
 from pydub import AudioSegment
 from tqdm import tqdm
@@ -25,7 +24,19 @@ from ..data_model import (Dialogue,
 from ..pdf import SpacyLayoutDocProcessor
 from dotenv import load_dotenv
 from datetime import datetime
+
 load_dotenv()
+
+@dataclass
+class SegmentInfo:
+    """
+    Metadata for a rendered speech chunk.
+    label: 'intro', 'segment_1'…'segment_n', or 'outro'
+    path : file path on disk
+    """
+    label: str
+    path: str
+
 
 
 class PaperPalPodcastGenerator:
@@ -391,44 +402,32 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         # 5) Merge the scripts
         merged_script = Dialogue.merge_outputs(scripts)
 
-        # 6) For each item in the dialogue, call TTS with either speaker-1 or speaker-2
+        # 6) Render each script block (intro → sections → outro) to audio
         Path(output_dir).mkdir(exist_ok=True, parents=True)
 
-        segments = []
-        full_transcript = []
+        segments: List[SegmentInfo] = []
+        full_transcript: List[str] = []
 
-        for idx, item in enumerate(merged_script.dialogue):
-            speaker = item.speaker.lower().strip()
-            line_text = item.text.strip()
-
-            # Choose TTS object
-            if speaker == "speaker-1":
-                tts = self.tts_speaker_1
-            elif speaker == "speaker-2":
-                tts = self.tts_speaker_2
+        for block_idx, block in enumerate(scripts):
+            if block_idx == 0:
+                label_prefix = "intro"
+            elif block_idx == len(scripts) - 1:
+                label_prefix = "outro"
             else:
-                # You could default or raise an error
-                print(f"Unknown speaker: {speaker}")
-                tts = self.tts_speaker_1
+                label_prefix = f"segment_{block_idx}"
 
-            # Prepare filename
-            
-            file_name = f"{prefix}_{idx}.{output_format}"
-            out_path = os.path.join(output_dir, file_name)
-            if verbose:
-                print(f"Processing line {idx} for speaker {speaker}")
-                print(f"Saving to: {out_path}")
+            for item in block.dialogue:
+                speaker = item.speaker.lower().strip()
+                text    = item.text.strip()
 
-            # TTS call
-            tts.invoke(
-                text=line_text,
-                save_file=True,
-                file_path=out_path,
-                format=output_format
-            )
+                tts = self.tts_speaker_1 if speaker == "speaker-1" else self.tts_speaker_2
+                file_id = f"{len(segments):03}"
+                out_path = os.path.join(output_dir, f"{prefix}_{file_id}.{output_format}")
 
-            segments.append(out_path)
-            full_transcript.append(f"{speaker}: {line_text}")
+                tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
+
+                segments.append(SegmentInfo(label=label_prefix, path=out_path))
+                full_transcript.append(f"{speaker}: {text}")
 
         # Build final transcript string
         transcript_text = "\n".join(full_transcript)
@@ -475,7 +474,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         return {
             "transcript": transcript_text,
             "dict_transcript": merged_script.model_dump(),
-            "segments": ", ".join(segments),
+            "segments": ", ".join([s.path for s in segments]),
             "final_podcast_path": final_podcast_path,
             "visualizer_path": output_filepath,
             "description": description,
@@ -507,6 +506,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         head_glow_passes=3,
         head_glow_alpha_decay=50,
         head_spawn_delay_range=(1.0,3.0),
+        head_saw_period=0.5,
         wave_color="#d703fc",
         trail_colors=["#fc03b6", "#ba03fc", "#ce6bf2"], 
         glow_passes=3,
@@ -604,41 +604,26 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         # Create output directory if it doesn't exist
         Path(output_dir).mkdir(exist_ok=True, parents=True)
 
-        segments = []
-        full_transcript = []
+        segments: List[SegmentInfo] = []
+        full_transcript: List[str] = []
 
-        # Generate audio for each dialogue line
         for idx, item in enumerate(dialogue_obj.dialogue):
             speaker = item.speaker.lower().strip()
-            line_text = item.text.strip()
+            text    = item.text.strip()
 
-            # Choose TTS object
-            if speaker == "speaker-1":
-                tts = tts_speaker_1
-            elif speaker == "speaker-2":
-                tts = tts_speaker_2
+            tts = tts_speaker_1 if speaker == "speaker-1" else tts_speaker_2
+            out_path = os.path.join(output_dir, f"{prefix}_{idx:03}.{output_format}")
+            tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
+
+            if idx == 0:
+                label = "intro"
+            elif idx == len(dialogue_obj.dialogue) - 1:
+                label = "outro"
             else:
-                print(f"Unknown speaker: {speaker}, defaulting to speaker-1")
-                tts = tts_speaker_1
+                label = f"segment_{idx}"
 
-            # Prepare filename
-            file_name = f"{prefix}_{idx}.{output_format}"
-            out_path = os.path.join(output_dir, file_name)
-            
-            if self.verbose:
-                print(f"Processing line {idx} for speaker {speaker}")
-                print(f"Saving to: {out_path}")
-
-            # TTS call
-            tts.invoke(
-                text=line_text,
-                save_file=True,
-                file_path=out_path,
-                format=output_format
-            )
-
-            segments.append(out_path)
-            full_transcript.append(f"{speaker}: {line_text}")
+            segments.append(SegmentInfo(label=label, path=out_path))
+            full_transcript.append(f"{speaker}: {text}")
 
         # Build final transcript string
         transcript_text = "\n".join(full_transcript)
@@ -680,60 +665,61 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         return {
             "transcript": transcript_text,
             "dict_transcript": dialogue_obj.model_dump(),
-            "segments": ", ".join(segments),
+            "segments": ", ".join([s.path for s in segments]),
             "final_podcast_path": final_podcast_path,
             "visualizer_path": output_filepath,
             "description": description,
         }
 
-    def _cleanup_segments(self, segments: List[str]):
-        """
-        Clean up individual audio segments after combining them.
-        
-        Args:
-            segments (List[str]): List of paths to segment files to delete
-        """
-        for segment_path in segments:
+    def _cleanup_segments(self, segments: List[SegmentInfo]) -> None:
+        for seg in segments:
             try:
-                if os.path.exists(segment_path):
-                    os.remove(segment_path)
+                if os.path.exists(seg.path):
+                    os.remove(seg.path)
                     if self.verbose:
-                        print(f"Cleaned up segment: {segment_path}")
+                        print(f"Removed temp file: {seg.path}")
             except Exception as e:
                 if self.verbose:
-                    print(f"Failed to clean up segment {segment_path}: {e}")
+                    print(f"Could not delete {seg.path}: {e}")
 
-    def _combine_audio_segments(self, segments: List[str], output_path: str, output_format: str, intro_music_path: str = None) -> None:
-        """
-        Combine audio segments and clean up individual files.
-        
-        Args:
-            segments (List[str]): List of paths to audio segments
-            output_path (str): Path to save the combined audio
-            output_format (str): Audio format (mp3, wav, etc.)
-            intro_music_path (str): Optional path to intro music file
-        """
+    def _combine_audio_segments(
+        self,
+        segments: List[SegmentInfo],
+        output_path: str,
+        output_format: str,
+        intro_music_path: str | None = None,
+    ) -> None:
         intro_music_path = intro_music_path or self.intro_music_path
-        combined_audio = AudioSegment.empty()
-        
-        # Add intro music if provided
-        if intro_music_path:
-            combined_audio += AudioSegment.from_file(intro_music_path, format=output_format)
-        
-        # Combine all segments with pauses between them
-        for i, seg_path in enumerate(segments):
-            segment = AudioSegment.from_file(seg_path, format=output_format)
-            combined_audio += segment
-            
-            # Add pause after each segment except the last one
-            if i < len(segments) - 1:
-                silence = AudioSegment.silent(duration=int(self.pause_duration * 1000))  # Convert seconds to milliseconds
-                combined_audio += silence
-        
-        # Export combined audio
-        combined_audio.export(output_path, format=output_format)
-        
-        # Clean up individual segments
+        combined = AudioSegment.empty()
+        music_dropped = False
+        FADE_MS = 5000  # fade-in / overlap duration in milliseconds
+
+        for idx, seg in enumerate(segments):
+            speech = AudioSegment.from_file(seg.path, format=output_format)
+
+            # ---- intro block with cross-fade music -------------------------
+            if intro_music_path and seg.label == "intro" and not music_dropped:
+                music = AudioSegment.from_file(intro_music_path, format=output_format)
+
+                overlap = min(FADE_MS, len(speech))          # protect short clips
+                music_fade = music.fade_in(overlap)
+
+                # Overlay music starting `overlap` ms before speech ends
+                mixed_intro = speech.overlay(music_fade, position=len(speech) - overlap)
+                combined += mixed_intro
+
+                # Continue playing the rest of the music after the intro speech
+                combined += music[overlap:]
+                music_dropped = True
+            # ----------------------------------------------------------------
+            else:
+                combined += speech
+
+            # Pause between logical blocks (skip if this is the very last segment)
+            if idx < len(segments) - 1:
+                combined += AudioSegment.silent(int(self.pause_duration * 1000))
+
+        combined.export(output_path, format=output_format)
         self._cleanup_segments(segments)
 
 class GeneralPodcastGenerator:
@@ -1115,36 +1101,36 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 progress_callback("Converting text to speech", 50)
                 
             # Convert dialogue to audio segments
-            segments = []
+            segments: List[SegmentInfo] = []
+            full_transcript: List[str] = []
             total_lines = len(dialogue.dialogue)
             for i, item in enumerate(dialogue.dialogue):
                 if progress_callback:
                     progress = 50 + ((i + 1) / total_lines) * 30
                     progress_callback("Converting text to speech", progress)
-                    
-                segment_path = f"{output_dir}/{prefix}_{i}.{output_format}"
-                if item.speaker == "speaker-1":
-                    tts = self.tts_speaker_1
+
+                speaker = item.speaker.lower().strip()
+                text = item.text.strip()
+                tts = self.tts_speaker_1 if speaker == "speaker-1" else self.tts_speaker_2
+                out_path = os.path.join(str(output_dir), f"{prefix}_{i:03}.{output_format}")
+                tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
+
+                if i == 0:
+                    label = "intro"
+                elif i == total_lines - 1:
+                    label = "outro"
                 else:
-                    tts = self.tts_speaker_2
-                    
-                tts.invoke(
-                    text=item.text,
-                    save_file=True,
-                    file_path=segment_path,
-                    format=output_format
-                )
-                segments.append(segment_path)
-            
+                    label = f"segment_{i}"
+
+                segments.append(SegmentInfo(label=label, path=out_path))
+                full_transcript.append(f"{speaker}: {text}")
+
             if progress_callback:
                 progress_callback("Combining audio segments", 85)
-                
+
             # Combine segments
             final_audio_path = f"{output_dir}/{final_filename}.{output_format}"
             self._combine_audio_segments(segments, final_audio_path, output_format, intro_music_path)
-            
-            # Clean up segments
-            self._cleanup_segments(segments)
             
             if visualizer:
                 if progress_callback:
@@ -1184,7 +1170,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 "output_file": final_audio_path,
                 "visualizer_file": final_video_path if visualizer else None,
                 "description": description,
-                "dialogue": dialogue.model_dump()
+                "dialogue": dialogue.model_dump(),
+                "segments": ", ".join([s.path for s in segments]),
             }
         except Exception as e:
             import traceback
@@ -1317,41 +1304,26 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         # Create output directory if it doesn't exist
         Path(output_dir).mkdir(exist_ok=True, parents=True)
 
-        segments = []
-        full_transcript = []
+        segments: List[SegmentInfo] = []
+        full_transcript: List[str] = []
 
-        # Generate audio for each dialogue line
         for idx, item in enumerate(dialogue_obj.dialogue):
             speaker = item.speaker.lower().strip()
-            line_text = item.text.strip()
+            text    = item.text.strip()
 
-            # Choose TTS object
-            if speaker == "speaker-1":
-                tts = tts_speaker_1
-            elif speaker == "speaker-2":
-                tts = tts_speaker_2
+            tts = tts_speaker_1 if speaker == "speaker-1" else tts_speaker_2
+            out_path = os.path.join(output_dir, f"{prefix}_{idx:03}.{output_format}")
+            tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
+
+            if idx == 0:
+                label = "intro"
+            elif idx == len(dialogue_obj.dialogue) - 1:
+                label = "outro"
             else:
-                print(f"Unknown speaker: {speaker}, defaulting to speaker-1")
-                tts = tts_speaker_1
+                label = f"segment_{idx}"
 
-            # Prepare filename
-            file_name = f"{prefix}_{idx}.{output_format}"
-            out_path = os.path.join(output_dir, file_name)
-            
-            if self.verbose:
-                print(f"Processing line {idx} for speaker {speaker}")
-                print(f"Saving to: {out_path}")
-
-            # TTS call
-            tts.invoke(
-                text=line_text,
-                save_file=True,
-                file_path=out_path,
-                format=output_format
-            )
-
-            segments.append(out_path)
-            full_transcript.append(f"{speaker}: {line_text}")
+            segments.append(SegmentInfo(label=label, path=out_path))
+            full_transcript.append(f"{speaker}: {text}")
 
         # Build final transcript string
         transcript_text = "\n".join(full_transcript)
@@ -1393,59 +1365,60 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         return {
             "transcript": transcript_text,
             "dict_transcript": dialogue_obj.model_dump(),
-            "segments": ", ".join(segments),
+            "segments": ", ".join([s.path for s in segments]),
             "final_podcast_path": final_podcast_path,
             "visualizer_path": output_filepath,
             "description": description,
         }
 
-    def _cleanup_segments(self, segments: List[str]):
-        """
-        Clean up individual audio segments after combining them.
-        
-        Args:
-            segments (List[str]): List of paths to segment files to delete
-        """
-        for segment_path in segments:
+    def _cleanup_segments(self, segments: List[SegmentInfo]) -> None:
+        for seg in segments:
             try:
-                if os.path.exists(segment_path):
-                    os.remove(segment_path)
+                if os.path.exists(seg.path):
+                    os.remove(seg.path)
                     if self.verbose:
-                        print(f"Cleaned up segment: {segment_path}")
+                        print(f"Removed temp file: {seg.path}")
             except Exception as e:
                 if self.verbose:
-                    print(f"Failed to clean up segment {segment_path}: {e}")
+                    print(f"Could not delete {seg.path}: {e}")
 
-    def _combine_audio_segments(self, segments: List[str], output_path: str, output_format: str, intro_music_path: str = None) -> None:
-        """
-        Combine audio segments and clean up individual files.
-        
-        Args:
-            segments (List[str]): List of paths to audio segments
-            output_path (str): Path to save the combined audio
-            output_format (str): Audio format (mp3, wav, etc.)
-            intro_music_path (str): Optional path to intro music file
-        """
+    def _combine_audio_segments(
+        self,
+        segments: List[SegmentInfo],
+        output_path: str,
+        output_format: str,
+        intro_music_path: str | None = None,
+    ) -> None:
         intro_music_path = intro_music_path or self.intro_music_path
-        combined_audio = AudioSegment.empty()
-        
-        # Add intro music if provided
-        if intro_music_path:
-            combined_audio += AudioSegment.from_file(intro_music_path, format=output_format)
-        
-        # Combine all segments with pauses between them
-        for i, seg_path in enumerate(segments):
-            segment = AudioSegment.from_file(seg_path, format=output_format)
-            combined_audio += segment
-            
-            # Add pause after each segment except the last one
-            if i < len(segments) - 1:
-                silence = AudioSegment.silent(duration=int(self.pause_duration * 1000))  # Convert seconds to milliseconds
-                combined_audio += silence
-        
-        # Export combined audio
-        combined_audio.export(output_path, format=output_format)
-        
-        # Clean up individual segments
+        combined = AudioSegment.empty()
+        music_dropped = False
+        FADE_MS = 5000  # fade-in / overlap duration in milliseconds
+
+        for idx, seg in enumerate(segments):
+            speech = AudioSegment.from_file(seg.path, format=output_format)
+
+            # ---- intro block with cross-fade music -------------------------
+            if intro_music_path and seg.label == "intro" and not music_dropped:
+                music = AudioSegment.from_file(intro_music_path, format=output_format)
+
+                overlap = min(FADE_MS, len(speech))          # protect short clips
+                music_fade = music.fade_in(overlap)
+
+                # Overlay music starting `overlap` ms before speech ends
+                mixed_intro = speech.overlay(music_fade, position=len(speech) - overlap)
+                combined += mixed_intro
+
+                # Continue playing the rest of the music after the intro speech
+                combined += music[overlap:]
+                music_dropped = True
+            # ----------------------------------------------------------------
+            else:
+                combined += speech
+
+            # Pause between logical blocks (skip if this is the very last segment)
+            if idx < len(segments) - 1:
+                combined += AudioSegment.silent(int(self.pause_duration * 1000))
+
+        combined.export(output_path, format=output_format)
         self._cleanup_segments(segments)
 

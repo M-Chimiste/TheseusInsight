@@ -52,10 +52,10 @@ class PodcastGenerationConfig(BaseModel):
         "temperature": 0.1,
         "num_ctx": 131072
     }
-    tts_provider: str = "kokoro"
-    speaker_1_voice: str = "af_bella"
+    tts_provider: str = "openai"
+    speaker_1_voice: str = "sage"
     speaker_1_speed: float = 1.15
-    speaker_2_voice: str = "am_adam"
+    speaker_2_voice: str = "ash"
     speaker_2_speed: float = 1.15
     output_format: str = "mp3"
     visualizer: bool = False

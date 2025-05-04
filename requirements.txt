@@ -29,7 +29,6 @@ openai
 ollama
 langchain
 soundfile
-kokoro
 google-generativeai
 
 # Data Processing & Management

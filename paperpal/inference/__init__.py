@@ -4,5 +4,4 @@ from .llm import (AnthropicInference,
                         GeminiInference,
                         OllamaInference,
                         LLMModelFactory)
-from .pipeline import *
 from .tts import *

@@ -15,7 +15,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional
 from pydantic import BaseModel
-
+from dotenv import load_dotenv
 
 class InferenceModel(ABC):
     """
@@ -143,6 +143,7 @@ class OpenAIInference(InferenceModel):
 
     def _load_model(self):
         from openai import OpenAI
+        load_dotenv()
         return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, model_name: Optional[str] = None) -> str:
@@ -184,6 +185,7 @@ class GeminiInference(InferenceModel):
 
     def _load_model(self):
         import google.generativeai as genai
+        load_dotenv()
         genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
         return genai
     

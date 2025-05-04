@@ -28,7 +28,7 @@
     "num_ctx": 131072
   },
   "newsletter_intro_model": {
-    "model_name": "gemini-2.5-pro-preview-03-25",
+    "model_name": "gemini-2.0-flash",
     "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.1,

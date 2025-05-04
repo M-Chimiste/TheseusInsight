@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from pydub import AudioSegment
 from tqdm import tqdm
-from ..inference import (KokoroTTSInference,
+from ..inference import (
                          PollyTTSInference,
                          OpenAITTSInference,
                         LLMModelFactory)
@@ -49,12 +49,10 @@ class PaperPalPodcastGenerator:
             "temperature": 0.1,
             "num_ctx": 131072
         },
-        tts_provider: str = "kokoro",        # 'kokoro', 'polly', or 'openai'
-        tts_model_path: str = "models/Kokoro-82M",
-        tts_model_name: str = "kokoro-v0_19.pth",
-        speaker_1_voice: str = "af_bella",
+        tts_provider: str = "openai",        # 'polly', or 'openai'
+        speaker_1_voice: str = "sage",
         speaker_1_speed: float = 1.15,
-        speaker_2_voice: str = "am_adam",
+        speaker_2_voice: str = "ash",
         speaker_2_speed: float = 1.15,
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
@@ -66,9 +64,7 @@ class PaperPalPodcastGenerator:
         
         Args:
             text_model (dict): Configuration for the text generation model
-            tts_provider (str): TTS provider to use ('kokoro', 'polly', or 'openai')
-            tts_model_path (str): Path to Kokoro model (only used if tts_provider is 'kokoro')
-            tts_model_name (str): Name of Kokoro model file (only used if tts_provider is 'kokoro')
+            tts_provider (str): TTS provider to use ('polly', or 'openai')
             speaker_1_voice (str): Voice ID for speaker 1 (provider-specific)
             speaker_1_speed (float): Speed factor for speaker 1
             speaker_2_voice (str): Voice ID for speaker 2 (provider-specific)
@@ -87,7 +83,7 @@ class PaperPalPodcastGenerator:
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
         
         # Validate TTS provider
-        valid_providers = ['kokoro', 'polly', 'openai']
+        valid_providers = ['polly', 'openai']
         if self.tts_provider not in valid_providers:
             raise ValueError(f"Invalid TTS provider: {tts_provider}. Must be one of {valid_providers}")
         
@@ -113,20 +109,8 @@ class PaperPalPodcastGenerator:
         self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
 
         # Initialize TTS models based on provider
-        if self.tts_provider == 'kokoro':
-            self.tts_speaker_1 = KokoroTTSInference(
-                voice_name=speaker_1_voice,
-                lang_code=speaker_1_voice[0],
-                speed=speaker_1_speed,
-                verbose=self.verbose
-            )
-            self.tts_speaker_2 = KokoroTTSInference(
-                voice_name=speaker_2_voice,
-                lang_code=speaker_2_voice[0],
-                speed=speaker_2_speed,
-                verbose=self.verbose
-            )
-        elif self.tts_provider == 'polly':
+        
+        if self.tts_provider == 'polly':
             self.tts_speaker_1 = PollyTTSInference(
                 voice_name=speaker_1_voice,
                 speaker_speed=speaker_1_speed,
@@ -560,22 +544,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
 
         # Create temporary TTS instances if we're overriding voices or speeds
         if any([speaker_1_voice, speaker_2_voice, speaker_1_speed, speaker_2_speed]):
-            if self.tts_provider == 'kokoro':
-                tts_speaker_1 = KokoroTTSInference(
-                    model_path=self.tts_model_path,
-                    model_name=self.tts_model_name,
-                    voice_name=speaker_1_voice or self.tts_speaker_1.voice_name,
-                    speaker_speed=speaker_1_speed or self.tts_speaker_1.speaker_speed,
-                    verbose=self.verbose
-                )
-                tts_speaker_2 = KokoroTTSInference(
-                    model_path=self.tts_model_path,
-                    model_name=self.tts_model_name,
-                    voice_name=speaker_2_voice or self.tts_speaker_2.voice_name,
-                    speaker_speed=speaker_2_speed or self.tts_speaker_2.speaker_speed,
-                    verbose=self.verbose
-                )
-            elif self.tts_provider == 'polly':
+           
+            if self.tts_provider == 'polly':
                 tts_speaker_1 = PollyTTSInference(
                     voice_id=speaker_1_voice or self.tts_speaker_1.voice_id,
                     speaker_speed=speaker_1_speed or self.tts_speaker_1.speaker_speed,
@@ -732,12 +702,10 @@ class GeneralPodcastGenerator:
             "temperature": 0.1,
             "num_ctx": 131072
         },
-        tts_provider: str = "kokoro",        # 'kokoro', 'polly', or 'openai'
-        tts_model_path: str = "models/Kokoro-82M",
-        tts_model_name: str = "kokoro-v0_19.pth",
-        speaker_1_voice: str = "af_bella",
+        tts_provider: str = "openai",        #  'polly', or 'openai'
+        speaker_1_voice: str = "sage",
         speaker_1_speed: float = 1.15,
-        speaker_2_voice: str = "am_adam",
+        speaker_2_voice: str = "ash",
         speaker_2_speed: float = 1.15,
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
@@ -749,9 +717,7 @@ class GeneralPodcastGenerator:
         
         Args:
             text_model (dict): Configuration for the text generation model
-            tts_provider (str): TTS provider to use ('kokoro', 'polly', or 'openai')
-            tts_model_path (str): Path to Kokoro model (only used if tts_provider is 'kokoro')
-            tts_model_name (str): Name of Kokoro model file (only used if tts_provider is 'kokoro')
+            tts_provider (str): TTS provider to use ( 'polly', or 'openai')
             speaker_1_voice (str): Voice ID for speaker 1 (provider-specific)
             speaker_1_speed (float): Speed factor for speaker 1
             speaker_2_voice (str): Voice ID for speaker 2 (provider-specific)
@@ -770,7 +736,7 @@ class GeneralPodcastGenerator:
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
         
         # Validate TTS provider
-        valid_providers = ['kokoro', 'polly', 'openai']
+        valid_providers = ['polly', 'openai']
         if self.tts_provider not in valid_providers:
             raise ValueError(f"Invalid TTS provider: {tts_provider}. Must be one of {valid_providers}")
         
@@ -796,20 +762,8 @@ class GeneralPodcastGenerator:
         self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
 
         # Initialize TTS models based on provider
-        if self.tts_provider == 'kokoro':
-            self.tts_speaker_1 = KokoroTTSInference(
-                voice_name=speaker_1_voice,
-                lang_code=speaker_1_voice[0],
-                speed=speaker_1_speed,
-                verbose=self.verbose
-            )
-            self.tts_speaker_2 = KokoroTTSInference(
-                voice_name=speaker_2_voice,
-                lang_code=speaker_2_voice[0],
-                speed=speaker_2_speed,
-                verbose=self.verbose
-            )
-        elif self.tts_provider == 'polly':
+       
+        if self.tts_provider == 'polly':
             self.tts_speaker_1 = PollyTTSInference(
                 voice_name=speaker_1_voice,
                 speaker_speed=speaker_1_speed,
@@ -1260,22 +1214,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
 
         # Create temporary TTS instances if we're overriding voices or speeds
         if any([speaker_1_voice, speaker_2_voice, speaker_1_speed, speaker_2_speed]):
-            if self.tts_provider == 'kokoro':
-                tts_speaker_1 = KokoroTTSInference(
-                    model_path=self.tts_model_path,
-                    model_name=self.tts_model_name,
-                    voice_name=speaker_1_voice or self.tts_speaker_1.voice_name,
-                    speaker_speed=speaker_1_speed or self.tts_speaker_1.speaker_speed,
-                    verbose=self.verbose
-                )
-                tts_speaker_2 = KokoroTTSInference(
-                    model_path=self.tts_model_path,
-                    model_name=self.tts_model_name,
-                    voice_name=speaker_2_voice or self.tts_speaker_2.voice_name,
-                    speaker_speed=speaker_2_speed or self.tts_speaker_2.speaker_speed,
-                    verbose=self.verbose
-                )
-            elif self.tts_provider == 'polly':
+            
+            if self.tts_provider == 'polly':
                 tts_speaker_1 = PollyTTSInference(
                     voice_id=speaker_1_voice or self.tts_speaker_1.voice_id,
                     speaker_speed=speaker_1_speed or self.tts_speaker_1.speaker_speed,

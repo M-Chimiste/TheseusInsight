@@ -12,12 +12,10 @@ from abc import ABC, abstractmethod
 import numpy as np
 import soundfile as sf
 import torch
-from dotenv import load_dotenv
 from pydub import AudioSegment
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
-load_dotenv()
 
 #: Tuple of audio formats accepted by all engines.
 SUPPORTED_AUDIO_FORMATS: Tuple[str, ...] = ("wav", "mp3", "ogg", "flac")

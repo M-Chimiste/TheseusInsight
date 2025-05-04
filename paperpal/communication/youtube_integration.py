@@ -1,9 +1,5 @@
 import os
 
-# 1) Load environment variables
-from dotenv import load_dotenv
-load_dotenv()
-
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.http

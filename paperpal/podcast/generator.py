@@ -22,10 +22,8 @@ from ..data_model import (Dialogue,
                           PodcastDescription,
                           ContentSummary)
 from ..pdf import SpacyLayoutDocProcessor
-from dotenv import load_dotenv
 from datetime import datetime
 
-load_dotenv()
 
 @dataclass
 class SegmentInfo:
@@ -661,33 +659,35 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
     ) -> None:
         intro_music_path = intro_music_path or self.intro_music_path
         combined = AudioSegment.empty()
-        music_dropped = False
         FADE_MS = 5000  # fade-in / overlap duration in milliseconds
 
+        # Find the last index where label == 'intro'
+        last_intro_idx = -1
+        for idx, seg in enumerate(segments):
+            if seg.label == "intro":
+                last_intro_idx = idx
+
+        # Combine segments, inserting music after last intro
         for idx, seg in enumerate(segments):
             speech = AudioSegment.from_file(seg.path, format=output_format)
-
-            # ---- intro block with cross-fade music -------------------------
-            if intro_music_path and seg.label == "intro" and not music_dropped:
-                music = AudioSegment.from_file(intro_music_path, format=output_format)
-
-                overlap = min(FADE_MS, len(speech))          # protect short clips
-                music_fade = music.fade_in(overlap)
-
-                # Overlay music starting `overlap` ms before speech ends
-                mixed_intro = speech.overlay(music_fade, position=len(speech) - overlap)
-                combined += mixed_intro
-
-                # Continue playing the rest of the music after the intro speech
-                combined += music[overlap:]
-                music_dropped = True
-            # ----------------------------------------------------------------
-            else:
-                combined += speech
+            combined += speech
 
             # Pause between logical blocks (skip if this is the very last segment)
             if idx < len(segments) - 1:
                 combined += AudioSegment.silent(int(self.pause_duration * 1000))
+
+            # Insert music after the last intro segment
+            if (
+                intro_music_path
+                and idx == last_intro_idx
+            ):
+                music = AudioSegment.from_file(intro_music_path, format=output_format)
+                overlap = min(FADE_MS, len(music))
+                music_fade = music.fade_in(overlap)
+                # Overlay music starting at this point
+                combined += music_fade
+                # Optionally, continue playing the rest of the music (if desired)
+                # combined += music[overlap:]
 
         combined.export(output_path, format=output_format)
         self._cleanup_segments(segments)
@@ -1331,33 +1331,35 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
     ) -> None:
         intro_music_path = intro_music_path or self.intro_music_path
         combined = AudioSegment.empty()
-        music_dropped = False
         FADE_MS = 5000  # fade-in / overlap duration in milliseconds
 
+        # Find the last index where label == 'intro'
+        last_intro_idx = -1
+        for idx, seg in enumerate(segments):
+            if seg.label == "intro":
+                last_intro_idx = idx
+
+        # Combine segments, inserting music after last intro
         for idx, seg in enumerate(segments):
             speech = AudioSegment.from_file(seg.path, format=output_format)
-
-            # ---- intro block with cross-fade music -------------------------
-            if intro_music_path and seg.label == "intro" and not music_dropped:
-                music = AudioSegment.from_file(intro_music_path, format=output_format)
-
-                overlap = min(FADE_MS, len(speech))          # protect short clips
-                music_fade = music.fade_in(overlap)
-
-                # Overlay music starting `overlap` ms before speech ends
-                mixed_intro = speech.overlay(music_fade, position=len(speech) - overlap)
-                combined += mixed_intro
-
-                # Continue playing the rest of the music after the intro speech
-                combined += music[overlap:]
-                music_dropped = True
-            # ----------------------------------------------------------------
-            else:
-                combined += speech
+            combined += speech
 
             # Pause between logical blocks (skip if this is the very last segment)
             if idx < len(segments) - 1:
                 combined += AudioSegment.silent(int(self.pause_duration * 1000))
+
+            # Insert music after the last intro segment
+            if (
+                intro_music_path
+                and idx == last_intro_idx
+            ):
+                music = AudioSegment.from_file(intro_music_path, format=output_format)
+                overlap = min(FADE_MS, len(music))
+                music_fade = music.fade_in(overlap)
+                # Overlay music starting at this point
+                combined += music_fade
+                # Optionally, continue playing the rest of the music (if desired)
+                # combined += music[overlap:]
 
         combined.export(output_path, format=output_format)
         self._cleanup_segments(segments)

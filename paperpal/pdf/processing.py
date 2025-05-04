@@ -4,7 +4,6 @@ from pathlib import Path
 import re
 
 import pandas as pd
-from dotenv import load_dotenv
 from tqdm import tqdm
 
 import spacy
@@ -17,7 +16,6 @@ from docling.pipeline.simple_pipeline import SimplePipeline
 from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
-load_dotenv()
 class DoclingDocProcessor:
     """
     A class to process documents and export tables and figures.

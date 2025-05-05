@@ -48,7 +48,28 @@ INTRO_TEXT = [
     "This research shows that...",
     "This paper explores...",
     "This research discusses...",
-    "This paper investigates..."
+    "This paper investigates...",
+    "This study presents...",
+    "In this work, the authors examine...",
+    "This article analyzes...",
+    "This paper highlights...",
+    "In this paper, the authors discuss...",
+    "This investigation addresses...",
+    "The research presented here explores...",
+    "The authors provide insights into...",
+    "This inquiry considers...",
+    "This document discusses...",
+    "Here, the study emphasizes...",
+    "This work illuminates...",
+    "This examination sheds light on...",
+    "This contribution offers perspectives on...",
+    "The paper provides an overview of...",
+    "This scholarly work investigates...",
+    "The following study presents findings on...",
+    "This piece of research elaborates on...",
+    "This article offers an analysis of...",
+    "The authors explore...",
+    "This study offers a comprehensive look at..."
 ]
 
 class PaperPal:

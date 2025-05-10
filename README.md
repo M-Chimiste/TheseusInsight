@@ -189,7 +189,7 @@ ti.run()
 Or use the CLI entrypoint:
 
 ```bash
-python run_paperpal.py --generate-podcast True --generate-email True
+python run_theseus_insight.py --generate-podcast True --generate-email True
 ```
 
 ---

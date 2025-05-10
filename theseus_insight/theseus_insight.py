@@ -369,33 +369,19 @@ class TheseusInsight:
                     {"role": "user", "content": research_prompt(self.research_interests, abstract)}
                 ]
                 # Depending on single-model or multi-model
-                if not self.use_different_models:
-                    # Example for Ollama only:
-                    if self.inference.provider == "ollama":
-                        response = self.inference.invoke(
-                            messages=messages,
-                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-                            schema=ResearchInterestsPromptData
-                        )
-                    else:
-                        # For other providers
-                        response = self.inference.invoke(
-                            messages=messages,
-                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
-                        )
+                
+                if self.judge_inference.provider == "ollama":
+                    response = self.judge_inference.invoke(
+                        messages=messages,
+                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                        schema=ResearchInterestsPromptData
+                    )
                 else:
-                    if self.judge_inference.provider == "ollama":
-                        response = self.judge_inference.invoke(
-                            messages=messages,
-                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-                            schema=ResearchInterestsPromptData
-                        )
-                    else:
-                        # E.g. Anthropic or OpenAI
-                        response = self.judge_inference.invoke(
-                            messages=messages,
-                            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
-                        )
+                    # E.g. Anthropic or OpenAI
+                    response = self.judge_inference.invoke(
+                        messages=messages,
+                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
+                    )
 
                 response_json = json_repair.loads(response)
                 scores.append(int(response_json['score']))
@@ -569,30 +555,18 @@ class TheseusInsight:
 
                         # Summarize the PDF content
                         messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
-                        if not self.use_different_models:
-                            if self.inference.provider == "ollama":
-                                resp = self.inference.invoke(
-                                    messages=messages,
-                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
-                                    schema=SummaryPromptData
-                                )
-                            else:
-                                resp = self.inference.invoke(
-                                    messages=messages,
-                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
-                                )
+                        
+                        if self.content_extraction_inference.provider == "ollama":
+                            resp = self.content_extraction_inference.invoke(
+                                messages=messages,
+                                system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
+                                schema=SummaryPromptData
+                            )
                         else:
-                            if self.content_extraction_inference.provider == "ollama":
-                                resp = self.content_extraction_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
-                                    schema=SummaryPromptData
-                                )
-                            else:
-                                resp = self.content_extraction_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
-                                )
+                            resp = self.content_extraction_inference.invoke(
+                                messages=messages,
+                                system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
+                            )
 
                         resp_json = json_repair.loads(resp)
                         summarized_paper = resp_json.get('content', resp)
@@ -608,30 +582,18 @@ class TheseusInsight:
                             {"role": "user", 
                              "content": newsletter_context_prompt(self.research_interests, context, intro_text)}
                         ]
-                        if not self.use_different_models:
-                            if self.inference.provider == "ollama":
-                                resp = self.inference.invoke(
-                                    messages=messages,
-                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                    schema=NewsletterPromptData
-                                )
-                            else:
-                                resp = self.inference.invoke(
-                                    messages=messages,
-                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                                )
+                     
+                        if self.newsletter_sections_inference.provider == "ollama":
+                            resp = self.newsletter_sections_inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                schema=NewsletterPromptData
+                            )
                         else:
-                            if self.newsletter_sections_inference.provider == "ollama":
-                                resp = self.newsletter_sections_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                    schema=NewsletterPromptData
-                                )
-                            else:
-                                resp = self.newsletter_sections_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                                )
+                            resp = self.newsletter_sections_inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                            )
 
                         resp_json = json_repair.loads(resp)
                         draft = f"## {row['title']}\n\n{resp_json['draft']}"
@@ -664,30 +626,19 @@ class TheseusInsight:
                     messages = [{"role": "user", "content": intro_prompt}]
 
                     # Model call for the newsletter's intro
-                    if not self.use_different_models:
-                        if self.inference.provider == "ollama":
-                            resp = self.inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                schema=NewsletterPromptData
-                            )
-                        else:
-                            resp = self.inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                            )
+                 
+                    
+                    if self.newsletter_intro_inference.provider == "ollama":
+                        resp = self.newsletter_intro_inference.invoke(
+                            messages=messages,
+                            system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                            schema=NewsletterPromptData
+                        )
                     else:
-                        if self.newsletter_intro_inference.provider == "ollama":
-                            resp = self.newsletter_intro_inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                schema=NewsletterPromptData
-                            )
-                        else:
-                            resp = self.newsletter_intro_inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                            )
+                        resp = self.newsletter_intro_inference.invoke(
+                            messages=messages,
+                            system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                        )
 
                     try:
                         resp_json = json_repair.loads(resp)

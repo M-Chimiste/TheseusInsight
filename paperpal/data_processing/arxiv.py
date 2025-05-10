@@ -97,12 +97,11 @@ class ArxivDataProcessor:
             subcategories=self.subcategories,
             date_from=start_date,
             date_until=end_date,
-            # max_results=self.max_results,
             verbose=True
         )
         records = harvester.harvest()
         data_df = harvester.to_dataframe()
-        # data_df['date'] = pd.to_datetime(data_df['created'])
+        data_df['date'] = pd.to_datetime(data_df['created'])
         return data_df
             
             

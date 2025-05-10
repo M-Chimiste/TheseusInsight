@@ -472,7 +472,7 @@ class PaperPal:
                 paper = Paper(
                     title=row['title'],
                     abstract=row['abstract'],
-                    url=row['url_pdf'],
+                    url=row['pdf_url'],
                     date_run=TODAY.strftime('%Y-%m-%d'),
                     date=row['date'].strftime('%Y-%m-%d'),
                     score=row['score'],
@@ -623,7 +623,7 @@ class PaperPal:
                         intro_text = random.choice(INTRO_TEXT)
                         
                         # Convert PDF to markdown
-                        response = converter.convert(row['url_pdf'])
+                        response = converter.convert(row['pdf_url'])
                         markdown = response.document.export_to_markdown()
 
                         # Summarize the PDF content
@@ -695,7 +695,7 @@ class PaperPal:
                         resp_json = json_repair.loads(resp)
                         draft = f"## {row['title']}\n\n{resp_json['draft']}"
                         sections.append(draft)
-                        urls_and_titles.append(f"{row['title']}: {row['url_pdf']}")
+                        urls_and_titles.append(f"{row['title']}: {row['pdf_url']}")
 
                     sections_data = {
                         'sections': sections,
@@ -827,7 +827,7 @@ class PaperPal:
                             raise ValueError("Cannot generate podcast: no newsletter sections found.")
 
                     podcast_content = self.podcast_generator.generate_podcast(
-                        pdf_paths=list(top_n_df['url_pdf']),
+                        pdf_paths=list(top_n_df['pdf_url']),
                         paperpal_sections=sections_data['sections'],
                         output_format=self.output_format,
                         output_dir=self.output_dir,
@@ -847,7 +847,7 @@ class PaperPal:
                     # We re-run generate_podcast with visualizer=True
                     # so it merges the final audio with the animation
                     podcast_content = self.podcast_generator.generate_podcast(
-                        pdf_paths=list(top_n_df['url_pdf']),
+                        pdf_paths=list(top_n_df['pdf_url']),
                         paperpal_sections=sections_data['sections'],
                         output_format=self.output_format,
                         output_dir=self.output_dir,

@@ -1,8 +1,8 @@
 import argparse
-from paperpal import PaperPal
+from theseus_insight import TheseusInsight
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run PaperPal with custom configurations")
+    parser = argparse.ArgumentParser(description="Run Theseus Insight with custom configurations")
     
     # Add arguments with current defaults
     parser.add_argument("--research-interests-path", type=str, 
@@ -79,7 +79,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     
-    paperpal = PaperPal(
+    theseus_insight = TheseusInsight(
         research_interests_path=args.research_interests_path,
         n_days=args.n_days,
         top_n=args.top_n,
@@ -104,4 +104,4 @@ if __name__ == "__main__":
         generate_podcast=args.generate_podcast
     )
     
-    paperpal.run()
+    theseus_insight.run()

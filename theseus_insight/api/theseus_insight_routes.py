@@ -4,14 +4,14 @@ import json
 import os
 import tempfile
 from datetime import datetime
-from ..theseus_insight import PaperPal
+from ..theseus_insight import TheseusInsight
 
 router = APIRouter()
 
 # Store active tasks and their status
 active_tasks: Dict[str, Dict[str, Any]] = {}
 
-async def run_paperpal_task(
+async def run_theseus_insight_task(
     task_id: str,
     config: dict,
     research_interests_path: Optional[str] = None,
@@ -21,8 +21,8 @@ async def run_paperpal_task(
         # Update task status
         active_tasks[task_id]["status"] = "running"
         
-        # Initialize PaperPal with config
-        paperpal = PaperPal(
+        # Initialize Theseus Insight with config
+        theseus_insight = TheseusInsight(
             research_interests_path=research_interests_path or config.get('researchInterestsPath'),
             orchestration_config=orchestration_path or config.get('orchestrationConfigPath'),
             n_days=config.get('nDays', 7),
@@ -53,14 +53,14 @@ async def run_paperpal_task(
                 "message": message
             })
 
-        # Run PaperPal with progress tracking
-        paperpal.run(progress_callback=progress_callback)
+        # Run Theseus Insight with progress tracking
+        theseus_insight.run(progress_callback=progress_callback)
         
         # Update final status
         active_tasks[task_id].update({
             "status": "completed",
             "progress": 100,
-            "message": "PaperPal run completed successfully"
+            "message": "Theseus Insight run completed successfully"
         })
 
     except Exception as e:
@@ -71,7 +71,7 @@ async def run_paperpal_task(
         raise
 
 @router.post("/run")
-async def run_paperpal(
+async def run_theseus_insight(
     background_tasks: BackgroundTasks,
     config: str = Form(...),
     research_interests_file: Optional[UploadFile] = File(None),
@@ -82,13 +82,13 @@ async def run_paperpal(
         config_dict = json.loads(config)
         
         # Generate task ID
-        task_id = f"paperpal_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        task_id = f"theseus_insight_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Initialize task status
         active_tasks[task_id] = {
             "status": "initializing",
             "progress": 0,
-            "message": "Initializing PaperPal run"
+            "message": "Initializing Theseus Insight run"
         }
 
         # Handle file uploads if provided
@@ -113,7 +113,7 @@ async def run_paperpal(
 
         # Start background task
         background_tasks.add_task(
-            run_paperpal_task,
+            run_theseus_insight_task,
             task_id,
             config_dict,
             research_interests_path,

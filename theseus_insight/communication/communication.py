@@ -39,7 +39,7 @@ def construct_email_body(content,
         date_range = start_date
     else:
         date_range = f"{start_date} - {end_date}"
-    body = f"""## PaperPal Newsletter for {date_range}:
+    body = f"""## Theseus Insight Newsletter for {date_range}:
 
 {content}
 
@@ -115,7 +115,7 @@ class GmailCommunication:
         # Remove the BCC header - it will be handled during sendmail
         if "Bcc" in message:
             del message["Bcc"]
-        message['Subject'] = f"PaperPal Paper Newsletter for {date_range}"
+        message['Subject'] = f"Theseus Insight Paper Newsletter for {date_range}"
         
         # Create both plain text and HTML versions
         text_part = MIMEText(content, 'plain')
@@ -199,11 +199,11 @@ class GmailCommunication:
             message = MIMEMultipart('alternative')
             message["From"] = self.sender_address
             message["To"] = self.sender_address
-            message['Subject'] = "PaperPal Error Notification"
+            message['Subject'] = "Theseus Insight Error Notification"
             
-            error_content = f"""## PaperPal Error Report
+            error_content = f"""## Theseus Insight Error Report
 
-An error occurred during the PaperPal execution:
+An error occurred during the Theseus Insight execution:
 
 {error_msg}
 """

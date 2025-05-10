@@ -1,6 +1,6 @@
-# PaperPal
+# Theseus Insight
 
-PaperPal is a multi-purpose project that processes PDF research papers, ranks them against your research interests, generates personalized newsletters, and can also produce podcast episodes (including optional visualized audio). It uses a combination of FastAPI endpoints, language models (LLMs), text-to-speech engines, and various utility scripts.
+Theseus Insight is a multi-purpose project that processes PDF research papers, ranks them against your research interests, generates personalized newsletters, and can also produce podcast episodes (including optional visualized audio). It uses a combination of FastAPI endpoints, language models (LLMs), text-to-speech engines, and various utility scripts.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -14,8 +14,8 @@ PaperPal is a multi-purpose project that processes PDF research papers, ranks th
   - [Podcast Generation](#podcast-generation)
   - [Script Management](#script-management)
   - [Visualizer Generation](#visualizer-generation)
-  - [PaperPal Run Orchestration](#paperpal-run-orchestration)
-- [Using PaperPal as a Library](#using-paperpal-as-a-library)
+  - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
+- [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
   - [Core Workflow](#core-workflow)
   - [Example Usage](#example-usage)
 - [License](#license)
@@ -25,7 +25,7 @@ PaperPal is a multi-purpose project that processes PDF research papers, ranks th
 
 ## Overview
 
-PaperPal is designed to automate tasks around recent research papers. It:
+Theseus Insight is designed to automate tasks around recent research papers. It:
 
 1. **Fetches & parses** papers from [paperswithcode.com](https://paperswithcode.com/) dumps within a date range.
 2. **Embeds** papers, checks their relevance to your research interests, and ranks them with large language models.
@@ -44,7 +44,7 @@ It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) 
   - Generating scripts & podcasts
   - Managing TTS visualizer generation
   - Checking generation status, downloading results
-  - Handling a “PaperPal run” that orchestrates the entire pipeline
+  - Handling a "Theseus Insight run" that orchestrates the entire pipeline
 - **In-memory or SQLite** database for:
   - Storing references to papers
   - Saving newsletters
@@ -53,68 +53,70 @@ It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) 
 - **TTS**: Choose KokoroTTS, Amazon Polly, or OpenAI TTS. Generate final MP3 or WAV files.
 - **Podcast**: Compose multi-speaker dialogues automatically, then convert them to TTS, merge segments into a final audio file, and optionally create a matrix-based visualizer.
 - **Newsletter**: Summarizes new relevant papers, providing references and sending them via email.
+- **Configurable orchestration**: All model and pipeline orchestration is handled via `config/orchestration.json`.
 
 ---
 
 ## Architecture and Modules
 
 ```
-api/
-  routers/
-    pdf.py          # Handles PDF upload
-    podcast.py      # Long-running tasks to generate podcasts
-    script.py       # Script management for saved dialogues
-    visualizer.py   # Endpoint to generate video visualizers from audio
-  main.py           # FastAPI entrypoint
-  paperpal_routes.py# Endpoint to orchestrate PaperPal runs
-
-communication/
-  __init__.py
-  communication.py  # Gmail email sending
-  youtube_integration.py # YouTube uploading
-
-data_model/
-  dialog.py         # Pydantic models for dialogues
-  __init__.py
-
-data_processing/
-  data_handling.py  # SQLite DB interactions (papers, newsletters, podcasts)
-  paperswithcode.py # Download JSON dump from paperswithcode.com
-  __init__.py
-
-inference/
-  llm.py            # LLM classes for Anthropic, OpenAI, Ollama, Gemini, etc.
-  pipeline.py       # TTS pipeline (Kokoro-based) logic
-  tts.py            # TTS classes for Kokoro, Polly, OpenAI TTS
-  __init__.py
-
-pdf/
-  parsers.py        # PDF -> Markdown parsers (using docling)
-  processing.py     # Table & figure extraction from PDFs
-  __init__.py
-
-podcast/
-  generator.py      # Higher-level logic to generate podcast from text
-  visualizer.py     # Visualizer logic (pygame + moviepy)
-  __init__.py
-
-prompt/
-  prompting.py      # Jinja2-based prompt decorator
-  data_models.py
-  newsletter_prompts.py
-  podcast_prompts.py
-  system_prompts.py
-  templates.py
-  __init__.py
-
-paperpal.py         # Main class orchestrating the entire pipeline
-utils.py            # Cosine similarity, date helpers, other utilities
-__init__.py         # Root init
+theseus_insight/
+  api/
+    routers/
+      pdf.py          # Handles PDF upload
+      podcast.py      # Long-running tasks to generate podcasts
+      script.py       # Script management for saved dialogues
+      visualizer.py   # Endpoint to generate video visualizers from audio
+    theseus_insight_routes.py # Endpoint to orchestrate Theseus Insight runs
+    __init__.py
+    uploads/         # Uploaded files
+    scripts/         # Saved scripts
+  communication/
+    communication.py  # Gmail email sending
+    youtube_integration.py # YouTube uploading
+    __init__.py
+  data_model/
+    dialog.py         # Pydantic models for dialogues
+    data_handling.py  # SQLite DB interactions (papers, newsletters, podcasts)
+    papers.py         # Paper metadata models
+    __init__.py
+  data_processing/
+    arxiv.py          # Arxiv data download/processing
+    harvester.py      # Data harvesting utilities
+    __init__.py
+  inference/
+    llm.py            # LLM classes for Anthropic, OpenAI, Ollama, Gemini, etc.
+    tts.py            # TTS classes for Kokoro, Polly, OpenAI TTS
+    __init__.py
+  pdf/
+    parsers.py        # PDF -> Markdown parsers (using docling)
+    processing.py     # Table & figure extraction from PDFs
+    __init__.py
+  podcast/
+    generator.py      # Podcast generation logic (main: PodcastGenerator)
+    visualizer.py     # Visualizer logic (pygame + moviepy)
+    __init__.py
+  prompt/
+    prompting.py      # Jinja2-based prompt decorator
+    data_models.py
+    newsletter_prompts.py
+    podcast_prompts.py
+    system_prompts.py
+    templates.py
+    __init__.py
+  constants.py        # Project-wide constants
+  main.py             # FastAPI entrypoint
+  theseus_insight.py  # Main orchestrator class (TheseusInsight)
+  utils.py            # Cosine similarity, date helpers, other utilities
+  __init__.py         # Root init
+config/
+  orchestration.json  # Model and pipeline orchestration config
+run_paperpal.py       # CLI entrypoint for running the full pipeline
 ```
 
 **Key classes include:**
-- `PaperPal`: A higher-level orchestrator to download, embed, rank, generate newsletters, produce podcasts, and optionally email or upload final artifacts.
-- `GeneralPodcastGenerator` & `PaperPalPodcastGenerator`: Tools to assemble multi-speaker dialogues from PDF or text, convert them to TTS, and optionally produce a matrix-based visualizer.
+- `TheseusInsight`: The main orchestrator to download, embed, rank, generate newsletters, produce podcasts, and optionally email or upload final artifacts.
+- `PodcastGenerator`: Assembles multi-speaker dialogues from PDF or text, converts them to TTS, and optionally produces a matrix-based visualizer.
 - Various FastAPI routers for structured endpoints.
 
 ---
@@ -137,7 +139,7 @@ __init__.py         # Root init
 Run the FastAPI app using uvicorn:
 
 ```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs).
@@ -155,9 +157,40 @@ View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs
 - **`GET /api/podcast/status/{task_id}`**  Check status of a podcast generation task.
 - **`GET /api/podcast/download/{filename}`**  Download the final podcast file.
 
+### Script Management
+- **`POST /api/script/save`**  Save a generated script.
+- **`GET /api/script/list`**  List saved scripts.
+- **`GET /api/script/download/{filename}`**  Download a saved script.
+
 ### Visualizer Generation
 - **`POST /api/visualizer/generate`**  Generate a visualizer video.
 - **`GET /api/visualizer/status/{task_id}`**  Check visualizer generation status.
+
+### Theseus Insight Run Orchestration
+- **`POST /api/theseus_insight/run`**  Orchestrate the full pipeline (papers, newsletter, podcast, etc).
+
+---
+
+## Using Theseus Insight as a Library
+
+You can use the main orchestrator directly in your own scripts:
+
+```python
+from theseus_insight import TheseusInsight
+
+ti = TheseusInsight(
+    research_interests_path="config/research_interests.txt",
+    orchestration_config="config/orchestration.json",
+    # ... other config options ...
+)
+ti.run()
+```
+
+Or use the CLI entrypoint:
+
+```bash
+python run_paperpal.py --generate-podcast True --generate-email True
+```
 
 ---
 
@@ -175,5 +208,5 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 - [KokoroTTS](https://github.com/fakeyh/kokoro-tts), [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
 - [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [SQLite](https://www.sqlite.org/) for backend processing.
 
-PaperPal is maintained by [M. Chimiste](https://github.com/fakeyh) & contributors.
+Theseus Insight is maintained by [M. Chimiste](https://github.com/fakeyh) & contributors.
 

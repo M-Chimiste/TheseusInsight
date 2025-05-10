@@ -3,7 +3,6 @@ import json
 import datetime
 import sqlite3
 from pathlib import Path
-from pydantic import BaseModel, field_validator
 from contextlib import contextmanager
 
 from .papers import Newsletter, Paper, Logs, Podcast

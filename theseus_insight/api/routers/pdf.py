@@ -1,7 +1,5 @@
 from fastapi import APIRouter, UploadFile, HTTPException
 from typing import List
-import tempfile
-import os
 from pathlib import Path
 
 router = APIRouter()

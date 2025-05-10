@@ -33,6 +33,7 @@ from theseus_insight.prompt import (
     NewsletterPromptData
 )
 from theseus_insight.utils import cosine_similarity, get_n_days_ago, TODAY, purge_ollama_cache
+from theseus_insight.constants import INTRO_TEXT
 
 load_dotenv()
 
@@ -43,34 +44,6 @@ GMAIL_SENDER_ADDRESS = os.getenv("GMAIL_SENDER_ADDRESS", None)
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", None)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 
-INTRO_TEXT = [
-    "This fascinating study sheds light on...",
-    "This research shows that...",
-    "This paper explores...",
-    "This research discusses...",
-    "This paper investigates...",
-    "This study presents...",
-    "In this work, the authors examine...",
-    "This article analyzes...",
-    "This paper highlights...",
-    "In this paper, the authors discuss...",
-    "This investigation addresses...",
-    "The research presented here explores...",
-    "The authors provide insights into...",
-    "This inquiry considers...",
-    "This document discusses...",
-    "Here, the study emphasizes...",
-    "This work illuminates...",
-    "This examination sheds light on...",
-    "This contribution offers perspectives on...",
-    "The paper provides an overview of...",
-    "This scholarly work investigates...",
-    "The following study presents findings on...",
-    "This piece of research elaborates on...",
-    "This article offers an analysis of...",
-    "The authors explore...",
-    "This study offers a comprehensive look at..."
-]
 
 class TheseusInsight:
     def __init__(self,
@@ -79,12 +52,7 @@ class TheseusInsight:
                  top_n=5,
                  start_date=None,
                  end_date=None,
-                 use_different_models=True,
-                 model_type="ollama",
-                 model_name="hermes3",
                  orchestration_config="config/orchestration.json",
-                 embedding_model_name="nomic-ai/modernbert-embed-base",
-                 trust_remote_code=True,
                  receiver_address=None,
                  max_new_tokens=1024,
                  temperature=0.1,
@@ -165,8 +133,6 @@ class TheseusInsight:
             self.end_date = try_parse_date(end_date) or TODAY
 
         self.top_n = top_n
-        self.model_type = model_type
-        self.model_name = model_name
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.cosine_similarity_threshold = cosine_similarity_threshold
@@ -207,104 +173,79 @@ class TheseusInsight:
             self.research_interests = f.read().strip()
         
         # Inference models
-        self.use_different_models = use_different_models
-        if use_different_models:
-            with open(orchestration_config, 'r') as f:
-                self.orchestration_config = json.load(f)
+    
+        with open(orchestration_config, 'r') as f:
+            self.orchestration_config = json.load(f)
 
-            # 1) Embedding model
-            self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']
-            self.embedding_model = SentenceTransformerInference(
-                self.embedding_model_name, 
-                remote_code=self.orchestration_config['embedding_model']['trust_remote_code']
-            )
-            
-            # 2) Load specialized LLMs
-            self.judge_model_config = self.orchestration_config['judge_model']
-            self.newsletter_model_config = self.orchestration_config['newsletter_model']
-            self.content_extraction_model_config = self.orchestration_config['content_extraction_model']
-            self.newsletter_sections_model_config = self.orchestration_config['newsletter_sections_model']
-            self.newsletter_intro_model_config = self.orchestration_config['newsletter_intro_model']
+        # 1) Embedding model
+        self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']
+        self.embedding_model = SentenceTransformerInference(
+            self.embedding_model_name, 
+            remote_code=self.orchestration_config['embedding_model']['trust_remote_code']
+        )
+        
+        # 2) Load specialized LLMs
+        self.judge_model_config = self.orchestration_config['judge_model']
+        self.newsletter_model_config = self.orchestration_config['newsletter_model']
+        self.content_extraction_model_config = self.orchestration_config['content_extraction_model']
+        self.newsletter_sections_model_config = self.orchestration_config['newsletter_sections_model']
+        self.newsletter_intro_model_config = self.orchestration_config['newsletter_intro_model']
 
-            self.judge_inference = self._load_inference_model(
-                self.judge_model_config['model_type'],
-                self.judge_model_config['model_name'],
-                self.judge_model_config['max_new_tokens'],
-                self.judge_model_config['temperature'],
-                self.judge_model_config.get('num_ctx')
-            )
-            self.newsletter_inference = self._load_inference_model(
-                self.newsletter_model_config['model_type'],
-                self.newsletter_model_config['model_name'],
-                self.newsletter_model_config['max_new_tokens'],
-                self.newsletter_model_config['temperature'],
-                self.newsletter_model_config.get('num_ctx')
-            )
-            self.content_extraction_inference = self._load_inference_model(
-                self.content_extraction_model_config['model_type'],
-                self.content_extraction_model_config['model_name'],
-                self.content_extraction_model_config['max_new_tokens'],
-                self.content_extraction_model_config['temperature'],
-                self.content_extraction_model_config.get('num_ctx')
-            )
-            self.newsletter_sections_inference = self._load_inference_model(
-                self.newsletter_sections_model_config['model_type'],
-                self.newsletter_sections_model_config['model_name'],
-                self.newsletter_sections_model_config['max_new_tokens'],
-                self.newsletter_sections_model_config['temperature'],
-                self.newsletter_sections_model_config.get('num_ctx')
-            )
-            self.newsletter_intro_inference = self._load_inference_model(
-                self.newsletter_intro_model_config['model_type'],
-                self.newsletter_intro_model_config['model_name'],
-                self.newsletter_intro_model_config['max_new_tokens'],
-                self.newsletter_intro_model_config['temperature'],
-                self.newsletter_intro_model_config.get('num_ctx')
-            )
+        self.judge_inference = self._load_inference_model(
+            self.judge_model_config['model_type'],
+            self.judge_model_config['model_name'],
+            self.judge_model_config['max_new_tokens'],
+            self.judge_model_config['temperature'],
+            self.judge_model_config.get('num_ctx')
+        )
+        self.newsletter_inference = self._load_inference_model(
+            self.newsletter_model_config['model_type'],
+            self.newsletter_model_config['model_name'],
+            self.newsletter_model_config['max_new_tokens'],
+            self.newsletter_model_config['temperature'],
+            self.newsletter_model_config.get('num_ctx')
+        )
+        self.content_extraction_inference = self._load_inference_model(
+            self.content_extraction_model_config['model_type'],
+            self.content_extraction_model_config['model_name'],
+            self.content_extraction_model_config['max_new_tokens'],
+            self.content_extraction_model_config['temperature'],
+            self.content_extraction_model_config.get('num_ctx')
+        )
+        self.newsletter_sections_inference = self._load_inference_model(
+            self.newsletter_sections_model_config['model_type'],
+            self.newsletter_sections_model_config['model_name'],
+            self.newsletter_sections_model_config['max_new_tokens'],
+            self.newsletter_sections_model_config['temperature'],
+            self.newsletter_sections_model_config.get('num_ctx')
+        )
+        self.newsletter_intro_inference = self._load_inference_model(
+            self.newsletter_intro_model_config['model_type'],
+            self.newsletter_intro_model_config['model_name'],
+            self.newsletter_intro_model_config['max_new_tokens'],
+            self.newsletter_intro_model_config['temperature'],
+            self.newsletter_intro_model_config.get('num_ctx')
+        )
 
-            # 3) Podcast model
-            if self.generate_podcast:
-                self.podcast_inference = self.orchestration_config.get('podcast_model', None)
-                if not self.podcast_inference:
-                    raise ValueError("Podcast model not set in orchestration config.")
-                self.podcast_generator = PodcastGenerator(
-                    text_model=self.podcast_inference,
-                    tts_provider=self.orchestration_config.get('tts_model', {}).get('tts_provider', 'kokoro'),
-                    speaker_1_voice=self.orchestration_config.get('tts_model', {}).get('speaker_1_voice', 'af_bella'),
-                    speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.0),
-                    speaker_2_voice=self.orchestration_config.get('tts_model', {}).get('speaker_2_voice', 'am_adam'),
-                    speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.0),
-                    instructions_template=INSTRUCTION_TEMPLATES,
-                    intro_music_path=self.intro_music_path,
-                    verbose=self.verbose
-                )
-
-        else:
-            # Single model approach
-            from .inference.llm import OllamaInference  # Example if all local
-            self.embedding_model = SentenceTransformerInference(
-                embedding_model_name,
-                remote_code=trust_remote_code
-            )
-            self.inference = OllamaInference(
-                model_name=model_name,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                url=OLLAMA_URL
-            )
-            # Podcast generator re-using the same inference
+        # 3) Podcast model
+        if self.generate_podcast:
+            self.podcast_inference = self.orchestration_config.get('podcast_model', None)
+            if not self.podcast_inference:
+                raise ValueError("Podcast model not set in orchestration config.")
             self.podcast_generator = PodcastGenerator(
-                text_model=self.inference,
-                tts_provider='kokoro',  # or your default
-                speaker_1_voice='af_bella',
-                speaker_1_speed=1.0,
-                speaker_2_voice='am_adam',
-                speaker_2_speed=1.0,
+                text_model=self.podcast_inference,
+                tts_provider=self.orchestration_config.get('tts_model', {}).get('tts_provider', 'kokoro'),
+                speaker_1_voice=self.orchestration_config.get('tts_model', {}).get('speaker_1_voice', 'af_bella'),
+                speaker_1_speed=self.orchestration_config.get('tts_model', {}).get('speaker_1_speed', 1.0),
+                speaker_2_voice=self.orchestration_config.get('tts_model', {}).get('speaker_2_voice', 'am_adam'),
+                speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.0),
                 instructions_template=INSTRUCTION_TEMPLATES,
                 intro_music_path=self.intro_music_path,
                 verbose=self.verbose
             )
-
+        # 4) Arxiv search categories
+        self.arxiv_main_category = self.orchestration_config['arxiv_search_categories']['main_category']
+        self.arxiv_filter_categories = self.orchestration_config['arxiv_search_categories']['filter_categories']
         self.error_notified = False
 
     def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
@@ -828,7 +769,6 @@ class TheseusInsight:
 
                     podcast_content = self.podcast_generator.generate_podcast(
                         pdf_paths=list(top_n_df['pdf_url']),
-                        paperpal_sections=sections_data['sections'],
                         output_format=self.output_format,
                         output_dir=self.output_dir,
                         prefix=self.prefix,
@@ -848,7 +788,6 @@ class TheseusInsight:
                     # so it merges the final audio with the animation
                     podcast_content = self.podcast_generator.generate_podcast(
                         pdf_paths=list(top_n_df['pdf_url']),
-                        paperpal_sections=sections_data['sections'],
                         output_format=self.output_format,
                         output_dir=self.output_dir,
                         prefix=self.prefix,
@@ -920,11 +859,23 @@ class TheseusInsight:
             # Final Step: Mark completion, purge + cleanup
             # -----------
             self._save_checkpoint('newsletter_complete', {'status': 'complete'})
-            if self.model_type == "ollama":
-                purge_ollama_cache(OLLAMA_URL, self.model_name)
+            # Try to purge the cache for all Ollama models used in the orchestration config
+            try:
+                # Collect all unique Ollama model names from the orchestration config
+                ollama_models = set()
+                for key, cfg in self.orchestration_config.items():
+                    if isinstance(cfg, dict) and cfg.get('model_type', '').lower() == 'ollama':
+                        model_name = cfg.get('model_name')
+                        if model_name:
+                            ollama_models.add(model_name)
+                for model_name in ollama_models:
+                    purge_ollama_cache(OLLAMA_URL, model_name)
+            except Exception as e:
+                if self.verbose:
+                    print(f"Failed to purge Ollama cache for some models: {e}")
 
             # Log final success
-            self.papers_db.insert_log(Logs(status_code=200, status="Successfully completed PaperPal run"))
+            self.papers_db.insert_log(Logs(status_code=200, status="Successfully completed Theseus Insight run"))
 
             # Optionally remove all checkpoints on success
             self._cleanup_checkpoints()

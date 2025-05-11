@@ -67,6 +67,34 @@ class PaperDatabase:
                 )
             ''')
 
+            # Create settings table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            ''')
+
+            # Create model_providers table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS model_providers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                )
+            ''')
+
+            # Create models table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS models (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    config_json TEXT,
+                    FOREIGN KEY (provider_id) REFERENCES model_providers(id),
+                    UNIQUE(provider_id, name)
+                )
+            ''')
+
     @contextmanager
     def get_cursor(self):
         """Context manager for database connections."""
@@ -230,3 +258,82 @@ class PaperDatabase:
                     'embedding_model': row[10]
                 })
             return result
+
+    # SETTINGS CRUD
+    def get_setting(self, key: str):
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def set_setting(self, key: str, value: str):
+        with self.get_cursor() as cursor:
+            cursor.execute('REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
+
+    def delete_setting(self, key: str):
+        with self.get_cursor() as cursor:
+            cursor.execute('DELETE FROM settings WHERE key = ?', (key,))
+
+    def get_all_settings(self):
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT key, value FROM settings')
+            return dict(cursor.fetchall())
+
+    # MODEL PROVIDERS CRUD
+    def add_model_provider(self, name: str):
+        with self.get_cursor() as cursor:
+            cursor.execute('INSERT OR IGNORE INTO model_providers (name) VALUES (?)', (name,))
+
+    def get_model_providers(self):
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT id, name FROM model_providers')
+            return [{'id': row[0], 'name': row[1]} for row in cursor.fetchall()]
+
+    def delete_model_provider(self, provider_id: int):
+        with self.get_cursor() as cursor:
+            cursor.execute('DELETE FROM model_providers WHERE id = ?', (provider_id,))
+
+    # MODELS CRUD
+    def add_model(self, provider_id: int, name: str, config_json: str = None):
+        with self.get_cursor() as cursor:
+            cursor.execute('INSERT OR IGNORE INTO models (provider_id, name, config_json) VALUES (?, ?, ?)', (provider_id, name, config_json))
+
+    def get_models(self, provider_id: int = None):
+        with self.get_cursor() as cursor:
+            if provider_id:
+                cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ?', (provider_id,))
+            else:
+                cursor.execute('SELECT id, provider_id, name, config_json FROM models')
+            return [
+                {'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]} for row in cursor.fetchall()
+            ]
+
+    def delete_model(self, model_id: int):
+        with self.get_cursor() as cursor:
+            cursor.execute('DELETE FROM models WHERE id = ?', (model_id,))
+
+    # EMAIL RECIPIENTS
+    def get_email_recipients(self):
+        val = self.get_setting('email_recipients')
+        if val:
+            try:
+                return json.loads(val)
+            except Exception:
+                return []
+        return []
+
+    def set_email_recipients(self, recipients):
+        self.set_setting('email_recipients', json.dumps(recipients))
+
+    # VISUALIZER SETTINGS
+    def get_visualizer_settings(self):
+        val = self.get_setting('visualizer_settings')
+        if val:
+            try:
+                return json.loads(val)
+            except Exception:
+                return {}
+        return {}
+
+    def set_visualizer_settings(self, settings):
+        self.set_setting('visualizer_settings', json.dumps(settings))

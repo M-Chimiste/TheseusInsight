@@ -18,6 +18,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import markdown2
+from theseus_insight.data_model.data_handling import PaperDatabase
 
 
 def construct_email_body(content,
@@ -57,18 +58,21 @@ class GmailCommunication:
                 sender_address=None, 
                 receiver_address=None, 
                 app_password=None, 
-                verbose=False):
+                verbose=False,
+                db_path=None):
         self.sender_address = sender_address
         self.app_password = app_password
         self.receiver_address = receiver_address
         self.email_message = None
         self.verbose = verbose
-        
+        if not db_path:
+            db_path = os.getenv('THESEUS_DB_PATH', 'data/papers.db')
+        self.db_path = db_path
+        self.db = PaperDatabase(self.db_path)
         if not self.app_password:
             self.app_password = os.getenv('GMAIL_APP_PASSWORD', None)
             if not self.app_password:
                 raise Exception("No application password found. Please set the GMAIL_APP_PASSWORD environment variable.")
-                
         if not self.sender_address:
             self.sender_address = os.getenv('GMAIL_SENDER_ADDRESS', None)
             if not self.sender_address:
@@ -86,7 +90,18 @@ class GmailCommunication:
         """
         sender_address = self.sender_address
         receiver_address = self.receiver_address
-
+        # If receiver_address is not provided, fetch from DB
+        if not receiver_address:
+            recipients = self.db.get_email_recipients()
+            if recipients:
+                receiver_address = recipients
+            else:
+                receiver_address = [sender_address]
+        elif isinstance(receiver_address, str):
+            receiver_address = [addr.strip() for addr in receiver_address.split(',')]
+        # Remove sender's address from BCC list if it's there
+        receiver_address = [addr for addr in receiver_address if addr != sender_address]
+        
         if isinstance(start_date, str):
             start_date = datetime.strptime(start_date, "%Y-%m-%d")
             start_date = start_date.strftime("%B %d, %Y")
@@ -95,15 +110,6 @@ class GmailCommunication:
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
             end_date = end_date.strftime("%B %d, %Y")
 
-        # Keep receiver_address as a list if it is one
-        if not receiver_address:  # we send the email to ourselves if we aren't sending it to someone else.
-            receiver_address = [sender_address]
-        elif isinstance(receiver_address, str):
-            receiver_address = [addr.strip() for addr in receiver_address.split(',')]
-        
-        # Remove sender's address from BCC list if it's there
-        receiver_address = [addr for addr in receiver_address if addr != sender_address]
-        
         if start_date == end_date:
             date_range = start_date
         else:

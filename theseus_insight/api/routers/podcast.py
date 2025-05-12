@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, File, UploadFile,
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from pathlib import Path
-from theseus_insight.podcast.generator import GeneralPodcastGenerator
+from theseus_insight.podcast.generator import PodcastGenerator
 from theseus_insight.api.routers.script import Script, SCRIPT_DIR
 from theseus_insight.data_model import PaperDatabase, Podcast
 import json
@@ -127,7 +127,7 @@ async def generate_podcast(
         }
         
         # Initialize the generator with the provided configuration
-        generator = GeneralPodcastGenerator(
+        generator = PodcastGenerator(
             text_model=config_obj.text_model,
             tts_provider=config_obj.tts_provider,
             speaker_1_voice=config_obj.speaker_1_voice,
@@ -258,7 +258,7 @@ async def regenerate_podcast(script: Script, config: PodcastGenerationConfig):
     """
     try:
         # Initialize the generator with the provided configuration
-        generator = GeneralPodcastGenerator(
+        generator = PodcastGenerator(
             text_model=config.text_model,
             tts_provider=config.tts_provider,
             speaker_1_voice=config.speaker_1_voice,

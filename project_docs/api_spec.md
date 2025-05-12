@@ -137,10 +137,4 @@ Long‑running status routes converge on the following schema:
    curl -O http://localhost:8000/api/podcast/download/podcast_final_1715500000.mp3
    ```
 
----
 
-## 6. Future Extensions
-
-* Authentication middleware (JWT / API key)
-* `/theseus_insight/status/{task_id}` for symmetry
-* Pagination & filtering for `/script/list` and settings collections

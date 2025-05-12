@@ -1,36 +1,34 @@
-# Theseus Insight – Phase 1 Task Graph (UI‑First, Local‑Dev)
+# Theseus Insight – Phase 1 Task Graph (NiceGUI, Local-Dev)
 
-*CI/CD is deferred; all work is executed and tested locally.*
+*CI/CD is still deferred; all work runs and is tested locally.*
 
 ---
 
 ## Overview
 
-Phase 1 delivers a standalone GUI backed by FastAPI and SQLite. Focus areas:
+Phase 1 delivers a **NiceGUI-based** GUI that shares the same FastAPI process and SQLite storage as the existing backend. Key work streams:
 
-1. React front‑end pages **Settings, Newsletter, Podcast, Visualization, Papers, Dashboard**.
-2. Minimal new FastAPI routes & WebSocket hooks to support UI.
-3. Local‑only dev/test workflow (no CI, no Docker yet).
+1. Stand-alone NiceGUI pages **Settings, Newsletter, Podcast, Visualiser, Papers, Dashboard**.
+2. Minimal FastAPI additions (settings CRUD, task progress WS, paginated paper search).
+3. Pure-Python dev workflow – **no Node, Vite, or Docker** in this phase.
 
 ---
 
 ## Task Table
 
-| ID                               | Depends On | Objective (local)                         |
-| -------------------------------- | ---------- | ----------------------------------------- |
-| **T01 – Settings API**           | –          | CRUD endpoints wrapping file configs      |
-| **T02 – Task Status WS**         | –          | REST + WebSocket for progress updates     |
-| **T03 – Papers Query API**       | –          | Paginated search over `papers.db`         |
-| **T04 – Serve SPA & Health**     | –          | Mount React bundle & `/healthz` route     |
-| **T05 – React Scaffold**         | T01‑T04    | Vite + TS + Chakra app, shared components |
-| **T06 – Settings Page**          | T05 T01    | Tabbed settings UI                        |
-| **T07 – Newsletter Wizard**      | T05 T02    | Date/category form → `/run`               |
-| **T08 – Podcast Wizard**         | T05 T02    | PDF/URL upload form → `/podcast/generate` |
-| **T09 – Visualization Page**     | T05 T02    | Audio→video form                          |
-| **T0A – Papers Explorer**        | T05 T03    | Virtualized table w/ bulk actions         |
-| **T0B – Dashboard & Nav**        | T06‑T0A    | Top nav, quick‑start cards, recent jobs   |
-| **T0C – Playwright E2E (local)** | T0B        | Node script runs dev server & E2E flows   |
-| **T0D – Docs & Screenshots**     | T0C        | Update README, add UI walkthrough         |
+| ID                                   | Depends On | Objective (local)                                    |
+| ------------------------------------ | ---------- | ---------------------------------------------------- |
+| **T01 – Settings API**               | –          | CRUD endpoints wrapping file configs                 |
+| **T02 – Task Status WS**             | –          | REST + WebSocket for progress updates                |
+| **T03 – Papers Query API**           | –          | Paginated search over `papers.db`                    |
+| **T04 – NiceGUI Bootstrap & Health** | –          | Initialise `ui` object, mount at `/`, add `/healthz` |
+| **T05 – NiceGUI Scaffold**           | T01-T04    | Create shared layout, nav, & util components         |
+| **T06 – Settings Page**              | T05 T01    | Tabbed settings UI bound to `/settings`              |
+| **T07 – Newsletter Wizard**          | T05 T02    | Date/category form → `/theseus_insight/run`          |
+| **T08 – Podcast Wizard**             | T05 T02    | PDF/URL upload → `/podcast/generate`                 |
+| **T09 – Visualiser Page**            | T05 T02    | Audio→video form & queue                             |
+| **T0A – Papers Explorer**            | T05 T03    | Virtualised table & bulk actions                     |
+| **T0B – Dashboard & Nav**            | T06-T0A    | Quick-start cards, recent jobs, top nav              |
 
 ---
 
@@ -38,79 +36,104 @@ Phase 1 delivers a standalone GUI backed by FastAPI and SQLite. Focus areas:
 
 ### T01 – **Settings API**
 
-*Expose `/settings` endpoints to read/write `config/orchestration.json` & `research_interests.txt`.*
+Expose `/settings` endpoints that read/write `config/orchestration.json` & `research_interests.txt`.
 
 * **Deliverables**
 
-  * `GET /settings`, `PUT /settings` (Pydantic validation).
-  * Unit test `python -m pytest tests/unit/test_settings_route.py`.
-* **Done When** file edits persist and reload without server restart.
+  * `GET /settings`, `PUT /settings` with Pydantic validation.
+  * Unit tests: `pytest tests/unit/test_settings_route.py`.
+* **Done When** edits persist to disk and downstream tasks pick up changes without server restart.
+
+---
 
 ### T02 – **Task Status & WebSocket**
 
-*REST + WebSocket layer over existing `TASK_STATUS` dict.*
+Provide unified progress tracking over the existing `TASK_STATUS` dict.
 
 * **Deliverables**
 
-  * `GET /status/{task_id}` JSON.
-  * `/ws/progress` pushes updates via `asyncio.Queue`.
-  * Helper `broadcast_progress` imported by background jobs.
-* **Done When** dummy task emits progress to a simple HTML client.
+  * `GET /status/{task_id}` returns JSON snapshot.
+  * `/ws/progress/{task_id}` streams updates (NiceGUI `ui.run_async`).
+  * Helper `broadcast_progress` in shared module.
+* **Done When** a dummy long-running task streams progress to a local browser tab.
+
+---
 
 ### T03 – **Papers Query API**
 
-*High‑performance SQLite search endpoint for Papers Explorer.*
+High-performance endpoint for the Papers Explorer page.
 
-* Params: `q`, `score_min`, `score_max`, `limit`, `offset`, `sort`.
-* Indexes on `score`, `created`.
+* Query params: `q`, `score_min`, `score_max`, `limit`, `offset`, `sort`.
+* Adds SQLite indexes on `score`, `created`.
 * Returns `{total, rows:[…]}`.
 
-### T04 – **Serve SPA & Health**
+---
 
-* Mount `StaticFiles("ui/dist")`.
-* `GET /healthz` → `{status:"ok"}`.
+### T04 – **NiceGUI Bootstrap & Health**
 
-### T05 – **React Scaffold & Shared Components**
+* Instantiate `app = NiceGUI()` (aliased as `ui`).
+* Mount it in `theseus_insight/ui.py`.
+* Add `GET /healthz` → `{status: "ok"}`.
+* Dev entrypoint: `python -m theseus_insight.ui --reload` (uvicorn hot-reload).
 
-* Vite + TS + Chakra UI.
-* Axios instance `/api` base, SWR provider.
-* `<JobDrawer>` listening to `/ws/progress`.
-* `<MainLayout>` with nav, color‑mode toggle.
+---
 
-*(Remaining UI tasks unchanged; they build on T05 and respective backend routes.)*
+### T05 – **NiceGUI Scaffold & Shared Components**
 
-### T06 – **Settings Page** – Tabbed form bound to `/settings`.
+* Create `<MainLayout>` function wrapping pages with side-nav, light/dark toggle.
+* Implement `<JobDrawer>` that subscribes to `/ws/progress` and shows task details.
+* Helper module `ui_helpers.py` for common widgets (date range picker, file-upload).
 
-### T07 – **Newsletter Wizard** – Date range etc., posts `/theseus_insight/run`.
+---
 
-### T08 – **Podcast Wizard** – Dropzone + URL list; posts `/podcast/generate`.
+### T06 – **Settings Page**
 
-### T09 – **Visualization Page** – Audio upload & render options.
+* Tabs: General, Models, ArXiv, Email, Audio/Video.
+* Uses NiceGUI `ui.tabs` + `ui.input`, `ui.select`, `ui.switch` bound via `get_settings()/put_settings()`.
+* “Save” button gives green toast; errors show red toast.
 
-### T0A – **Papers Explorer** – TanStack virtualized grid, bulk actions cart.
+---
 
-### T0B – **Dashboard & Navigation** – Quick‑start cards + recent jobs list.
+### T07 – **Newsletter Wizard**
 
-### T0C – **Playwright E2E (Local)**
+* Page `/newsletter` with date range, category multiselect, advanced accordion (LLM params).
+* “Run” triggers `POST /theseus_insight/run` and opens `<JobDrawer>`.
 
-* Node script starts: `uvicorn theseus_insight.main:app` & `npm run dev` concurrently.
-* Tests drive each flow, assert output files in `/data/output`.
-* Run via `npm run test:e2e`.
+---
 
-### T0D – **Docs & Screenshots**
+### T08 – **Podcast Wizard**
 
-* Update `README` with local dev steps: `python -m venv`, install deps, `uvicorn`, `npm install`, `npm run dev`.
-* Add `docs/UI.md` annotated screenshots.
+* Page `/podcast`; `ui.upload` for PDFs, `ui.input` for arXiv URLs.
+* Switch **Create visualiser** and intro-music `ui.upload`.
+* Posts to `/podcast/generate`.
+
+---
+
+### T09 – **Visualiser Page**
+
+* Upload MP3, colour/Fx presets (`ui.select`, `ui.slider`).
+* Render queue with status chips and download buttons.
+
+---
+
+### T0A – **Papers Explorer**
+
+* Server-side `ui.table` using data from T03.
+* Column filters, score sliders, bulk action toolbar → newsletter / podcast endpoints.
+
+---
+
+### T0B – **Dashboard & Navigation**
+
+* Home page `/` showing quick-start cards.
+* Recent jobs table pulls `/status` for last ten tasks.
+* Side navigation & brand header shared via `<MainLayout>`.
 
 ---
 
 ## Definition of Done
 
-* All endpoints functional; unit tests pass locally.
-* `npm run dev` loads UI, each page round‑trips to backend.
-* Job progress streams live via WebSocket.
-* `npm run test:e2e` executes Playwright flows successfully.
-
----
-
-*Last updated:* 2025‑05‑11
+* All endpoints functional & unit tests green (`pytest`).
+* `python -m theseus_insight.ui --reload` starts NiceGUI; pages round-trip successfully.
+* Live progress streaming via WS is visible on JobDrawer.
+* No Node/Vite.

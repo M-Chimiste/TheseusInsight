@@ -61,6 +61,7 @@ appdirs
 # Media Processing
 pydub  # Audio
 moviepy  # Video
+pygame  # Visualization
 
 # YouTube Integration
 google-api-python-client
@@ -71,4 +72,4 @@ google-auth-oauthlib
 fastapi
 uvicorn
 python-multipart
-nicegui
+

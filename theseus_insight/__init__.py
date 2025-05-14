@@ -13,7 +13,7 @@
 # limitations under the License.
 
 __version__ = "0.9.0"
-from .theseus_insight import TheseusInsight
+from .theseus_insight import *
 from .prompt import *
 from .podcast import *
 from .inference import *

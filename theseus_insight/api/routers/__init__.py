@@ -3,3 +3,4 @@ from .script import router as script_router
 from .podcast import router as podcast_router
 from .visualizer import router as visualizer_router
 from .settings import router as settings_router
+from .models import router as models_router

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from theseus_insight.api.routers import pdf, script, podcast, visualizer, settings_router
 from theseus_insight.api.theseus_insight_routes import router as theseus_insight_router
+from theseus_insight.api.routers.models import router as models_router
 from dotenv import load_dotenv
 import os
 import json
@@ -77,8 +78,8 @@ app.include_router(script.router, prefix="/api/script", tags=["Script"])
 app.include_router(podcast.router, prefix="/api/podcast", tags=["Podcast"])
 app.include_router(visualizer.router, prefix="/api/visualizer", tags=["Visualizer"])
 app.include_router(theseus_insight_router, prefix="/api/theseus_insight", tags=["theseus_insight"])
-app.include_router(settings_router, prefix="/api", tags=["Settings"])
-
+app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
+app.include_router(models_router, prefix="/api/models", tags=["Models"])
 @app.get("/")
 async def root():
     return {

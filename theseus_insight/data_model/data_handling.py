@@ -7,6 +7,14 @@ from contextlib import contextmanager
 
 from .papers import Newsletter, Paper, Logs, Podcast
 
+INITIAL_PROVIDERS = [
+    {"id": 1, "name": "ollama"},
+    {"id": 2, "name": "gemini"},
+    {"id": 3, "name": "openai"},
+    {"id": 4, "name": "sentence-transformers"},
+    {"id": 5, "name": "llamacpp"},
+]
+
 
 class PaperDatabase:
     def __init__(self, db_path: str):
@@ -78,10 +86,12 @@ class PaperDatabase:
             # Create model_providers table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS model_providers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE
                 )
             ''')
+            for provider in INITIAL_PROVIDERS:
+                cursor.execute('INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)', (provider['id'], provider['name']))
 
             # Create models table
             cursor.execute('''
@@ -266,7 +276,11 @@ class PaperDatabase:
             row = cursor.fetchone()
             return row[0] if row else None
 
-    def set_setting(self, key: str, value: str):
+    def set_setting(self, key, value):
+        if not isinstance(value, str):
+            key = str(key)
+        if not isinstance(key, str):
+            key = str(key)
         with self.get_cursor() as cursor:
             cursor.execute('REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
 
@@ -280,9 +294,9 @@ class PaperDatabase:
             return dict(cursor.fetchall())
 
     # MODEL PROVIDERS CRUD
-    def add_model_provider(self, name: str):
+    def add_model_provider(self, id: int, name: str):
         with self.get_cursor() as cursor:
-            cursor.execute('INSERT OR IGNORE INTO model_providers (name) VALUES (?)', (name,))
+            cursor.execute('INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)', (id, name))
 
     def get_model_providers(self):
         with self.get_cursor() as cursor:

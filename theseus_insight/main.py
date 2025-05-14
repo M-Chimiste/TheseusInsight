@@ -45,7 +45,7 @@ def _populate_settings_from_config():
 
     if interests_path.exists():
         with open(interests_path, "r", encoding="utf-8") as f:
-            db.set_setting("research_interests", f.read())
+            db.set_setting("research-interests", f.read())
 
 
 # Lifespan handler (replaces deprecated on_event("startup"))

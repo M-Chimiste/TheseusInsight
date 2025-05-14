@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, ValidationError
+from fastapi import APIRouter, HTTPException, Body
+from pydantic import BaseModel, Field, ValidationError, RootModel
 from typing import List, Optional, Dict, Any
 from theseus_insight.data_model.data_handling import PaperDatabase
 import os
@@ -13,13 +13,10 @@ def get_db():
     db_path = os.environ.get("THESEUS_DB_PATH", "data/papers.db")
     return PaperDatabase(db_path)
 
-# --- Pydantic Schemas ---
-class Setting(BaseModel):
-    key: str
-    value: str
+# --- Pydantic Schemas
 
 class Provider(BaseModel):
-    id: Optional[int]
+    id: int
     name: str
 
 class ModelConfig(BaseModel):
@@ -34,13 +31,14 @@ class EmailRecipients(BaseModel):
 class VisualizerSettings(BaseModel):
     settings: Dict[str, Any] = Field(default_factory=dict)
 
+
 # --- Settings Endpoints ---
 @router.get("/settings", response_model=Dict[str, str])
 def get_all_settings():
     db = get_db()
     return db.get_all_settings()
 
-@router.get("/settings/{key}", response_model=Setting)
+@router.get("/settings/{key}")
 def get_setting(key: str):
     db = get_db()
     value = db.get_setting(key)
@@ -48,11 +46,11 @@ def get_setting(key: str):
         raise HTTPException(status_code=404, detail="Setting not found")
     return {"key": key, "value": value}
 
-@router.put("/settings/{key}", response_model=Setting)
-def set_setting(key: str, setting: Setting):
+@router.put("/settings/{key}")
+def set_setting(key: str, value: str):
     db = get_db()
-    db.set_setting(key, setting.value)
-    return setting
+    db.set_setting(key, value)
+    return {"result": "updated"}
 
 @router.delete("/settings/{key}")
 def delete_setting(key: str):
@@ -148,4 +146,37 @@ def send_test_email():
         comm.send_email()
         return {"success": True, "message": f"Test email sent to: {', '.join(recipients)}"}
     except Exception as e:
-        return {"success": False, "message": str(e)} 
+        return {"success": False, "message": str(e)}
+
+@router.get("/settings/orchestration")
+def get_orchestration():
+    db = get_db()
+    value = db.get_setting("orchestration")
+    if value is None:
+        raise HTTPException(status_code=404, detail="Setting not found")
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+@router.put("/settings/orchestration")
+def set_orchestration(config: Dict[str, Any]):
+    db = get_db()
+    db.set_setting("orchestration", config)
+    return config
+
+@router.get("/settings/research-interests")
+def get_research_interests():
+    db = get_db()
+    value = db.get_setting("research-interests")
+    if value is None:
+        return {"interests": ""}
+    return {"interests": value}
+
+@router.put("/settings/research-interests")
+def set_research_interests(payload):
+    print(payload)
+    db = get_db()
+    value = json.dumps(payload["interests"])
+    db.set_setting("research-interests", value)
+    return payload

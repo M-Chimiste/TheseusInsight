@@ -36,7 +36,7 @@ pandas
 openpyxl
 json_repair
 tabulate
-pydantic
+pydantic==2.4.2
 tqdm
 numba>=0.56.4
 
@@ -72,4 +72,10 @@ google-auth-oauthlib
 fastapi
 uvicorn
 python-multipart
+
+# Additional dependencies
+websockets
+email-validator
+python-jose[cryptography]
+passlib[bcrypt]
 

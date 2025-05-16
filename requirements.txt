@@ -79,3 +79,7 @@ email-validator
 python-jose[cryptography]
 passlib[bcrypt]
 
+streamlit
+plotly
+streamlit-aggrid
+python-multipart

@@ -1,6 +1,6 @@
-# Theseus Insight – Graphical User Interface (GUI) Product Requirements Document (v0.2)
+# Theseus Insight – Graphical User Interface (GUI) Product Requirements Document (v0.3)
 
-> **Scope note:** This PRD covers *Phase 1* — adding a **browser‑based GUI** that runs locally, served by a Node/Next.js dev server and talking to the existing FastAPI backend + SQLite storage. Containerisation and remote deployment will be defined in a later phase.
+> **Scope note:** This PRD covers *Phase 1* — adding a **browser‑based GUI** that runs locally, served by a lightweight **Python‑friendly** web server (e.g., **Streamlit**) and talking to the existing FastAPI backend + SQLite storage. Containerisation and remote deployment will be defined in a later phase.
 
 ---
 
@@ -9,7 +9,7 @@
 |                | Goals                                                                                                                                                                                                                                                                                                                   | Non‑Goals                                                                                                                                               |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **User Value** | • Provide a polished point‑and‑click experience so non‑technical users can harvest papers, generate newsletters & podcasts, and review results.<br>• Reduce reliance on CLI and manual JSON edits.                                                                                                                      | • Cloud/SaaS multi‑tenant hosting.<br>• Mobile‑first UX (desktop‑first for Phase 1).<br>• Full account management / OAuth (assume single‑user desktop). |
-| **Technical**  | • Build the UI with **Next.js 14 (App Router) + React 18**, written in **TypeScript**.<br>• Use **shadcn/ui** (Radix primitives + Tailwind CSS) for components & styling.<br>• Keep the backend exactly as‑is (FastAPI) and communicate over REST/WebSockets.<br>• Hot‑reload dev workflow: `pnpm install && pnpm dev`. | • Heavy CI/CD & Docker orchestration.<br>• Design‑system theming beyond shadcn defaults.<br>• Data‑visualisation polish (simple first).                 |
+| **Technical**  | • Build the UI using a lightweight, Python‑based framework that supports rapid local development (e.g., **Streamlit** for the initial prototype).<br>• Keep the backend exactly as‑is (FastAPI) and communicate over REST/WebSockets.<br>• Hot‑reload/auto‑reload dev workflow should rely on the framework’s native tooling (e.g., `streamlit run`). | • Heavy CI/CD & Docker orchestration.<br>• Custom theming or advanced design‑system work beyond built‑in defaults.<br>• Data‑visualisation polish (simple first). |
 
 ---
 
@@ -23,18 +23,16 @@
 
 ---
 
-## 3 · Technology Stack
+## 3 · Technology Considerations
 
-| Layer              | Choice                                         | Notes                                                           |
-| ------------------ | ---------------------------------------------- | --------------------------------------------------------------- |
-| Frontend framework | **Next.js 14 (App Router)**                    | File‑based routing, built‑in SSR/SSG if needed.                 |
-| UI components      | **shadcn/ui**                                  | Radix primitives, Tailwind utility classes; dark‑mode included. |
-| Styling            | **Tailwind v3**                                | Already integrated via shadcn generator.                        |
-| State‑management   | React Context + `react‑query` (TanStack Query) | Handles server‑state caching + optimistic updates.              |
-| Icons              | **lucide‑react**                               | Lightweight SVG icon set.                                       |
-| Build tool         | **Vite (via Next.js turbo)**                   | Out of the box with Next 14.                                    |
-| Package manager    | **pnpm**                                       | Faster installs, workspace‑friendly.                            |
-| Communication      | REST + WebSocket                               | Proxy to FastAPI on `localhost:8000`.                           |
+* The GUI should be implementable with minimal front‑end boilerplate.
+* Preference for Python‑native frameworks to leverage existing expertise (e.g., **Streamlit** or **NiceGUI**), but the design is framework‑agnostic.
+* The selected framework must support:
+  * Persistent sidebar navigation.
+  * File upload & download.
+  * Real‑time progress updates via WebSockets or polling.
+  * Responsive layouts and accessibility best practices.
+* The PRD remains technology‑independent to allow future evolution; **Streamlit** is an acceptable choice for Phase 1.
 
 ---
 
@@ -45,11 +43,11 @@
 1. **Persistent Sidebar Navigation**
 
    * Width ≈ 240 px, collapsible (<1024 px auto‑collapses).
-   * Active link highlighted; uses `next/link` for client‑side route transitions.
-   * Main content area (`<main className="flex‑1 p‑6">`) fills remaining space and starts at top‑left (no forced centring).
+   * Active link highlighted.
+   * Main content area (main layout area) fills remaining space and starts at top‑left (no forced centring).
 2. **Global Feedback**
 
-   * Toast component from shadcn (`<ToastProvider>` + `<Toast>`).
+   * Toast/notification mechanism provided by the chosen framework.
    * WebSocket hook (`useRunProgress`) streams node‑level status into progress bars / DAG viewer.
 3. **Settings Hydration**
 
@@ -72,37 +70,32 @@
 1. **Bootstrap**
 
    ```bash
-   pnpm create next-app theseus-gui --ts --tailwind --eslint --src-dir
-   cd theseus-gui
-   npx shadcn-ui@latest init
-   pnpm add @tanstack/react-query lucide-react socket.io-client
+   python -m venv .venv
+   source .venv/bin/activate          # or use your preferred environment tool
+   pip install -r requirements.txt    # include streamlit, requests, websockets, etc.
    ```
-2. **Local backend proxy** – add `next.config.js` rewrite:
 
-   ```js
-   module.exports = {
-     async rewrites() {
-       return [{ source: '/api/:path*', destination: 'http://localhost:8000/:path*' }]
-     },
-   }
-   ```
-3. **Run**
+2. **Run**
 
    ```bash
-   # in one terminal
-   pnpm dev  # Next.js on :3000
+   # terminal 1
+   streamlit run gui_app.py           # Streamlit GUI on :8501 by default
 
-   # in another
+   # terminal 2
    uvicorn backend.main:app --reload  # FastAPI on :8000
    ```
-4. **Build** – `pnpm build && pnpm start` serves static/server bundle.
+
+3. **Packaging**
+
+   * For a self‑contained desktop app, consider bundling via PyInstaller or similar.
+   * Containerisation and remote deployment will be addressed in a later phase.
 
 ---
 
 ## 6 · Non‑Functional Requirements
 
 * **Performance:** Time‑to‑Interactive ≤ 1 s on M‑series Mac in dev; background tasks streamed every ≤ 2 s.
-* **Accessibility:** All shadcn components ship with Radix accessibility; verify colour contrast AA.
+* **Accessibility:** Ensure chosen components meet WCAG 2.1 AA colour‑contrast and keyboard‑navigation standards.
 * **Responsiveness:** Sidebar collapses at < 1024 px; layout degrades gracefully to single column.
 * **Download Packaging:** Server‑side zipping unchanged (see backend spec). Frontend polls `/podcast/{id}` until `artifact_ready=true`.
 * **Error Handling:** HTTP errors → toast, `react‑query` handles retries; WS disconnects → exponential backoff.
@@ -154,8 +147,8 @@ flowchart TD
 
 ## 11 · Open Questions
 
-1. Should we SSR any pages (e.g., Paper Ratings) or keep everything client‑side CSR for simplicity?
+1. Do any heavy tables need pre‑rendering, or can we rely on dynamic generation within the chosen framework?
 2. How long should generated ZIPs persist on disk (7 days vs configurable)?
 3. Future multi‑user auth: integrate NextAuth or rely on future backend JWT?
 
-*Last updated:* 2025‑05‑12
+*Last updated:* 2025‑05‑16

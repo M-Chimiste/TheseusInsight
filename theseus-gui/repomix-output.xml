@@ -1,0 +1,4601 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+4. Repository files, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+<additional_info>
+
+</additional_info>
+
+</file_summary>
+
+<directory_structure>
+public/
+  file.svg
+  globe.svg
+  next.svg
+  vercel.svg
+  window.svg
+src/
+  app/
+    newsletter/
+      page.tsx
+    papers/
+      page.tsx
+    podcast/
+      page.tsx
+    runs/
+      page.tsx
+    settings/
+      tabs/
+        email.tsx
+        models.tsx
+        orchestration.tsx
+        research-interests.tsx
+        visualizer.tsx
+      page.tsx
+    globals.css
+    layout.tsx
+    page.tsx
+  components/
+    ui/
+      accordion.tsx
+      alert-dialog.tsx
+      badge.tsx
+      button.tsx
+      calendar.tsx
+      card.tsx
+      input.tsx
+      label.tsx
+      popover.tsx
+      progress.tsx
+      select.tsx
+      slider.tsx
+      sonner.tsx
+      switch.tsx
+      table.tsx
+      tabs.tsx
+      textarea.tsx
+    MainLayout.tsx
+    Sidebar.tsx
+  hooks/
+    useWebSocketProgress.ts
+  lib/
+    utils.ts
+  providers/
+    Providers.tsx
+.gitignore
+components.json
+eslint.config.mjs
+next.config.ts
+package.json
+postcss.config.mjs
+README.md
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="public/file.svg">
+<svg fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 13.5V5.41a1 1 0 0 0-.3-.7L9.8.29A1 1 0 0 0 9.08 0H1.5v13.5A2.5 2.5 0 0 0 4 16h8a2.5 2.5 0 0 0 2.5-2.5m-1.5 0v-7H8v-5H3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1M9.5 5V2.12L12.38 5zM5.13 5h-.62v1.25h2.12V5zm-.62 3h7.12v1.25H4.5zm.62 3h-.62v1.25h7.12V11z" clip-rule="evenodd" fill="#666" fill-rule="evenodd"/></svg>
+</file>
+
+<file path="public/globe.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g clip-path="url(#a)"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.27 14.1a6.5 6.5 0 0 0 3.67-3.45q-1.24.21-2.7.34-.31 1.83-.97 3.1M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.48-1.52a7 7 0 0 1-.96 0H7.5a4 4 0 0 1-.84-1.32q-.38-.89-.63-2.08a40 40 0 0 0 3.92 0q-.25 1.2-.63 2.08a4 4 0 0 1-.84 1.31zm2.94-4.76q1.66-.15 2.95-.43a7 7 0 0 0 0-2.58q-1.3-.27-2.95-.43a18 18 0 0 1 0 3.44m-1.27-3.54a17 17 0 0 1 0 3.64 39 39 0 0 1-4.3 0 17 17 0 0 1 0-3.64 39 39 0 0 1 4.3 0m1.1-1.17q1.45.13 2.69.34a6.5 6.5 0 0 0-3.67-3.44q.65 1.26.98 3.1M8.48 1.5l.01.02q.41.37.84 1.31.38.89.63 2.08a40 40 0 0 0-3.92 0q.25-1.2.63-2.08a4 4 0 0 1 .85-1.32 7 7 0 0 1 .96 0m-2.75.4a6.5 6.5 0 0 0-3.67 3.44 29 29 0 0 1 2.7-.34q.31-1.83.97-3.1M4.58 6.28q-1.66.16-2.95.43a7 7 0 0 0 0 2.58q1.3.27 2.95.43a18 18 0 0 1 0-3.44m.17 4.71q-1.45-.12-2.69-.34a6.5 6.5 0 0 0 3.67 3.44q-.65-1.27-.98-3.1" fill="#666"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h16v16H0z"/></clipPath></defs></svg>
+</file>
+
+<file path="public/next.svg">
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 394 80"><path fill="#000" d="M262 0h68.5v12.7h-27.2v66.6h-13.6V12.7H262V0ZM149 0v12.7H94v20.4h44.3v12.6H94v21h55v12.6H80.5V0h68.7zm34.3 0h-17.8l63.8 79.4h17.9l-32-39.7 32-39.6h-17.9l-23 28.6-23-28.6zm18.3 56.7-9-11-27.1 33.7h17.8l18.3-22.7z"/><path fill="#000" d="M81 79.3 17 0H0v79.3h13.6V17l50.2 62.3H81Zm252.6-.4c-1 0-1.8-.4-2.5-1s-1.1-1.6-1.1-2.6.3-1.8 1-2.5 1.6-1 2.6-1 1.8.3 2.5 1a3.4 3.4 0 0 1 .6 4.3 3.7 3.7 0 0 1-3 1.8zm23.2-33.5h6v23.3c0 2.1-.4 4-1.3 5.5a9.1 9.1 0 0 1-3.8 3.5c-1.6.8-3.5 1.3-5.7 1.3-2 0-3.7-.4-5.3-1s-2.8-1.8-3.7-3.2c-.9-1.3-1.4-3-1.4-5h6c.1.8.3 1.6.7 2.2s1 1.2 1.6 1.5c.7.4 1.5.5 2.4.5 1 0 1.8-.2 2.4-.6a4 4 0 0 0 1.6-1.8c.3-.8.5-1.8.5-3V45.5zm30.9 9.1a4.4 4.4 0 0 0-2-3.3 7.5 7.5 0 0 0-4.3-1.1c-1.3 0-2.4.2-3.3.5-.9.4-1.6 1-2 1.6a3.5 3.5 0 0 0-.3 4c.3.5.7.9 1.3 1.2l1.8 1 2 .5 3.2.8c1.3.3 2.5.7 3.7 1.2a13 13 0 0 1 3.2 1.8 8.1 8.1 0 0 1 3 6.5c0 2-.5 3.7-1.5 5.1a10 10 0 0 1-4.4 3.5c-1.8.8-4.1 1.2-6.8 1.2-2.6 0-4.9-.4-6.8-1.2-2-.8-3.4-2-4.5-3.5a10 10 0 0 1-1.7-5.6h6a5 5 0 0 0 3.5 4.6c1 .4 2.2.6 3.4.6 1.3 0 2.5-.2 3.5-.6 1-.4 1.8-1 2.4-1.7a4 4 0 0 0 .8-2.4c0-.9-.2-1.6-.7-2.2a11 11 0 0 0-2.1-1.4l-3.2-1-3.8-1c-2.8-.7-5-1.7-6.6-3.2a7.2 7.2 0 0 1-2.4-5.7 8 8 0 0 1 1.7-5 10 10 0 0 1 4.3-3.5c2-.8 4-1.2 6.4-1.2 2.3 0 4.4.4 6.2 1.2 1.8.8 3.2 2 4.3 3.4 1 1.4 1.5 3 1.5 5h-5.8z"/></svg>
+</file>
+
+<file path="public/vercel.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+</file>
+
+<file path="public/window.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
+</file>
+
+<file path="src/app/newsletter/page.tsx">
+"use client";
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { CalendarIcon, Play, Music, Settings2, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
+import { Progress } from "@/components/ui/progress";
+
+interface NewsletterConfig {
+  startDate: string;
+  endDate: string;
+  researchInterests: string[];
+  emailRecipients: string[];
+  createPodcast: boolean;
+  podcastConfig?: {
+    scriptModel: string;
+    ttsModel: string;
+    introMusic?: File;
+  };
+}
+
+interface Model {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+interface NodeStatus {
+  id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  message: string;
+  progress: number;
+  timestamp: string;
+}
+
+interface RunStatus {
+  taskId: string;
+  nodes: NodeStatus[];
+  overallStatus: 'pending' | 'processing' | 'completed' | 'failed';
+  error?: string;
+}
+
+export default function NewsletterPage() {
+  const [dateRange, setDateRange] = useState<{
+    from: Date | undefined;
+    to: Date | undefined;
+  }>({
+    from: undefined,
+    to: undefined,
+  });
+  const [lastNDays, setLastNDays] = useState<string>("7");
+  const [useDateRange, setUseDateRange] = useState(true);
+  const [researchInterests, setResearchInterests] = useState<string>("");
+  const [emailRecipients, setEmailRecipients] = useState<string>("");
+  const [createPodcast, setCreatePodcast] = useState(false);
+  const [introMusic, setIntroMusic] = useState<File | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
+  const [ws, setWs] = useState<WebSocket | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+    };
+  }, [ws]);
+
+  // Fetch available models
+  const { data: models } = useQuery<Model[]>({
+    queryKey: ['models'],
+    queryFn: async () => {
+      const response = await fetch('/api/models');
+      if (!response.ok) throw new Error('Failed to fetch models');
+      return response.json();
+    },
+  });
+
+  const connectWebSocket = (taskId: string) => {
+    const wsUrl = `ws://localhost:8000/ws/newsletter/${taskId}`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setRunStatus((prev) => {
+        if (!prev) {
+          return {
+            taskId,
+            nodes: [data],
+            overallStatus: data.status,
+          };
+        }
+        return {
+          ...prev,
+          nodes: [...prev.nodes, data],
+          overallStatus: data.status,
+        };
+      });
+    };
+
+    socket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      toast.error('Lost connection to progress updates');
+    };
+
+    socket.onclose = () => {
+      console.log('WebSocket disconnected');
+    };
+
+    setWs(socket);
+  };
+
+  const handleGenerate = async () => {
+    if (!dateRange.from || !dateRange.to) {
+      toast.error("Please select a date range");
+      return;
+    }
+
+    if (!researchInterests.trim()) {
+      toast.error("Please enter research interests");
+      return;
+    }
+
+    if (!emailRecipients.trim()) {
+      toast.error("Please enter email recipients");
+      return;
+    }
+
+    setIsGenerating(true);
+    setRunStatus(null);
+
+    try {
+      const config: NewsletterConfig = {
+        startDate: dateRange.from.toISOString(),
+        endDate: dateRange.to.toISOString(),
+        researchInterests: researchInterests.split('\n').filter(Boolean),
+        emailRecipients: emailRecipients.split('\n').filter(Boolean),
+        createPodcast,
+      };
+
+      if (createPodcast) {
+        config.podcastConfig = {
+          scriptModel: "gpt-4",
+          ttsModel: "elevenlabs",
+        };
+
+        if (introMusic) {
+          const formData = new FormData();
+          formData.append('config', JSON.stringify(config));
+          formData.append('intro_music_file', introMusic);
+
+          const response = await fetch('/api/newsletter/run', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) throw new Error('Failed to generate newsletter');
+          const { taskId } = await response.json();
+          connectWebSocket(taskId);
+        }
+      } else {
+        const response = await fetch('/api/newsletter/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(config),
+        });
+
+        if (!response.ok) throw new Error('Failed to generate newsletter');
+        const { taskId } = await response.json();
+        connectWebSocket(taskId);
+      }
+
+      toast.success("Newsletter generation started");
+    } catch (error) {
+      toast.error("Failed to start newsletter generation");
+      setIsGenerating(false);
+    }
+  };
+
+  const getStatusIcon = (status: NodeStatus['status']) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      case 'failed':
+        return <XCircle className="h-5 w-5 text-red-500" />;
+      case 'processing':
+        return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+      default:
+        return <Clock className="h-5 w-5 text-gray-500" />;
+    }
+  };
+
+  return (
+    <div className="container mx-auto py-6">
+      <h1 className="text-3xl font-bold mb-6">Newsletter Builder</h1>
+
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Date Range</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center space-x-4 mb-4">
+              <Switch
+                checked={useDateRange}
+                onCheckedChange={setUseDateRange}
+              />
+              <Label>{useDateRange ? "Use Date Range" : "Last N Days"}</Label>
+            </div>
+
+            {useDateRange ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>From Date</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !dateRange.from && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange.from ? (
+                          format(dateRange.from, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={dateRange.from}
+                        onSelect={(date: Date | undefined) =>
+                          setDateRange((prev) => ({ ...prev, from: date }))
+                        }
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>To Date</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !dateRange.to && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange.to ? (
+                          format(dateRange.to, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={dateRange.to}
+                        onSelect={(date: Date | undefined) =>
+                          setDateRange((prev) => ({ ...prev, to: date }))
+                        }
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Last N Days</Label>
+                <Input
+                  type="number"
+                  value={lastNDays}
+                  onChange={(e) => setLastNDays(e.target.value)}
+                  min="1"
+                  max="365"
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Research Interests</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              placeholder="Enter research interests (one per line)"
+              value={researchInterests}
+              onChange={(e) => setResearchInterests(e.target.value)}
+              className="min-h-[100px]"
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Email Recipients</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              placeholder="Enter email addresses (one per line)"
+              value={emailRecipients}
+              onChange={(e) => setEmailRecipients(e.target.value)}
+              className="min-h-[100px]"
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Podcast Options</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center space-x-4 mb-4">
+              <Switch
+                checked={createPodcast}
+                onCheckedChange={setCreatePodcast}
+              />
+              <Label>Create Podcast</Label>
+            </div>
+
+            {createPodcast && (
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="models">
+                  <AccordionTrigger>
+                    <div className="flex items-center">
+                      <Settings2 className="mr-2 h-4 w-4" />
+                      Model Settings
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="grid gap-4">
+                      <div className="space-y-2">
+                        <Label>Script Generation Model</Label>
+                        <Select defaultValue="gpt-4">
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select model" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {models?.map((model) => (
+                              <SelectItem key={model.id} value={model.id}>
+                                {model.name} ({model.provider})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Text-to-Speech Model</Label>
+                        <Select defaultValue="elevenlabs">
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select model" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {models?.map((model) => (
+                              <SelectItem key={model.id} value={model.id}>
+                                {model.name} ({model.provider})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="intro-music">
+                  <AccordionTrigger>
+                    <div className="flex items-center">
+                      <Music className="mr-2 h-4 w-4" />
+                      Intro Music
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="space-y-2">
+                      <Label>Upload Intro Music (MP3/WAV)</Label>
+                      <Input
+                        type="file"
+                        accept=".mp3,.wav"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) setIntroMusic(file);
+                        }}
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            )}
+          </CardContent>
+        </Card>
+
+        {runStatus && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Generation Progress</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {runStatus.nodes.map((node, index) => (
+                  <div key={node.id} className="flex items-start space-x-4">
+                    <div className="flex flex-col items-center">
+                      {getStatusIcon(node.status)}
+                      {index < runStatus.nodes.length - 1 && (
+                        <div className="w-0.5 h-8 bg-gray-200 my-1" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium">{node.message}</p>
+                        <span className="text-sm text-gray-500">
+                          {format(new Date(node.timestamp), 'HH:mm:ss')}
+                        </span>
+                      </div>
+                      {node.status === 'processing' && (
+                        <Progress value={node.progress} className="mt-2" />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="flex justify-end">
+          <Button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="w-full sm:w-auto"
+          >
+            <Play className="mr-2 h-4 w-4" />
+            {isGenerating ? "Generating..." : "Generate Newsletter"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/papers/page.tsx">
+"use client";
+import { useState, useRef, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { CalendarIcon, ArrowUpDown, Search } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useInfiniteQuery, InfiniteData } from "@tanstack/react-query";
+
+interface Paper {
+  id: number;
+  title: string;
+  abstract: string;
+  score: number;
+  date: string;
+  url: string;
+}
+
+interface PapersResponse {
+  papers: Paper[];
+  nextPage: number | null;
+}
+
+type SortField = 'title' | 'score' | 'date';
+type SortDirection = 'asc' | 'desc';
+
+interface SortConfig {
+  field: SortField;
+  direction: SortDirection;
+}
+
+type QueryKey = ['papers', number, { from: Date | undefined; to: Date | undefined }, SortConfig, string];
+
+export default function PapersPage() {
+  const [scoreFilter, setScoreFilter] = useState<number>(0);
+  const [dateRange, setDateRange] = useState<{
+    from: Date | undefined;
+    to: Date | undefined;
+  }>({
+    from: undefined,
+    to: undefined,
+  });
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'date', direction: 'desc' });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>({
+    title: 300,
+    abstract: 400,
+    score: 100,
+    date: 150,
+  });
+  const resizingRef = useRef<{ column: string | null; startX: number; startWidth: number }>({
+    column: null,
+    startX: 0,
+    startWidth: 0,
+  });
+
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    status,
+  } = useInfiniteQuery<PapersResponse, Error, InfiniteData<PapersResponse>, QueryKey, number>({
+    queryKey: ['papers', scoreFilter, dateRange, sortConfig, searchQuery],
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams({
+        page: pageParam.toString(),
+        score: scoreFilter.toString(),
+        sort_field: sortConfig.field,
+        sort_direction: sortConfig.direction,
+        search: searchQuery,
+        ...(dateRange.from && { from: dateRange.from.toISOString() }),
+        ...(dateRange.to && { to: dateRange.to.toISOString() }),
+      });
+
+      const response = await fetch(`/api/papers?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch papers');
+      return response.json();
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => lastPage.nextPage,
+  });
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight * 1.5) {
+      if (hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    }
+  };
+
+  const handleSort = (field: SortField) => {
+    setSortConfig((prev) => ({
+      field,
+      direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const handleResizeStart = (e: React.MouseEvent, column: string) => {
+    e.preventDefault();
+    const th = e.currentTarget.parentElement as HTMLElement;
+    resizingRef.current = {
+      column,
+      startX: e.pageX,
+      startWidth: th.offsetWidth,
+    };
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+  };
+
+  const handleResizeMove = (e: MouseEvent) => {
+    if (!resizingRef.current.column) return;
+    const diff = e.pageX - resizingRef.current.startX;
+    setColumnWidths((prev) => ({
+      ...prev,
+      [resizingRef.current.column!]: Math.max(100, resizingRef.current.startWidth + diff),
+    }));
+  };
+
+  const handleResizeEnd = () => {
+    resizingRef.current.column = null;
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+  };
+
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleResizeMove);
+      document.removeEventListener('mouseup', handleResizeEnd);
+    };
+  }, []);
+
+  return (
+    <div className="container mx-auto py-6">
+      <h1 className="text-3xl font-bold mb-6">Paper Ratings</h1>
+
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Filters</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <Label>Minimum Score</Label>
+                <div className="flex items-center gap-4">
+                  <Slider
+                    value={[scoreFilter]}
+                    onValueChange={([value]: number[]) => setScoreFilter(value)}
+                    max={10}
+                    step={0.1}
+                    className="flex-1"
+                  />
+                  <span className="w-12 text-right">{scoreFilter.toFixed(1)}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>From Date</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !dateRange.from && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange.from ? (
+                          format(dateRange.from, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={dateRange.from}
+                        onSelect={(date: Date | undefined) =>
+                          setDateRange((prev) => ({ ...prev, from: date }))
+                        }
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>To Date</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !dateRange.to && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange.to ? (
+                          format(dateRange.to, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={dateRange.to}
+                        onSelect={(date: Date | undefined) =>
+                          setDateRange((prev) => ({ ...prev, to: date }))
+                        }
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search titles and abstracts..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="max-w-sm"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-0">
+            <div className="h-[600px] overflow-auto" onScroll={handleScroll}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead
+                      style={{ width: columnWidths.title }}
+                      className="relative"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          onClick={() => handleSort('title')}
+                          className="h-8 px-2"
+                        >
+                          Title
+                          <ArrowUpDown className="ml-2 h-4 w-4" />
+                        </Button>
+                        <div
+                          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary"
+                          onMouseDown={(e) => handleResizeStart(e, 'title')}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead
+                      style={{ width: columnWidths.abstract }}
+                      className="relative"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>Abstract</span>
+                        <div
+                          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary"
+                          onMouseDown={(e) => handleResizeStart(e, 'abstract')}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead
+                      style={{ width: columnWidths.score }}
+                      className="relative"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          onClick={() => handleSort('score')}
+                          className="h-8 px-2"
+                        >
+                          Score
+                          <ArrowUpDown className="ml-2 h-4 w-4" />
+                        </Button>
+                        <div
+                          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary"
+                          onMouseDown={(e) => handleResizeStart(e, 'score')}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead
+                      style={{ width: columnWidths.date }}
+                      className="relative"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          onClick={() => handleSort('date')}
+                          className="h-8 px-2"
+                        >
+                          Date
+                          <ArrowUpDown className="ml-2 h-4 w-4" />
+                        </Button>
+                        <div
+                          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary"
+                          onMouseDown={(e) => handleResizeStart(e, 'date')}
+                        />
+                      </div>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {status === 'pending' ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center">
+                        Loading...
+                      </TableCell>
+                    </TableRow>
+                  ) : status === 'error' ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-red-500">
+                        Error loading papers
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    data?.pages.map((page) =>
+                      page.papers.map((paper: Paper) => (
+                        <TableRow key={paper.id}>
+                          <TableCell>
+                            <a
+                              href={paper.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:underline"
+                            >
+                              {paper.title}
+                            </a>
+                          </TableCell>
+                          <TableCell>
+                            <div className="max-w-md truncate" title={paper.abstract}>
+                              {paper.abstract}
+                            </div>
+                          </TableCell>
+                          <TableCell>{paper.score.toFixed(1)}</TableCell>
+                          <TableCell>{format(new Date(paper.date), 'PPP')}</TableCell>
+                        </TableRow>
+                      ))
+                    )
+                  )}
+                </TableBody>
+              </Table>
+              {isFetchingNextPage && (
+                <div className="text-center py-4">Loading more...</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/podcast/page.tsx">
+"use client";
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
+import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
+import { Play, Download, Settings2, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+
+interface Model {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+interface NodeStatus {
+  id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  message: string;
+  progress: number;
+  timestamp: string;
+}
+
+interface RunStatus {
+  taskId: string;
+  nodes: NodeStatus[];
+  overallStatus: 'pending' | 'processing' | 'completed' | 'failed';
+  error?: string;
+}
+
+interface VisualizerConfig {
+  fps: number;
+  colorScheme: string;
+  introLength: number;
+  outroLength: number;
+}
+
+export default function PodcastPage() {
+  const [files, setFiles] = useState<File[]>([]);
+  const [urls, setUrls] = useState<string>("");
+  const [scriptModel, setScriptModel] = useState<string>("gpt-4");
+  const [ttsModel, setTtsModel] = useState<string>("elevenlabs");
+  const [addVisualization, setAddVisualization] = useState(false);
+  const [visualizerConfig, setVisualizerConfig] = useState<VisualizerConfig>({
+    fps: 30,
+    colorScheme: "default",
+    introLength: 5,
+    outroLength: 5,
+  });
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
+  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  // Fetch available models
+  const { data: models } = useQuery<Model[]>({
+    queryKey: ['models'],
+    queryFn: async () => {
+      const response = await fetch('/api/models');
+      if (!response.ok) throw new Error('Failed to fetch models');
+      return response.json();
+    },
+  });
+
+  useEffect(() => {
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+    };
+  }, [ws]);
+
+  const connectWebSocket = (taskId: string) => {
+    const wsUrl = `ws://localhost:8000/ws/podcast/${taskId}`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setRunStatus((prev) => {
+        if (!prev) {
+          return {
+            taskId,
+            nodes: [data],
+            overallStatus: data.status,
+          };
+        }
+        return {
+          ...prev,
+          nodes: [...prev.nodes, data],
+          overallStatus: data.status,
+        };
+      });
+
+      // Check if generation is complete and get download URL
+      if (data.status === 'completed') {
+        setDownloadUrl(`/api/podcast/download/${taskId}`);
+      }
+    };
+
+    socket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      toast.error('Lost connection to progress updates');
+    };
+
+    socket.onclose = () => {
+      console.log('WebSocket disconnected');
+    };
+
+    setWs(socket);
+  };
+
+  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    setFiles((prev) => [...prev, ...droppedFiles]);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const selectedFiles = Array.from(e.target.files);
+      setFiles((prev) => [...prev, ...selectedFiles]);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleGenerate = async () => {
+    if (files.length === 0 && !urls.trim()) {
+      toast.error("Please provide at least one PDF file or arXiv URL");
+      return;
+    }
+
+    setIsGenerating(true);
+    setRunStatus(null);
+    setDownloadUrl(null);
+
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+
+      const config = {
+        scriptModel,
+        ttsModel,
+        addVisualization,
+        visualizerConfig: addVisualization ? visualizerConfig : undefined,
+        urls: urls.split('\n').filter(Boolean),
+      };
+
+      formData.append('config', JSON.stringify(config));
+
+      const response = await fetch('/api/podcast/generate', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Failed to generate podcast');
+      
+      const { taskId } = await response.json();
+      connectWebSocket(taskId);
+      toast.success("Podcast generation started");
+    } catch (error) {
+      toast.error("Failed to start podcast generation");
+      setIsGenerating(false);
+    }
+  };
+
+  const getStatusIcon = (status: NodeStatus['status']) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      case 'failed':
+        return <XCircle className="h-5 w-5 text-red-500" />;
+      case 'processing':
+        return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+      default:
+        return <Clock className="h-5 w-5 text-gray-500" />;
+    }
+  };
+
+  return (
+    <div className="container mx-auto py-6">
+      <h1 className="text-3xl font-bold mb-6">Podcast Builder</h1>
+
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Input Sources</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              <div>
+                <Label>PDF Files</Label>
+                <div
+                  className="mt-2 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleFileDrop}
+                  onClick={() => document.getElementById('file-input')?.click()}
+                >
+                  <input
+                    id="file-input"
+                    type="file"
+                    multiple
+                    accept=".pdf"
+                    className="hidden"
+                    onChange={handleFileInput}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Drag and drop PDF files here or click to browse
+                  </p>
+                </div>
+                {files.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    {files.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 bg-muted rounded"
+                      >
+                        <span className="text-sm truncate">{file.name}</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFile(index)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <Label>arXiv URLs</Label>
+                <Textarea
+                  placeholder="Enter arXiv URLs (one per line)"
+                  value={urls}
+                  onChange={(e) => setUrls(e.target.value)}
+                  className="mt-2 min-h-[100px]"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Model Settings</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <Label>Script Generation Model</Label>
+                <Select value={scriptModel} onValueChange={setScriptModel}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models?.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name} ({model.provider})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Text-to-Speech Model</Label>
+                <Select value={ttsModel} onValueChange={setTtsModel}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models?.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name} ({model.provider})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Visualizer Options</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center space-x-4 mb-4">
+              <Switch
+                checked={addVisualization}
+                onCheckedChange={setAddVisualization}
+              />
+              <Label>Add Visualization</Label>
+            </div>
+
+            {addVisualization && (
+              <div className="grid gap-4">
+                <div className="space-y-2">
+                  <Label>FPS</Label>
+                  <Input
+                    type="number"
+                    value={visualizerConfig.fps}
+                    onChange={(e) =>
+                      setVisualizerConfig((prev) => ({
+                        ...prev,
+                        fps: parseInt(e.target.value),
+                      }))
+                    }
+                    min="1"
+                    max="60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Color Scheme</Label>
+                  <Select
+                    value={visualizerConfig.colorScheme}
+                    onValueChange={(value) =>
+                      setVisualizerConfig((prev) => ({
+                        ...prev,
+                        colorScheme: value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select color scheme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default</SelectItem>
+                      <SelectItem value="dark">Dark</SelectItem>
+                      <SelectItem value="light">Light</SelectItem>
+                      <SelectItem value="neon">Neon</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Intro Length (seconds)</Label>
+                    <Input
+                      type="number"
+                      value={visualizerConfig.introLength}
+                      onChange={(e) =>
+                        setVisualizerConfig((prev) => ({
+                          ...prev,
+                          introLength: parseInt(e.target.value),
+                        }))
+                      }
+                      min="0"
+                      max="30"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Outro Length (seconds)</Label>
+                    <Input
+                      type="number"
+                      value={visualizerConfig.outroLength}
+                      onChange={(e) =>
+                        setVisualizerConfig((prev) => ({
+                          ...prev,
+                          outroLength: parseInt(e.target.value),
+                        }))
+                      }
+                      min="0"
+                      max="30"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {runStatus && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Generation Progress</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {runStatus.nodes.map((node, index) => (
+                  <div key={node.id} className="flex items-start space-x-4">
+                    <div className="flex flex-col items-center">
+                      {getStatusIcon(node.status)}
+                      {index < runStatus.nodes.length - 1 && (
+                        <div className="w-0.5 h-8 bg-gray-200 my-1" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium">{node.message}</p>
+                        <span className="text-sm text-gray-500">
+                          {new Date(node.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      {node.status === 'processing' && (
+                        <Progress value={node.progress} className="mt-2" />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="flex justify-end space-x-4">
+          {downloadUrl && (
+            <Button
+              variant="outline"
+              onClick={() => window.open(downloadUrl, '_blank')}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Download Podcast
+            </Button>
+          )}
+          <Button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="w-full sm:w-auto"
+          >
+            <Play className="mr-2 h-4 w-4" />
+            {isGenerating ? "Generating..." : "Generate Podcast"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/runs/page.tsx">
+"use client";
+import { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { CalendarIcon, ArrowUpDown, Download, Trash2, FileText } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useInfiniteQuery, InfiniteData } from "@tanstack/react-query";
+import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
+
+interface Run {
+  id: number;
+  date: string;
+  pipeline_type: 'newsletter' | 'podcast';
+  status: 'completed' | 'failed' | 'processing';
+  duration: number;
+  artifact_path: string | null;
+  artifact_size?: number;
+}
+
+interface RunsResponse {
+  runs: Run[];
+  nextPage: number | null;
+}
+
+type SortField = 'date' | 'duration';
+type SortDirection = 'asc' | 'desc';
+
+interface SortConfig {
+  field: SortField;
+  direction: SortDirection;
+}
+
+type QueryKey = ['runs', { from: Date | undefined; to: Date | undefined }, SortConfig];
+
+export default function RunsPage() {
+  const [dateRange, setDateRange] = useState<{
+    from: Date | undefined;
+    to: Date | undefined;
+  }>({
+    from: undefined,
+    to: undefined,
+  });
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'date', direction: 'desc' });
+
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    status,
+    refetch
+  } = useInfiniteQuery<RunsResponse, Error, InfiniteData<RunsResponse>, QueryKey, number>({
+    queryKey: ['runs', dateRange, sortConfig],
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams({
+        page: pageParam.toString(),
+        sort_field: sortConfig.field,
+        sort_direction: sortConfig.direction,
+        ...(dateRange.from && { from: dateRange.from.toISOString() }),
+        ...(dateRange.to && { to: dateRange.to.toISOString() }),
+      });
+
+      const response = await fetch(`/api/runs?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch runs');
+      return response.json();
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => lastPage.nextPage,
+  });
+
+  const handleSort = (field: SortField) => {
+    setSortConfig((prev) => ({
+      field,
+      direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight * 1.5) {
+      if (hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    }
+  };
+
+  const getStatusBadge = (status: Run['status']) => {
+    const variants = {
+      completed: 'default',
+      failed: 'destructive',
+      processing: 'secondary',
+    } as const;
+
+    return (
+      <Badge variant={variants[status]}>
+        {status.charAt(0).toUpperCase() + status.slice(1)}
+      </Badge>
+    );
+  };
+
+  const formatDuration = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds}s`;
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return 'N/A';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+  };
+
+  const handleDeleteArtifact = async (runId: number) => {
+    try {
+      const response = await fetch(`/api/runs/${runId}/artifact`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete artifact');
+      }
+
+      toast.success("Artifact deleted successfully");
+
+      // Refetch the runs to update the list
+      refetch();
+    } catch (error) {
+      toast.error("Failed to delete artifact");
+    }
+  };
+
+  return (
+    <div className="container mx-auto py-6">
+      <h1 className="text-3xl font-bold mb-6">Run Log</h1>
+
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Filters</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>From Date</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !dateRange.from && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {dateRange.from ? (
+                        format(dateRange.from, "PPP")
+                      ) : (
+                        <span>Pick a date</span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={dateRange.from}
+                      onSelect={(date: Date | undefined) =>
+                        setDateRange((prev) => ({ ...prev, from: date }))
+                      }
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="space-y-2">
+                <Label>To Date</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !dateRange.to && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {dateRange.to ? (
+                        format(dateRange.to, "PPP")
+                      ) : (
+                        <span>Pick a date</span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={dateRange.to}
+                      onSelect={(date: Date | undefined) =>
+                        setDateRange((prev) => ({ ...prev, to: date }))
+                      }
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-0">
+            <div className="h-[600px] overflow-auto" onScroll={handleScroll}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>
+                      <Button
+                        variant="ghost"
+                        onClick={() => handleSort('date')}
+                        className="h-8 px-2"
+                      >
+                        Date
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead>Pipeline</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>
+                      <Button
+                        variant="ghost"
+                        onClick={() => handleSort('duration')}
+                        className="h-8 px-2"
+                      >
+                        Duration
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead>Artifact</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {status === 'pending' ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center">
+                        Loading...
+                      </TableCell>
+                    </TableRow>
+                  ) : status === 'error' ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-red-500">
+                        Error loading runs
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    data?.pages.map((page) =>
+                      page.runs.map((run: Run) => (
+                        <TableRow key={run.id}>
+                          <TableCell>{format(new Date(run.date), 'PPP')}</TableCell>
+                          <TableCell className="capitalize">{run.pipeline_type}</TableCell>
+                          <TableCell>{getStatusBadge(run.status)}</TableCell>
+                          <TableCell>{formatDuration(run.duration)}</TableCell>
+                          <TableCell>
+                            {run.artifact_path ? (
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1">
+                                  <FileText className="h-4 w-4" />
+                                  <span className="text-sm text-muted-foreground">
+                                    {formatFileSize(run.artifact_size)}
+                                  </span>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => window.open(`/api/runs/${run.id}/download`, '_blank')}
+                                >
+                                  <Download className="h-4 w-4" />
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="sm">
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete Artifact</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Are you sure you want to delete this artifact? This action cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleDeleteArtifact(run.id)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Delete
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">No artifact</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )
+                  )}
+                </TableBody>
+              </Table>
+              {isFetchingNextPage && (
+                <div className="text-center py-4">Loading more...</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/settings/tabs/email.tsx">
+"use client";
+import { useState } from 'react';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+
+export function EmailTab() {
+  const [recipients, setRecipients] = useState<string[]>([]);
+  const [newEmail, setNewEmail] = useState('');
+
+  const handleAddEmail = () => {
+    if (newEmail && !recipients.includes(newEmail)) {
+      setRecipients([...recipients, newEmail]);
+      setNewEmail('');
+    }
+  };
+
+  const handleRemoveEmail = (email: string) => {
+    setRecipients(recipients.filter(e => e !== email));
+  };
+
+  const handleSave = async () => {
+    try {
+      const response = await fetch('/api/settings/email-recipients', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ recipients }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save email recipients');
+      }
+
+      toast.success("Email recipients saved successfully");
+    } catch (error) {
+      toast.error("Failed to save email recipients");
+    }
+  };
+
+  const handleTestEmail = async () => {
+    try {
+      const response = await fetch('/api/settings/send-test-email', {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send test email');
+      }
+
+      toast.success("Test email sent successfully");
+    } catch (error) {
+      toast.error("Failed to send test email");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <Input
+          type="email"
+          placeholder="Enter email address"
+          value={newEmail}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEmail(e.target.value)}
+        />
+        <Button onClick={handleAddEmail}>Add</Button>
+      </div>
+
+      <div className="space-y-2">
+        {recipients.map((email) => (
+          <div key={email} className="flex items-center justify-between p-2 bg-secondary rounded-md">
+            <span>{email}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleRemoveEmail(email)}
+            >
+              Remove
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        <Button onClick={handleSave}>Save Recipients</Button>
+        <Button variant="outline" onClick={handleTestEmail}>
+          Send Test Email
+        </Button>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/settings/tabs/models.tsx">
+"use client";
+
+import { useState } from 'react';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
+
+const PROVIDERS = [
+  { id: 1, name: "Ollama" },
+  { id: 2, name: "Gemini" },
+  { id: 3, name: "OpenAI" },
+  { id: 4, name: "Sentence Transformers" },
+];
+
+const defaultModelConfig = {
+  temperature: 0.1,
+  num_ctx: 4096,
+};
+
+const defaultSTConfig = {
+  model_name: "Alibaba-NLP/gte-modernbert-base",
+  model_type: "sentence-transformers",
+  trust_remote_code: true,
+};
+
+export function ModelsTab() {
+  const [models, setModels] = useState<any[]>([]);
+  const [newModel, setNewModel] = useState<any>({
+    provider_id: 0,
+    name: '',
+    config_json: { ...defaultModelConfig },
+  });
+
+  const isSentenceTransformer = newModel.provider_id === 4;
+
+  const handleAddModel = async () => {
+    let payload = { ...newModel };
+    if (isSentenceTransformer) {
+      payload.config_json = {
+        model_name: newModel.config_json.model_name,
+        model_type: "sentence-transformers",
+        trust_remote_code: newModel.config_json.trust_remote_code,
+      };
+    }
+    try {
+      const response = await fetch('/api/models', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to add model');
+      }
+      const addedModel = await response.json();
+      setModels([...models, addedModel]);
+      setNewModel({
+        provider_id: 0,
+        name: '',
+        config_json: isSentenceTransformer ? { ...defaultSTConfig } : { ...defaultModelConfig },
+      });
+      toast.success("Model added successfully");
+    } catch (error) {
+      toast.error("Failed to add model");
+    }
+  };
+
+  const handleDeleteModel = async (id: number) => {
+    try {
+      const response = await fetch(`/api/models/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error('Failed to delete model');
+      }
+      setModels(models.filter(model => model.id !== id));
+      toast.success("Model deleted successfully");
+    } catch (error) {
+      toast.error("Failed to delete model");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Add New Model</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="provider">Provider</Label>
+                <Select
+                  value={newModel.provider_id?.toString()}
+                  onValueChange={(value: string) => {
+                    const pid = parseInt(value);
+                    setNewModel({
+                      ...newModel,
+                      provider_id: pid,
+                      config_json: pid === 4 ? { ...defaultSTConfig } : { ...defaultModelConfig },
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROVIDERS.map((p) => (
+                      <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="name">Model Name</Label>
+                <Input
+                  id="name"
+                  value={isSentenceTransformer ? newModel.config_json.model_name : newModel.name}
+                  onChange={(e) => {
+                    if (isSentenceTransformer) {
+                      setNewModel({
+                        ...newModel,
+                        config_json: {
+                          ...newModel.config_json,
+                          model_name: e.target.value,
+                        },
+                      });
+                    } else {
+                      setNewModel({ ...newModel, name: e.target.value });
+                    }
+                  }}
+                  placeholder={isSentenceTransformer ? "e.g., Alibaba-NLP/gte-modernbert-base" : "e.g., gemma3:27b-it-qat"}
+                />
+              </div>
+            </div>
+            {isSentenceTransformer ? (
+              <div className="space-y-2">
+                <Label htmlFor="trust_remote_code">Trust Remote Code</Label>
+                <input
+                  id="trust_remote_code"
+                  type="checkbox"
+                  checked={newModel.config_json.trust_remote_code}
+                  onChange={(e) => setNewModel({
+                    ...newModel,
+                    config_json: {
+                      ...newModel.config_json,
+                      trust_remote_code: e.target.checked,
+                    },
+                  })}
+                  className="ml-2"
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="temperature">Temperature</Label>
+                  <Input
+                    id="temperature"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="1"
+                    value={newModel.config_json?.temperature ?? defaultModelConfig.temperature}
+                    onChange={(e) => setNewModel({
+                      ...newModel,
+                      config_json: {
+                        ...newModel.config_json,
+                        temperature: parseFloat(e.target.value),
+                        num_ctx: newModel.config_json?.num_ctx ?? defaultModelConfig.num_ctx,
+                      },
+                    })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="num_ctx">Context Length</Label>
+                  <Input
+                    id="num_ctx"
+                    type="number"
+                    value={newModel.config_json?.num_ctx ?? defaultModelConfig.num_ctx}
+                    onChange={(e) => setNewModel({
+                      ...newModel,
+                      config_json: {
+                        ...newModel.config_json,
+                        temperature: newModel.config_json?.temperature ?? defaultModelConfig.temperature,
+                        num_ctx: parseInt(e.target.value),
+                      },
+                    })}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button onClick={handleAddModel}>Add Model</Button>
+        </CardFooter>
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {models.map((model) => {
+          const isST = model.provider_id === 4;
+          return (
+            <Card key={model.id}>
+              <CardHeader>
+                <CardTitle className="text-lg">{isST ? model.config_json.model_name : model.name}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Provider: {PROVIDERS.find(p => p.id === model.provider_id)?.name}
+                  </p>
+                  {isST ? (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        Trust Remote Code: {model.config_json.trust_remote_code ? 'Yes' : 'No'}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        Temperature: {model.config_json.temperature}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Context Length: {model.config_json.num_ctx}
+                      </p>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+              <CardFooter>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => model.id && handleDeleteModel(model.id)}
+                >
+                  Delete
+                </Button>
+              </CardFooter>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/settings/tabs/orchestration.tsx">
+"use client";
+
+import { useState, useEffect } from 'react';
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+
+interface Model {
+  id: number;
+  name: string;
+  provider_id: number;
+  config_json: {
+    temperature: number;
+    num_ctx: number;
+    max_new_tokens?: number;
+  };
+}
+
+interface ModelConfig {
+  model_id: number;
+  temperature: number;
+  num_ctx: number;
+}
+
+interface EmbeddingModelConfig {
+  model_id: number;
+}
+
+interface OrchestrationConfig {
+  judge_model: ModelConfig;
+  newsletter_model: ModelConfig;
+  content_extraction_model: ModelConfig;
+  newsletter_sections_model: ModelConfig;
+  newsletter_intro_model: ModelConfig;
+  embedding_model: EmbeddingModelConfig;
+  podcast_model: ModelConfig;
+  tts_model: {
+    tts_provider: string;
+    tts_model_name: string;
+    speaker_1_voice: string;
+    speaker_1_speed: number;
+    speaker_2_voice: string;
+    speaker_2_speed: number;
+  };
+  arxiv_search_categories: {
+    main_category: string;
+    filter_categories: string[];
+  };
+}
+
+export function OrchestrationTab() {
+  const [models, setModels] = useState<Model[]>([]);
+  const [config, setConfig] = useState<OrchestrationConfig>({
+    judge_model: {
+      model_id: 0,
+      temperature: 0.1,
+      num_ctx: 4096,
+    },
+    newsletter_model: {
+      model_id: 0,
+      temperature: 0.1,
+      num_ctx: 4096,
+    },
+    content_extraction_model: {
+      model_id: 0,
+      temperature: 0.1,
+      num_ctx: 4096,
+    },
+    newsletter_sections_model: {
+      model_id: 0,
+      temperature: 0.1,
+      num_ctx: 4096,
+    },
+    newsletter_intro_model: {
+      model_id: 0,
+      temperature: 0.1,
+      num_ctx: 4096,
+    },
+    embedding_model: {
+      model_id: 0,
+    },
+    podcast_model: {
+      model_id: 0,
+      temperature: 0.1,
+      num_ctx: 4096,
+    },
+    tts_model: {
+      tts_provider: 'openai',
+      tts_model_name: 'tts-1',
+      speaker_1_voice: 'sage',
+      speaker_1_speed: 1.0,
+      speaker_2_voice: 'ash',
+      speaker_2_speed: 1.0,
+    },
+    arxiv_search_categories: {
+      main_category: 'cs',
+      filter_categories: ['cs.ai', 'cs.cl', 'cs.lg', 'cs.ir', 'cs.ma', 'cs.cv'],
+    },
+  });
+
+  useEffect(() => {
+    // Fetch available models
+    const fetchModels = async () => {
+      try {
+        const response = await fetch('/api/models');
+        if (!response.ok) throw new Error('Failed to fetch models');
+        const data = await response.json();
+        setModels(data);
+      } catch (error) {
+        toast.error('Failed to load models');
+      }
+    };
+
+    // Fetch current orchestration config
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch('/api/settings/orchestration');
+        if (!response.ok) throw new Error('Failed to fetch orchestration config');
+        const data = await response.json();
+        setConfig(data);
+      } catch (error) {
+        toast.error('Failed to load orchestration config');
+      }
+    };
+
+    fetchModels();
+    fetchConfig();
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      const response = await fetch('/api/settings/orchestration', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (!response.ok) throw new Error('Failed to save orchestration config');
+      toast.success('Orchestration configuration saved successfully');
+    } catch (error) {
+      toast.error('Failed to save orchestration configuration');
+    }
+  };
+
+  const renderModelConfig = (
+    title: string,
+    key: keyof OrchestrationConfig,
+    showParams: boolean = true
+  ) => {
+    const modelConfig = config[key];
+    if (!('model_id' in modelConfig)) return null;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Model</Label>
+              <Select
+                value={modelConfig.model_id.toString()}
+                onValueChange={(value: string) => {
+                  setConfig({
+                    ...config,
+                    [key]: {
+                      ...modelConfig,
+                      model_id: parseInt(value),
+                    },
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((model) => (
+                    <SelectItem key={model.id} value={model.id.toString()}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {showParams && 'temperature' in modelConfig && 'num_ctx' in modelConfig && (
+              <>
+                <div className="space-y-2">
+                  <Label>Temperature</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="1"
+                    value={modelConfig.temperature}
+                    onChange={(e) => {
+                      setConfig({
+                        ...config,
+                        [key]: {
+                          ...modelConfig,
+                          temperature: parseFloat(e.target.value),
+                        },
+                      });
+                    }}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Context Length</Label>
+                  <Input
+                    type="number"
+                    value={modelConfig.num_ctx}
+                    onChange={(e) => {
+                      setConfig({
+                        ...config,
+                        [key]: {
+                          ...modelConfig,
+                          num_ctx: parseInt(e.target.value),
+                        },
+                      });
+                    }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {renderModelConfig('Judge Model', 'judge_model')}
+        {renderModelConfig('Newsletter Model', 'newsletter_model')}
+        {renderModelConfig('Content Extraction Model', 'content_extraction_model')}
+        {renderModelConfig('Newsletter Sections Model', 'newsletter_sections_model')}
+        {renderModelConfig('Newsletter Intro Model', 'newsletter_intro_model')}
+        {renderModelConfig('Embedding Model', 'embedding_model', false)}
+        {renderModelConfig('Podcast Model', 'podcast_model')}
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>TTS Configuration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>TTS Provider</Label>
+              <Input
+                value={config.tts_model.tts_provider}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    tts_model: {
+                      ...config.tts_model,
+                      tts_provider: e.target.value,
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Model Name</Label>
+              <Input
+                value={config.tts_model.tts_model_name}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    tts_model: {
+                      ...config.tts_model,
+                      tts_model_name: e.target.value,
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Speaker 1 Voice</Label>
+              <Input
+                value={config.tts_model.speaker_1_voice}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    tts_model: {
+                      ...config.tts_model,
+                      speaker_1_voice: e.target.value,
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Speaker 1 Speed</Label>
+              <Input
+                type="number"
+                step="0.1"
+                value={config.tts_model.speaker_1_speed}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    tts_model: {
+                      ...config.tts_model,
+                      speaker_1_speed: parseFloat(e.target.value),
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Speaker 2 Voice</Label>
+              <Input
+                value={config.tts_model.speaker_2_voice}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    tts_model: {
+                      ...config.tts_model,
+                      speaker_2_voice: e.target.value,
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Speaker 2 Speed</Label>
+              <Input
+                type="number"
+                step="0.1"
+                value={config.tts_model.speaker_2_speed}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    tts_model: {
+                      ...config.tts_model,
+                      speaker_2_speed: parseFloat(e.target.value),
+                    },
+                  });
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>ArXiv Search Categories</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Main Category</Label>
+              <Input
+                value={config.arxiv_search_categories.main_category}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    arxiv_search_categories: {
+                      ...config.arxiv_search_categories,
+                      main_category: e.target.value,
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Filter Categories (comma-separated)</Label>
+              <Input
+                value={config.arxiv_search_categories.filter_categories.join(', ')}
+                onChange={(e) => {
+                  setConfig({
+                    ...config,
+                    arxiv_search_categories: {
+                      ...config.arxiv_search_categories,
+                      filter_categories: e.target.value.split(',').map(cat => cat.trim()),
+                    },
+                  });
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Button onClick={handleSave}>Save Configuration</Button>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/settings/tabs/research-interests.tsx">
+"use client";
+import { useState } from 'react';
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+
+export function ResearchInterestsTab() {
+  const [interests, setInterests] = useState('');
+
+  const handleSave = async () => {
+    try {
+      const response = await fetch('/api/settings/research-interests', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ interests }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save research interests');
+      }
+
+      toast.success("Research interests saved successfully");
+    } catch (error) {
+      toast.error("Failed to save research interests");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Textarea
+        placeholder="Enter your research interests (one per line)"
+        value={interests}
+        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInterests(e.target.value)}
+        className="min-h-[200px]"
+      />
+      <Button onClick={handleSave}>Save Interests</Button>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/settings/tabs/visualizer.tsx">
+"use client";
+import { useState } from 'react';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
+
+interface VisualizerSettings {
+  resolution: {
+    width: number;
+    height: number;
+  };
+  fps: number;
+  colors: {
+    primary: string;
+    secondary: string;
+    background: string;
+  };
+}
+
+export function VisualizerTab() {
+  const [settings, setSettings] = useState<VisualizerSettings>({
+    resolution: {
+      width: 1920,
+      height: 1080,
+    },
+    fps: 30,
+    colors: {
+      primary: '#ffffff',
+      secondary: '#000000',
+      background: '#000000',
+    },
+  });
+
+  const handleSave = async () => {
+    try {
+      const response = await fetch('/api/settings/visualizer-settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settings),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save visualizer settings');
+      }
+
+      toast.success("Visualizer settings saved successfully");
+    } catch (error) {
+      toast.error("Failed to save visualizer settings");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <h3 className="text-lg font-medium">Resolution</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="width">Width</Label>
+            <Input
+              id="width"
+              type="number"
+              value={settings.resolution.width}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSettings({
+                  ...settings,
+                  resolution: {
+                    ...settings.resolution,
+                    width: parseInt(e.target.value) || 0,
+                  },
+                })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="height">Height</Label>
+            <Input
+              id="height"
+              type="number"
+              value={settings.resolution.height}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSettings({
+                  ...settings,
+                  resolution: {
+                    ...settings.resolution,
+                    height: parseInt(e.target.value) || 0,
+                  },
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-medium">FPS</h3>
+        <div className="space-y-2">
+          <Label htmlFor="fps">Frames per second</Label>
+          <Input
+            id="fps"
+            type="number"
+            value={settings.fps}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setSettings({
+                ...settings,
+                fps: parseInt(e.target.value) || 0,
+              })
+            }
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-medium">Colors</h3>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="primary">Primary</Label>
+            <Input
+              id="primary"
+              type="color"
+              value={settings.colors.primary}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSettings({
+                  ...settings,
+                  colors: {
+                    ...settings.colors,
+                    primary: e.target.value,
+                  },
+                })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="secondary">Secondary</Label>
+            <Input
+              id="secondary"
+              type="color"
+              value={settings.colors.secondary}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSettings({
+                  ...settings,
+                  colors: {
+                    ...settings.colors,
+                    secondary: e.target.value,
+                  },
+                })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="background">Background</Label>
+            <Input
+              id="background"
+              type="color"
+              value={settings.colors.background}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSettings({
+                  ...settings,
+                  colors: {
+                    ...settings.colors,
+                    background: e.target.value,
+                  },
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      <Button onClick={handleSave}>Save Settings</Button>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/settings/page.tsx">
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ResearchInterestsTab } from "./tabs/research-interests";
+import { ModelsTab } from "./tabs/models";
+import { EmailTab } from "./tabs/email";
+import { VisualizerTab } from "./tabs/visualizer";
+import { OrchestrationTab } from "./tabs/orchestration";
+
+export default function SettingsPage() {
+  return (
+    <div className="container mx-auto py-6">
+      <h1 className="text-3xl font-bold mb-6">Settings</h1>
+      
+      <Tabs defaultValue="research-interests" className="w-full">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="research-interests">Research Interests</TabsTrigger>
+          <TabsTrigger value="models">Models</TabsTrigger>
+          <TabsTrigger value="orchestration">Orchestration</TabsTrigger>
+          <TabsTrigger value="email">Email</TabsTrigger>
+          <TabsTrigger value="visualizer">Visualizer</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="research-interests">
+          <Card>
+            <CardHeader>
+              <CardTitle>Research Interests</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResearchInterestsTab />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="models">
+          <Card>
+            <CardHeader>
+              <CardTitle>Model Configurations</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ModelsTab />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="orchestration">
+          <Card>
+            <CardHeader>
+              <CardTitle>Pipeline Configuration</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <OrchestrationTab />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="email">
+          <Card>
+            <CardHeader>
+              <CardTitle>Email Settings</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EmailTab />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="visualizer">
+          <Card>
+            <CardHeader>
+              <CardTitle>Visualizer Settings</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <VisualizerTab />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/globals.css">
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+</file>
+
+<file path="src/app/layout.tsx">
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+import { Providers } from "../providers/Providers";
+import { MainLayout } from "../components/MainLayout";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "Create Next App",
+  description: "Generated by create next app",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+      >
+        <Providers>
+          <MainLayout>
+            {children}
+          </MainLayout>
+        </Providers>
+      </body>
+    </html>
+  );
+}
+</file>
+
+<file path="src/app/page.tsx">
+import { redirect } from 'next/navigation';
+
+export default function Home() {
+  redirect('/settings');
+  return null;
+}
+</file>
+
+<file path="src/components/ui/accordion.tsx">
+"use client"
+
+import * as React from "react"
+import * as AccordionPrimitive from "@radix-ui/react-accordion"
+import { ChevronDownIcon } from "lucide-react"
+
+import { cn } from "@/lib/utils"
+
+function Accordion({
+  ...props
+}: React.ComponentProps<typeof AccordionPrimitive.Root>) {
+  return <AccordionPrimitive.Root data-slot="accordion" {...props} />
+}
+
+function AccordionItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof AccordionPrimitive.Item>) {
+  return (
+    <AccordionPrimitive.Item
+      data-slot="accordion-item"
+      className={cn("border-b last:border-b-0", className)}
+      {...props}
+    />
+  )
+}
+
+function AccordionTrigger({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof AccordionPrimitive.Trigger>) {
+  return (
+    <AccordionPrimitive.Header className="flex">
+      <AccordionPrimitive.Trigger
+        data-slot="accordion-trigger"
+        className={cn(
+          "focus-visible:border-ring focus-visible:ring-ring/50 flex flex-1 items-start justify-between gap-4 rounded-md py-4 text-left text-sm font-medium transition-all outline-none hover:underline focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 [&[data-state=open]>svg]:rotate-180",
+          className
+        )}
+        {...props}
+      >
+        {children}
+        <ChevronDownIcon className="text-muted-foreground pointer-events-none size-4 shrink-0 translate-y-0.5 transition-transform duration-200" />
+      </AccordionPrimitive.Trigger>
+    </AccordionPrimitive.Header>
+  )
+}
+
+function AccordionContent({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof AccordionPrimitive.Content>) {
+  return (
+    <AccordionPrimitive.Content
+      data-slot="accordion-content"
+      className="data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down overflow-hidden text-sm"
+      {...props}
+    >
+      <div className={cn("pt-0 pb-4", className)}>{children}</div>
+    </AccordionPrimitive.Content>
+  )
+}
+
+export { Accordion, AccordionItem, AccordionTrigger, AccordionContent }
+</file>
+
+<file path="src/components/ui/alert-dialog.tsx">
+"use client"
+
+import * as React from "react"
+import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
+
+import { cn } from "@/lib/utils"
+import { buttonVariants } from "@/components/ui/button"
+
+function AlertDialog({
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
+  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+}
+
+function AlertDialogTrigger({
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Trigger>) {
+  return (
+    <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />
+  )
+}
+
+function AlertDialogPortal({
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Portal>) {
+  return (
+    <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal" {...props} />
+  )
+}
+
+function AlertDialogOverlay({
+  className,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
+  return (
+    <AlertDialogPrimitive.Overlay
+      data-slot="alert-dialog-overlay"
+      className={cn(
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function AlertDialogContent({
+  className,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+  return (
+    <AlertDialogPortal>
+      <AlertDialogOverlay />
+      <AlertDialogPrimitive.Content
+        data-slot="alert-dialog-content"
+        className={cn(
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
+          className
+        )}
+        {...props}
+      />
+    </AlertDialogPortal>
+  )
+}
+
+function AlertDialogHeader({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="alert-dialog-header"
+      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      {...props}
+    />
+  )
+}
+
+function AlertDialogFooter({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="alert-dialog-footer"
+      className={cn(
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function AlertDialogTitle({
+  className,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Title>) {
+  return (
+    <AlertDialogPrimitive.Title
+      data-slot="alert-dialog-title"
+      className={cn("text-lg font-semibold", className)}
+      {...props}
+    />
+  )
+}
+
+function AlertDialogDescription({
+  className,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Description>) {
+  return (
+    <AlertDialogPrimitive.Description
+      data-slot="alert-dialog-description"
+      className={cn("text-muted-foreground text-sm", className)}
+      {...props}
+    />
+  )
+}
+
+function AlertDialogAction({
+  className,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Action>) {
+  return (
+    <AlertDialogPrimitive.Action
+      className={cn(buttonVariants(), className)}
+      {...props}
+    />
+  )
+}
+
+function AlertDialogCancel({
+  className,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Cancel>) {
+  return (
+    <AlertDialogPrimitive.Cancel
+      className={cn(buttonVariants({ variant: "outline" }), className)}
+      {...props}
+    />
+  )
+}
+
+export {
+  AlertDialog,
+  AlertDialogPortal,
+  AlertDialogOverlay,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+}
+</file>
+
+<file path="src/components/ui/badge.tsx">
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+
+import { cn } from "@/lib/utils"
+
+const badgeVariants = cva(
+  "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden",
+  {
+    variants: {
+      variant: {
+        default:
+          "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
+        destructive:
+          "border-transparent bg-destructive text-white [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+        outline:
+          "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
+
+function Badge({
+  className,
+  variant,
+  asChild = false,
+  ...props
+}: React.ComponentProps<"span"> &
+  VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
+  const Comp = asChild ? Slot : "span"
+
+  return (
+    <Comp
+      data-slot="badge"
+      className={cn(badgeVariants({ variant }), className)}
+      {...props}
+    />
+  )
+}
+
+export { Badge, badgeVariants }
+</file>
+
+<file path="src/components/ui/button.tsx">
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  {
+    variants: {
+      variant: {
+        default:
+          "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+        destructive:
+          "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+        outline:
+          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+        secondary:
+          "bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80",
+        ghost:
+          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-9 px-4 py-2 has-[>svg]:px-3",
+        sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
+        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
+        icon: "size-9",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+
+function Button({
+  className,
+  variant,
+  size,
+  asChild = false,
+  ...props
+}: React.ComponentProps<"button"> &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean
+  }) {
+  const Comp = asChild ? Slot : "button"
+
+  return (
+    <Comp
+      data-slot="button"
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  )
+}
+
+export { Button, buttonVariants }
+</file>
+
+<file path="src/components/ui/calendar.tsx">
+"use client"
+
+import * as React from "react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
+import { DayPicker } from "react-day-picker"
+
+import { cn } from "@/lib/utils"
+import { buttonVariants } from "@/components/ui/button"
+
+function Calendar({
+  className,
+  classNames,
+  showOutsideDays = true,
+  ...props
+}: React.ComponentProps<typeof DayPicker>) {
+  return (
+    <DayPicker
+      showOutsideDays={showOutsideDays}
+      className={cn("p-3", className)}
+      classNames={{
+        months: "flex flex-col sm:flex-row gap-2",
+        month: "flex flex-col gap-4",
+        caption: "flex justify-center pt-1 relative items-center w-full",
+        caption_label: "text-sm font-medium",
+        nav: "flex items-center gap-1",
+        nav_button: cn(
+          buttonVariants({ variant: "outline" }),
+          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100"
+        ),
+        nav_button_previous: "absolute left-1",
+        nav_button_next: "absolute right-1",
+        table: "w-full border-collapse space-x-1",
+        head_row: "flex",
+        head_cell:
+          "text-muted-foreground rounded-md w-8 font-normal text-[0.8rem]",
+        row: "flex w-full mt-2",
+        cell: cn(
+          "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent [&:has([aria-selected].day-range-end)]:rounded-r-md",
+          props.mode === "range"
+            ? "[&:has(>.day-range-end)]:rounded-r-md [&:has(>.day-range-start)]:rounded-l-md first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md"
+            : "[&:has([aria-selected])]:rounded-md"
+        ),
+        day: cn(
+          buttonVariants({ variant: "ghost" }),
+          "size-8 p-0 font-normal aria-selected:opacity-100"
+        ),
+        day_range_start:
+          "day-range-start aria-selected:bg-primary aria-selected:text-primary-foreground",
+        day_range_end:
+          "day-range-end aria-selected:bg-primary aria-selected:text-primary-foreground",
+        day_selected:
+          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
+        day_today: "bg-accent text-accent-foreground",
+        day_outside:
+          "day-outside text-muted-foreground aria-selected:text-muted-foreground",
+        day_disabled: "text-muted-foreground opacity-50",
+        day_range_middle:
+          "aria-selected:bg-accent aria-selected:text-accent-foreground",
+        day_hidden: "invisible",
+        ...classNames,
+      }}
+      components={{
+        IconLeft: ({ className, ...props }) => (
+          <ChevronLeft className={cn("size-4", className)} {...props} />
+        ),
+        IconRight: ({ className, ...props }) => (
+          <ChevronRight className={cn("size-4", className)} {...props} />
+        ),
+      }}
+      {...props}
+    />
+  )
+}
+
+export { Calendar }
+</file>
+
+<file path="src/components/ui/card.tsx">
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Card({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card"
+      className={cn(
+        "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-header"
+      className={cn(
+        "@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-title"
+      className={cn("leading-none font-semibold", className)}
+      {...props}
+    />
+  )
+}
+
+function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-description"
+      className={cn("text-muted-foreground text-sm", className)}
+      {...props}
+    />
+  )
+}
+
+function CardAction({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-action"
+      className={cn(
+        "col-start-2 row-span-2 row-start-1 self-start justify-self-end",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function CardContent({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-content"
+      className={cn("px-6", className)}
+      {...props}
+    />
+  )
+}
+
+function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-footer"
+      className={cn("flex items-center px-6 [.border-t]:pt-6", className)}
+      {...props}
+    />
+  )
+}
+
+export {
+  Card,
+  CardHeader,
+  CardFooter,
+  CardTitle,
+  CardAction,
+  CardDescription,
+  CardContent,
+}
+</file>
+
+<file path="src/components/ui/input.tsx">
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Input({ className, type, ...props }: React.ComponentProps<"input">) {
+  return (
+    <input
+      type={type}
+      data-slot="input"
+      className={cn(
+        "file:text-foreground placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground dark:bg-input/30 border-input flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
+        "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+        "aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Input }
+</file>
+
+<file path="src/components/ui/label.tsx">
+"use client"
+
+import * as React from "react"
+import * as LabelPrimitive from "@radix-ui/react-label"
+
+import { cn } from "@/lib/utils"
+
+function Label({
+  className,
+  ...props
+}: React.ComponentProps<typeof LabelPrimitive.Root>) {
+  return (
+    <LabelPrimitive.Root
+      data-slot="label"
+      className={cn(
+        "flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Label }
+</file>
+
+<file path="src/components/ui/popover.tsx">
+"use client"
+
+import * as React from "react"
+import * as PopoverPrimitive from "@radix-ui/react-popover"
+
+import { cn } from "@/lib/utils"
+
+function Popover({
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Root>) {
+  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+}
+
+function PopoverTrigger({
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
+  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
+}
+
+function PopoverContent({
+  className,
+  align = "center",
+  sideOffset = 4,
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+  return (
+    <PopoverPrimitive.Portal>
+      <PopoverPrimitive.Content
+        data-slot="popover-content"
+        align={align}
+        sideOffset={sideOffset}
+        className={cn(
+          "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-md border p-4 shadow-md outline-hidden",
+          className
+        )}
+        {...props}
+      />
+    </PopoverPrimitive.Portal>
+  )
+}
+
+function PopoverAnchor({
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
+  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />
+}
+
+export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor }
+</file>
+
+<file path="src/components/ui/progress.tsx">
+"use client"
+
+import * as React from "react"
+import * as ProgressPrimitive from "@radix-ui/react-progress"
+
+import { cn } from "@/lib/utils"
+
+function Progress({
+  className,
+  value,
+  ...props
+}: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+  return (
+    <ProgressPrimitive.Root
+      data-slot="progress"
+      className={cn(
+        "bg-primary/20 relative h-2 w-full overflow-hidden rounded-full",
+        className
+      )}
+      {...props}
+    >
+      <ProgressPrimitive.Indicator
+        data-slot="progress-indicator"
+        className="bg-primary h-full w-full flex-1 transition-all"
+        style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
+      />
+    </ProgressPrimitive.Root>
+  )
+}
+
+export { Progress }
+</file>
+
+<file path="src/components/ui/select.tsx">
+"use client"
+
+import * as React from "react"
+import * as SelectPrimitive from "@radix-ui/react-select"
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+
+import { cn } from "@/lib/utils"
+
+function Select({
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Root>) {
+  return <SelectPrimitive.Root data-slot="select" {...props} />
+}
+
+function SelectGroup({
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Group>) {
+  return <SelectPrimitive.Group data-slot="select-group" {...props} />
+}
+
+function SelectValue({
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Value>) {
+  return <SelectPrimitive.Value data-slot="select-value" {...props} />
+}
+
+function SelectTrigger({
+  className,
+  size = "default",
+  children,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Trigger> & {
+  size?: "sm" | "default"
+}) {
+  return (
+    <SelectPrimitive.Trigger
+      data-slot="select-trigger"
+      data-size={size}
+      className={cn(
+        "border-input data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 dark:hover:bg-input/50 flex w-fit items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <SelectPrimitive.Icon asChild>
+        <ChevronDownIcon className="size-4 opacity-50" />
+      </SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
+  )
+}
+
+function SelectContent({
+  className,
+  children,
+  position = "popper",
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  return (
+    <SelectPrimitive.Portal>
+      <SelectPrimitive.Content
+        data-slot="select-content"
+        className={cn(
+          "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border shadow-md",
+          position === "popper" &&
+            "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
+          className
+        )}
+        position={position}
+        {...props}
+      >
+        <SelectScrollUpButton />
+        <SelectPrimitive.Viewport
+          className={cn(
+            "p-1",
+            position === "popper" &&
+              "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1"
+          )}
+        >
+          {children}
+        </SelectPrimitive.Viewport>
+        <SelectScrollDownButton />
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  )
+}
+
+function SelectLabel({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Label>) {
+  return (
+    <SelectPrimitive.Label
+      data-slot="select-label"
+      className={cn("text-muted-foreground px-2 py-1.5 text-xs", className)}
+      {...props}
+    />
+  )
+}
+
+function SelectItem({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Item>) {
+  return (
+    <SelectPrimitive.Item
+      data-slot="select-item"
+      className={cn(
+        "focus:bg-accent focus:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        className
+      )}
+      {...props}
+    >
+      <span className="absolute right-2 flex size-3.5 items-center justify-center">
+        <SelectPrimitive.ItemIndicator>
+          <CheckIcon className="size-4" />
+        </SelectPrimitive.ItemIndicator>
+      </span>
+      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    </SelectPrimitive.Item>
+  )
+}
+
+function SelectSeparator({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Separator>) {
+  return (
+    <SelectPrimitive.Separator
+      data-slot="select-separator"
+      className={cn("bg-border pointer-events-none -mx-1 my-1 h-px", className)}
+      {...props}
+    />
+  )
+}
+
+function SelectScrollUpButton({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.ScrollUpButton>) {
+  return (
+    <SelectPrimitive.ScrollUpButton
+      data-slot="select-scroll-up-button"
+      className={cn(
+        "flex cursor-default items-center justify-center py-1",
+        className
+      )}
+      {...props}
+    >
+      <ChevronUpIcon className="size-4" />
+    </SelectPrimitive.ScrollUpButton>
+  )
+}
+
+function SelectScrollDownButton({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.ScrollDownButton>) {
+  return (
+    <SelectPrimitive.ScrollDownButton
+      data-slot="select-scroll-down-button"
+      className={cn(
+        "flex cursor-default items-center justify-center py-1",
+        className
+      )}
+      {...props}
+    >
+      <ChevronDownIcon className="size-4" />
+    </SelectPrimitive.ScrollDownButton>
+  )
+}
+
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectScrollDownButton,
+  SelectScrollUpButton,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+}
+</file>
+
+<file path="src/components/ui/slider.tsx">
+"use client"
+
+import * as React from "react"
+import * as SliderPrimitive from "@radix-ui/react-slider"
+
+import { cn } from "@/lib/utils"
+
+function Slider({
+  className,
+  defaultValue,
+  value,
+  min = 0,
+  max = 100,
+  ...props
+}: React.ComponentProps<typeof SliderPrimitive.Root>) {
+  const _values = React.useMemo(
+    () =>
+      Array.isArray(value)
+        ? value
+        : Array.isArray(defaultValue)
+          ? defaultValue
+          : [min, max],
+    [value, defaultValue, min, max]
+  )
+
+  return (
+    <SliderPrimitive.Root
+      data-slot="slider"
+      defaultValue={defaultValue}
+      value={value}
+      min={min}
+      max={max}
+      className={cn(
+        "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
+        className
+      )}
+      {...props}
+    >
+      <SliderPrimitive.Track
+        data-slot="slider-track"
+        className={cn(
+          "bg-muted relative grow overflow-hidden rounded-full data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-1.5"
+        )}
+      >
+        <SliderPrimitive.Range
+          data-slot="slider-range"
+          className={cn(
+            "bg-primary absolute data-[orientation=horizontal]:h-full data-[orientation=vertical]:w-full"
+          )}
+        />
+      </SliderPrimitive.Track>
+      {Array.from({ length: _values.length }, (_, index) => (
+        <SliderPrimitive.Thumb
+          data-slot="slider-thumb"
+          key={index}
+          className="border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
+        />
+      ))}
+    </SliderPrimitive.Root>
+  )
+}
+
+export { Slider }
+</file>
+
+<file path="src/components/ui/sonner.tsx">
+"use client"
+
+import { useTheme } from "next-themes"
+import { Toaster as Sonner, ToasterProps } from "sonner"
+
+const Toaster = ({ ...props }: ToasterProps) => {
+  const { theme = "system" } = useTheme()
+
+  return (
+    <Sonner
+      theme={theme as ToasterProps["theme"]}
+      className="toaster group"
+      style={
+        {
+          "--normal-bg": "var(--popover)",
+          "--normal-text": "var(--popover-foreground)",
+          "--normal-border": "var(--border)",
+        } as React.CSSProperties
+      }
+      {...props}
+    />
+  )
+}
+
+export { Toaster }
+</file>
+
+<file path="src/components/ui/switch.tsx">
+"use client"
+
+import * as React from "react"
+import * as SwitchPrimitive from "@radix-ui/react-switch"
+
+import { cn } from "@/lib/utils"
+
+function Switch({
+  className,
+  ...props
+}: React.ComponentProps<typeof SwitchPrimitive.Root>) {
+  return (
+    <SwitchPrimitive.Root
+      data-slot="switch"
+      className={cn(
+        "peer data-[state=checked]:bg-primary data-[state=unchecked]:bg-input focus-visible:border-ring focus-visible:ring-ring/50 dark:data-[state=unchecked]:bg-input/80 inline-flex h-[1.15rem] w-8 shrink-0 items-center rounded-full border border-transparent shadow-xs transition-all outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      )}
+      {...props}
+    >
+      <SwitchPrimitive.Thumb
+        data-slot="switch-thumb"
+        className={cn(
+          "bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block size-4 rounded-full ring-0 transition-transform data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0"
+        )}
+      />
+    </SwitchPrimitive.Root>
+  )
+}
+
+export { Switch }
+</file>
+
+<file path="src/components/ui/table.tsx">
+"use client"
+
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Table({ className, ...props }: React.ComponentProps<"table">) {
+  return (
+    <div
+      data-slot="table-container"
+      className="relative w-full overflow-x-auto"
+    >
+      <table
+        data-slot="table"
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props}
+      />
+    </div>
+  )
+}
+
+function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
+  return (
+    <thead
+      data-slot="table-header"
+      className={cn("[&_tr]:border-b", className)}
+      {...props}
+    />
+  )
+}
+
+function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
+  return (
+    <tbody
+      data-slot="table-body"
+      className={cn("[&_tr:last-child]:border-0", className)}
+      {...props}
+    />
+  )
+}
+
+function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
+  return (
+    <tfoot
+      data-slot="table-footer"
+      className={cn(
+        "bg-muted/50 border-t font-medium [&>tr]:last:border-b-0",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
+  return (
+    <tr
+      data-slot="table-row"
+      className={cn(
+        "hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TableHead({ className, ...props }: React.ComponentProps<"th">) {
+  return (
+    <th
+      data-slot="table-head"
+      className={cn(
+        "text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TableCell({ className, ...props }: React.ComponentProps<"td">) {
+  return (
+    <td
+      data-slot="table-cell"
+      className={cn(
+        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TableCaption({
+  className,
+  ...props
+}: React.ComponentProps<"caption">) {
+  return (
+    <caption
+      data-slot="table-caption"
+      className={cn("text-muted-foreground mt-4 text-sm", className)}
+      {...props}
+    />
+  )
+}
+
+export {
+  Table,
+  TableHeader,
+  TableBody,
+  TableFooter,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableCaption,
+}
+</file>
+
+<file path="src/components/ui/tabs.tsx">
+"use client"
+
+import * as React from "react"
+import * as TabsPrimitive from "@radix-ui/react-tabs"
+
+import { cn } from "@/lib/utils"
+
+function Tabs({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Root>) {
+  return (
+    <TabsPrimitive.Root
+      data-slot="tabs"
+      className={cn("flex flex-col gap-2", className)}
+      {...props}
+    />
+  )
+}
+
+function TabsList({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.List>) {
+  return (
+    <TabsPrimitive.List
+      data-slot="tabs-list"
+      className={cn(
+        "bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-[3px]",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TabsTrigger({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+  return (
+    <TabsPrimitive.Trigger
+      data-slot="tabs-trigger"
+      className={cn(
+        "data-[state=active]:bg-background dark:data-[state=active]:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 text-foreground dark:text-muted-foreground inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TabsContent({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Content>) {
+  return (
+    <TabsPrimitive.Content
+      data-slot="tabs-content"
+      className={cn("flex-1 outline-none", className)}
+      {...props}
+    />
+  )
+}
+
+export { Tabs, TabsList, TabsTrigger, TabsContent }
+</file>
+
+<file path="src/components/ui/textarea.tsx">
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+  return (
+    <textarea
+      data-slot="textarea"
+      className={cn(
+        "border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 flex field-sizing-content min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Textarea }
+</file>
+
+<file path="src/components/MainLayout.tsx">
+import { Sidebar } from './Sidebar';
+
+export function MainLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-screen">
+      <Sidebar />
+      <main className="flex-1 p-6">
+        {children}
+      </main>
+    </div>
+  );
+}
+</file>
+
+<file path="src/components/Sidebar.tsx">
+"use client";
+import { useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import {
+  Settings,
+  Mail,
+  Mic,
+  BookOpen,
+  ListChecks,
+  Menu,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
+
+const links = [
+  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/newsletter', label: 'Newsletter Builder', icon: Mail },
+  { href: '/podcast', label: 'Podcast Builder', icon: Mic },
+  { href: '/papers', label: 'Paper Ratings', icon: BookOpen },
+  { href: '/runs', label: 'Run Log', icon: ListChecks },
+];
+
+export function Sidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+  const pathname = usePathname();
+
+  return (
+    <aside
+      className={`h-screen bg-zinc-900 text-zinc-100 flex flex-col transition-all duration-200 border-r border-zinc-800
+        ${collapsed ? 'w-16' : 'w-60'}
+        fixed md:static z-40
+      `}
+    >
+      <div className="flex items-center justify-between h-16 px-4 border-b border-zinc-800">
+        {!collapsed && <span className="font-bold text-lg tracking-wide">Theseus</span>}
+        <button
+          className="p-2 rounded hover:bg-zinc-800 transition-colors"
+          onClick={() => setCollapsed((c) => !c)}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+        </button>
+      </div>
+      <nav className="flex-1 flex flex-col gap-1 mt-4">
+        {links.map(({ href, label, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className={`flex items-center gap-3 px-4 py-2 rounded-lg mx-2 my-1 transition-colors
+              ${pathname === href ? 'bg-zinc-800 text-primary' : 'hover:bg-zinc-800'}
+              ${collapsed ? 'justify-center px-2' : ''}
+            `}
+          >
+            <Icon size={20} />
+            {!collapsed && <span className="truncate">{label}</span>}
+          </Link>
+        ))}
+      </nav>
+      <div className="mt-auto mb-4 px-4 text-xs text-zinc-500 text-center">
+        {!collapsed && '© 2024 Theseus Insight'}
+      </div>
+    </aside>
+  );
+}
+</file>
+
+<file path="src/hooks/useWebSocketProgress.ts">
+import { useEffect, useState } from 'react';
+import { io, Socket } from 'socket.io-client';
+
+export function useWebSocketProgress(runId: string) {
+  const [status, setStatus] = useState<string>('connecting');
+  const [socket, setSocket] = useState<Socket | null>(null);
+
+  useEffect(() => {
+    const newSocket = io('http://localhost:8000', {
+      path: '/ws',
+      query: { runId },
+    });
+
+    newSocket.on('connect', () => {
+      setStatus('connected');
+    });
+
+    newSocket.on('disconnect', () => {
+      setStatus('disconnected');
+    });
+
+    newSocket.on('progress', (data) => {
+      setStatus(data.status);
+    });
+
+    setSocket(newSocket);
+
+    return () => {
+      newSocket.close();
+    };
+  }, [runId]);
+
+  return { status, socket };
+}
+</file>
+
+<file path="src/lib/utils.ts">
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+</file>
+
+<file path="src/providers/Providers.tsx">
+'use client';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
+import { useState } from 'react';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient());
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Toaster />
+      {children}
+    </QueryClientProvider>
+  );
+}
+</file>
+
+<file path=".gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+</file>
+
+<file path="components.json">
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "iconLibrary": "lucide"
+}
+</file>
+
+<file path="eslint.config.mjs">
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const eslintConfig = [
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
+];
+
+export default eslintConfig;
+</file>
+
+<file path="next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:8000/api/:path*', // Proxy to FastAPI backend
+      },
+    ];
+  },
+};
+
+export default nextConfig;
+</file>
+
+<file path="package.json">
+{
+  "name": "theseus-gui",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.3",
+    "@monaco-editor/react": "^4.7.0",
+    "@radix-ui/react-accordion": "^1.2.10",
+    "@radix-ui/react-alert-dialog": "^1.1.13",
+    "@radix-ui/react-label": "^2.1.6",
+    "@radix-ui/react-popover": "^1.1.13",
+    "@radix-ui/react-progress": "^1.1.6",
+    "@radix-ui/react-select": "^2.2.4",
+    "@radix-ui/react-slider": "^1.3.4",
+    "@radix-ui/react-slot": "^1.2.2",
+    "@radix-ui/react-switch": "^1.2.4",
+    "@radix-ui/react-tabs": "^1.1.11",
+    "@radix-ui/react-toast": "^1.2.13",
+    "@tanstack/react-query": "^5.76.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.510.0",
+    "next": "15.3.2",
+    "next-themes": "^0.4.6",
+    "react": "^19.0.0",
+    "react-day-picker": "8.10.1",
+    "react-dom": "^19.0.0",
+    "socket.io-client": "^4.8.1",
+    "sonner": "^2.0.3",
+    "tailwind-merge": "^3.3.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.2",
+    "tailwindcss": "^4",
+    "tw-animate-css": "^1.2.9",
+    "typescript": "^5"
+  }
+}
+</file>
+
+<file path="postcss.config.mjs">
+const config = {
+  plugins: ["@tailwindcss/postcss"],
+};
+
+export default config;
+</file>
+
+<file path="README.md">
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+</file>
+
+</files>

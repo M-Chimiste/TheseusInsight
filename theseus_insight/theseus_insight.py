@@ -186,7 +186,6 @@ class TheseusInsight:
         
         # 2) Load specialized LLMs
         self.judge_model_config = self.orchestration_config['judge_model']
-        self.newsletter_model_config = self.orchestration_config['newsletter_model']
         self.content_extraction_model_config = self.orchestration_config['content_extraction_model']
         self.newsletter_sections_model_config = self.orchestration_config['newsletter_sections_model']
         self.newsletter_intro_model_config = self.orchestration_config['newsletter_intro_model']
@@ -197,13 +196,6 @@ class TheseusInsight:
             self.judge_model_config['max_new_tokens'],
             self.judge_model_config['temperature'],
             self.judge_model_config.get('num_ctx')
-        )
-        self.newsletter_inference = self._load_inference_model(
-            self.newsletter_model_config['model_type'],
-            self.newsletter_model_config['model_name'],
-            self.newsletter_model_config['max_new_tokens'],
-            self.newsletter_model_config['temperature'],
-            self.newsletter_model_config.get('num_ctx')
         )
         self.content_extraction_inference = self._load_inference_model(
             self.content_extraction_model_config['model_type'],

@@ -10,14 +10,15 @@ Theseus Insight is a multi-purpose project that processes PDF research papers, r
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
 - [Key Endpoints](#key-endpoints)
-  - [PDF Uploads](#pdf-uploads)
+  - [Model Management](#model-management)
+  - [Papers](#papers)
+  - [Settings](#settings)
+  - [Runs](#runs)
+  - [Tasks](#tasks)
+  - [Newsletter Generation](#newsletter-generation)
   - [Podcast Generation](#podcast-generation)
-  - [Script Management](#script-management)
-  - [Visualizer Generation](#visualizer-generation)
-  - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
+  - [WebSocket Status](#websocket-status)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
-  - [Core Workflow](#core-workflow)
-  - [Example Usage](#example-usage)
 - [License](#license)
 - [Credits](#credits)
 
@@ -39,21 +40,14 @@ It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) 
 
 ## Features
 
-- **FastAPI** server with endpoints to handle:
-  - Uploading PDFs
-  - Generating scripts & podcasts
-  - Managing TTS visualizer generation
-  - Checking generation status, downloading results
-  - Handling a "Theseus Insight run" that orchestrates the entire pipeline
-- **In-memory or SQLite** database for:
-  - Storing references to papers
-  - Saving newsletters
-  - Tracking podcasts & logs
-- **Flexible LLM usage**: can switch among Anthropic, OpenAI, Ollama, or Gemini for inference tasks.
-- **TTS**: Choose KokoroTTS, Amazon Polly, or OpenAI TTS. Generate final MP3 or WAV files.
-- **Podcast**: Compose multi-speaker dialogues automatically, then convert them to TTS, merge segments into a final audio file, and optionally create a matrix-based visualizer.
-- **Newsletter**: Summarizes new relevant papers, providing references and sending them via email.
-- **Configurable orchestration**: All model and pipeline orchestration is handled via `config/orchestration.json`.
+- **FastAPI** server for model management, paper retrieval, settings, and launching newsletter or podcast tasks.
+- **WebSocket** updates for long-running tasks so you can monitor progress in real time.
+- **SQLite** database storing papers, newsletters, podcasts and settings.
+- **Flexible LLM usage**: switch among Anthropic, OpenAI, Ollama or Gemini for inference tasks.
+- **TTS**: Choose KokoroTTS, Amazon Polly or OpenAI TTS to produce final MP3 or WAV files.
+- **Podcast**: Compose multi-speaker dialogues automatically, convert them to TTS and optionally generate a matrix-style visualizer.
+- **Newsletter**: Summarize new relevant papers and email them to configured recipients.
+- **Configurable orchestration** via `config/orchestration.json`.
 
 ---
 
@@ -62,22 +56,16 @@ It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) 
 ```
 theseus_insight/
   api/
-    routers/
-      pdf.py          # Handles PDF upload
-      podcast.py      # Long-running tasks to generate podcasts
-      script.py       # Script management for saved dialogues
-      visualizer.py   # Endpoint to generate video visualizers from audio
-    theseus_insight_routes.py # Endpoint to orchestrate Theseus Insight runs
     __init__.py
-    uploads/         # Uploaded files
-    scripts/         # Saved scripts
+    models.py       # Pydantic API models
+    tasks.py        # Background task management
   communication/
     communication.py  # Gmail email sending
     youtube_integration.py # YouTube uploading
     __init__.py
   data_model/
-    dialog.py         # Pydantic models for dialogues
-    data_handling.py  # SQLite DB interactions (papers, newsletters, podcasts)
+    data_handling.py  # SQLite DB interactions
+    dialog.py         # Dialogue models
     papers.py         # Paper metadata models
     __init__.py
   data_processing/
@@ -111,13 +99,13 @@ theseus_insight/
   __init__.py         # Root init
 config/
   orchestration.json  # Model and pipeline orchestration config
-run_paperpal.py       # CLI entrypoint for running the full pipeline
+run_theseus_insight.py  # CLI entrypoint for running the pipeline
 ```
 
 **Key classes include:**
 - `TheseusInsight`: The main orchestrator to download, embed, rank, generate newsletters, produce podcasts, and optionally email or upload final artifacts.
 - `PodcastGenerator`: Assembles multi-speaker dialogues from PDF or text, converts them to TTS, and optionally produces a matrix-based visualizer.
-- Various FastAPI routers for structured endpoints.
+- FastAPI endpoints are defined in `main.py` and leverage `api/models.py` and `api/tasks.py` for data handling.
 
 ---
 
@@ -130,7 +118,21 @@ run_paperpal.py       # CLI entrypoint for running the full pipeline
    ```
    (Make sure your environment has the relevant TTS/LLM dependencies.)
 
-3. **(Optional) Configure LLM & TTS providers** as described in the Environment Variables section.
+3. **(Optional) Configure environment variables** to enable LLM and TTS providers.
+
+---
+
+## Environment Variables
+
+Set the following variables in your environment (or a `.env` file) to enable
+model access and email functionality:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GOOGLE_API_KEY`
+- `ELEVENLABS_API_KEY`
+- `GMAIL_SENDER_ADDRESS`
+- `GMAIL_APP_PASSWORD`
 
 ---
 
@@ -148,26 +150,39 @@ View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs
 
 ## Key Endpoints
 
-### PDF Uploads
-- **`POST /api/pdf/upload`**  Upload a single PDF file.
-- **`POST /api/pdf/batch-upload`**  Upload multiple PDFs.
+### Model Management
+- **`GET /api/models`** – list registered models.
+- **`POST /api/models`** – add a new model.
+- **`DELETE /api/models/{model_id}`** – remove a model.
+
+### Papers
+- **`GET /api/papers`** – list papers with optional filtering and pagination.
+
+### Settings
+- **`GET /api/settings/orchestration`** / **`PUT /api/settings/orchestration`**
+- **`GET /api/settings/research-interests`** / **`PUT /api/settings/research-interests`**
+- **`GET /api/settings/email-recipients`** / **`PUT /api/settings/email-recipients`**
+- **`GET /api/settings/visualizer-settings`**
+- **`POST /api/settings/send-test-email`**
+
+### Runs
+- **`GET /api/runs`** – list previous newsletters or podcasts.
+- **`DELETE /api/runs/{run_id}/artifact`** – delete an associated artifact.
+
+### Tasks
+- **`GET /api/tasks/{task_id}/status`** – check progress of a running task.
+- **`GET /api/tasks/{task_id}/result`** – fetch the final result once complete.
+- **`GET /api/tasks/{task_id}/download/{file_type}`** – download the generated artifact.
+
+### Newsletter Generation
+- **`POST /api/newsletter/run`** – start the newsletter pipeline.
 
 ### Podcast Generation
-- **`POST /api/podcast/generate`**  Generate a podcast from PDFs or text.
-- **`GET /api/podcast/status/{task_id}`**  Check status of a podcast generation task.
-- **`GET /api/podcast/download/{filename}`**  Download the final podcast file.
+- **`POST /api/podcast/generate`** – start the podcast pipeline.
 
-### Script Management
-- **`POST /api/script/save`**  Save a generated script.
-- **`GET /api/script/list`**  List saved scripts.
-- **`GET /api/script/download/{filename}`**  Download a saved script.
-
-### Visualizer Generation
-- **`POST /api/visualizer/generate`**  Generate a visualizer video.
-- **`GET /api/visualizer/status/{task_id}`**  Check visualizer generation status.
-
-### Theseus Insight Run Orchestration
-- **`POST /api/theseus_insight/run`**  Orchestrate the full pipeline (papers, newsletter, podcast, etc).
+### WebSocket Status
+- **`/ws/newsletter/{task_id}`** – real-time newsletter status updates.
+- **`/ws/podcast/{task_id}`** – real-time podcast status updates.
 
 ---
 

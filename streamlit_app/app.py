@@ -1,6 +1,7 @@
 import streamlit as st
 from dotenv import load_dotenv
 from styles.css import apply_all_styles
+import os
 
 # Load environment variables
 load_dotenv()
@@ -16,9 +17,26 @@ st.set_page_config(
 # Apply all custom CSS
 st.markdown(apply_all_styles(), unsafe_allow_html=True)
 
+# Apply theme from settings if set
+if 'settings' in st.session_state and st.session_state.settings.get('theme'):
+    from views.settings import apply_theme
+    apply_theme(st.session_state.settings['theme'])
+
 # Initialize session state
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "Settings"
+
+# Initialize settings if not present
+if 'settings' not in st.session_state:
+    st.session_state.settings = {
+        'theme': 'System',
+        'api_key': os.getenv("API_KEY", ""),
+        'environment': 'Development',
+        'model': 'GPT-4',
+        'temperature': 0.7,
+        'max_tokens': 2000,
+        'batch_size': 10
+    }
 
 def render_navigation():
     with st.sidebar:

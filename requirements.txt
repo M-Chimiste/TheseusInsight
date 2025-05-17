@@ -27,7 +27,6 @@ FlagEmbedding
 anthropic[bedrock]
 openai
 ollama
-langchain
 soundfile
 google-generativeai
 
@@ -36,9 +35,9 @@ pandas
 openpyxl
 json_repair
 tabulate
-pydantic==2.4.2
+pydantic
 tqdm
-numba>=0.56.4
+numba
 
 # PDF & Document Processing
 PyPDF2

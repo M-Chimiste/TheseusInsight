@@ -1,0 +1,74 @@
+[project]
+name = "theseus-insight"
+version = "0.1.0"
+description = "TheseusInsight project"
+authors = [
+    {name = "KC"}
+]
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "torch (>=2.7.0,<3.0.0)",
+    "torchvision (>=0.22.0,<0.23.0)",
+    "torchaudio (>=2.7.0,<3.0.0)",
+    "transformers (>=4.51.3,<5.0.0)",
+    "accelerate (>=1.7.0,<2.0.0)",
+    "bitsandbytes (>=0.45.5,<0.46.0)",
+    "einops (>=0.8.1,<0.9.0)",
+    "numpy (>=2.2.5,<3.0.0)",
+    "scipy (>=1.15.3,<2.0.0)",
+    "spacy (>=3.8.4,<4.0.0)",
+    "spacy-layout (>=0.0.12,<0.0.13)",
+    "tiktoken (>=0.9.0,<0.10.0)",
+    "phonemizer (>=3.3.0,<4.0.0)",
+    "unidecode (>=1.4.0,<2.0.0)",
+    "chardet (>=5.2.0,<6.0.0)",
+    "lxml (>=5.4.0,<6.0.0)",
+    "sentencepiece (>=0.2.0,<0.3.0)",
+    "sentence-transformers (>=4.1.0,<5.0.0)",
+    "flagembedding (>=1.3.4,<2.0.0)",
+    "anthropic[bedrock] (>=0.51.0,<0.52.0)",
+    "openai (>=1.79.0,<2.0.0)",
+    "ollama (>=0.4.8,<0.5.0)",
+    "soundfile (>=0.13.1,<0.14.0)",
+    "google-generativeai (>=0.8.5,<0.9.0)",
+    "pandas (>=2.2.3,<3.0.0)",
+    "openpyxl (>=3.1.5,<4.0.0)",
+    "json-repair (>=0.44.1,<0.45.0)",
+    "tabulate (>=0.9.0,<0.10.0)",
+    "pydantic (>=2.11.4,<3.0.0)",
+    "tqdm (>=4.67.1,<5.0.0)",
+    "numba (>=0.61.2,<0.62.0)",
+    "pypdf2 (>=3.0.1,<4.0.0)",
+    "pymupdf (>=1.25.5,<2.0.0)",
+    "requests (>=2.32.3,<3.0.0)",
+    "requests-aws4auth (>=1.3.1,<2.0.0)",
+    "python-dotenv (>=1.1.0,<2.0.0)",
+    "jupyterlab (>=4.4.2,<5.0.0)",
+    "tenacity (>=9.1.2,<10.0.0)",
+    "markdown2 (>=2.5.3,<3.0.0)",
+    "jinja2 (>=3.1.6,<4.0.0)",
+    "munch (>=4.0.0,<5.0.0)",
+    "appdirs (>=1.4.4,<2.0.0)",
+    "pydub (>=0.25.1,<0.26.0)",
+    "moviepy (>=2.1.2,<3.0.0)",
+    "pygame (>=2.6.1,<3.0.0)",
+    "google-api-python-client (>=2.169.0,<3.0.0)",
+    "google-auth-httplib2 (>=0.2.0,<0.3.0)",
+    "google-auth-oauthlib (>=1.2.2,<2.0.0)",
+    "fastapi (>=0.115.12,<0.116.0)",
+    "uvicorn (>=0.34.2,<0.35.0)",
+    "python-multipart (>=0.0.20,<0.0.21)",
+    "websockets (>=15.0.1,<16.0.0)",
+    "email-validator (>=2.2.0,<3.0.0)",
+    "python-jose[cryptography] (>=3.4.0,<4.0.0)",
+    "passlib[bcrypt] (>=1.7.4,<2.0.0)",
+    "streamlit (>=1.45.1,<2.0.0)",
+    "plotly (>=6.1.0,<7.0.0)",
+    "streamlit-aggrid (>=1.1.4.post1,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

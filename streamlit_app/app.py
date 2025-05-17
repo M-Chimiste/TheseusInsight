@@ -1,14 +1,6 @@
 import streamlit as st
-import os
 from dotenv import load_dotenv
-from pathlib import Path
-import json
-from datetime import datetime, timedelta
-import requests
-import asyncio
-import websockets
-import json
-from typing import Dict, Any, Optional, List
+from styles.css import apply_all_styles
 
 # Load environment variables
 load_dotenv()
@@ -21,119 +13,80 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# API Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-WS_BASE_URL = os.getenv("WS_BASE_URL", "ws://localhost:8000")
+# Apply all custom CSS
+st.markdown(apply_all_styles(), unsafe_allow_html=True)
 
-# Custom CSS for better styling
-st.markdown("""
-    <style>
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    .sidebar .sidebar-content {
-        width: 280px;
-    }
-    .stProgress > div > div > div > div {
-        background-color: #4CAF50;
-    }
-    .stButton>button {
-        width: 100%;
-    }
-    .stSelectbox, .stTextInput, .stTextArea, .stDateInput, .stTimeInput {
-        margin-bottom: 1rem;
-    }
-    """, unsafe_allow_html=True)
+# Initialize session state
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "Settings"
 
-# State management
-if 'auth_token' not in st.session_state:
-    st.session_state.auth_token = None
+def render_navigation():
+    with st.sidebar:
+        st.markdown("""
+            <div style='text-align: center; padding: 1rem;'>
+                <h2 style='color: #000;'>🔬 Theseus Insight</h2>
+            </div>
+        """, unsafe_allow_html=True)
 
-class APIError(Exception):
-    pass
+        nav_pages = {
+            "⚙️ Settings": "Settings",
+            "📰 Newsletter Builder": "Newsletter Builder",
+            "🎙️ Podcast Builder": "Podcast Builder",
+            "📄 Paper Ratings": "Paper Ratings",
+            "📊 Run Log": "Run Log"
+        }
 
-def make_api_request(method: str, endpoint: str, data: Optional[Dict] = None, params: Optional[Dict] = None, files: Optional[Dict] = None):
-    """Make an API request to the FastAPI backend."""
-    url = f"{API_BASE_URL}{endpoint}"
-    headers = {}
-    
-    if st.session_state.auth_token:
-        headers["Authorization"] = f"Bearer {st.session_state.auth_token}"
-    
-    try:
-        if method.upper() == 'GET':
-            response = requests.get(url, headers=headers, params=params)
-        elif method.upper() == 'POST':
-            if files:
-                response = requests.post(url, headers=headers, data=data, files=files)
-            else:
-                response = requests.post(url, headers=headers, json=data)
-        elif method.upper() == 'PUT':
-            response = requests.put(url, headers=headers, json=data)
-        elif method.upper() == 'DELETE':
-            response = requests.delete(url, headers=headers)
-        else:
-            raise ValueError(f"Unsupported HTTP method: {method}")
-        
-        response.raise_for_status()
-        return response.json() if response.content else {}
-    except requests.exceptions.RequestException as e:
-        error_msg = str(e)
-        if hasattr(e, 'response') and e.response is not None:
-            try:
-                error_msg = e.response.json().get('detail', str(e))
-            except:
-                error_msg = e.response.text or str(e)
-        raise APIError(f"API request failed: {error_msg}")
+        for label, page in nav_pages.items():
+            if st.button(label, key=f"nav_{page}"):
+                st.session_state.current_page = page
+                st.rerun()
 
-# Sidebar navigation
-def render_sidebar():
-    st.sidebar.title("Theseus Insight")
-    
-    # Navigation menu
-    menu = {
-        "🎛️ Settings": "settings",
-        "📰 Newsletter Builder": "newsletter",
-        "🎙️ Podcast Builder": "podcast",
-        "📄 Paper Ratings": "papers",
-        "📊 Run Log": "runs"
-    }
-    
-    # Render navigation
-    st.sidebar.title("Navigation")
-    selection = st.sidebar.radio("", list(menu.keys()))
-    
-    # Add some space and app info
-    st.sidebar.markdown("---")
-    st.sidebar.info(
-        "Theseus Insight v0.3\n\n"
-        "Research paper analysis and newsletter generation tool"
-    )
-    
-    return menu[selection]
+        # Stats section with consistent styling
+        st.markdown("---")
+        st.markdown("""
+            <div class='custom-container'>
+                <h4 style='color: #000; margin: 0;'>📈 Quick Stats</h4>
+                <div class='stats-grid'>
+                    <div class='stat-card'>
+                        <div class='stat-value'>25</div>
+                        <div class='stat-label'>📄 Papers</div>
+                    </div>
+                    <div class='stat-card'>
+                        <div class='stat-value'>8</div>
+                        <div class='stat-label'>✅ Tasks</div>
+                    </div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
-# Main app
-def main():
-    # Render sidebar and get current page
-    page = render_sidebar()
-    
-    # Display the selected page
-    if page == "settings":
-        from pages.settings import show_settings_page
-        show_settings_page()
-    elif page == "newsletter":
-        from pages.newsletter import show_newsletter_page
-        show_newsletter_page()
-    elif page == "podcast":
-        from pages.podcast import show_podcast_page
-        show_podcast_page()
-    elif page == "papers":
-        from pages.papers import show_papers_page
-        show_papers_page()
-    elif page == "runs":
-        from pages.runs import show_runs_page
-        show_runs_page()
+        # Version info with consistent styling
+        st.markdown("---")
+        st.markdown("""
+            <div class='custom-container'>
+                <h4 style='color: #000; margin: 0;'>ℹ️ About</h4>
+                <p style='color: rgba(0, 0, 0, 0.8); margin-top: 0.5rem;'>
+                    Theseus Insight v0.3<br>
+                    Research paper analysis and newsletter generation tool
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+# Render navigation
+render_navigation()
+
+# Load the appropriate page
+if st.session_state.current_page == "Settings":
+    from views.settings import show_settings_page
+    show_settings_page()
+elif st.session_state.current_page == "Newsletter Builder":
+    from views.newsletter import show_newsletter_page
+    show_newsletter_page()
+elif st.session_state.current_page == "Podcast Builder":
+    from views.podcast import show_podcast_page
+    show_podcast_page()
+elif st.session_state.current_page == "Paper Ratings":
+    from views.papers import show_papers_page
+    show_papers_page()
+elif st.session_state.current_page == "Run Log":
+    from views.runs import show_runs_page
+    show_runs_page()

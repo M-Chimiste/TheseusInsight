@@ -6,13 +6,6 @@
     "temperature": 0.1,
     "num_ctx": 4096
   },
-  "newsletter_model": {
-    "model_name": "gemma3:27b-it-qat",
-    "model_type": "ollama",
-    "max_new_tokens": 4096,
-    "temperature": 0.1,
-    "num_ctx": 131072
-  },
   "content_extraction_model": {
     "model_name": "gemma3:27b-it-qat",
     "model_type": "ollama",

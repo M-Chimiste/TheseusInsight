@@ -49,6 +49,13 @@
   },
   "arxiv_search_categories": {
     "main_category": "cs",
-    "filter_categories": ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"]
+    "filter_categories": [
+      "cs.ai",
+      "cs.cl",
+      "cs.lg",
+      "cs.ir",
+      "cs.ma",
+      "cs.cv"
+    ]
   }
 }

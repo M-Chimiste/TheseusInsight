@@ -59,36 +59,6 @@ def render_navigation():
                 st.session_state.current_page = page
                 st.rerun()
 
-        # Stats section with consistent styling
-        st.markdown("---")
-        st.markdown("""
-            <div class='custom-container'>
-                <h4 style='color: #000; margin: 0;'>📈 Quick Stats</h4>
-                <div class='stats-grid'>
-                    <div class='stat-card'>
-                        <div class='stat-value'>25</div>
-                        <div class='stat-label'>📄 Papers</div>
-                    </div>
-                    <div class='stat-card'>
-                        <div class='stat-value'>8</div>
-                        <div class='stat-label'>✅ Tasks</div>
-                    </div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-
-        # Version info with consistent styling
-        st.markdown("---")
-        st.markdown("""
-            <div class='custom-container'>
-                <h4 style='color: #000; margin: 0;'>ℹ️ About</h4>
-                <p style='color: rgba(0, 0, 0, 0.8); margin-top: 0.5rem;'>
-                    Theseus Insight v0.3<br>
-                    Research paper analysis and newsletter generation tool
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
-
 # Render navigation
 render_navigation()
 

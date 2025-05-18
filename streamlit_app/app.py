@@ -20,13 +20,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Create a placeholder for theme styles
+theme_style_placeholder = st.empty()
+
 # Apply all custom CSS
 st.markdown(apply_all_styles(), unsafe_allow_html=True)
 
 # Apply theme from settings if set
 if 'settings' in st.session_state and st.session_state.settings.get('theme'):
     from views.settings import apply_theme
-    apply_theme(st.session_state.settings['theme'])
+    apply_theme(theme_style_placeholder, st.session_state.settings['theme'])
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -35,7 +38,7 @@ if 'current_page' not in st.session_state:
 # Initialize settings if not present
 if 'settings' not in st.session_state:
     st.session_state.settings = {
-        'theme': 'System',
+        'theme': 'Dark',  # Changed default theme from 'System' to 'Dark'
         'api_key': os.getenv("API_KEY", ""),
         'environment': 'Development',
         'model': 'GPT-4',

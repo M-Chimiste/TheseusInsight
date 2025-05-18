@@ -28,6 +28,163 @@ if os.path.exists(ORCHESTRATION_CONFIG_PATH):
 else:
     ORCHESTRATION_CONFIG = {}
 
+# --- Theme CSS Definitions ---
+DARK_THEME_CSS = """
+<style>
+    :root {
+        --text-primary: #f3f4f6 !important; /* Light gray for text */
+        --text-secondary: #9ca3af !important; /* Medium gray for secondary text */
+        --bg-primary: #111827 !important; /* Very dark blue/gray for main background */
+        --bg-secondary: #1f2937 !important; /* Dark blue/gray for secondary backgrounds */
+        --card-bg: #1f2937 !important; /* Same as secondary for cards/expanders */
+        --border-color: #374151 !important; /* Darker gray for borders */
+        --input-bg: #2b394c !important; /* Slightly lighter than bg-secondary for inputs */
+        --input-text: #f3f4f6 !important; /* Light gray for input text */
+        --button-bg: #3b82f6 !important; /* Blue for buttons */
+        --button-text: #ffffff !important; /* White for button text */
+    }
+    body {
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+    }
+    .stApp, .main .block-container {
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+    }
+    h1, h2, h3, h4, h5, h6 { color: var(--text-primary) !important; }
+    .stTextInput > div > div > input, 
+    .stTextArea > div > div > textarea,
+    .stSelectbox > div > div > div,
+    .stNumberInput > div > div > input,
+    .stSlider > div > div > div > div {
+        background-color: var(--input-bg) !important;
+        color: var(--input-text) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 0.375rem !important;
+    }
+    .stSelectbox > div > div { color: var(--input-text) !important; }
+    .stRadio > div {
+        background-color: var(--card-bg) !important;
+        padding: 10px; border-radius: 0.5rem;
+        border: 1px solid var(--border-color) !important;
+    }
+    .stRadio label span { color: var(--text-primary) !important; }
+    .stExpander {
+        background-color: var(--card-bg) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 0.5rem !important;
+    }
+    .stExpander header { color: var(--text-primary) !important; }
+    .stToggle { background-color: transparent !important; }
+    .stToggle label { display: flex !important; align-items: center !important; color: var(--text-primary) !important; }
+    .stToggle label span { color: var(--text-primary) !important; margin-left: 8px; }
+    .stToggle input[type="checkbox"] + div {
+        transition: background-color 0.2s ease, border-color 0.2s ease !important;
+        border-radius: 1rem !important; height: 1.5rem !important; width: 2.75rem !important;
+        display: flex !important; align-items: center !important;
+        background-color: var(--input-bg) !important; 
+        border: 1px solid var(--border-color) !important;
+    }
+    .stToggle input[type="checkbox"] + div > div {
+        background-color: white !important; border-radius: 50% !important;
+        height: 1.25rem !important; width: 1.25rem !important;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.2), 0 1px 2px 0 rgba(0, 0, 0, 0.1) !important;
+        transition: transform 0.2s ease !important; position: relative !important;
+    }
+    .stToggle input[type="checkbox"]:not(:checked) + div > div { transform: translateX(0.125rem) !important; }
+    .stToggle input[type="checkbox"]:checked + div { /* Track when ON for Dark Mode */
+        background-color: var(--button-bg) !important;
+        border-color: var(--button-bg) !important;
+    }
+    .stToggle input[type="checkbox"]:checked + div > div { transform: translateX(1.375rem) !important; }
+    .stDataFrame { background-color: var(--card-bg) !important; }
+    .stButton > button {
+        background-color: var(--button-bg) !important; color: var(--button-text) !important;
+        border: 1px solid var(--button-bg) !important; border-radius: 0.375rem !important;
+    }
+    .stButton > button:hover { filter: brightness(110%); }
+    p, span, label, .stMarkdown, div[data-testid="stVerticalBlock"] div,
+    div[data-testid="stHorizontalBlock"] div {
+        color: var(--text-primary) !important;
+    }
+</style>
+"""
+
+LIGHT_THEME_CSS = """
+<style>
+    :root {
+        --text-primary: #1f2937 !important; --text-secondary: #4b5563 !important;
+        --bg-primary: #ffffff !important; --bg-secondary: #f3f4f6 !important;
+        --card-bg: #ffffff !important; --border-color: #d1d5db !important;
+        --input-bg: #ffffff !important; --input-text: #1f2937 !important;
+        --button-bg: #3b82f6 !important; --button-text: #ffffff !important;
+    }
+    body { background-color: var(--bg-primary) !important; color: var(--text-primary) !important; }
+    .stApp, .main .block-container { background-color: var(--bg-primary) !important; color: var(--text-primary) !important; }
+    h1, h2, h3, h4, h5, h6 { color: var(--text-primary) !important; }
+    .stTextInput > div > div > input, .stTextArea > div > div > textarea,
+    .stNumberInput > div > div > input, .stSlider > div > div > div > div {
+        background-color: var(--input-bg) !important; color: var(--input-text) !important;
+        border: 1px solid var(--border-color) !important; border-radius: 0.375rem !important;
+    }
+    .stSelectbox > label { color: var(--text-primary) !important; }
+    .stSelectbox > div > div { color: var(--input-text) !important; }
+    .stSelectbox > div > div > div {
+        background-color: var(--input-bg) !important; color: var(--input-text) !important;
+        border: 1px solid var(--border-color) !important; border-radius: 0.375rem !important;
+    }
+    div[data-baseweb="popover"] ul li { background-color: var(--input-bg) !important; color: var(--input-text) !important; }
+    div[data-baseweb="popover"] ul li:hover { background-color: #e9ecef !important; }
+    .stRadio > label { color: var(--text-primary) !important; }
+    .stRadio > div {
+        background-color: var(--card-bg) !important; padding: 10px;
+        border-radius: 0.5rem; border: 1px solid var(--border-color) !important;
+    }
+    .stRadio label span { color: var(--text-primary) !important; }
+    .stExpander {
+        background-color: var(--card-bg) !important; border: 1px solid var(--border-color) !important;
+        border-radius: 0.5rem !important;
+    }
+    .stExpander header { color: var(--text-primary) !important; }
+    .stToggle { background-color: transparent !important; }
+    .stToggle label { display: flex !important; align-items: center !important; color: var(--text-primary) !important; }
+    .stToggle label span { color: var(--text-primary) !important; margin-left: 8px; }
+    .stToggle input[type="checkbox"] + div { /* Track base */
+        transition: background-color 0.2s ease, border-color 0.2s ease !important;
+        border-radius: 1rem !important; height: 1.5rem !important; width: 2.75rem !important;
+        display: flex !important; align-items: center !important;
+    }
+    .stToggle input[type="checkbox"] + div > div { /* Thumb base */
+        background-color: white !important; border-radius: 50% !important;
+        height: 1.25rem !important; width: 1.25rem !important;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.2), 0 1px 2px 0 rgba(0, 0, 0, 0.1) !important;
+        transition: transform 0.2s ease !important; position: relative !important;
+    }
+    .stToggle input[type="checkbox"]:not(:checked) + div { /* Track when OFF for Light Mode */
+        background-color: #CFD8DC !important; /* Medium-light grey for track */
+        border: 1px solid #B0BEC5 !important;
+    }
+    .stToggle input[type="checkbox"]:not(:checked) + div > div { transform: translateX(0.125rem) !important; }
+    .stToggle input[type="checkbox"]:checked + div { /* Track when ON for Light Mode (i.e. Dark Mode selected by user) */
+        background-color: var(--button-bg) !important; /* Blue from vars */
+        border: 1px solid var(--button-bg) !important;
+    }
+    .stToggle input[type="checkbox"]:checked + div > div { transform: translateX(1.375rem) !important; }
+    .stDataFrame { background-color: var(--card-bg) !important; }
+    .stButton > button {
+        background-color: var(--button-bg) !important; color: var(--button-text) !important;
+        border: 1px solid var(--button-bg) !important; border-radius: 0.375rem !important;
+    }
+    .stButton > button:hover { filter: brightness(95%); }
+    p, span, label, .stMarkdown, div[data-testid="stVerticalBlock"] div,
+    div[data-testid="stHorizontalBlock"] div {
+        color: var(--text-primary) !important;
+    }
+</style>
+"""
+
+EMPTY_STYLE_TAG = "<style></style>"
+
 def get_theme_setting():
     """Get theme setting from session state or default to System."""
     if 'theme' in st.session_state:
@@ -38,77 +195,14 @@ def set_theme_setting(theme: str):
     """Set theme setting in session state."""
     st.session_state.theme = theme
 
-def apply_theme(theme):
-    """Apply the selected theme."""
+def apply_theme(theme_style_placeholder, theme: str):
+    """Apply the selected theme by updating the placeholder's markdown content."""
     if theme == 'Dark':
-        st.markdown("""
-            <style>
-                :root {
-                    --text-primary: #f3f4f6 !important;
-                    --text-secondary: #9ca3af !important;
-                    --bg-primary: #111827 !important;
-                    --bg-secondary: #1f2937 !important;
-                    --card-bg: #1f2937 !important;
-                    --border-color: #374151 !important;
-                }
-                .stApp, .main .block-container {
-                    background-color: var(--bg-primary) !important;
-                    color: var(--text-primary) !important;
-                }
-                .stTextInput > div > div > input, 
-                .stTextArea > div > div > textarea,
-                .stSelectbox > div > div,
-                .stNumberInput > div > input,
-                .stSlider > div > div > div > div {
-                    background-color: var(--bg-secondary) !important;
-                    color: var(--text-primary) !important;
-                    border-color: var(--border-color) !important;
-                }
-                .stRadio > div {
-                    background-color: var(--bg-secondary) !important;
-                    padding: 10px;
-                    border-radius: 0.5rem;
-                }
-                .stExpander {
-                    background-color: var(--card-bg) !important;
-                    border-color: var(--border-color) !important;
-                }
-                /* Toggle label color */
-                p, span, label, .stMarkdown, div[data-testid="stVerticalBlock"] div {
-                    color: var(--text-primary) !important;
-                }
-                /* Toggle switch color */
-                .stToggle > div > div {
-                    background-color: var(--bg-secondary) !important;
-                }
-            </style>
-        """, unsafe_allow_html=True)
+        theme_style_placeholder.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
     elif theme == 'Light':
-        st.markdown("""
-            <style>
-                :root {
-                    --text-primary: #111827 !important;
-                    --text-secondary: #4b5563 !important;
-                    --bg-primary: #ffffff !important;
-                    --bg-secondary: #f3f4f6 !important;
-                    --card-bg: #ffffff !important;
-                    --border-color: #e5e7eb !important;
-                }
-                .stApp, .main .block-container {
-                    background-color: var(--bg-primary) !important;
-                    color: var(--text-primary) !important;
-                }
-                /* Toggle label color */
-                p, span, label, .stMarkdown, div[data-testid="stVerticalBlock"] div {
-                    color: var(--text-primary) !important;
-                }
-                /* Toggle switch color */
-                .stToggle > div > div {
-                    background-color: var(--bg-secondary) !important;
-                }
-            </style>
-        """, unsafe_allow_html=True)
-    # For 'System', we'll let the OS preference take over via the media query
+        theme_style_placeholder.markdown(LIGHT_THEME_CSS, unsafe_allow_html=True)
+    else: # System theme or any other case
+        theme_style_placeholder.markdown(EMPTY_STYLE_TAG, unsafe_allow_html=True)
 
 # Helper function to populate model config UI and collect data
 def render_model_config_ui(model_key: str, config_data: Dict[str, Any], available_providers: List[str], form_key_prefix: str) -> Dict[str, Any]:
@@ -204,6 +298,10 @@ def render_model_config_ui(model_key: str, config_data: Dict[str, Any], availabl
 def show_settings_page():
     st.title("⚙️ Settings")
 
+    # Create a placeholder for theme styles at the top of the page.
+    # This allows us to inject or remove CSS dynamically.
+    theme_style_placeholder = st.empty()
+
     # --- Initialize state for holding API data --- #
     if 'settings_orchestration_config' not in st.session_state:
         st.session_state.settings_orchestration_config = None
@@ -234,31 +332,61 @@ def show_settings_page():
         st.warning("Configurations could not be loaded. Please try again later.")
         return
 
-    # Initialize theme settings in session state if not present (UI specific, keep as is)
-    if 'theme' not in st.session_state:
-        st.session_state.theme = 'System'
-    
     # Theme selection at the top
     st.subheader("Display Settings")
     
-    # Initialize theme state if not present
+    # Initialize theme in session state if not present, defaulting to 'System'
     if 'theme' not in st.session_state:
-        st.session_state.theme = 'System'
+        st.session_state.theme = 'System' 
+
+    # Determine the current state for the toggle.
+    # The toggle is ON if the theme is explicitly 'Dark'.
+    # It's OFF if the theme is 'Light' or 'System'.
+    is_dark_mode_toggle_on = (st.session_state.theme == 'Dark')
     
-    # Simple dark mode toggle
-    dark_mode = st.toggle(
+    new_toggle_value_from_ui = st.toggle(
         "Dark Mode",
-        value=st.session_state.theme,
-        help="Toggle dark mode on/off"
+        value=is_dark_mode_toggle_on,
+        help="Toggle to explicitly set Dark or Light mode. Default is System theme. Changing the toggle overrides the System theme setting.",
+        key="theme_toggle_explicit" 
     )
     
-    # Set theme based on toggle
-    theme = 'Dark' if dark_mode else 'Light'
+    # Determine the theme the user wants based on the toggle's new state.
+    # If toggle is ON -> 'Dark'. If toggle is OFF -> 'Light'.
+    # This action overrides 'System' once the toggle is used.
+    desired_theme_based_on_toggle_action = 'Dark' if new_toggle_value_from_ui else 'Light'
     
-    # Update theme immediately when changed
-    if theme != st.session_state.theme:
-        set_theme_setting(theme)
-        apply_theme(theme)
+    # Logic to update theme based on toggle interaction:
+    # If the toggle is ON (new_toggle_value_from_ui is True) and current theme isn't Dark, switch to Dark.
+    # If the toggle is OFF (new_toggle_value_from_ui is False) and current theme was Dark (meaning user just turned it off), switch to Light.
+    # If the current theme is 'System' and user touches the toggle (either on or off), it will set an explicit theme.
+    
+    should_update_theme = False
+    new_theme_to_set = st.session_state.theme
+
+    if new_toggle_value_from_ui: # User wants Dark mode (toggle is ON)
+        if st.session_state.theme != 'Dark':
+            new_theme_to_set = 'Dark'
+            should_update_theme = True
+    else: # User wants Light mode (toggle is OFF)
+        if st.session_state.theme == 'Dark': # Was dark, now turned off
+            new_theme_to_set = 'Light'
+            should_update_theme = True
+        elif st.session_state.theme == 'System' and is_dark_mode_toggle_on != new_toggle_value_from_ui:
+            # This condition means: theme was System (toggle appeared OFF), user clicked it (it's still OFF, but an *action* occurred).
+            # Or, if somehow toggle was ON for System (shouldn't happen with current value logic), and user clicked OFF.
+            # Effectively, any click on the toggle when in 'System' mode should switch to 'Light' if toggle ends up OFF.
+            new_theme_to_set = 'Light' # Default to Light if toggled from System and ends up OFF
+            should_update_theme = True
+
+
+    if should_update_theme:
+        set_theme_setting(new_theme_to_set)
+        st.rerun() 
+    
+    # Apply the theme (Light, Dark, or clears for System) using the placeholder
+    # This is called on every run, ensuring the placeholder has the correct styles.
+    apply_theme(theme_style_placeholder, st.session_state.theme)
     
     st.markdown("---")
     
@@ -371,8 +499,8 @@ def show_settings_page():
             except api_client.APIClientError as e:
                 st.error(f"Failed to save ArXiv settings: {str(e)} (Details: {e.details})")
             
-        st.markdown("### Current ArXiv Settings (from API)")
-        st.json(arxiv_categories_config) # Display the fetched config
+        # st.markdown("### Current ArXiv Settings (from API)")
+        # st.json(arxiv_categories_config) # Display the fetched config
     
     # Apply theme on initial load if not already applied
-    apply_theme(st.session_state.theme) # Theme logic remains UI-side
+    # apply_theme(theme_style_placeholder, st.session_state.theme) # This line is now redundant and handled above

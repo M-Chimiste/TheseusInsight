@@ -11,7 +11,8 @@ from .data_model.data_handling import PaperDatabase
 from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
-    VisualizerSettings
+    VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
+    EmailRecipients, ResearchInterests, ModelConfig
 )
 from .api.tasks import task_manager, TaskStatus
 
@@ -219,24 +220,64 @@ async def get_papers(
 
 # Settings endpoints
 @app.get("/api/settings/orchestration", response_model=OrchestrationConfig)
-async def get_orchestration_config():
+async def get_orchestration_config_api():
     """Get orchestration configuration."""
     try:
-        config = db.get_setting("orchestration")
-        if config:
-            return OrchestrationConfig.parse_raw(config)
-        raise HTTPException(status_code=404, detail="Configuration not found")
+        config_json = db.get_setting("orchestration")
+        if config_json:
+            return OrchestrationConfig.parse_raw(config_json)
+        # Return default OrchestrationConfig if not found in DB
+        return OrchestrationConfig(
+            embedding_model=ModelConfig(model_name='Alibaba-NLP/gte-modernbert-base', model_type='sentence-transformers', trust_remote_code=True),
+            judge_model=ModelConfig(model_name='phi4-mini:3.8b-q8_0', model_type='ollama', max_new_tokens=512, temperature=0.1, num_ctx=4096),
+            content_extraction_model=ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072),
+            newsletter_sections_model=ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072),
+            newsletter_intro_model=ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error getting orchestration config: {str(e)}")
 
 @app.put("/api/settings/orchestration")
-async def update_orchestration_config(config: OrchestrationConfig):
+async def update_orchestration_config_api(config: OrchestrationConfig):
     """Update orchestration configuration."""
     try:
         db.set_setting("orchestration", config.json())
-        return {"status": "success"}
+        return {"status": "success", "message": "Orchestration configuration updated successfully."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error updating orchestration config: {str(e)}")
+
+@app.get("/api/settings/arxiv-categories", response_model=ArxivCategoriesConfig)
+async def get_arxiv_categories_api():
+    """Get ArXiv search categories."""
+    try:
+        settings_json = db.get_setting("arxiv_search_categories")
+        if settings_json:
+            return ArxivCategoriesConfig.parse_raw(settings_json)
+        # Return default ArXivCategoriesConfig if not found in DB
+        return ArxivCategoriesConfig(
+            main_category="cs",
+            filter_categories=["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting ArXiv categories: {str(e)}")
+
+@app.put("/api/settings/arxiv-categories")
+async def update_arxiv_categories_api(config: ArxivCategoriesConfig):
+    """Update ArXiv search categories."""
+    try:
+        db.set_setting("arxiv_search_categories", config.json())
+        return {"status": "success", "message": "ArXiv categories updated successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating ArXiv categories: {str(e)}")
+
+@app.get("/api/model-providers", response_model=List[ModelProvider])
+async def get_model_providers_api():
+    """Get all available model providers."""
+    try:
+        providers_data = db.get_model_providers() # This returns a list of dicts like [{'id': 1, 'name': 'ollama'}]
+        return [ModelProvider(id=p['id'], name=p['name']) for p in providers_data]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting model providers: {str(e)}")
 
 @app.get("/api/settings/research-interests")
 async def get_research_interests():
@@ -262,31 +303,31 @@ async def update_research_interests(interests: Dict[str, str]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/settings/email-recipients")
+@app.get("/api/settings/email-recipients", response_model=EmailRecipients)
 async def get_email_recipients():
     """Get email recipients list."""
     try:
-        recipients = db.get_email_recipients()
-        return {"recipients": recipients}
+        recipients_list = db.get_email_recipients()
+        return EmailRecipients(recipients=recipients_list)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/settings/email-recipients")
-async def update_email_recipients(recipients: List[str]):
+async def update_email_recipients(data: EmailRecipients):
     """Update email recipients list."""
     try:
-        # Basic email validation
-        for email in recipients:
-            if "@" not in email or "." not in email:
+        # Basic email validation (optional here if Pydantic model handles it, or keep for defense-in-depth)
+        for email in data.recipients:
+            if "@" not in email or "." not in email: # Basic check
                 raise HTTPException(status_code=400, detail=f"Invalid email address: {email}")
-        db.set_email_recipients(recipients)
-        return {"status": "success"}
+        db.set_email_recipients(data.recipients)
+        return {"status": "success", "message": "Email recipients updated successfully."}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/settings/visualizer-settings")
+@app.get("/api/settings/visualizer-settings", response_model=VisualizerSettings)
 async def get_visualizer_settings():
     """Get visualizer settings."""
     try:

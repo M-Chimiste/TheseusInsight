@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Any
 from datetime import date, datetime
 
 # Basic domain entities
@@ -51,63 +51,46 @@ class VisualizerSettings(BaseModel):
     glow_alpha_decay: int = 40
     line_width: int = 6
 
+    class Config:
+        schema_extra = {
+            "example": {
+                "theme": "dark",
+                "font_size": 12,
+                "node_color": "#1f77b4",
+                "edge_color": "#aec7e8",
+                "show_labels": True,
+                "layout_type": "force-directed"
+            }
+        }
+
+class ModelConfig(BaseModel):
+    model_name: str
+    model_type: str # This refers to the provider name e.g., "ollama", "openai"
+    max_new_tokens: Optional[int] = Field(None, example=2048)
+    temperature: Optional[float] = Field(None, example=0.7)
+    num_ctx: Optional[int] = Field(None, example=4096) # Context window size
+    trust_remote_code: Optional[bool] = Field(None, example=False)
+    # Any other model-specific parameters can be added here or in a Dict[str, Any]
+
 class OrchestrationConfig(BaseModel):
-    embedding_model: Dict[str, Union[str, bool]] = {
-        "model_name": "Alibaba-NLP/gte-modernbert-base",
-        "model_type": "sentence-transformers",
-        "trust_remote_code": True
-    }
-    judge_model: Dict[str, Union[str, int, float]] = {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 512,
-        "temperature": 0.1,
-        "num_ctx": 4096
-    }
-    newsletter_model: Dict[str, Union[str, int, float]] = {
-        "model_name": "gemma3:27b-it-qat",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-    content_extraction_model: Dict[str, Union[str, int, float]] = {
-        "model_name": "gemma3:27b-it-qat",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-    newsletter_sections_model: Dict[str, Union[str, int, float]] = {
-        "model_name": "gemma3:27b-it-qat",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-    newsletter_intro_model: Dict[str, Union[str, int, float]] = {
-        "model_name": "gemini-2.0-flash",
-        "model_type": "gemini",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-    podcast_script_model: Dict[str, Union[str, int, float]] = {
-        "model_name": "gemini-2.0-flash",
-        "model_type": "gemini",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-    arxiv_search_categories: Dict[str, Union[str, List[str]]] = {
-        "main_category": "cs.AI",
-        "filter_categories": ["cs.LG", "cs.CL", "cs.CV"]
-    }
+    embedding_model: ModelConfig = Field(..., example={"model_name": "Alibaba-NLP/gte-modernbert-base", "model_type": "sentence-transformers", "trust_remote_code": True})
+    judge_model: ModelConfig = Field(..., example={"model_name": "phi4-mini:3.8b-q8_0", "model_type": "ollama", "max_new_tokens": 512, "temperature": 0.1, "num_ctx": 4096})
+    content_extraction_model: ModelConfig = Field(..., example={"model_name": "gemma3:27b-it-qat", "model_type": "ollama", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
+    newsletter_sections_model: ModelConfig = Field(..., example={"model_name": "gemma3:27b-it-qat", "model_type": "ollama", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
+    newsletter_intro_model: ModelConfig = Field(..., example={"model_name": "gemini-2.0-flash", "model_type": "gemini", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
+    # Add other orchestration settings as needed
+
+class ModelProvider(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        orm_mode = True
 
 # Pagination
 class PaginatedResponse(BaseModel):
-    items: List[Union[Paper, Run]]
-    nextPage: Optional[int]
+    items: List[Any]  # Can be List[Paper], List[Run], etc.
+    nextPage: Optional[int] = None
 
 # Newsletter/Podcast config models
 class DateRange(BaseModel):
@@ -139,4 +122,50 @@ class RunStatus(BaseModel):
     taskId: str
     nodes: List[NodeStatus]
     overallStatus: str  # 'pending' | 'processing' | 'completed' | 'failed'
-    error: Optional[str] = None 
+    error: Optional[str] = None
+
+# Settings for ArXiv
+class ArxivCategoriesConfig(BaseModel):
+    main_category: str = Field(..., example="cs")
+    filter_categories: List[str] = Field(..., example=["cs.ai", "cs.cl", "cs.lg"])
+
+# Settings for Newsletter Generation
+class NewsletterConfig(BaseModel):
+    start_date: date
+    end_date: date
+    research_summary_model: ModelConfig
+    title_generation_model: ModelConfig
+    intro_generation_model: ModelConfig
+    layout_optimization_model: ModelConfig
+    # Additional fields like template_path, max_papers, etc.
+    max_papers_to_select: int = Field(10, gt=0)
+    min_score_threshold: float = Field(0.5, ge=0, le=1)
+    search_query: Optional[str] = None
+    send_email: bool = False
+    intro_music_path: Optional[str] = None # Path to intro music file if any
+
+# General Run Status
+class RunStatus(BaseModel):
+    taskId: str
+    overallStatus: str  # e.g., "PENDING", "RUNNING", "COMPLETED", "FAILED"
+    currentStep: Optional[str] = None
+    progress: Optional[float] = None  # e.g., 0.0 to 1.0
+    message: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None # To store final results like file paths or content
+    error: Optional[str] = None
+
+# If you have other specific setting structures, define them here
+# e.g., EmailRecipients, ResearchInterests (if more complex than simple list/string)
+
+class EmailRecipients(BaseModel):
+    recipients: List[str] = Field(..., example=["test@example.com", "user@example.org"])
+
+class ResearchInterests(BaseModel):
+    interests: str = Field(..., example="Large language models, reinforcement learning, and generative AI.")
+
+# Ensure this is at the end or handled correctly if models refer to each other.
+# This is a placeholder for now, actual model definitions will be used from above.
+Model.update_forward_refs()
+ModelConfig.update_forward_refs()
+OrchestrationConfig.update_forward_refs()
+NewsletterConfig.update_forward_refs() 

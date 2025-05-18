@@ -312,14 +312,29 @@ class PaperDatabase:
         with self.get_cursor() as cursor:
             cursor.execute('INSERT OR IGNORE INTO models (provider_id, name, config_json) VALUES (?, ?, ?)', (provider_id, name, config_json))
 
-    def get_models(self, provider_id: int = None):
+    def upsert_model(self, provider_id: int, name: str, config_json: str = None):
         with self.get_cursor() as cursor:
-            if provider_id:
+            cursor.execute('''
+                INSERT INTO models (provider_id, name, config_json) 
+                VALUES (?, ?, ?)
+                ON CONFLICT(provider_id, name) 
+                DO UPDATE SET config_json = excluded.config_json
+            ''', (provider_id, name, config_json))
+
+    def get_models(self, provider_id: int = None, name: str = None):
+        with self.get_cursor() as cursor:
+            if provider_id is not None and name is not None:
+                cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ? AND name = ?', (provider_id, name))
+                row = cursor.fetchone()
+                return [{'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]}] if row else []
+            elif provider_id is not None:
                 cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ?', (provider_id,))
             else:
                 cursor.execute('SELECT id, provider_id, name, config_json FROM models')
+            
+            rows = cursor.fetchall() # Ensure fetchall is used
             return [
-                {'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]} for row in cursor.fetchall()
+                {'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]} for row in rows
             ]
 
     def delete_model(self, model_id: int):

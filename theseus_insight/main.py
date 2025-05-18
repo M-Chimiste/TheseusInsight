@@ -53,14 +53,15 @@ async def startup_event():
         os.makedirs("data/visualizations", exist_ok=True)
         
         # Initialize database if not exists
-        db.initialize_database()
+        # db._initialize_database()
         
         # Load environment variables
         required_env_vars = [
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
-            "ELEVENLABS_API_KEY",
             "GMAIL_SENDER_ADDRESS",
+            "CLIENT_SECRET",
+            "PROJECT_ID",
             "GMAIL_APP_PASSWORD"
         ]
         

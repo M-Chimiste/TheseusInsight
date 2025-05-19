@@ -153,7 +153,7 @@ def start_theseus_newsletter_run(
 
 # --- Podcast Generation --- #
 def start_podcast_generation_pipeline(
-    input_type: str,
+    input_type: str, # This will be "URLs" or "PDF Upload" from Streamlit
     podcast_model_config: Dict[str, Any],
     tts_model_config: Dict[str, Any],
     create_visualization: bool,
@@ -165,9 +165,14 @@ def start_podcast_generation_pipeline(
     """Starts the podcast generation pipeline via the API."""
     url = f"{API_HOST_URL}/api/podcast/generate"
     
+    # Standardize input_type for the API
+    api_input_type = input_type
+    if input_type == "PDF Upload":
+        api_input_type = "pdfs"
+    
     # Prepare the main parameters payload as a JSON string
     params_payload_dict = {
-        "input_type": input_type,
+        "input_type": api_input_type, # Now sends "URLs" or "pdfs"
         "urls": urls,
         "podcast_model_config": podcast_model_config,
         "tts_model_config": tts_model_config,

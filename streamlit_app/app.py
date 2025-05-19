@@ -60,8 +60,6 @@ def render_navigation():
             "⚙️ Settings": "Settings",
             "📰 Newsletter Builder": "Newsletter Builder",
             "🎙️ Podcast Creator": "Podcast Creator",
-            "📄 Paper Ratings": "Paper Ratings",
-            "📊 Run Log": "Run Log"
         }
 
         for label, page in nav_pages.items():
@@ -82,9 +80,3 @@ elif st.session_state.current_page == "Newsletter Builder":
 elif st.session_state.current_page == "Podcast Creator":
     from views.podcast import show_podcast_creator_page
     show_podcast_creator_page()
-elif st.session_state.current_page == "Paper Ratings":
-    from views.papers import show_papers_page
-    show_papers_page()
-elif st.session_state.current_page == "Run Log":
-    from views.runs import show_runs_page
-    show_runs_page()

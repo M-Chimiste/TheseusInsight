@@ -125,13 +125,6 @@ class PodcastConfig(BaseModel):
     addVisualization: bool = False
     visualizerConfig: Optional[Dict] = None
 
-class NewsletterConfig(BaseModel):
-    dateRange: DateRange
-    topics: List[str]
-    judgeModel: str
-    newsletterModel: str
-    podcastConfig: Optional[PodcastConfig] = None
-
 # WebSocket status models
 class NodeStatus(BaseModel):
     nodeId: str
@@ -231,8 +224,8 @@ class PodcastGenerationParams(BaseModel):
     visualizer_params: Optional[PodcastVisualizerParams] = None
     # Intro music file will also be handled as UploadFile directly in the endpoint.
 
-# Keep existing NodeStatus if it's used elsewhere, or ensure it's defined if it's new from a merge
-class NodeStatus(BaseModel):
-    id: str
-    status: str # e.g., "active", "inactive", "error"
-    message: Optional[str] = None 
+# Removed the conflicting/simpler NodeStatus definition that was here.
+# class NodeStatus(BaseModel):
+#     id: str 
+#     status: str 
+#     message: Optional[str] = None 

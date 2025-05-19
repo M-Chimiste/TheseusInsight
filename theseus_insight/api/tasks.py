@@ -161,53 +161,77 @@ class TaskManager:
             config = self.tasks[task_id]["config"]
             
             # Initialize podcast generator
+            # The text_model parameter expects the entire model configuration dictionary.
+            # The key for this dictionary in the config is "podcast_model_config".
+            podcast_model_configuration = config.get("podcast_model_config")
+            if not podcast_model_configuration:
+                raise ValueError("Podcast model configuration (podcast_model_config) is missing from task config.")
+
             podcast_gen = PodcastGenerator(
-                text_model={
-                    "model_name": config["scriptModel"],
-                    "model_type": "openai",  # You might want to make this configurable
-                    "max_new_tokens": 1024,
-                    "temperature": 0.1
-                },
-                tts_provider=config.get("ttsProvider", "openai"),
-                speaker_1_voice=config.get("speaker1Voice", "sage"),
-                speaker_2_voice=config.get("speaker2Voice", "ash"),
-                speaker_1_speed=config.get("speaker1Speed", 1.0),
-                speaker_2_speed=config.get("speaker2Speed", 1.0),
+                text_model=podcast_model_configuration, # Use the correct key here
+                tts_provider=config.get("tts_model_config", {}).get("tts_provider", "openai"),
+                speaker_1_voice=config.get("tts_model_config", {}).get("speaker_1_voice", "sage"),
+                speaker_2_voice=config.get("tts_model_config", {}).get("speaker_2_voice", "ash"),
+                speaker_1_speed=config.get("tts_model_config", {}).get("speaker_1_speed", 1.0),
+                speaker_2_speed=config.get("tts_model_config", {}).get("speaker_2_speed", 1.0),
                 intro_music_path=config.get("intro_music_path", None),
-                verbose=True
+                verbose=config.get("verbose", True) # Added verbose from config
             )
             
             await self.update_task_status(task_id, TaskStatus.PROCESSING, "Starting podcast generation")
             
-            # Get URLs from config
-            urls = config.get("urls", [])
-            if not urls:
-                raise ValueError("No URLs provided for podcast generation")
+            # Get input sources from config
+            input_type = config.get("input_type") # Should be present, validated by Pydantic model
+            if not input_type: # Defensive check
+                raise ValueError("input_type is missing from task config.")
+                
+            urls_to_process = config.get("urls", [])
+            input_pdf_paths = config.get("input_pdf_paths", [])
+
+            final_input_paths = []
+            if input_type == "URLs": # Matches what api_client sends
+                if not urls_to_process:
+                    # It's valid to have URLs type with no URLs yet, user might be about to input them
+                    # or it's an error if pipeline starts. For now, assume it's an error if empty at execution.
+                    raise ValueError("No URLs provided for podcast generation when input_type is 'URLs'.")
+                final_input_paths = urls_to_process
+            elif input_type == "pdfs": # Matches what api_client sends
+                if not input_pdf_paths:
+                    raise ValueError("No PDF paths provided for podcast generation when input_type is 'pdfs'.")
+                final_input_paths = input_pdf_paths
+            else:
+                # This case should ideally not be reached if PodcastGenerationParams validates input_type
+                raise ValueError(f"Unsupported input_type for podcast received in task: {input_type}")
             
             # Create output directories
-            output_dir = f"data/podcasts/{task_id}"
+            # Use task_id in output_dir_base for better organization as done in main.py
+            output_dir_base = config.get("output_dir_base", "data/podcasts")
+            output_dir = os.path.join(output_dir_base, task_id) 
             os.makedirs(output_dir, exist_ok=True)
             
             # Generate podcast with progress tracking
-            def progress_callback(stage: str, progress: float):
-                asyncio.create_task(
-                    self.update_task_status(
-                        task_id,
-                        TaskStatus.PROCESSING,
-                        f"{stage}",
-                        progress=progress
-                    )
-                )
+            # Ensure the progress_callback in PodcastGenerator is compatible or adapt here
+            # For now, assuming PodcastGenerator.generate_podcast uses a simple callback structure if any.
+            # The callback here is for the TaskManager, not directly for PodcastGenerator stages if it has finer-grained ones.
+
+            visualizer_settings = config.get("visualizer_settings")
+            create_visualization = config.get("create_visualization", False)
             
             # Run podcast generation
+            # The generate_podcast method in the stub takes pdf_paths. 
+            # We should ensure it can handle URLs or pre-processed PDF paths based on input_type.
+            # For now, passing final_input_paths which could be URLs or local PDF paths.
+            # PodcastGenerator needs to handle this logic internally.
             result = await asyncio.to_thread(
                 podcast_gen.generate_podcast,
-                pdf_paths=urls,
+                pdf_paths=final_input_paths, # This is now a list of URLs or local PDF paths
                 output_dir=output_dir,
-                prefix=f"podcast_{task_id}",
+                prefix=f"podcast_{task_id}", 
                 final_filename=f"podcast_{task_id}_final",
-                visualizer=config.get("addVisualization", False),
-                progress_callback=progress_callback
+                visualizer=create_visualization,
+                # Pass specific visualizer settings if available and visualizer is True
+                **(visualizer_settings if create_visualization and visualizer_settings else {})
+                # progress_callback=progress_callback # If PodcastGenerator takes a callback
             )
             
             # Store the result

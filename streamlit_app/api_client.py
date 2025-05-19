@@ -100,6 +100,25 @@ def update_email_recipients(recipients: List[str]) -> Dict[str, Any]:
     except requests.exceptions.RequestException as e:
         raise APIClientError(f"Network error updating email recipients: {e}")
 
+# --- Research Interests --- #
+def get_research_interests() -> str:
+    """Fetches research interests from the API."""
+    url = f"{API_HOST_URL}/api/settings/research-interests"
+    try:
+        response_data = _handle_response(requests.get(url))
+        return response_data.get("interests", "") # Default to empty string if not found
+    except requests.exceptions.RequestException as e:
+        raise APIClientError(f"Network error fetching research interests: {e}")
+
+def update_research_interests(interests: str) -> Dict[str, Any]:
+    """Updates research interests via the API."""
+    url = f"{API_HOST_URL}/api/settings/research-interests"
+    try:
+        response = requests.put(url, json={"interests": interests})
+        return _handle_response(response)
+    except requests.exceptions.RequestException as e:
+        raise APIClientError(f"Network error updating research interests: {e}")
+
 # Example usage (for testing, not part of the client usually)
 if __name__ == "__main__":
     print(f"Using API Host URL: {API_HOST_URL}")
@@ -129,6 +148,13 @@ if __name__ == "__main__":
         print("Fetched Email Recipients:", emails)
         # updated_emails_res = update_email_recipients(["test1@example.com", "test2@example.com"])
         # print("Update Response:", updated_emails_res)
+
+        print("\n--- Testing Research Interests ---")
+        research_interests_text = get_research_interests()
+        print("Fetched Research Interests:", research_interests_text)
+        # Example update
+        # updated_interests_res = update_research_interests("New research interests focused on AI safety.")
+        # print("Update Response:", updated_interests_res)
 
     except APIClientError as e:
         print(f"API Client Error: {str(e)} (Status: {e.status_code})")

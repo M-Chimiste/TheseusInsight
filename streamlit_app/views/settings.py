@@ -309,6 +309,10 @@ def show_settings_page():
         st.session_state.settings_arxiv_categories = None
     if 'settings_model_providers' not in st.session_state:
         st.session_state.settings_model_providers = []
+    if 'settings_research_interests' not in st.session_state: # New state for research interests
+        st.session_state.settings_research_interests = "" # Default to empty string
+    if 'settings_email_recipients' not in st.session_state: # New state for email recipients
+        st.session_state.settings_email_recipients = [] # Default to empty list
 
     # --- Load data from API --- #
     # Only load once or if forced by a refresh button (not implemented here)
@@ -318,6 +322,8 @@ def show_settings_page():
             st.session_state.settings_arxiv_categories = api_client.get_arxiv_categories()
             providers_data = api_client.get_model_providers()
             st.session_state.settings_model_providers = [p['name'] for p in providers_data] if providers_data else []
+            st.session_state.settings_research_interests = api_client.get_research_interests() # Load research interests
+            st.session_state.settings_email_recipients = api_client.get_email_recipients() # Load email recipients
         except api_client.APIClientError as e:
             st.error(f"Failed to load settings from API: {str(e)} (Details: {e.details})")
             # Prevent further rendering of settings UI if critical data is missing
@@ -327,6 +333,8 @@ def show_settings_page():
     orchestration_config = st.session_state.settings_orchestration_config
     arxiv_categories_config = st.session_state.settings_arxiv_categories
     model_provider_names = st.session_state.settings_model_providers
+    research_interests_text = st.session_state.settings_research_interests # Get from session state
+    email_recipients_list = st.session_state.settings_email_recipients # Get from session state
 
     if not orchestration_config or not arxiv_categories_config: # Check if loading failed
         st.warning("Configurations could not be loaded. Please try again later.")
@@ -516,13 +524,74 @@ def show_settings_page():
             except api_client.APIClientError as e:
                 st.error(f"Failed to save ArXiv settings: {str(e)} (Details: {e.details})")
             
-        # Podcast Model Settings (Collapsible)
-        # This section is intentionally left blank as it's moved below
+    # Research Interests Settings (Collapsible) - ENSURING IT IS TOP LEVEL
+    with st.expander("🔬 Research Interests Settings", expanded=True):
+        st.markdown("### Define Your Research Interests")
+        st.markdown("Provide a detailed description of your research interests. This will be used to guide paper discovery and analysis.")
         
-        # TTS Model Settings (Collapsible)
-        # This section is intentionally left blank as it's moved below
+        current_research_interests = st.text_area(
+            label="Your Research Interests",
+            value=research_interests_text,
+            height=200, # Make the text area reasonably tall
+            key="research_interests_text_area",
+            help="Enter your research interests, one per line or as a paragraph."
+        )
+        
+        if st.button("Save Research Interests", key="save_research_interests_api"):
+            try:
+                response = api_client.update_research_interests(current_research_interests)
+                st.success("✅ Research interests saved successfully via API!")
+                # Update session state with the new interests (API might return the saved object)
+                st.session_state.settings_research_interests = api_client.get_research_interests() # Re-fetch to be sure
+                st.rerun()
+            except api_client.APIClientError as e:
+                st.error(f"Failed to save research interests: {str(e)} (Details: {e.details})")
 
-    # Podcast Model Settings (Collapsible) - MOVED TO TOP LEVEL
+    # Email Recipients Settings (Collapsible)
+    with st.expander("📧 Email Recipients Settings", expanded=True):
+        st.markdown("### Manage Newsletter Email Recipients")
+        st.markdown("Enter email addresses below, one per line or separated by commas. These recipients will receive generated newsletters.")
+        
+        # Convert list of emails to a newline-separated string for text_area
+        current_email_recipients_str = "\n".join(email_recipients_list)
+        
+        email_recipients_text_area = st.text_area(
+            label="Email Recipients",
+            value=current_email_recipients_str,
+            height=150, # Adjust height as needed
+            key="email_recipients_text_area",
+            help="Enter email addresses, separated by newlines or commas."
+        )
+        
+        if st.button("Save Email Recipients", key="save_email_recipients_api"):
+            # Convert string from text_area back to a list of emails
+            # Split by newline, then by comma, and strip whitespace, filter out empty strings
+            raw_emails = []
+            for line in email_recipients_text_area.split('\n'):
+                raw_emails.extend(item.strip() for item in line.split(',') if item.strip())
+            
+            # Basic validation for email format (optional, as backend also validates)
+            validated_emails = []
+            valid_input = True
+            for email in raw_emails:
+                if "@" in email and "." in email: # Simple check
+                    validated_emails.append(email)
+                elif email: # If not empty and not valid
+                    st.warning(f"Skipping invalid email format: {email}")
+                    # valid_input = False # Optionally stop if any email is invalid
+            
+            # if not valid_input:
+            #     st.error("Please correct the invalid email formats before saving.")
+            # else:
+            try:
+                response = api_client.update_email_recipients(validated_emails)
+                st.success("✅ Email recipients saved successfully via API!")
+                st.session_state.settings_email_recipients = api_client.get_email_recipients() # Re-fetch
+                st.rerun()
+            except api_client.APIClientError as e:
+                st.error(f"Failed to save email recipients: {str(e)} (Details: {e.details})")
+
+    # Podcast Model Settings (Collapsible)
     with st.expander("🎙️ Podcast Model Settings", expanded=True):
         st.markdown("### Podcast Model Configuration")
         st.markdown("Configure the model used for podcast generation.")
@@ -544,7 +613,7 @@ def show_settings_page():
             except api_client.APIClientError as e:
                 st.error(f"Failed to save podcast model settings: {str(e)} (Details: {e.details})")
 
-    # TTS Model Settings (Collapsible) - MOVED TO TOP LEVEL
+    # TTS Model Settings (Collapsible)
     with st.expander("🗣️ TTS Model Settings", expanded=True):
         st.markdown("### TTS Model Configuration")
         st.markdown("Configure the Text-to-Speech (TTS) model and speaker voices for podcast generation.")

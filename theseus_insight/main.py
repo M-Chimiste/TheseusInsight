@@ -308,29 +308,49 @@ async def get_model_providers_api():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting model providers: {str(e)}")
 
-@app.get("/api/settings/research-interests")
-async def get_research_interests():
-    """Get research interests."""
+@app.get("/api/settings/research-interests", response_model=ResearchInterests)
+async def get_research_interests_api():
+    """Get research interests. Prioritizes DB, then research_interests.txt, then empty string."""
     try:
         interests = db.get_setting("research_interests")
-        if not interests:
-            return {"interests": ""}
-        return {"interests": interests}
+        if interests is not None: # Check if DB returned a value (could be empty string)
+            return ResearchInterests(interests=interests)
+        else:
+            # Fallback to research_interests.txt
+            config_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    interests_from_file = f.read().strip()
+                return ResearchInterests(interests=interests_from_file)
+            else:
+                # Default to empty string if neither DB nor file exists
+                return ResearchInterests(interests="")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error getting research interests: {str(e)}")
 
-@app.put("/api/settings/research-interests")
-async def update_research_interests(interests: Dict[str, str]):
-    """Update research interests."""
+@app.put("/api/settings/research-interests", response_model=ResearchInterests)
+async def update_research_interests_api(data: ResearchInterests):
+    """Update research interests in DB and research_interests.txt."""
     try:
-        if "interests" not in interests:
-            raise HTTPException(status_code=400, detail="Missing 'interests' field")
-        db.set_setting("research_interests", interests["interests"])
-        return {"status": "success"}
-    except HTTPException:
-        raise
+        # Save to DB
+        db.set_setting("research_interests", data.interests)
+        
+        # Save to research_interests.txt
+        config_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
+        try:
+            with open(config_path, 'w') as f:
+                f.write(data.interests)
+        except IOError as e:
+            # Log error but don't fail the request if DB save was successful
+            print(f"Warning: Could not write to {config_path}: {e}")
+            # Optionally, you could raise an HTTPException here if writing to file is critical
+            # raise HTTPException(status_code=500, detail=f"Error saving research interests to file: {str(e)}")
+
+        return data # Return the updated data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log the full error for debugging
+        print(f"Full error updating research interests: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating research interests: {str(e)}")
 
 @app.get("/api/settings/email-recipients", response_model=EmailRecipients)
 async def get_email_recipients():
@@ -370,15 +390,10 @@ async def get_visualizer_settings():
 
 @app.post("/api/settings/send-test-email")
 async def send_test_email():
-    """Send a test email to configured recipients."""
+    """Send a test email to email address in GMAIL_SENDER_ADDRESS environment variable."""
     try:
         from .communication import GmailCommunication
         
-        # Get email recipients
-        recipients = db.get_email_recipients()
-        if not recipients:
-            raise HTTPException(status_code=400, detail="No email recipients configured")
-            
         # Initialize email client
         gmail_sender = os.getenv("GMAIL_SENDER_ADDRESS")
         gmail_password = os.getenv("GMAIL_APP_PASSWORD")
@@ -392,7 +407,7 @@ async def send_test_email():
         comm = GmailCommunication(
             sender_address=gmail_sender,
             app_password=gmail_password,
-            receiver_address=recipients
+            receiver_address=gmail_sender
         )
         
         # Send test email

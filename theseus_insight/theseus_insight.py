@@ -50,10 +50,11 @@ class TheseusInsight:
                  research_interests_path="config/research_interests.txt",
                  n_days=7,
                  top_n=5,
-                 start_date=None,
-                 end_date=None,
+                 start_date_override=None,
+                 end_date_override=None,
                  orchestration_config="config/orchestration.json",
-                 receiver_address=None,
+                 receiver_address_override=None,
+                 research_interests_override=None,
                  max_new_tokens=1024,
                  temperature=0.1,
                  cosine_similarity_threshold=0.5,
@@ -99,11 +100,18 @@ class TheseusInsight:
         self.generate_podcast = generate_podcast
         
         # Email/Communication
-        if receiver_address:
-            if isinstance(receiver_address, str) and ',' in receiver_address:
-                self.receiver_address = [addr.strip() for addr in receiver_address.split(',')]
-            else:
-                self.receiver_address = receiver_address
+        final_receiver_address = None
+        if receiver_address_override is not None:
+            final_receiver_address = receiver_address_override
+        
+        if final_receiver_address:
+            if isinstance(final_receiver_address, str) and ',' in final_receiver_address:
+                self.receiver_address = [addr.strip() for addr in final_receiver_address.split(',')]
+            elif isinstance(final_receiver_address, list):
+                self.receiver_address = final_receiver_address
+            else: # Should be a single string email
+                self.receiver_address = [final_receiver_address] if isinstance(final_receiver_address, str) else []
+
         else:
             self.receiver_address = None
 
@@ -114,7 +122,7 @@ class TheseusInsight:
         )
 
         # Dates
-        if start_date is None and end_date is None:
+        if start_date_override is None and end_date_override is None:
             self.start_date = get_n_days_ago(n_days)
             self.end_date = TODAY
         else:
@@ -127,10 +135,13 @@ class TheseusInsight:
                         return datetime.datetime.strptime(date_str, fmt).date()
                     except ValueError:
                         continue
-                raise ValueError("Dates must be in YYYY-MM-DD or MM-DD-YYYY format")
+                # If it's already a date object, return it
+                if isinstance(date_str, datetime.date):
+                    return date_str
+                raise ValueError("Dates must be in YYYY-MM-DD or MM-DD-YYYY format or a date object")
 
-            self.start_date = try_parse_date(start_date) or get_n_days_ago(n_days)
-            self.end_date = try_parse_date(end_date) or TODAY
+            self.start_date = try_parse_date(start_date_override) if start_date_override else get_n_days_ago(n_days)
+            self.end_date = try_parse_date(end_date_override) if end_date_override else TODAY
 
         self.top_n = top_n
         self.max_new_tokens = max_new_tokens
@@ -169,13 +180,23 @@ class TheseusInsight:
         self.visualizer = visualizer
         
         # Load research interests
-        with open(research_interests_path, 'r') as f:
-            self.research_interests = f.read().strip()
+        if research_interests_override is not None:
+            self.research_interests = research_interests_override
+        else:
+            with open(research_interests_path, 'r') as f:
+                self.research_interests = f.read().strip()
         
         # Inference models
     
         with open(orchestration_config, 'r') as f:
             self.orchestration_config = json.load(f)
+
+        # Ensure arxiv_search_categories exists with defaults if not present
+        if 'arxiv_search_categories' not in self.orchestration_config:
+            self.orchestration_config['arxiv_search_categories'] = {
+                "main_category": "cs",
+                "filter_categories": ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"]
+            }
 
         # 1) Embedding model
         self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']

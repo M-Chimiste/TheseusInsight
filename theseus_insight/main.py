@@ -4,17 +4,21 @@ from typing import List, Optional, Dict
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from fastapi.responses import FileResponse, JSONResponse
+
+from pydantic import BaseModel, Field
 
 from .data_model.data_handling import PaperDatabase
 from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
-    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig
+    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig, NodeStatus
 )
 from .api.tasks import task_manager, TaskStatus
+from .theseus_insight import TheseusInsight
+import asyncio
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -52,6 +56,7 @@ async def startup_event():
         os.makedirs("data/newsletters", exist_ok=True)
         os.makedirs("data/podcasts", exist_ok=True)
         os.makedirs("data/visualizations", exist_ok=True)
+        os.makedirs("data/temp", exist_ok=True)
         
         # Initialize database if not exists
         # db._initialize_database()
@@ -857,4 +862,84 @@ async def podcast_status(websocket: WebSocket, task_id: str):
     finally:
         if status_queue:
             await task_manager.unsubscribe_from_updates(task_id, status_queue)
-        manager.disconnect(task_id, websocket) 
+        manager.disconnect(task_id, websocket)
+
+# --- Pydantic Model for the new endpoint ---
+class NewsletterRunParams(BaseModel):
+    start_date: str = Field(..., example=date.today().strftime("%Y-%m-%d"))
+    end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
+    email_recipients: List[str] = Field(default_factory=list, example=["test@example.com"])
+    research_interests: str = Field(..., example="AI in healthcare") # Made non-optional
+    generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
+
+# --- Endpoint for Running TheseusInsight Newsletter Pipeline ---
+@app.post("/api/actions/run-newsletter-pipeline", response_model=Dict[str, str])
+async def run_newsletter_pipeline_endpoint(
+    params: NewsletterRunParams,
+    background_tasks: BackgroundTasks
+):
+    task_id = str(uuid.uuid4())
+    run_db_path = DB_PATH
+    loop = asyncio.get_event_loop()
+
+    def pipeline_progress_callback(stage: str, progress_val: float, message: str):
+        status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
+        overall_status_for_tm = TaskStatus.PROCESSING
+        if stage.lower() == "newsletter_complete" and progress_val >= 100.0:
+             overall_status_for_tm = TaskStatus.COMPLETED
+        
+        async def update_status_async():
+            await task_manager.update_task_status(
+                task_id, 
+                overall_status=overall_status_for_tm, 
+                current_step=stage,
+                progress=progress_val / 100.0, 
+                message=status_detail
+            )
+        if loop.is_running():
+             asyncio.run_coroutine_threadsafe(update_status_async(), loop)
+        else:
+            # This fallback might be problematic if no loop is available for create_task
+            # It's better if task_manager itself can handle thread-safe queuing if called from sync
+             try:
+                asyncio.create_task(update_status_async())
+             except RuntimeError as e:
+                 print(f"RuntimeError creating task for status update (loop might not be running or accessible): {e}")
+                 # Consider logging this to a file or a more robust system if it occurs
+
+    async def background_pipeline_run():
+        try:
+            await task_manager.create_task(
+                task_id=task_id,
+                task_type="custom_newsletter_run",
+                config=params.dict()
+            )
+            await task_manager.update_task_status(task_id, TaskStatus.PENDING, message="Pipeline initialized.")
+
+            ti_instance = TheseusInsight(
+                research_interests_override=params.research_interests,
+                start_date_override=params.start_date,
+                end_date_override=params.end_date,
+                receiver_address_override=params.email_recipients,
+                generate_podcast=params.generate_podcast_run,
+                db_saving=True, 
+                data_path=run_db_path,
+                verbose=True 
+            )
+            ti_instance.run(progress_callback=pipeline_progress_callback)
+            
+            current_task_status = task_manager.get_task_status(task_id)
+            # Ensure status is a dict before get
+            if isinstance(current_task_status, dict) and current_task_status.get('overallStatus') == TaskStatus.PROCESSING:
+                 await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message="Pipeline finished processing.")
+            elif hasattr(current_task_status, 'overallStatus') and current_task_status.overallStatus == TaskStatus.PROCESSING:
+                 await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message="Pipeline finished processing.")
+
+        except Exception as e:
+            error_message = f"Error in newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"
+            if task_manager: 
+                await task_manager.update_task_status(task_id, TaskStatus.FAILED, error=error_message, message=error_message)
+            print(error_message) # Log to server console as well
+
+    background_tasks.add_task(background_pipeline_run)
+    return {"task_id": task_id, "message": "Newsletter generation process has been initiated."} 

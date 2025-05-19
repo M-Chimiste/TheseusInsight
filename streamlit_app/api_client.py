@@ -119,6 +119,38 @@ def update_research_interests(interests: str) -> Dict[str, Any]:
     except requests.exceptions.RequestException as e:
         raise APIClientError(f"Network error updating research interests: {e}")
 
+# --- Theseus Insight Pipeline Actions --- # 
+def start_theseus_newsletter_run(
+    start_date: str,
+    end_date: str,
+    email_recipients: List[str],
+    research_interests: str,
+    generate_podcast: bool = False
+) -> str: # Returns task_id
+    """Starts the Theseus Insight newsletter generation pipeline via the API."""
+    url = f"{API_HOST_URL}/api/actions/run-newsletter-pipeline"
+    payload = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "email_recipients": email_recipients,
+        "research_interests": research_interests,
+        "generate_podcast_run": generate_podcast
+    }
+    try:
+        response = requests.post(url, json=payload)
+        response_data = _handle_response(response)
+        task_id = response_data.get("task_id")
+        if not task_id:
+            details = response_data.get("message", str(response_data))
+            raise APIClientError(f"Failed to get task_id from pipeline start response. Details: {details}", details=details)
+        return task_id
+    except requests.exceptions.RequestException as e:
+        raise APIClientError(f"Network error starting newsletter pipeline: {e}")
+    except APIClientError: 
+        raise
+    except Exception as e: 
+        raise APIClientError(f"Unexpected error when starting newsletter pipeline: {str(e)}")
+
 # Example usage (for testing, not part of the client usually)
 if __name__ == "__main__":
     print(f"Using API Host URL: {API_HOST_URL}")

@@ -2,11 +2,15 @@ import streamlit as st
 import os
 from datetime import datetime
 from api_utils import make_api_request, APIError
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import pandas as pd
 import re
 from streamlit_app import api_client # Assuming api_client is in streamlit_app directory
 from streamlit_app.views.settings import render_model_config_ui # Re-using the helper
+import asyncio # For WebSocket listener
+import threading # For WebSocket listener
+import websockets # For WebSocket listener
+import json # For WebSocket messages
 
 # Default values from NeonWaveVisualizer (approximated or common ones)
 DEFAULT_VIS_PARAMS = {
@@ -44,6 +48,24 @@ def initialize_podcast_creator_session_state():
         st.session_state.pc_urls_text = ""
     if "pc_create_visualization" not in st.session_state:
         st.session_state.pc_create_visualization = False
+
+    # Session state for podcast generation task tracking
+    if "pc_task_id" not in st.session_state:
+        st.session_state.pc_task_id = None
+    if "pc_status_messages" not in st.session_state:
+        st.session_state.pc_status_messages = []
+    if "pc_pipeline_running" not in st.session_state:
+        st.session_state.pc_pipeline_running = False
+    if "pc_pipeline_error" not in st.session_state:
+        st.session_state.pc_pipeline_error = None
+    if "pc_trigger_rerun_for_status" not in st.session_state: # Used by WebSocket listener to tell main thread to rerun
+        st.session_state.pc_trigger_rerun_for_status = False
+    if "pc_current_stage" not in st.session_state:
+        st.session_state.pc_current_stage = ""
+    if "pc_current_progress" not in st.session_state:
+        st.session_state.pc_current_progress = 0.0
+    if "pc_final_artifact_paths" not in st.session_state: # To store paths from completed task
+        st.session_state.pc_final_artifact_paths = None
 
     if "pc_orchestration_config" not in st.session_state:
         st.session_state.pc_orchestration_config = None
@@ -194,16 +216,176 @@ def show_podcast_creator_page():
                 st.number_input("Resolution Height (px)", min_value=360, max_value=2160, value=st.session_state.pc_vis_resolution_height, step=10, key="pc_vis_res_h")
 
     st.markdown("---    ")
-    if st.button("🚀 Generate Podcast", use_container_width=True, type="primary", key="pc_generate_button"):
-        st.info("Podcast generation started... (This will be implemented fully later)")
-        # Placeholder for actual generation logic
-        # 1. Collect all data from st.session_state
-        # 2. Validate inputs (e.g., at least one URL or PDF)
-        # 3. Prepare payload for API
-        # 4. Call api_client.start_podcast_generation_pipeline(...)
-        # 5. Handle task_id and status updates similar to newsletter page
+    if st.button("🚀 Generate Podcast", use_container_width=True, type="primary", key="pc_generate_button", disabled=st.session_state.pc_pipeline_running):
+        # 1. Validate inputs
+        input_type = st.session_state.pc_input_type
+        urls_list: Optional[List[str]] = None
+        uploaded_pdfs = st.session_state.get("pc_uploaded_pdfs", [])
 
-# Remove or comment out the old podcast page if it's being replaced
-# def show_podcast_page():
-#    st.title("🎙️ Podcast Builder")
-# ... (old code)
+        if input_type == "URLs":
+            raw_urls = st.session_state.get("pc_urls_text", "")
+            urls_list = [url.strip() for url in re.split(r'[\n,]+', raw_urls) if url.strip()]
+            if not urls_list:
+                st.error("Please enter at least one URL.")
+                st.stop()
+        elif input_type == "PDF Upload" and not uploaded_pdfs:
+            st.error("Please upload at least one PDF file.")
+            st.stop()
+
+        podcast_model_cfg = st.session_state.get("pc_podcast_model_config_temp", {})
+        tts_model_cfg = st.session_state.get("pc_tts_model_config_temp", {})
+        if not podcast_model_cfg or not podcast_model_cfg.get("model_name") or \
+           not tts_model_cfg or not tts_model_cfg.get("tts_provider"):
+            st.error("Podcast or TTS model configuration is incomplete. Please check settings.")
+            st.stop()
+
+        intro_music = st.session_state.get("pc_intro_music_file", None)
+        create_viz = st.session_state.get("pc_create_visualization", False)
+        viz_params_collected: Optional[Dict[str, Any]] = None
+        if create_viz:
+            viz_params_collected = {}
+            for key in DEFAULT_VIS_PARAMS.keys(): # Use keys from DEFAULT_VIS_PARAMS as source of truth for viz param names
+                viz_params_collected[key] = st.session_state.get(f"pc_vis_{key}")
+        
+        # 2. Call API client
+        try:
+            st.session_state.pc_pipeline_running = True
+            st.session_state.pc_task_id = None # Reset previous task id
+            st.session_state.pc_status_messages = ["Initiating podcast generation..."]
+            st.session_state.pc_pipeline_error = None
+            st.session_state.pc_current_stage = "Initiating"
+            st.session_state.pc_current_progress = 5.0 # Small progress for initiation
+            st.session_state.pc_final_artifact_paths = None
+            st.rerun() 
+
+            task_id = api_client.start_podcast_generation_pipeline(
+                input_type=input_type,
+                urls=urls_list,
+                pdf_files=uploaded_pdfs if input_type == "PDF Upload" else None,
+                podcast_model_config=podcast_model_cfg,
+                tts_model_config=tts_model_cfg,
+                intro_music_file=intro_music,
+                create_visualization=create_viz,
+                visualizer_params=viz_params_collected
+            )
+            st.session_state.pc_task_id = task_id
+            # Don't set pipeline_running to False here, WebSocket will do it.
+            
+            # Start WebSocket listener in a new thread
+            # Ensure API_HOST_URL is accessible for WebSocket connection string construction
+            ws_url_base = api_client.API_HOST_URL.replace("http", "ws")
+            ws_url = f"{ws_url_base}/ws/podcast/{task_id}"
+            
+            # Ensure an event loop is running in the main thread if not already
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            listener_thread = threading.Thread(
+                target=run_async_in_thread,
+                args=(listen_to_task_status_async(ws_url, "pc"), loop),
+                daemon=True
+            )
+            listener_thread.start()
+            st.success(f"Podcast generation started. Task ID: {task_id}. Waiting for status updates...")
+            # UI will update via rerun triggered by WebSocket listener setting pc_trigger_rerun_for_status
+
+        except api_client.APIClientError as e:
+            st.session_state.pc_pipeline_error = f"API Error: {str(e)} (Details: {e.details})"
+            st.session_state.pc_pipeline_running = False # Error occurred, stop running state
+        except Exception as e:
+            st.session_state.pc_pipeline_error = f"Failed to start podcast generation: {str(e)}"
+            st.session_state.pc_pipeline_running = False # Error occurred, stop running state
+        # Removed finally block that sets running to False, as WebSocket should handle it
+        # Add a rerun if an error occurred to display it immediately
+        if st.session_state.pc_pipeline_error:
+            st.rerun()
+
+    # Display status, progress, and errors
+    if st.session_state.get("pc_task_id"):
+        if st.session_state.pc_pipeline_running:
+            st.info(f"Task {st.session_state.pc_task_id} is processing...")
+            status_text = st.session_state.get("pc_current_stage", "Processing...")
+            if st.session_state.get("pc_status_messages"):
+                latest_message = st.session_state.pc_status_messages[-1] if st.session_state.pc_status_messages else status_text
+                st.progress(st.session_state.pc_current_progress / 100.0, text=latest_message)
+            st.markdown("**Live Log:**")
+            st.markdown(f'''<div style="height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; font-family: monospace; white-space: pre-wrap;'>{"<br>".join(st.session_state.pc_status_messages)}</div>''', unsafe_allow_html=True)
+        
+        elif st.session_state.pc_pipeline_error:
+            st.error(f"Task {st.session_state.pc_task_id} failed: {st.session_state.pc_pipeline_error}")
+        
+        elif not st.session_state.pc_pipeline_running and st.session_state.pc_final_artifact_paths:
+            st.success(f"Task {st.session_state.pc_task_id} completed successfully!")
+            # Display download links or results here based on pc_final_artifact_paths
+            # For now, just a message. Example: st.markdown(f"Podcast Audio: {st.session_state.pc_final_artifact_paths.get('audio_path')}")
+
+    if st.session_state.get("pc_trigger_rerun_for_status", False):
+        st.session_state.pc_trigger_rerun_for_status = False
+        st.rerun()
+
+# Helper to run asyncio functions in a separate thread
+def run_async_in_thread(coro, loop):
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(coro)
+
+async def listen_to_task_status_async(ws_url: str, session_prefix: str):
+    """Listen to task status via WebSocket and update Streamlit session state."""
+    try:
+        async with websockets.connect(ws_url) as websocket:
+            st.session_state[f"{session_prefix}_status_messages"].append(f"Connected to WebSocket: {ws_url}")
+            st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+
+            while True:
+                try:
+                    message_json = await asyncio.wait_for(websocket.recv(), timeout=60) # Timeout for recv
+                    status_data = json.loads(message_json)
+                    
+                    st.session_state[f"{session_prefix}_status_messages"].append(status_data.get("message", "No message"))
+                    st.session_state[f"{session_prefix}_current_stage"] = status_data.get("currentStep", "Processing")
+                    st.session_state[f"{session_prefix}_current_progress"] = float(status_data.get("progress", 0.0)) * 100 # Assuming progress is 0.0-1.0
+
+                    overall_status = status_data.get("overallStatus")
+                    if overall_status == "COMPLETED":
+                        st.session_state[f"{session_prefix}_pipeline_running"] = False
+                        st.session_state[f"{session_prefix}_final_artifact_paths"] = status_data.get("result", {}) # Store results
+                        st.session_state[f"{session_prefix}_status_messages"].append("Pipeline COMPLETED.")
+                        st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+                        break 
+                    elif overall_status == "FAILED":
+                        st.session_state[f"{session_prefix}_pipeline_running"] = False
+                        st.session_state[f"{session_prefix}_pipeline_error"] = status_data.get("error", "Unknown error from pipeline")
+                        st.session_state[f"{session_prefix}_status_messages"].append(f"Pipeline FAILED: {st.session_state[f'{session_prefix}_pipeline_error']}")
+                        st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+                        break
+                    
+                    st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True # Trigger UI update
+
+                except asyncio.TimeoutError:
+                    st.session_state[f"{session_prefix}_status_messages"].append("WebSocket receive timeout, will keep listening...")
+                    st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+                    # Check if task is still considered running on server if possible, or just continue listening
+                except websockets.exceptions.ConnectionClosed:
+                    st.session_state[f"{session_prefix}_status_messages"].append("WebSocket connection closed.")
+                    if st.session_state[f"{session_prefix}_pipeline_running"]:
+                        st.session_state[f"{session_prefix}_pipeline_error"] = "WebSocket connection lost unexpectedly."
+                        st.session_state[f"{session_prefix}_pipeline_running"] = False
+                    st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+                    break
+                except Exception as e:
+                    st.session_state[f"{session_prefix}_status_messages"].append(f"WebSocket listener error: {str(e)}")
+                    st.session_state[f"{session_prefix}_pipeline_error"] = f"Error processing status: {str(e)}"
+                    st.session_state[f"{session_prefix}_pipeline_running"] = False # Assume failure
+                    st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+                    break
+    except Exception as e:
+        st.session_state[f"{session_prefix}_status_messages"].append(f"Failed to connect to WebSocket ({ws_url}): {str(e)}")
+        st.session_state[f"{session_prefix}_pipeline_error"] = f"WebSocket connection failed: {str(e)}"
+        st.session_state[f"{session_prefix}_pipeline_running"] = False
+        st.session_state[f"{session_prefix}_trigger_rerun_for_status"] = True
+

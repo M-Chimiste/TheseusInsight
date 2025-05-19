@@ -190,4 +190,49 @@ class ResearchInterests(BaseModel):
 Model.update_forward_refs()
 ModelConfig.update_forward_refs()
 OrchestrationConfig.update_forward_refs()
-NewsletterConfig.update_forward_refs() 
+NewsletterConfig.update_forward_refs()
+
+# --- Podcast Generation Specific Models --- #
+
+class PodcastVisualizerParams(BaseModel):
+    """Detailed parameters for the podcast video visualizer."""
+    matrix_count: int
+    matrix_head_color: str
+    matrix_tail_color: str
+    matrix_char_size: int
+    head_step_time: float
+    random_x_jitter: float
+    fade_time: float
+    head_glow_passes: int
+    head_glow_alpha_decay: int
+    head_spawn_delay_range_min: float
+    head_spawn_delay_range_max: float
+    head_saw_period: float
+    line_width: int
+    wave_color: str
+    trail_color_1: str
+    trail_color_2: str
+    trail_color_3: str
+    glow_passes: int
+    glow_alpha_decay: int
+    font_path: str
+    resolution_width: int
+    resolution_height: int
+    fps: int
+
+class PodcastGenerationParams(BaseModel):
+    """Parameters for initiating a podcast generation task."""
+    input_type: str = Field(..., description="Input type, either 'urls' or 'pdfs'.")
+    urls: Optional[List[str]] = Field(None, description="List of URLs if input_type is 'urls'.")
+    # PDF files will be handled as UploadFile list directly in the endpoint, not part of this JSON body.
+    podcast_model_config: ModelConfig
+    tts_model_config: TTSModelConfig
+    create_visualization: bool
+    visualizer_params: Optional[PodcastVisualizerParams] = None
+    # Intro music file will also be handled as UploadFile directly in the endpoint.
+
+# Keep existing NodeStatus if it's used elsewhere, or ensure it's defined if it's new from a merge
+class NodeStatus(BaseModel):
+    id: str
+    status: str # e.g., "active", "inactive", "error"
+    message: Optional[str] = None 

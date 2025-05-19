@@ -14,7 +14,8 @@ from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
-    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig, NodeStatus
+    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig, NodeStatus,
+    PodcastGenerationParams
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
@@ -687,49 +688,103 @@ async def run_newsletter(
 
 # Podcast endpoints
 @app.post("/api/podcast/generate")
-async def generate_podcast(
+async def generate_podcast_pipeline(
     background_tasks: BackgroundTasks,
-    config: str = Form(...),
-    intro_music_file: Optional[UploadFile] = File(None)
+    params_json: str = Form(..., description="JSON string of PodcastGenerationParams"),
+    intro_music_file: Optional[UploadFile] = File(None),
+    pdf_files: Optional[List[UploadFile]] = File(None, description="List of PDF files if input_type is 'pdfs'")
 ):
-    """Start the podcast generation pipeline."""
+    """
+    Start the podcast generation pipeline using detailed parameters.
+    Accepts PodcastGenerationParams as a JSON string in 'params_json' form field,
+    an optional intro music file, and optional PDF files.
+    """
     try:
-        # Parse config
-        config_dict = json.loads(config)
-        if not isinstance(config_dict, dict):
-            raise HTTPException(status_code=400, detail="Invalid config format")
-            
-        required_fields = ['scriptModel', 'ttsModel', 'addVisualization', 'urls']
-        missing_fields = [f for f in required_fields if f not in config_dict]
-        if missing_fields:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Missing required fields: {', '.join(missing_fields)}"
-            )
-        
+        generation_params = PodcastGenerationParams.parse_raw(params_json)
         task_id = str(uuid.uuid4())
+
+        # This will be the main config dictionary passed to the task manager
+        # It will be used by the background task to instantiate and run PodcastGenerator
+        task_config = {
+            "input_type": generation_params.input_type,
+            "podcast_model_config": generation_params.podcast_model_config.dict(),
+            "tts_model_config": generation_params.tts_model_config.dict(),
+            "create_visualization": generation_params.create_visualization,
+            "db_saving": True, # Default, can be made configurable if needed
+            "data_path": DB_PATH, # Global DB path
+            "verbose": True, # Default, can be made configurable
+            "output_dir_base": "data/podcasts", # Base directory for task outputs
+            "task_id": task_id # Pass task_id for organizing outputs
+        }
+
+        if generation_params.urls:
+            task_config["urls"] = generation_params.urls
         
-        # Save intro music file if provided
+        # Handle uploaded intro music file
         if intro_music_file:
-            file_path = f"data/temp/{task_id}/intro_music{os.path.splitext(intro_music_file.filename)[1]}"
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, "wb") as f:
+            temp_dir = f"data/temp/{task_id}"
+            os.makedirs(temp_dir, exist_ok=True)
+            intro_music_path = os.path.join(temp_dir, f"intro_{intro_music_file.filename}")
+            with open(intro_music_path, "wb") as f:
                 f.write(await intro_music_file.read())
-            config_dict["intro_music_path"] = file_path
-        
-        # Create and start task
+            task_config["intro_music_path"] = intro_music_path
+
+        # Handle uploaded PDF files
+        if generation_params.input_type == "pdfs" and pdf_files:
+            saved_pdf_paths = []
+            pdf_temp_dir = f"data/temp/{task_id}/uploaded_pdfs"
+            os.makedirs(pdf_temp_dir, exist_ok=True)
+            for i, pdf_file in enumerate(pdf_files):
+                # Sanitize filename or use a unique name
+                safe_filename = f"doc_{i}_{os.path.basename(pdf_file.filename or f'file{i}.pdf')}"
+                pdf_path = os.path.join(pdf_temp_dir, safe_filename)
+                with open(pdf_path, "wb") as f:
+                    f.write(await pdf_file.read())
+                saved_pdf_paths.append(pdf_path)
+            task_config["input_pdf_paths"] = saved_pdf_paths
+        elif generation_params.input_type == "pdfs" and not pdf_files:
+            raise HTTPException(status_code=400, detail="PDF files are required when input_type is 'pdfs'.")
+
+
+        if generation_params.create_visualization and generation_params.visualizer_params:
+            vis_p = generation_params.visualizer_params
+            task_config.update({
+                "visualizer_settings": vis_p.dict() # Pass the whole dict
+            })
+        else:
+            task_config["visualizer_settings"] = None
+
+
+        # Create task with the comprehensive config
         await task_manager.create_task(
             task_id=task_id,
-            task_type="podcast",
-            config=config_dict
+            task_type="podcast", # Using existing "podcast" type, assuming run_podcast_task can handle new config
+            config=task_config 
         )
+        
+        # The task_manager.run_podcast_task needs to be able to:
+        # 1. Instantiate PodcastGenerator with relevant parts of task_config
+        #    (podcast_model_config, tts_model_config, intro_music_path, etc.)
+        # 2. Call PodcastGenerator.generate_podcast() with input_pdf_paths or processed URLs,
+        #    output directory derived from task_id, and visualizer settings.
+        # 3. Handle URL fetching and conversion to PDF if input_type is 'urls' (this is complex).
+        #    For now, this implementation primarily supports 'pdfs' directly for PodcastGenerator.
+        #    If 'urls' are passed, 'run_podcast_task' needs to manage downloading/converting them to PDF paths.
         background_tasks.add_task(task_manager.run_podcast_task, task_id)
         
-        return {"taskId": task_id}
-    except ValueError as e:
+        return {"task_id": task_id, "message": "Podcast generation process initiated."}
+    
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format for params_json.")
+    except ValueError as e: # Handles Pydantic validation errors
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException: # Re-raise existing HTTPExceptions
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in /api/podcast/generate: {type(e).__name__} - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error processing podcast request: {str(e)}")
 
 # Enhance the WebSocket connection manager
 class ConnectionManager:

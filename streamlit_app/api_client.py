@@ -119,7 +119,7 @@ def update_research_interests(interests: str) -> Dict[str, Any]:
     except requests.exceptions.RequestException as e:
         raise APIClientError(f"Network error updating research interests: {e}")
 
-# --- Theseus Insight Pipeline Actions --- # 
+# --- Theseus Insight Newsletter Actions --- # 
 def start_theseus_newsletter_run(
     start_date: str,
     end_date: str,
@@ -150,6 +150,69 @@ def start_theseus_newsletter_run(
         raise
     except Exception as e: 
         raise APIClientError(f"Unexpected error when starting newsletter pipeline: {str(e)}")
+
+# --- Podcast Generation --- #
+def start_podcast_generation_pipeline(
+    input_type: str,
+    podcast_model_config: Dict[str, Any],
+    tts_model_config: Dict[str, Any],
+    create_visualization: bool,
+    urls: Optional[List[str]] = None,
+    pdf_files: Optional[List[Any]] = None, # Streamlit UploadedFile objects
+    intro_music_file: Optional[Any] = None, # Streamlit UploadedFile object
+    visualizer_params: Optional[Dict[str, Any]] = None,
+) -> str: # Returns task_id
+    """Starts the podcast generation pipeline via the API."""
+    url = f"{API_HOST_URL}/api/podcast/generate"
+    
+    # Prepare the main parameters payload as a JSON string
+    params_payload_dict = {
+        "input_type": input_type,
+        "urls": urls,
+        "podcast_model_config": podcast_model_config,
+        "tts_model_config": tts_model_config,
+        "create_visualization": create_visualization,
+        "visualizer_params": visualizer_params if create_visualization else None,
+    }
+    params_json_str = json.dumps(params_payload_dict)
+    
+    # Prepare form data part for the JSON string
+    data_payload = {'params_json': params_json_str}
+    
+    # Prepare files for multipart upload
+    files_to_upload = {}
+    if intro_music_file:
+        files_to_upload['intro_music_file'] = (intro_music_file.name, intro_music_file, intro_music_file.type)
+        
+    if input_type == "pdfs" and pdf_files:
+        # For multiple files under the same field name, pass a list of (filename, file_obj, content_type) tuples
+        pdf_file_tuples = []
+        for pdf_file in pdf_files:
+            pdf_file_tuples.append((pdf_file.name, pdf_file, pdf_file.type))
+        if pdf_file_tuples:
+            files_to_upload['pdf_files'] = pdf_file_tuples
+
+    try:
+        if not files_to_upload: # No files being sent
+            response = requests.post(url, data=data_payload)
+        else: # Files are present
+            response = requests.post(url, data=data_payload, files=files_to_upload)
+            
+        response_data = _handle_response(response)
+        task_id = response_data.get("task_id")
+        if not task_id:
+            details = response_data.get("message", str(response_data))
+            raise APIClientError(f"Failed to get task_id from podcast generation response. Details: {details}", details=details)
+        return task_id
+    except requests.exceptions.RequestException as e:
+        raise APIClientError(f"Network error starting podcast generation pipeline: {e}")
+    except APIClientError: # Re-raise APIClientError if it was raised by _handle_response
+        raise
+    except Exception as e:
+        # Catch any other unexpected errors during request preparation or sending
+        import traceback
+        print(f"RAW EXCEPTION in start_podcast_generation_pipeline: {traceback.format_exc()}")
+        raise APIClientError(f"Unexpected error: {str(e)}")
 
 # Example usage (for testing, not part of the client usually)
 if __name__ == "__main__":

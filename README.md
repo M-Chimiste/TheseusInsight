@@ -145,6 +145,19 @@ uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
 View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ---
+## React Frontend (MVP)
+
+A minimal React application is provided in the `react_frontend` directory. It communicates with the FastAPI backend using REST and WebSocket endpoints.
+
+```bash
+cd react_frontend
+npm install
+npm run dev
+```
+
+The development server expects the backend to be running on the same host. Adjust URLs in `src/App.jsx` if your API is hosted elsewhere.
+
+---
 
 ## Key Endpoints
 

@@ -1,0 +1,161 @@
+# Project Status
+
+## Implemented
+- **Overall Refactoring & Feature Implementation (Cumulative - reflects state after user's latest summary):**
+    - **FastAPI Backend as Central Hub (`theseus_insight/main.py`, `theseus_insight/api/models.py`, `theseus_insight/api/tasks.py`):**
+        - Established FastAPI as the sole interface for all settings management and action triggering (newsletter/podcast generation).
+        - Comprehensive Pydantic models (`ModelConfig`, `OrchestrationConfig`, `ArxivCategoriesConfig`, `ModelProvider`, `EmailRecipients`, `ResearchInterests`, `TTSModelConfig`, `NewsletterRunParams`, `PodcastVisualizerParams`, `PodcastGenerationParams`, `NodeStatus`, `RunStatus`) define data structures for settings and pipeline parameters.
+        - Settings endpoints (e.g., `/api/settings/orchestration`, `/api/settings/arxiv-categories`, `/api/model-providers`, `/api/settings/email-recipients`, `/api/settings/research-interests`) for GET (retrieve with fallbacks) and PUT (update DB and JSON).
+        - Action endpoint `POST /api/actions/run-newsletter-pipeline`: Accepts `NewsletterRunParams`, runs `TheseusInsight.run()` in background, uses `task_manager` for progress.
+        - Action endpoint `POST /api/podcast/generate`: Accepts `PodcastGenerationParams` (JSON string in form field) and optional files (`intro_music_file`, `pdf_files`). Uses `task_manager` for task creation and execution.
+        - Introduced `TaskManager` for creating, tracking, and updating status of background tasks (newsletter/podcast) using Pydantic status models.
+        - WebSocket endpoints (`/ws/newsletter/{task_id}`, `/ws/podcast/{task_id}`) for streaming real-time `RunStatus` updates.
+    - **Database Interaction (`theseus_insight/data_model/data_handling.py`):**
+        - `PaperDatabase` class updated with methods for storing/retrieving configurations (general models, ArXiv, etc.) from SQLite. Settings are prioritized from DB, then JSON, then defaults.
+    - **Streamlit API Client (`streamlit_app/api_client.py`):**
+        - Created a dedicated API client with functions to interact with all FastAPI settings and action endpoints.
+        - Includes `APIClientError` custom exception and `API_HOST_URL` configuration.
+        - Added `start_podcast_generation_pipeline` to handle `multipart/form-data` for podcast creation.
+    - **Streamlit Views Refactor (`streamlit_app/views/`):**
+        - **Settings Page (`settings.py`):**
+            - All direct DB/file I/O removed; now uses `api_client.py`.
+            - `render_model_config_ui` helper for dynamic UI.
+            - Theme management (Dark/Light/System) with dynamic CSS.
+        - **Newsletter Generation Page (`newsletter.py`):**
+            - UI for date pickers, editable recipients/interests (pre-filled via API), "Generate Podcast" checkbox.
+            - Calls `api_client.start_theseus_newsletter_run` on "Generate Newsletter" click.
+            - Real-time status updates via WebSocket listener (`listen_to_task_status_async`) in a separate thread, updating `st.session_state`.
+        - **Podcast Creator Page (`podcast.py`):**
+            - UI for input selection (URLs/PDFs), model configuration (reusing `render_model_config_ui`, saving to main orchestration config via API), optional intro music, and visualization settings.
+            - Calls `api_client.start_podcast_generation_pipeline` on "Generate Podcast" click.
+            - Reuses WebSocket listener logic (`common_listen_to_task_status`) for status updates to `/ws/podcast/{task_id}`.
+            - Session state (`st.session_state.pc_...`) for UI and task tracking, with robust initialization.
+    - **`TheseusInsight` Class (`theseus_insight/theseus_insight.py`):**
+        - `__init__` modified to accept overrides for dates, interests, recipients, and `generate_podcast` flag.
+        - `run()` method updated to accept a `progress_callback` for FastAPI task manager updates.
+        - Fallback to default `arxiv_search_categories` if not in `orchestration.json`.
+- **Overall Refactoring & Feature Implementation (Sessions 1-19 Summary):**
+    - **Settings Management Overhaul:**
+        - Migrated all application settings (Orchestration, ArXiv Categories, Model Providers, Email Recipients, Research Interests, Podcast Models, TTS Models) from direct DB/JSON interaction within Streamlit views to a FastAPI backend.
+        - FastAPI backend (`theseus_insight/main.py`, `theseus_insight/api/models.py`) now serves as the sole interface for GET/PUT operations on settings.
+        - Settings are stored in an SQLite database (`theseus_insight/data_model/data_handling.py`) with fallbacks to JSON files (e.g., `orchestration.json`, `config/research_interests.txt`) or Pydantic model defaults.
+        - Comprehensive Pydantic models define the structure for all configurations.
+        - Streamlit frontend (`streamlit_app/views/settings.py`) exclusively uses a dedicated API client (`streamlit_app/api_client.py`) for all settings operations.
+        - Introduced `render_model_config_ui` in `streamlit_app/views/settings.py` for dynamic UI generation for different model types.
+        - Implemented theme management (Dark/Light/System) in Streamlit settings, with dynamic CSS injection for theme application.
+    - **Newsletter Generation Pipeline Rewrite:**
+        - Developed functionality to configure and trigger the `TheseusInsight` newsletter generation pipeline via the API.
+        - Created a FastAPI endpoint `POST /api/actions/run-newsletter-pipeline` in `theseus_insight/main.py`.
+            - Accepts `NewsletterRunParams` (start/end dates, recipients, interests, generate_podcast flag).
+            - Instantiates `TheseusInsight` with overrides for pipeline parameters.
+            - Executes `TheseusInsight.run()` in a background task.
+            - Provides real-time status updates via a WebSocket endpoint (`/ws/newsletter/{task_id}`) by leveraging a `task_manager` and a `progress_callback` within `TheseusInsight.run()`.
+        - Updated `theseus_insight/theseus_insight.py` (`TheseusInsight` class) to accept runtime overrides and a `progress_callback`.
+        - Rewritten the Streamlit newsletter view (`streamlit_app/views/newsletter.py`):
+            - UI allows configuration of dates, recipients, research interests (pre-filled via API), and podcast generation.
+            - Triggers the pipeline by calling `streamlit_app.api_client.start_theseus_newsletter_run`.
+            - Displays real-time status updates by listening to the WebSocket endpoint in a separate, non-blocking daemon thread (`threading.Thread`) and updating `st.session_state`.
+- Updated model settings in `streamlit_app/views/settings.py`.
+  - Model configurations are now loaded by prioritizing the SQLite database, then `orchestration.json`, and finally hardcoded defaults.
+  - Saving model configurations now writes to both `orchestration.json` and the SQLite database (`models` table).
+- Modified `theseus_insight/data_model/data_handling.py`:
+  - Added `upsert_model` method to `PaperDatabase` for inserting or updating model configurations.
+  - Enhanced `get_models` method in `PaperDatabase` to allow fetching a model by `provider_id` and `name`.
+- Updated ArXiv settings in `streamlit_app/views/settings.py`:
+  - ArXiv configuration now loads by prioritizing SQLite DB, then `orchestration.json`, then defaults.
+  - Saving ArXiv configuration now writes to both `orchestration.json` and SQLite DB.
+- Fixed `ModuleNotFoundError` for `theseus_insight` package in Streamlit app:
+  - Added code to `streamlit_app/app.py` to append the project root directory to `sys.path`.
+- Refactored Streamlit settings page (`streamlit_app/views/settings.py`) to use FastAPI backend exclusively:
+  - Removed direct database and file system access for configurations.
+  - Integrated `streamlit_app/api_client.py` for all settings-related data operations.
+  - Centralized model configuration UI rendering with a new `render_model_config_ui` helper function.
+  - Settings (Orchestration, ArXiv categories, Model Providers) are now fetched from and saved to the API.
+- Enhanced FastAPI backend (`theseus_insight/main.py` and `theseus_insight/api/models.py`):
+  - Updated Pydantic models (`OrchestrationConfig`, `ModelConfig`, `ArxivCategoriesConfig`, `ModelProvider`) for comprehensive settings management.
+  - Modified `/api/settings/orchestration` endpoints to use the detailed `OrchestrationConfig` and provide defaults.
+  - Added `/api/settings/arxiv-categories` (GET/PUT) endpoints with defaults.
+  - Added `/api/model-providers` (GET) endpoint.
+- Created `streamlit_app/api_client.py` to abstract API communication for the Streamlit app.
+- Corrected `AttributeError` in Streamlit error handling for `APIClientError` by using `str(e)` instead of `e.message`.
+- Standardized URL construction in `streamlit_app/api_client.py` to prevent 404 errors by using `API_HOST_URL` and consistently prefixing paths with `/api/`.
+- Fixed CSS styling for Light Theme in `streamlit_app/views/settings.py` (Session 8):
+  - Updated `apply_theme` function with more specific CSS rules for `.stSelectbox` to ensure they render correctly in light mode.
+  - Improved styling for select box dropdown menus and radio button labels in light mode.
+- Corrected Theme Toggle Logic and Styling (Session 9):
+  - In `streamlit_app/views/settings.py` (`show_settings_page`):
+    - Ensured `st.toggle` for Dark Mode uses a correct boolean `value`.
+    - Implemented `st.rerun()` after theme state change for consistent application.
+    - Defaulted initial theme to 'Light' if not set in session state.
+  - In `streamlit_app/views/settings.py` (`apply_theme` function, Light theme CSS):
+    - Refined CSS for `.stToggle` to improve visibility of track and thumb in its "off" state (when Light Mode is active).
+    - Added specific styling for thumb positioning and appearance for both checked and unchecked states.
+- Implemented System Theme Default and Dynamic CSS Injection (Session 10):
+  - In `streamlit_app/views/settings.py`:
+    - Defined `DARK_THEME_CSS`, `LIGHT_THEME_CSS`, and `EMPTY_STYLE_TAG` as module-level constants.
+    - Modified `apply_theme` function to accept an `st.empty()` placeholder and inject appropriate CSS (or empty style for 'System' theme) into it.
+    - Updated `show_settings_page` to initialize `st.session_state.theme` to `'System'` by default.
+    - Created an `st.empty()` placeholder for theme CSS injection.
+    - Adjusted Dark Mode toggle logic to reflect 'System' default: toggle is OFF for 'System' or 'Light', ON for 'Dark'. User interaction overrides 'System' with explicit 'Light'/'Dark'.
+    - Updated toggle help text.
+- Feature: Added Podcast and TTS Model Configurations (Session 11):
+  - Backend (`theseus_insight/api/models.py`):
+    - Created `TTSModelConfig` Pydantic model with fields for provider, model name, speaker voices, and validated speeds (0.5-3.5).
+    - Extended `OrchestrationConfig` to include `podcast_model: Optional[ModelConfig]` and `tts_model: Optional[TTSModelConfig]`.
+  - Backend (`theseus_insight/main.py`):
+    - Updated `/api/settings/orchestration` GET endpoint to correctly load `podcast_model` and `tts_model` from DB or JSON, applying comprehensive defaults if fields are missing.
+    - Updated `/api/settings/orchestration` PUT endpoint to save the complete `OrchestrationConfig` (including new models) to both DB and `orchestration.json`.
+  - Frontend (`streamlit_app/api_client.py`):
+    - Updated docstrings for `get_orchestration_config` and `update_orchestration_config` to reflect inclusion of new models (no functional change needed as it handles dicts).
+  - Frontend (`streamlit_app/views/settings.py`):
+    - Added "Podcast Model Settings" expander using `render_model_config_ui`.
+    - Added "TTS Model Settings" expander with custom UI for its specific fields (dropdowns for provider, model, voices; number inputs for speeds).
+    - Ensured save buttons for new panes update the full orchestration config via API.
+  - Resolved 500 error from Pydantic validation by making `podcast_model` and `tts_model` optional in `OrchestrationConfig` and ensuring the GET endpoint provides full default objects if these are not found in storage.
+- Resolved Streamlit UI error `StreamlitAPIException: Expanders may not be nested inside other expanders`:
+  - In `streamlit_app/views/settings.py`, moved "Podcast Model Settings" and "TTS Model Settings" expanders to be top-level, instead of nested within "Data Source Settings".
+  - Corrected a typo in an exception name from `APIClient_Error` to `APIClientError` in the TTS model settings save logic.
+- Feature: Added Research Interests Setting:
+  - Backend (`theseus_insight/main.py`):
+    - Updated `/api/settings/research-interests` GET endpoint to fetch from DB, then `config/research_interests.txt`, then default to empty string.
+    - Updated `/api/settings/research-interests` PUT endpoint to save to both DB and `config/research_interests.txt`.
+  - API Client (`streamlit_app/api_client.py`):
+    - Added `get_research_interests` and `update_research_interests` functions.
+  - Frontend (`streamlit_app/views/settings.py`):
+    - Added "Research Interests Settings" expander after "ArXiv Settings".
+    - Included a `st.text_area` for input and a save button.
+    - Integrated API calls to load and save research interests.
+- Feature: Added Email Recipients Setting:
+  - Backend (`theseus_insight/main.py` and `theseus_insight/api/models.py`): Verified existing Pydantic model `EmailRecipients` and FastAPI endpoints (`/api/settings/email-recipients`) are suitable.
+  - API Client (`streamlit_app/api_client.py`): Verified existing `get_email_recipients` and `update_email_recipients` functions are suitable.
+  - Frontend (`streamlit_app/views/settings.py`):
+    - Added "Email Recipients Settings" expander after "Research Interests Settings".
+    - Initialized session state variable `settings_email_recipients`.
+    - Updated API loading logic to include `api_client.get_email_recipients()`.
+    - Used `st.text_area` for inputting email addresses (newline or comma-separated).
+    - Implemented save logic to process input and call `api_client.update_email_recipients()`.
+
+## Next Steps
+- Awaiting next task or specific area of focus from the user.
+
+## Debug Log
+- **Cumulative Debug Log (Summary from User Update):**
+    - **`ModuleNotFoundError` (FastAPI & Streamlit):**
+        - Resolved by ensuring correct Uvicorn execution path (project root) and `sys.path` modifications in `streamlit_app/app.py`.
+    - **`AttributeError` (Streamlit APIClientError, TaskManager methods):**
+        - Corrected by using `str(e)` for exception messages and renaming `task_manager.set_task_status` to `update_task_status`.
+    - **404 Errors (Streamlit API Call, FastAPI endpoint definitions):**
+        - Fixed API URL construction in `api_client.py` (using `API_HOST_URL` correctly) and ensured correct endpoint definitions/paths in FastAPI.
+    - **Pydantic Validation Errors (FastAPI):**
+        - Addressed by making fields optional (e.g., `podcast_model`, `tts_model` in `OrchestrationConfig`), providing defaults where necessary, and correcting `NodeStatus` model definition mismatches (ensuring `nodeId` was used consistently over `id`).
+    - **Streamlit `StreamlitAPIException` (Nested Expanders):**
+        - Resolved by restructuring UI in `settings.py` to avoid nesting `st.expander` elements.
+    - **Streamlit `StreamlitValueAssignmentNotAllowedError` (for `st.file_uploader`):**
+        - Resolved by removing problematic session state initialization for `pc_intro_music_file` in `podcast.py`.
+    - **Streamlit `KeyError` / `AttributeError` (Session State in Listener Threads):**
+        - Addressed by ensuring prefixed session state keys (e.g., `nl_...`, `pc_...`) were used and initialized robustly before thread access. Added defensive checks in listener functions.
+    - **Logic error with `st.rerun()` in Streamlit button clicks:**
+        - Corrected order of operations to ensure API calls and thread creations happen *before* `st.rerun()`.
+    - **WebSocket `TimeoutError` (Client-side):**
+        - Investigated, potentially related to connection handshake or server-side processing before `accept()`.
+        - Client-side `UnboundLocalError` in WebSocket listener's exception handling (due to `task_id_key` not being defined in all paths) was fixed by moving key string definitions to an earlier, guaranteed execution point.

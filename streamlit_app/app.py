@@ -4,10 +4,11 @@ import os
 from dotenv import load_dotenv
 from styles.css import apply_all_styles
 
-# Add the project root to sys.path
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+# Ensure the root directory is in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir) # This assumes app.py is in streamlit_app, which is in project_root
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # Load environment variables
 load_dotenv()
@@ -58,7 +59,7 @@ def render_navigation():
         nav_pages = {
             "⚙️ Settings": "Settings",
             "📰 Newsletter Builder": "Newsletter Builder",
-            "🎙️ Podcast Builder": "Podcast Builder",
+            "🎙️ Podcast Creator": "Podcast Creator",
             "📄 Paper Ratings": "Paper Ratings",
             "📊 Run Log": "Run Log"
         }
@@ -78,9 +79,9 @@ if st.session_state.current_page == "Settings":
 elif st.session_state.current_page == "Newsletter Builder":
     from views.newsletter import show_newsletter_page
     show_newsletter_page()
-elif st.session_state.current_page == "Podcast Builder":
-    from views.podcast import show_podcast_page
-    show_podcast_page()
+elif st.session_state.current_page == "Podcast Creator":
+    from views.podcast import show_podcast_creator_page
+    show_podcast_creator_page()
 elif st.session_state.current_page == "Paper Ratings":
     from views.papers import show_papers_page
     show_papers_page()

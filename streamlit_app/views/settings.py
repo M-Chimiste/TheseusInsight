@@ -472,8 +472,25 @@ def show_settings_page():
             valid_defaults_for_multiselect = []
             if main_category_ui.lower() == current_main_arxiv_cat.lower(): # Only use defaults if main cat matches fetched
                 for filt_cat in current_filter_arxiv_cats:
-                    if filt_cat.startswith(main_category_ui + ".") and filt_cat in subcategory_options:
-                        valid_defaults_for_multiselect.append(filt_cat)
+                    # Normalize case for comparison
+                    filt_cat_normalized = filt_cat.lower()
+                    # Check if the filter category belongs to the current main category
+                    if '.' in filt_cat_normalized and filt_cat_normalized.split('.')[0] == main_category_ui.lower():
+                        # Find the matching subcategory option with proper casing
+                        for option in subcategory_options:
+                            if option.lower() == filt_cat_normalized:
+                                valid_defaults_for_multiselect.append(option)
+                                break
+                        # If no exact match found, try to reconstruct the proper case version
+                        if filt_cat_normalized not in [opt.lower() for opt in valid_defaults_for_multiselect]:
+                            main_part = main_category_ui
+                            sub_part = filt_cat_normalized.split('.', 1)[1]
+                            reconstructed = f"{main_part}.{sub_part}"
+                            if reconstructed.lower() in [opt.lower() for opt in subcategory_options]:
+                                for option in subcategory_options:
+                                    if option.lower() == reconstructed.lower():
+                                        valid_defaults_for_multiselect.append(option)
+                                        break
             
             selected_subcategories_ui = st.multiselect(
                 "Subcategories",

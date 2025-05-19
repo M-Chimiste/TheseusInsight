@@ -1,43 +1,51 @@
 {
+  "embedding_model": {
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
+    "model_type": "sentence-transformers",
+    "max_new_tokens": null,
+    "temperature": null,
+    "num_ctx": null,
+    "trust_remote_code": true
+  },
   "judge_model": {
     "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
-    "max_new_tokens": 512,
+    "max_new_tokens": 600,
     "temperature": 0.1,
-    "num_ctx": 4096
+    "num_ctx": 4096,
+    "trust_remote_code": null
   },
   "content_extraction_model": {
     "model_name": "gemma3:27b-it-qat",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
-    "num_ctx": 131072
+    "num_ctx": 131072,
+    "trust_remote_code": null
   },
   "newsletter_sections_model": {
     "model_name": "gemma3:27b-it-qat",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
-    "num_ctx": 131072
+    "num_ctx": 131072,
+    "trust_remote_code": null
   },
   "newsletter_intro_model": {
     "model_name": "gemini-2.0-flash",
     "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.1,
-    "num_ctx": 131072
-  },
-  "embedding_model": {
-    "model_name": "Alibaba-NLP/gte-modernbert-base",
-    "model_type": "sentence-transformers",
-    "trust_remote_code": true
+    "num_ctx": 131072,
+    "trust_remote_code": null
   },
   "podcast_model": {
     "model_name": "gemini-2.0-flash",
     "model_type": "gemini",
     "max_new_tokens": 8192,
     "temperature": 0.1,
-    "num_ctx": 131072
+    "num_ctx": 131072,
+    "trust_remote_code": null
   },
   "tts_model": {
     "tts_provider": "openai",
@@ -46,16 +54,5 @@
     "speaker_1_speed": 1.0,
     "speaker_2_voice": "ash",
     "speaker_2_speed": 1.0
-  },
-  "arxiv_search_categories": {
-    "main_category": "cs",
-    "filter_categories": [
-      "cs.ai",
-      "cs.cl",
-      "cs.lg",
-      "cs.ir",
-      "cs.ma",
-      "cs.cv"
-    ]
   }
 }

@@ -72,12 +72,34 @@ class ModelConfig(BaseModel):
     trust_remote_code: Optional[bool] = Field(None, example=False)
     # Any other model-specific parameters can be added here or in a Dict[str, Any]
 
+class TTSModelConfig(BaseModel):
+    tts_provider: str
+    tts_model_name: str
+    speaker_1_voice: str
+    speaker_1_speed: float = Field(..., ge=0.5, le=3.5)
+    speaker_2_voice: str
+    speaker_2_speed: float = Field(..., ge=0.5, le=3.5)
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "tts_provider": "openai",
+                "tts_model_name": "tts-1",
+                "speaker_1_voice": "sage",
+                "speaker_1_speed": 1.0,
+                "speaker_2_voice": "ash",
+                "speaker_2_speed": 1.0
+            }
+        }
+
 class OrchestrationConfig(BaseModel):
     embedding_model: ModelConfig = Field(..., example={"model_name": "Alibaba-NLP/gte-modernbert-base", "model_type": "sentence-transformers", "trust_remote_code": True})
     judge_model: ModelConfig = Field(..., example={"model_name": "phi4-mini:3.8b-q8_0", "model_type": "ollama", "max_new_tokens": 512, "temperature": 0.1, "num_ctx": 4096})
     content_extraction_model: ModelConfig = Field(..., example={"model_name": "gemma3:27b-it-qat", "model_type": "ollama", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
     newsletter_sections_model: ModelConfig = Field(..., example={"model_name": "gemma3:27b-it-qat", "model_type": "ollama", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
     newsletter_intro_model: ModelConfig = Field(..., example={"model_name": "gemini-2.0-flash", "model_type": "gemini", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
+    podcast_model: Optional[ModelConfig] = Field(None, example={"model_name": "gemini-2.0-flash", "model_type": "gemini", "max_new_tokens": 8192, "temperature": 0.1, "num_ctx": 131072})
+    tts_model: Optional[TTSModelConfig] = Field(None, example={"tts_provider": "openai", "tts_model_name": "tts-1", "speaker_1_voice": "sage", "speaker_1_speed": 1.0, "speaker_2_voice": "ash", "speaker_2_speed": 1.0})
     # Add other orchestration settings as needed
 
 class ModelProvider(BaseModel):

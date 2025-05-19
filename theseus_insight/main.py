@@ -12,7 +12,7 @@ from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
-    EmailRecipients, ResearchInterests, ModelConfig
+    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig
 )
 from .api.tasks import task_manager, TaskStatus
 
@@ -221,27 +221,56 @@ async def get_papers(
 # Settings endpoints
 @app.get("/api/settings/orchestration", response_model=OrchestrationConfig)
 async def get_orchestration_config_api():
-    """Get orchestration configuration."""
+    """Get orchestration configuration, ensuring defaults for all fields including podcast and TTS."""
     try:
-        config_json = db.get_setting("orchestration")
-        if config_json:
-            return OrchestrationConfig.parse_raw(config_json)
-        # Return default OrchestrationConfig if not found in DB
-        return OrchestrationConfig(
-            embedding_model=ModelConfig(model_name='Alibaba-NLP/gte-modernbert-base', model_type='sentence-transformers', trust_remote_code=True),
-            judge_model=ModelConfig(model_name='phi4-mini:3.8b-q8_0', model_type='ollama', max_new_tokens=512, temperature=0.1, num_ctx=4096),
-            content_extraction_model=ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072),
-            newsletter_sections_model=ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072),
-            newsletter_intro_model=ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        db_config_json = db.get_setting("orchestration")
+        loaded_config_data = {}
+
+        if db_config_json:
+            loaded_config_data = json.loads(db_config_json)
+        else:
+            # Fallback to orchestration.json if DB is empty
+            config_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    loaded_config_data = json.load(f)
+        
+        # Define comprehensive defaults that Pydantic models expect
+        default_embedding_model = ModelConfig(model_name='Alibaba-NLP/gte-modernbert-base', model_type='sentence-transformers', trust_remote_code=True)
+        default_judge_model = ModelConfig(model_name='phi4-mini:3.8b-q8_0', model_type='ollama', max_new_tokens=512, temperature=0.1, num_ctx=4096)
+        default_content_extraction_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        default_newsletter_sections_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        default_newsletter_intro_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        default_podcast_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=8192, temperature=0.1, num_ctx=131072)
+        default_tts_model = TTSModelConfig(tts_provider='openai', tts_model_name='tts-1', speaker_1_voice='sage', speaker_1_speed=1.0, speaker_2_voice='ash', speaker_2_speed=1.0)
+
+        # Create OrchestrationConfig by merging loaded data with defaults for missing top-level keys
+        # Pydantic will handle missing sub-fields within ModelConfig/TTSModelConfig if they are optional or have defaults in their own definitions
+        final_config = OrchestrationConfig(
+            embedding_model=ModelConfig(**loaded_config_data.get('embedding_model', default_embedding_model.dict())),
+            judge_model=ModelConfig(**loaded_config_data.get('judge_model', default_judge_model.dict())),
+            content_extraction_model=ModelConfig(**loaded_config_data.get('content_extraction_model', default_content_extraction_model.dict())),
+            newsletter_sections_model=ModelConfig(**loaded_config_data.get('newsletter_sections_model', default_newsletter_sections_model.dict())),
+            newsletter_intro_model=ModelConfig(**loaded_config_data.get('newsletter_intro_model', default_newsletter_intro_model.dict())),
+            podcast_model=ModelConfig(**loaded_config_data.get('podcast_model', default_podcast_model.dict())),
+            tts_model=TTSModelConfig(**loaded_config_data.get('tts_model', default_tts_model.dict()))
         )
+        return final_config
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting orchestration config: {str(e)}")
+        # Adding more context to the error for easier debugging
+        error_detail = f"Error getting orchestration config: {str(e)}. DB JSON: {db_config_json if 'db_config_json' in locals() else 'Not fetched/Error'}. Loaded Data: {loaded_config_data if 'loaded_config_data' in locals() else 'Not loaded/Error'}."
+        raise HTTPException(status_code=500, detail=error_detail)
 
 @app.put("/api/settings/orchestration")
 async def update_orchestration_config_api(config: OrchestrationConfig):
     """Update orchestration configuration."""
     try:
         db.set_setting("orchestration", config.json())
+        # Also update orchestration.json for legacy/fallback
+        config_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
+        with open(config_path, 'w') as f:
+            json.dump(json.loads(config.json()), f, indent=2)
         return {"status": "success", "message": "Orchestration configuration updated successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating orchestration config: {str(e)}")

@@ -35,7 +35,7 @@ def _handle_response(response: requests.Response) -> Dict[str, Any]:
 
 # --- Orchestration Config --- #
 def get_orchestration_config() -> Dict[str, Any]:
-    """Fetches the full orchestration configuration from the API."""
+    """Fetches the full orchestration configuration from the API, including podcast_model and tts_model."""
     url = f"{API_HOST_URL}/api/settings/orchestration"
     try:
         response = requests.get(url)
@@ -44,7 +44,7 @@ def get_orchestration_config() -> Dict[str, Any]:
         raise APIClientError(f"Network error fetching orchestration config: {e}")
 
 def update_orchestration_config(config_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Updates the orchestration configuration via the API."""
+    """Updates the orchestration configuration via the API, including podcast_model and tts_model."""
     url = f"{API_HOST_URL}/api/settings/orchestration"
     try:
         response = requests.put(url, json=config_data)

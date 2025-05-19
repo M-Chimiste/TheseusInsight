@@ -516,8 +516,106 @@ def show_settings_page():
             except api_client.APIClientError as e:
                 st.error(f"Failed to save ArXiv settings: {str(e)} (Details: {e.details})")
             
-        # st.markdown("### Current ArXiv Settings (from API)")
-        # st.json(arxiv_categories_config) # Display the fetched config
-    
+        # Podcast Model Settings (Collapsible)
+        # This section is intentionally left blank as it's moved below
+        
+        # TTS Model Settings (Collapsible)
+        # This section is intentionally left blank as it's moved below
+
+    # Podcast Model Settings (Collapsible) - MOVED TO TOP LEVEL
+    with st.expander("🎙️ Podcast Model Settings", expanded=True):
+        st.markdown("### Podcast Model Configuration")
+        st.markdown("Configure the model used for podcast generation.")
+        podcast_model_cfg_data = orchestration_config.get('podcast_model', {})
+        podcast_model_ui_state = render_model_config_ui(
+            'podcast_model',
+            podcast_model_cfg_data,
+            model_provider_names,
+            form_key_prefix="settings_podcast_model"
+        )
+        if st.button("Save Podcast Model Settings", key="save_podcast_model_settings"):
+            payload = orchestration_config.copy()
+            payload['podcast_model'] = podcast_model_ui_state
+            try:
+                response = api_client.update_orchestration_config(payload)
+                st.success("✅ Podcast model settings saved successfully via API!")
+                st.session_state.settings_orchestration_config = api_client.get_orchestration_config()
+                st.rerun()
+            except api_client.APIClientError as e:
+                st.error(f"Failed to save podcast model settings: {str(e)} (Details: {e.details})")
+
+    # TTS Model Settings (Collapsible) - MOVED TO TOP LEVEL
+    with st.expander("🗣️ TTS Model Settings", expanded=True):
+        st.markdown("### TTS Model Configuration")
+        st.markdown("Configure the Text-to-Speech (TTS) model and speaker voices for podcast generation.")
+        tts_model_cfg_data = orchestration_config.get('tts_model', {})
+        # Hardcoded dropdown options for now
+        tts_providers = ["openai", "google", "azure"]
+        tts_models = ["tts-1", "tts-2", "tts-3"]
+        tts_voices = ["sage", "ash", "echo", "nova", "onyx"]
+        col1, col2 = st.columns(2)
+        with col1:
+            tts_provider = st.selectbox(
+                "TTS Provider",
+                tts_providers,
+                index=tts_providers.index(tts_model_cfg_data.get('tts_provider', tts_providers[0])) if tts_model_cfg_data.get('tts_provider') in tts_providers else 0,
+                key="tts_provider"
+            )
+            tts_model_name = st.selectbox(
+                "Model Name",
+                tts_models,
+                index=tts_models.index(tts_model_cfg_data.get('tts_model_name', tts_models[0])) if tts_model_cfg_data.get('tts_model_name') in tts_models else 0,
+                key="tts_model_name"
+            )
+            speaker_1_voice = st.selectbox(
+                "Speaker 1 Voice",
+                tts_voices,
+                index=tts_voices.index(tts_model_cfg_data.get('speaker_1_voice', tts_voices[0])) if tts_model_cfg_data.get('speaker_1_voice') in tts_voices else 0,
+                key="speaker_1_voice"
+            )
+            speaker_2_voice = st.selectbox(
+                "Speaker 2 Voice",
+                tts_voices,
+                index=tts_voices.index(tts_model_cfg_data.get('speaker_2_voice', tts_voices[1])) if tts_model_cfg_data.get('speaker_2_voice') in tts_voices else 1,
+                key="speaker_2_voice"
+            )
+        with col2:
+            speaker_1_speed = st.number_input(
+                "Speaker 1 Speed",
+                min_value=0.5,
+                max_value=3.5,
+                value=float(tts_model_cfg_data.get('speaker_1_speed', 1.0)),
+                step=0.05,
+                format="%.2f",
+                key="speaker_1_speed"
+            )
+            speaker_2_speed = st.number_input(
+                "Speaker 2 Speed",
+                min_value=0.5,
+                max_value=3.5,
+                value=float(tts_model_cfg_data.get('speaker_2_speed', 1.0)),
+                step=0.05,
+                format="%.2f",
+                key="speaker_2_speed"
+            )
+        tts_model_ui_state = {
+            "tts_provider": tts_provider,
+            "tts_model_name": tts_model_name,
+            "speaker_1_voice": speaker_1_voice,
+            "speaker_1_speed": speaker_1_speed,
+            "speaker_2_voice": speaker_2_voice,
+            "speaker_2_speed": speaker_2_speed
+        }
+        if st.button("Save TTS Model Settings", key="save_tts_model_settings"):
+            payload = orchestration_config.copy()
+            payload['tts_model'] = tts_model_ui_state
+            try:
+                response = api_client.update_orchestration_config(payload)
+                st.success("✅ TTS model settings saved successfully via API!")
+                st.session_state.settings_orchestration_config = api_client.get_orchestration_config()
+                st.rerun()
+            except api_client.APIClientError as e:
+                st.error(f"Failed to save TTS model settings: {str(e)} (Details: {e.details})")
+
     # Apply theme on initial load if not already applied
     # apply_theme(theme_style_placeholder, st.session_state.theme) # This line is now redundant and handled above

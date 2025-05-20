@@ -5,7 +5,7 @@ import json
 import os
 import uuid
 from datetime import datetime, date, timedelta
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
-    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig, NodeStatus,
+    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
     PodcastGenerationParams
 )
 from .api.tasks import task_manager, TaskStatus
@@ -804,7 +804,7 @@ class ConnectionManager:
             print(f"Error connecting WebSocket: {e}")
             try:
                 await websocket.close(code=4000, reason=str(e))
-            except:
+            except Exception:
                 pass
             raise
 
@@ -842,7 +842,7 @@ class ConnectionManager:
             for connection in self.active_connections[task_id]:
                 try:
                     await connection.close(code=1000)
-                except:
+                except Exception:
                     pass
             del self.active_connections[task_id]
 
@@ -873,12 +873,12 @@ async def newsletter_status(websocket: WebSocket, task_id: str):
     except ValueError as e:
         try:
             await websocket.close(code=4004, reason=str(e))
-        except:
+        except Exception:
             pass
     except Exception as e:
         try:
             await websocket.close(code=4000, reason=str(e))
-        except:
+        except Exception:
             pass
     finally:
         if status_queue:
@@ -909,12 +909,12 @@ async def podcast_status(websocket: WebSocket, task_id: str):
     except ValueError as e:
         try:
             await websocket.close(code=4004, reason=str(e))
-        except:
+        except Exception:
             pass
     except Exception as e:
         try:
             await websocket.close(code=4000, reason=str(e))
-        except:
+        except Exception:
             pass
     finally:
         if status_queue:
@@ -953,16 +953,20 @@ async def run_newsletter_pipeline_endpoint(
                 message=status_detail,
                 progress=progress_val,
             )
+
         if loop.is_running():
-             asyncio.run_coroutine_threadsafe(update_status_async(), loop)
+            # Running from a background thread -> use thread-safe scheduling
+            asyncio.run_coroutine_threadsafe(update_status_async(), loop)
         else:
-            # This fallback might be problematic if no loop is available for create_task
-            # It's better if task_manager itself can handle thread-safe queuing if called from sync
-             try:
+            # Fallback if no running loop was found
+            try:
                 asyncio.create_task(update_status_async())
-             except RuntimeError as e:
-                 print(f"RuntimeError creating task for status update (loop might not be running or accessible): {e}")
-                 # Consider logging this to a file or a more robust system if it occurs
+            except RuntimeError as e:
+                print(
+                    "RuntimeError creating task for status update (loop might not be running or accessible): "
+                    f"{e}"
+                )
+                # Consider logging this to a file or a more robust system if it occurs
 
     async def background_pipeline_run():
         try:
@@ -983,7 +987,10 @@ async def run_newsletter_pipeline_endpoint(
                 data_path=run_db_path,
                 verbose=True 
             )
-            ti_instance.run(progress_callback=pipeline_progress_callback)
+            await asyncio.to_thread(
+                ti_instance.run,
+                progress_callback=pipeline_progress_callback,
+            )
             
             current_task_status = task_manager.get_task_status(task_id)
             # If the progress callback hasn't already marked completion

@@ -940,18 +940,18 @@ async def run_newsletter_pipeline_endpoint(
     loop = asyncio.get_event_loop()
 
     def pipeline_progress_callback(stage: str, progress_val: float, message: str):
+        """Relay progress from TheseusInsight.run to connected WebSocket clients."""
         status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
         overall_status_for_tm = TaskStatus.PROCESSING
         if stage.lower() == "newsletter_complete" and progress_val >= 100.0:
-             overall_status_for_tm = TaskStatus.COMPLETED
-        
+            overall_status_for_tm = TaskStatus.COMPLETED
+
         async def update_status_async():
             await task_manager.update_task_status(
-                task_id, 
-                overall_status=overall_status_for_tm, 
-                current_step=stage,
-                progress=progress_val / 100.0, 
-                message=status_detail
+                task_id,
+                overall_status_for_tm,
+                message=status_detail,
+                progress=progress_val,
             )
         if loop.is_running():
              asyncio.run_coroutine_threadsafe(update_status_async(), loop)
@@ -986,11 +986,13 @@ async def run_newsletter_pipeline_endpoint(
             ti_instance.run(progress_callback=pipeline_progress_callback)
             
             current_task_status = task_manager.get_task_status(task_id)
-            # Ensure status is a dict before get
-            if isinstance(current_task_status, dict) and current_task_status.get('overallStatus') == TaskStatus.PROCESSING:
-                 await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message="Pipeline finished processing.")
-            elif hasattr(current_task_status, 'overallStatus') and current_task_status.overallStatus == TaskStatus.PROCESSING:
-                 await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message="Pipeline finished processing.")
+            # If the progress callback hasn't already marked completion
+            if current_task_status and current_task_status.get("status") == TaskStatus.PROCESSING:
+                await task_manager.update_task_status(
+                    task_id,
+                    TaskStatus.COMPLETED,
+                    message="Pipeline finished processing."
+                )
 
         except Exception as e:
             error_message = f"Error in newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"

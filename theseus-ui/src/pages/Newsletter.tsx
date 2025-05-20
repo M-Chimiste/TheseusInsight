@@ -85,8 +85,6 @@ const Newsletter = () => {
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [researchInterests, setResearchInterests] = useState<string>('');
-  const [generatePodcast, setGeneratePodcast] = useState<boolean>(false);
-  
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>({
     isRunning: false,
@@ -249,7 +247,6 @@ const Newsletter = () => {
         end_date: endDate ? endDate.toISOString().split('T')[0] : '',
         email_recipients: emailRecipients,
         research_interests: researchInterests,
-        generate_podcast_run: generatePodcast,
       };
       const response = await settingsApi.runNewsletterPipeline(params);
       setPipelineStatus(prev => ({ ...prev, taskId: response.data.task_id, message: `Task ${response.data.task_id} started.` }));
@@ -359,10 +356,6 @@ const Newsletter = () => {
               rows={5}
               helperText="Provide a detailed description of your research interests."
               sx={{ mb: 2 }}
-            />
-            <FormControlLabel
-              control={<Checkbox checked={generatePodcast} onChange={(e) => setGeneratePodcast(e.target.checked)} />}
-              label="🎙️ Also generate Podcast?"
             />
           </CardContent>
         </Card>

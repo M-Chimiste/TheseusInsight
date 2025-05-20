@@ -952,18 +952,21 @@ async def run_newsletter_pipeline_endpoint(
                 overall_status_for_tm,
                 message=status_detail,
                 progress=progress_val,
-                current_step=stage,
-            )
+                current_step=stage,            )
+
         if loop.is_running():
-             asyncio.run_coroutine_threadsafe(update_status_async(), loop)
+            # Running from a background thread -> use thread-safe scheduling
+            asyncio.run_coroutine_threadsafe(update_status_async(), loop)
         else:
-            # This fallback might be problematic if no loop is available for create_task
-            # It's better if task_manager itself can handle thread-safe queuing if called from sync
-             try:
+            # Fallback if no running loop was found
+            try:
                 asyncio.create_task(update_status_async())
-             except RuntimeError as e:
-                 print(f"RuntimeError creating task for status update (loop might not be running or accessible): {e}")
-                 # Consider logging this to a file or a more robust system if it occurs
+            except RuntimeError as e:
+                print(
+                    "RuntimeError creating task for status update (loop might not be running or accessible): "
+                    f"{e}"
+                )
+                # Consider logging this to a file or a more robust system if it occurs
 
     async def background_pipeline_run():
         try:
@@ -989,7 +992,10 @@ async def run_newsletter_pipeline_endpoint(
                 data_path=run_db_path,
                 verbose=True 
             )
-            ti_instance.run(progress_callback=pipeline_progress_callback)
+            await asyncio.to_thread(
+                ti_instance.run,
+                progress_callback=pipeline_progress_callback,
+            )
             
             current_task_status = task_manager.get_task_status(task_id)
             # If the progress callback hasn't already marked completion

@@ -5,7 +5,7 @@ import json
 import os
 import uuid
 from datetime import datetime, date, timedelta
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
-    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig, NodeStatus,
+    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
     PodcastGenerationParams
 )
 from .api.tasks import task_manager, TaskStatus
@@ -804,7 +804,7 @@ class ConnectionManager:
             print(f"Error connecting WebSocket: {e}")
             try:
                 await websocket.close(code=4000, reason=str(e))
-            except:
+            except Exception:
                 pass
             raise
 
@@ -842,7 +842,7 @@ class ConnectionManager:
             for connection in self.active_connections[task_id]:
                 try:
                     await connection.close(code=1000)
-                except:
+                except Exception:
                     pass
             del self.active_connections[task_id]
 
@@ -873,12 +873,12 @@ async def newsletter_status(websocket: WebSocket, task_id: str):
     except ValueError as e:
         try:
             await websocket.close(code=4004, reason=str(e))
-        except:
+        except Exception:
             pass
     except Exception as e:
         try:
             await websocket.close(code=4000, reason=str(e))
-        except:
+        except Exception:
             pass
     finally:
         if status_queue:
@@ -909,12 +909,12 @@ async def podcast_status(websocket: WebSocket, task_id: str):
     except ValueError as e:
         try:
             await websocket.close(code=4004, reason=str(e))
-        except:
+        except Exception:
             pass
     except Exception as e:
         try:
             await websocket.close(code=4000, reason=str(e))
-        except:
+        except Exception:
             pass
     finally:
         if status_queue:
@@ -940,18 +940,19 @@ async def run_newsletter_pipeline_endpoint(
     loop = asyncio.get_event_loop()
 
     def pipeline_progress_callback(stage: str, progress_val: float, message: str):
+        """Relay progress from TheseusInsight.run to connected WebSocket clients."""
         status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
         overall_status_for_tm = TaskStatus.PROCESSING
         if stage.lower() == "newsletter_complete" and progress_val >= 100.0:
-             overall_status_for_tm = TaskStatus.COMPLETED
-        
+            overall_status_for_tm = TaskStatus.COMPLETED
+
         async def update_status_async():
             await task_manager.update_task_status(
-                task_id, 
-                overall_status=overall_status_for_tm, 
+                task_id,
+                overall_status_for_tm,
+                message=status_detail,
+                progress=progress_val,
                 current_step=stage,
-                progress=progress_val / 100.0, 
-                message=status_detail
             )
         if loop.is_running():
              asyncio.run_coroutine_threadsafe(update_status_async(), loop)
@@ -971,7 +972,12 @@ async def run_newsletter_pipeline_endpoint(
                 task_type="custom_newsletter_run",
                 config=params.dict()
             )
-            await task_manager.update_task_status(task_id, TaskStatus.PENDING, message="Pipeline initialized.")
+            await task_manager.update_task_status(
+                task_id,
+                TaskStatus.PENDING,
+                message="Pipeline initialized.",
+                current_step="initializing",
+            )
 
             ti_instance = TheseusInsight(
                 research_interests_override=params.research_interests,
@@ -986,16 +992,25 @@ async def run_newsletter_pipeline_endpoint(
             ti_instance.run(progress_callback=pipeline_progress_callback)
             
             current_task_status = task_manager.get_task_status(task_id)
-            # Ensure status is a dict before get
-            if isinstance(current_task_status, dict) and current_task_status.get('overallStatus') == TaskStatus.PROCESSING:
-                 await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message="Pipeline finished processing.")
-            elif hasattr(current_task_status, 'overallStatus') and current_task_status.overallStatus == TaskStatus.PROCESSING:
-                 await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message="Pipeline finished processing.")
+            # If the progress callback hasn't already marked completion
+            if current_task_status and current_task_status.get("status") == TaskStatus.PROCESSING:
+                await task_manager.update_task_status(
+                    task_id,
+                    TaskStatus.COMPLETED,
+                    message="Pipeline finished processing.",
+                    current_step="newsletter_complete",
+                )
 
         except Exception as e:
             error_message = f"Error in newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"
-            if task_manager: 
-                await task_manager.update_task_status(task_id, TaskStatus.FAILED, error=error_message, message=error_message)
+            if task_manager:
+                await task_manager.update_task_status(
+                    task_id,
+                    TaskStatus.FAILED,
+                    error=error_message,
+                    message=error_message,
+                    current_step="newsletter_failed",
+                )
             print(error_message) # Log to server console as well
 
     background_tasks.add_task(background_pipeline_run)

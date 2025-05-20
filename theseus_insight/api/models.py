@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Union, Dict, Any
-from datetime import date, datetime
+from typing import List, Optional, Dict, Any
+from datetime import date
 
 # Basic domain entities
 class Model(BaseModel):
@@ -134,9 +134,15 @@ class NodeStatus(BaseModel):
     timestamp: str  # ISO 8601
 
 class RunStatus(BaseModel):
+    """Combined status model used by WebSocket clients."""
+
     taskId: str
     nodes: List[NodeStatus]
     overallStatus: str  # 'pending' | 'processing' | 'completed' | 'failed'
+    currentStep: Optional[str] = None
+    progress: Optional[float] = None  # 0-100
+    message: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 # Settings for ArXiv
@@ -158,16 +164,6 @@ class NewsletterConfig(BaseModel):
     search_query: Optional[str] = None
     send_email: bool = False
     intro_music_path: Optional[str] = None # Path to intro music file if any
-
-# General Run Status
-class RunStatus(BaseModel):
-    taskId: str
-    overallStatus: str  # e.g., "PENDING", "RUNNING", "COMPLETED", "FAILED"
-    currentStep: Optional[str] = None
-    progress: Optional[float] = None  # e.g., 0.0 to 1.0
-    message: Optional[str] = None
-    result: Optional[Dict[str, Any]] = None # To store final results like file paths or content
-    error: Optional[str] = None
 
 # If you have other specific setting structures, define them here
 # e.g., EmailRecipients, ResearchInterests (if more complex than simple list/string)

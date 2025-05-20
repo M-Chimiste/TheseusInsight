@@ -1,6 +1,5 @@
 from typing import Dict, Optional, List
 import asyncio
-import json
 import os
 from datetime import datetime
 from enum import Enum
@@ -51,7 +50,16 @@ class TaskManager:
         if task_id in self.status_updates and queue in self.status_updates[task_id]:
             self.status_updates[task_id].remove(queue)
             
-    async def update_task_status(self, task_id: str, status: TaskStatus, message: str = "", progress: float = 0, error: str = None):
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        message: str = "",
+        progress: float = 0,
+        error: str | None = None,
+        current_step: str | None = None,
+        result: dict | None = None,
+    ) -> None:
         """Update task status and notify subscribers."""
         if task_id not in self.tasks:
             raise ValueError(f"Task {task_id} not found")
@@ -69,12 +77,20 @@ class TaskManager:
                     nodeId="main",
                     status=status,
                     message=message,
-                    progress=progress if status == TaskStatus.PROCESSING else (100 if status == TaskStatus.COMPLETED else 0),
-                    timestamp=timestamp
+                    progress=progress
+                    if status == TaskStatus.PROCESSING
+                    else (100 if status == TaskStatus.COMPLETED else 0),
+                    timestamp=timestamp,
                 )
             ],
             overallStatus=status,
-            error=error
+            currentStep=current_step,
+            progress=progress
+            if status == TaskStatus.PROCESSING
+            else (100 if status == TaskStatus.COMPLETED else 0),
+            message=message,
+            result=result,
+            error=error,
         )
         
         # Notify all subscribers
@@ -89,7 +105,8 @@ class TaskManager:
                 task_id=task_id,
                 status=TaskStatus.PROCESSING,
                 message=f"{stage}: {message}",
-                progress=progress
+                progress=progress,
+                current_step=stage
             )
         return callback
 
@@ -125,7 +142,12 @@ class TaskManager:
             )
             
             # Run the pipeline with progress tracking
-            await self.update_task_status(task_id, TaskStatus.PROCESSING, "Starting newsletter generation")
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Starting newsletter generation",
+                current_step="initializing",
+            )
             
             # Create progress callback
             progress_callback = self._progress_callback(task_id)
@@ -143,7 +165,9 @@ class TaskManager:
                 task_id,
                 TaskStatus.COMPLETED,
                 "Newsletter generated successfully",
-                progress=100
+                progress=100,
+                current_step="newsletter_complete",
+                result=result,
             )
             
         except Exception as e:
@@ -151,7 +175,8 @@ class TaskManager:
                 task_id,
                 TaskStatus.FAILED,
                 "Newsletter generation failed",
-                error=str(e)
+                error=str(e),
+                current_step="newsletter_failed",
             )
             raise
             
@@ -178,7 +203,12 @@ class TaskManager:
                 verbose=config.get("verbose", True) # Added verbose from config
             )
             
-            await self.update_task_status(task_id, TaskStatus.PROCESSING, "Starting podcast generation")
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Starting podcast generation",
+                current_step="podcast_init",
+            )
             
             # Get input sources from config
             input_type = config.get("input_type") # Should be present, validated by Pydantic model
@@ -241,7 +271,9 @@ class TaskManager:
                 task_id,
                 TaskStatus.COMPLETED,
                 "Podcast generated successfully",
-                progress=100
+                progress=100,
+                current_step="podcast_complete",
+                result=result,
             )
             
         except Exception as e:
@@ -249,7 +281,8 @@ class TaskManager:
                 task_id,
                 TaskStatus.FAILED,
                 "Podcast generation failed",
-                error=str(e)
+                error=str(e),
+                current_step="podcast_failed",
             )
             raise
 

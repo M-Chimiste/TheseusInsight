@@ -484,7 +484,7 @@ class TheseusInsight:
             # Stage 2: Embed Papers
             # -----------
             if progress_callback:
-                progress_callback("embed", 10, "Starting paper embedding")
+                progress_callback("embed", 11, "Starting paper embedding")
                 
             if start_from is None or start_from in ['papers_downloaded', 'papers_embedded']:
                 embedded_df = self._load_checkpoint('papers_embedded')

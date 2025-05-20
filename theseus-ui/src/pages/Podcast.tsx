@@ -13,6 +13,7 @@ import {
   Select,
   MenuItem,
   CircularProgress,
+  Container,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -164,7 +165,7 @@ const Podcast: React.FC = () => {
   }, [podcastTaskId]);
 
   return (
-    <Box sx={{ mt: 4, mb: 4, px: 2 }}>
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
         🎙️ Podcast Creator
       </Typography>
@@ -177,7 +178,7 @@ const Podcast: React.FC = () => {
         }}
       >
         {/* Content Sources Card - Combined */}
-        <Card sx={{ width: '100%', maxWidth: 'none' }}>
+        <Card sx={{ mb: 3 }}>
           <CardContent>
             <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>Content Sources</Typography>
             
@@ -241,7 +242,7 @@ const Podcast: React.FC = () => {
         </Card>
 
         {/* Podcast Model Settings Card */}
-        <Card sx={{ width: '100%', maxWidth: 'none' }}>
+        <Card sx={{ mb: 3 }}>
           <CardContent>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               <Typography variant="h5" sx={{ flexGrow: 1 }}>Podcast Model Settings</Typography>
@@ -298,7 +299,7 @@ const Podcast: React.FC = () => {
         </Card>
 
         {/* TTS Model Settings Card */}
-        <Card sx={{ width: '100%', maxWidth: 'none' }}>
+        <Card sx={{ mb: 3 }}>
           <CardContent>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               <Typography variant="h5" sx={{ flexGrow: 1 }}>TTS Model Settings</Typography>
@@ -368,7 +369,7 @@ const Podcast: React.FC = () => {
         </Card>
 
         {/* Intro Music Upload */}
-        <Card sx={{ width: '100%', maxWidth: 'none' }}>
+        <Card sx={{ mb: 3 }}>
           <CardContent>
             <Typography variant="h5" gutterBottom>Intro Music (Optional)</Typography>
             <Button variant="outlined" component="label">
@@ -387,7 +388,7 @@ const Podcast: React.FC = () => {
         </Card>
 
         {/* Generate Podcast Button and Status */}
-        <Card sx={{ width: '100%', maxWidth: 'none' }}>
+        <Card>
           <CardContent>
             <Typography variant="h5" gutterBottom>Generate</Typography>
             <Button
@@ -424,7 +425,7 @@ const Podcast: React.FC = () => {
           </CardContent>
         </Card>
       </Box>
-    </Box>
+    </Container>
   );
 };
 

@@ -34,7 +34,7 @@
         - `__init__` modified to accept overrides for dates, interests, recipients, and `generate_podcast` flag.
         - `run()` method updated to accept a `progress_callback` for FastAPI task manager updates.
         - Fallback to default `arxiv_search_categories` if not in `orchestration.json`.
-- **Overall Refactoring & Feature Implementation (Sessions 1-19 Summary):**
+- **Overall Refactoring & Feature Implementation (Sessions 1-19 Summary - now integrated into the above cumulative summary, this section can be removed or condensed if redundant):**
     - **Settings Management Overhaul:**
         - Migrated all application settings (Orchestration, ArXiv Categories, Model Providers, Email Recipients, Research Interests, Podcast Models, TTS Models) from direct DB/JSON interaction within Streamlit views to a FastAPI backend.
         - FastAPI backend (`theseus_insight/main.py`, `theseus_insight/api/models.py`) now serves as the sole interface for GET/PUT operations on settings.
@@ -134,59 +134,109 @@
     - Updated API loading logic to include `api_client.get_email_recipients()`.
     - Used `st.text_area` for inputting email addresses (newline or comma-separated).
     - Implemented save logic to process input and call `api_client.update_email_recipients()`.
-- **React Frontend and FastAPI Backend Migration (Focus: Settings.tsx, Newsletter.tsx):**
-    - **Settings Page (`frontend/src/pages/Settings.tsx`):**
-        - **Initial Setup & Grid Issues:**
-            - Started creating the `Settings.tsx` component using Material-UI (MUI).
-            - Encountered and resolved issues with MUI `Grid` component (linter/TypeScript errors with `item` prop) by replacing it with `Box` and flexbox.
-        - **Layout and Styling:**
-            - Refactored to a full-width layout using MUI `Container`, `Card`, and `Tabs` based on user feedback for wider screen real estate usage.
-            - Added "Display Settings" section with a Dark Mode toggle.
+- **React Frontend and FastAPI Backend Migration:**
+    - **`Settings.tsx` Page (frontend/src/pages/Settings.tsx):**
+        - **Layout & Core Structure:**
+            - Switched from MUI `Grid` to `Box` with flexbox due to linter errors.
+            - Adopted a wider, full-screen layout with `Container`, `Card`, and `Tabs`.
+            - Added "Display Settings" with a Dark Mode toggle (theme connection TODO).
         - **Model Configuration Section:**
-            - Implemented functionality to mirror Streamlit's `settings.py` for configuring model parameters (embedding, judge, content extraction, etc.).
-            - Added API calls (`getModelProviders`, `getOrchestrationConfig`) to `services/api.ts`.
-            - Fetched model providers from `/api/model-providers` for dropdowns.
-            - Used `orchestration.json` as a default/fallback.
-            - Implemented per-model type `Card` layout with individual "Save" buttons.
-            - Created `renderModelConfigFields` helper for dynamic form input generation.
+            - Mirrors Streamlit `settings.py` for model types (embedding, judge, etc.).
+            - Fetches model providers (`/api/model-providers`).
+            - Uses `orchestration.json` (via `/api/settings/orchestration`) as settings source.
+            - `renderModelConfigFields` for dynamic form inputs.
+            - Per-model type "Save" buttons, updating `orchestrationConfig` via `react-query` mutation.
+            - TTS model section matches Streamlit UI (provider, model name, speaker voice/speed).
         - **ArXiv Categories Section:**
-            - Implemented human-friendly category names using `arxiv_taxonomy.json`.
-            - Changed subcategory input to MUI `Autocomplete` for a tagged multi-select experience.
-            - Added logic to load taxonomy, populate dropdowns dynamically, and handle selection state.
-            - Ensured initial population from backend (`arxivCategories`) or `orchestration.json`.
-        - **Podcast Model Settings:**
-            - Added a new card reusing `renderModelConfigFields`.
-        - **TTS Model Settings:**
-            - Added a new card with specific UI elements (provider dropdown, model name input, speaker voice dropdowns, speed inputs) to match Streamlit.
-            - Updated `renderModelConfigFields` to handle `tts_model` specific layout.
+            - User-friendly category selection using `arxiv_taxonomy.json`.
+            - Main category dropdown; `Autocomplete` for multi-select subcategories.
+            - Logic to filter/re-add subcategories.
+            - Initial data from `/api/settings/arxiv-categories` or `orchestration.json`.
+            - "Save ArXiv Settings" button.
+        - **Research Interests & Email Recipients Sections:**
+            - `TextField` areas, data from `/api/settings/research-interests` and `/api/settings/email-recipients`.
+            - Individual "Save" buttons.
+            - "Send Test Email" button in Email Recipients card.
         - **Visualizer Settings Section:**
-            - Initially planned but removed as per user request.
-    - **Newsletter Page (`frontend/src/pages/Newsletter.tsx`) - Initial Development:**
-        - **Setup & API:**
-            - Installed `@mui/x-date-pickers` and `date-fns`.
-            - Added `runNewsletterPipeline` to `services/api.ts`.
-        - **Structure & State:**
-            - Created initial structure with state variables for date range, emails, research interests, podcast toggle, and pipeline status.
-        - **Logic (Partial Implementation):**
-            - `useEffect` hooks for fetching defaults and date synchronization.
-            - Helper functions for date calculations.
-            - Handlers for date changes, email input/parsing/chip deletion.
-            - WebSocket setup using `useWebSocket`.
-            - `handleGenerateNewsletter` function drafted.
-        - **UI (Basic Layout):**
-            - Basic UI for "Date Range," "Targeting and Content Focus," "Action Button," and "Pipeline Status" sections using MUI components.
+            - Removed, functionality to be part of newsletter/podcast flows.
+    - **`Newsletter.tsx` Page (frontend/src/pages/Newsletter.tsx):**
+        - **Core Functionality (Mirroring Streamlit):**
+            - Date Range Selection (Start, End, Days) with synchronization.
+            - Email Recipients: Text area, displayed as deletable MUI `Chip`s, defaults from settings.
+            - Research Interests: Text area, defaults from settings.
+            - "Generate Newsletter" button.
+            - Pipeline Status display (node-based progress via WebSocket).
+        - **Implementation Details:**
+            - Dependencies: `@mui/x-date-pickers`, `date-fns`.
+            - API endpoint: `runNewsletterPipeline` (`services/api.ts`, POST to `/api/actions/run-newsletter-pipeline`).
+            - State variables for inputs and pipeline status (isRunning, stage, progress, message, error, taskId).
+            - `useEffect` for fetching defaults and date sync.
+            - Date helper functions.
+            - Handlers for date changes, email input (parsing to chips), chip deletion.
+            - **WebSocket Integration (`useWebSocket` hook):**
+                - Connects to `ws://localhost:8000/ws/newsletter/{taskId}`.
+                - Debugged "Order of Hooks" error (conditional call resolved by unconditional call with nullable taskId).
+                - Resolved type errors (signature/return type mismatches, consumption in `Newsletter.tsx`).
+                - Ensured correct parsing of JSON `RunStatusPayload`.
+                - Hook accepts `taskId | null` and `type` ('newsletter'/'podcast'), returns `lastMessage` (parsed payload), `readyState`, `error`.
+                - `Newsletter.tsx` uses `useEffect` to update local `pipelineStatus` and `statusMessages` from hook.
+                - `RunStatusPayload`, `NodeStatusPayload` interfaces defined.
+            - `handleGenerateNewsletter` calls API, updates `taskId`, triggering WebSocket.
+            - UI: MUI `Card`, `DatePicker`, `TextField`, `Button`, `LinearProgress`, `Alert`, `Chip`.
+    - **`Podcast.tsx` Page (frontend/src/pages/Podcast.tsx) - In Progress:**
+        - **User Request & Initial Structure (Phase 1 Goals):**
+            - Inputs for PDF uploads and URLs (add/delete, use simultaneously).
+            - "Podcast Model Settings" & "TTS Model Settings" cards (view/edit fetched data).
+            - Optional intro music upload.
+        - **Implementation Steps & Refinements:**
+            - **Content Sources (PDFs/URLs):**
+                - Removed `Tabs`, displaying PDF upload and URL input simultaneously in one "Content Sources" card.
+                - PDF upload button, filenames as deletable `Chip`s.
+                - URL `TextField` (Add button, Enter support), URLs as deletable `Chip`s.
+            - **Model Configuration Cards ("Podcast Model Settings", "TTS Model Settings"):**
+                - Separate `Card` components.
+                - Fetch `orchestrationConfig` and `modelProviders`.
+                - Local state (`podcastModelConfig`, `ttsModelConfig`) initialized from `orchestrationConfig`.
+                - Podcast Card Fields: Model Type (Provider), Model Name, Max New Tokens, Temperature.
+                - TTS Card Fields: TTS Provider, TTS Model Name, Speaker 1 Voice/Speed, Speaker 2 Voice/Speed.
+                - Individual "Save" buttons, update `orchestrationConfig` via `settingsApi.updateOrchestrationConfig`.
+            - **Layout:**
+                - `Container` `maxWidth` to `xl`.
+                - Two-column `Grid` (Left 2/3: Content, Podcast Model, TTS Model; Right 1/3: Intro Music, Generate Button & Status).
+            - **Intro Music Upload:**
+                - `Card` with upload button, filename as deletable `Chip`.
+            - **Generate Podcast Functionality:**
+                - State: `generating`, `podcastTaskId`, `podcastError`, `isCompleted`, `downloadUrl`.
+                - `handleGeneratePodcast`:
+                    - Constructs `params` for `podcastApi.generatePodcast` (dynamic `input_type`, `urls`, model configs).
+                    - Calls `podcastApi.generatePodcast` (multipart form data: params as JSON string, files).
+                    - Updates state with `taskId` or error.
+                - "Generate Podcast" button (disabled if no PDFs/URLs).
+                - Basic status display (spinner, error, task ID).
+            - **Download Functionality:**
+                - `useEffect` polls `taskApi.getTaskStatus(podcastTaskId)` if `podcastTaskId` exists.
+                - On "completed": calls `taskApi.downloadTaskArtifact(podcastTaskId, 'audio')`.
+                - Converts blob to object URL, renders "Download Podcast" button.
+                - On "failed": displays error.
 
 ## Next Steps
-- **React Frontend - `Newsletter.tsx` Development:**
-    - Complete UI implementation for all sections (Date Range, Targeting and Content Focus, Action Button, Pipeline Status).
-    - Ensure robust WebSocket communication for real-time pipeline status updates.
-    - Thoroughly test the "Generate Newsletter" functionality, including API parameter passing and backend pipeline triggering.
-    - Refine styling and layout for a polished user experience.
-    - Implement client-side validation for inputs.
+- **React Frontend - `Podcast.tsx` Development:**
+    - Implement WebSocket for real-time status updates (similar to `Newsletter.tsx`).
+    - Refine the UI for podcast generation status (progress bar, messages, errors).
+    - Ensure robust error handling throughout the generation and download process.
+    - Test PDF and URL inputs thoroughly, individually and combined.
+    - Test intro music upload and inclusion in the generated podcast.
+    - Test model configuration changes and their effect on generation.
+    - Finalize styling and layout for a polished user experience.
+    - Implement client-side validation for inputs where appropriate.
+- **General:**
+    - Address any TODOs noted in the code (e.g., Dark Mode theme connection in `Settings.tsx`).
+    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`).
+    - Review and refactor code for maintainability and scalability as per guidelines.
 - Awaiting next task or specific area of focus from the user for other areas.
 
 ## Debug Log
-- **Cumulative Debug Log (Summary from User Update):**
+- **Cumulative Debug Log (Reflects User Summary):**
     - **`ModuleNotFoundError` (FastAPI & Streamlit):**
         - Resolved by ensuring correct Uvicorn execution path (project root) and `sys.path` modifications in `streamlit_app/app.py`.
     - **`AttributeError` (Streamlit APIClientError, TaskManager methods):**

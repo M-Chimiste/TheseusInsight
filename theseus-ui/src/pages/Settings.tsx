@@ -333,7 +333,7 @@ const Settings: React.FC = () => {
   };
 
   return (
-    <Container maxWidth={false} sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
@@ -355,7 +355,7 @@ const Settings: React.FC = () => {
         </Box>
       </Box>
 
-      <Card sx={{ mb: 4, width: '100%' }}>
+      <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
@@ -425,7 +425,7 @@ const Settings: React.FC = () => {
       </Card>
 
       {/* ArXiv Categories Section */}
-      <Card sx={{ mb: 4, width: '100%' }}>
+      <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
@@ -492,7 +492,7 @@ const Settings: React.FC = () => {
       </Card>
 
       {/* Research Interests Section */}
-      <Card sx={{ mb: 4, width: '100%' }}>
+      <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
@@ -535,7 +535,7 @@ const Settings: React.FC = () => {
       </Card>
 
       {/* Email Configuration Section */}
-      <Card sx={{ mb: 4, width: '100%' }}>
+      <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
@@ -585,7 +585,7 @@ const Settings: React.FC = () => {
       </Card>
 
       {/* Podcast Model Settings Section */}
-      <Card sx={{ mb: 4, width: '100%' }}>
+      <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
@@ -620,7 +620,7 @@ const Settings: React.FC = () => {
       </Card>
 
       {/* TTS Model Settings Section */}
-      <Card sx={{ mb: 4, width: '100%' }}>
+      <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>

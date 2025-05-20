@@ -186,7 +186,8 @@ const Podcast: React.FC = () => {
             <Box sx={{ mb: 3 }}>
               <Typography variant="h6" gutterBottom>Upload PDFs</Typography>
               <Button
-                variant="outlined"
+                variant="contained"
+                color="primary"
                 component="label"
               >
                 Select PDF Files
@@ -372,7 +373,7 @@ const Podcast: React.FC = () => {
         <Card sx={{ mb: 3 }}>
           <CardContent>
             <Typography variant="h5" gutterBottom>Intro Music (Optional)</Typography>
-            <Button variant="outlined" component="label">
+            <Button variant="contained" color="primary" component="label">
               Upload Intro Music
               <input
                 type="file"

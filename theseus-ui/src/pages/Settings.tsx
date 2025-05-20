@@ -573,7 +573,8 @@ const Settings: React.FC = () => {
                 Save Email Recipients
               </Button>
               <Button
-                variant="outlined"
+                variant="contained"
+                color="primary"
                 onClick={() => sendTestEmailMutation.mutate()}
                 disabled={sendTestEmailMutation.isPending}
               >

@@ -349,10 +349,6 @@ const Settings: React.FC = () => {
         <Typography variant="h4" fontWeight={700}>
           Settings
         </Typography>
-        <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="subtitle1">Dark Mode</Typography>
-          <Switch checked={isDarkMode} onChange={() => setIsDarkMode((v) => !v)} /> {/* TODO: connect to theme context */}
-        </Box>
       </Box>
 
       <Card sx={{ mb: 4 }}>

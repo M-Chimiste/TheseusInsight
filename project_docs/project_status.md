@@ -134,9 +134,56 @@
     - Updated API loading logic to include `api_client.get_email_recipients()`.
     - Used `st.text_area` for inputting email addresses (newline or comma-separated).
     - Implemented save logic to process input and call `api_client.update_email_recipients()`.
+- **React Frontend and FastAPI Backend Migration (Focus: Settings.tsx, Newsletter.tsx):**
+    - **Settings Page (`frontend/src/pages/Settings.tsx`):**
+        - **Initial Setup & Grid Issues:**
+            - Started creating the `Settings.tsx` component using Material-UI (MUI).
+            - Encountered and resolved issues with MUI `Grid` component (linter/TypeScript errors with `item` prop) by replacing it with `Box` and flexbox.
+        - **Layout and Styling:**
+            - Refactored to a full-width layout using MUI `Container`, `Card`, and `Tabs` based on user feedback for wider screen real estate usage.
+            - Added "Display Settings" section with a Dark Mode toggle.
+        - **Model Configuration Section:**
+            - Implemented functionality to mirror Streamlit's `settings.py` for configuring model parameters (embedding, judge, content extraction, etc.).
+            - Added API calls (`getModelProviders`, `getOrchestrationConfig`) to `services/api.ts`.
+            - Fetched model providers from `/api/model-providers` for dropdowns.
+            - Used `orchestration.json` as a default/fallback.
+            - Implemented per-model type `Card` layout with individual "Save" buttons.
+            - Created `renderModelConfigFields` helper for dynamic form input generation.
+        - **ArXiv Categories Section:**
+            - Implemented human-friendly category names using `arxiv_taxonomy.json`.
+            - Changed subcategory input to MUI `Autocomplete` for a tagged multi-select experience.
+            - Added logic to load taxonomy, populate dropdowns dynamically, and handle selection state.
+            - Ensured initial population from backend (`arxivCategories`) or `orchestration.json`.
+        - **Podcast Model Settings:**
+            - Added a new card reusing `renderModelConfigFields`.
+        - **TTS Model Settings:**
+            - Added a new card with specific UI elements (provider dropdown, model name input, speaker voice dropdowns, speed inputs) to match Streamlit.
+            - Updated `renderModelConfigFields` to handle `tts_model` specific layout.
+        - **Visualizer Settings Section:**
+            - Initially planned but removed as per user request.
+    - **Newsletter Page (`frontend/src/pages/Newsletter.tsx`) - Initial Development:**
+        - **Setup & API:**
+            - Installed `@mui/x-date-pickers` and `date-fns`.
+            - Added `runNewsletterPipeline` to `services/api.ts`.
+        - **Structure & State:**
+            - Created initial structure with state variables for date range, emails, research interests, podcast toggle, and pipeline status.
+        - **Logic (Partial Implementation):**
+            - `useEffect` hooks for fetching defaults and date synchronization.
+            - Helper functions for date calculations.
+            - Handlers for date changes, email input/parsing/chip deletion.
+            - WebSocket setup using `useWebSocket`.
+            - `handleGenerateNewsletter` function drafted.
+        - **UI (Basic Layout):**
+            - Basic UI for "Date Range," "Targeting and Content Focus," "Action Button," and "Pipeline Status" sections using MUI components.
 
 ## Next Steps
-- Awaiting next task or specific area of focus from the user.
+- **React Frontend - `Newsletter.tsx` Development:**
+    - Complete UI implementation for all sections (Date Range, Targeting and Content Focus, Action Button, Pipeline Status).
+    - Ensure robust WebSocket communication for real-time pipeline status updates.
+    - Thoroughly test the "Generate Newsletter" functionality, including API parameter passing and backend pipeline triggering.
+    - Refine styling and layout for a polished user experience.
+    - Implement client-side validation for inputs.
+- Awaiting next task or specific area of focus from the user for other areas.
 
 ## Debug Log
 - **Cumulative Debug Log (Summary from User Update):**
@@ -159,3 +206,9 @@
     - **WebSocket `TimeoutError` (Client-side):**
         - Investigated, potentially related to connection handshake or server-side processing before `accept()`.
         - Client-side `UnboundLocalError` in WebSocket listener's exception handling (due to `task_id_key` not being defined in all paths) was fixed by moving key string definitions to an earlier, guaranteed execution point.
+    - **MUI `Grid` component issues (React - `Settings.tsx`):**
+        - `item` prop not recognized by linter/TypeScript despite various import strategies.
+        - Resolved by replacing `Grid` with `Box` component and using flexbox for layout.
+    - **ArXiv Categories dynamic data handling (React - `Settings.tsx`):**
+        - Ensuring correct TypeScript typings for `arxiv_taxonomy.json`.
+        - Mapping lowercase subcategory codes from DB to potentially uppercase codes in the taxonomy file for `Autocomplete` initial value population.

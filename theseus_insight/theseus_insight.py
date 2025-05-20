@@ -478,13 +478,13 @@ class TheseusInsight:
                         self._save_checkpoint('papers_downloaded', data_df)
 
             if progress_callback:
-                progress_callback("download", 100, "Paper download complete")
+                progress_callback("download", 10, "Paper download complete")
 
             # -----------
             # Stage 2: Embed Papers
             # -----------
             if progress_callback:
-                progress_callback("embed", 0, "Starting paper embedding")
+                progress_callback("embed", 10, "Starting paper embedding")
                 
             if start_from is None or start_from in ['papers_downloaded', 'papers_embedded']:
                 embedded_df = self._load_checkpoint('papers_embedded')
@@ -519,11 +519,14 @@ class TheseusInsight:
                     embedded_df = filtered_df
 
             if progress_callback:
-                progress_callback("embed", 100, "Paper embedding complete")
+                progress_callback("embed", 15, "Paper embedding complete")
 
             # -----------
             # Stage 3: Rank Papers
             # -----------
+            if progress_callback:
+                progress_callback("rank", 20, "Starting paper ranking")
+
             if start_from is None or start_from in ['papers_embedded', 'papers_ranked']:
                 top_n_df = self._load_checkpoint('papers_ranked')
                 if top_n_df is None:
@@ -540,10 +543,14 @@ class TheseusInsight:
                 # free memory from embeddings if needed
                 del embedded_df
                 gc.collect()
+            if progress_callback:
+                progress_callback("rank", 30, "Paper ranking complete")
 
             # -----------
             # Stage 4: Generate Newsletter Sections
             # -----------
+            if progress_callback:
+                progress_callback("newsletter", 40, "Starting newsletter sections generation")
             if start_from is None or start_from in ['papers_ranked', 'newsletter_sections']:
                 sections_data = self._load_checkpoint('newsletter_sections')
                 if sections_data is None:
@@ -618,10 +625,14 @@ class TheseusInsight:
                         'urls_and_titles': urls_and_titles
                     }
                     self._save_checkpoint('newsletter_sections', sections_data)
+            if progress_callback:
+                progress_callback("newsletter", 50, "Newsletter sections generation complete")
 
             # -----------
             # Stage 5: Generate Full Newsletter Content
             # -----------
+            if progress_callback:
+                progress_callback("newsletter", 60, "Starting newsletter content generation")
             if start_from is None or start_from in ['newsletter_sections', 'newsletter_content']:
                 newsletter_content = self._load_checkpoint('newsletter_content')
                 if newsletter_content is None:
@@ -672,10 +683,14 @@ class TheseusInsight:
                             date_sent=TODAY.strftime('%Y-%m-%d')
                         )
                         self.papers_db.insert_newsletter(newsletter)
+            if progress_callback:
+                progress_callback("newsletter", 80, "Newsletter content generation complete")
 
             # -----------
             # Stage 6: Send Email (if generate_email=True)
             # -----------
+            if progress_callback:
+                progress_callback("newsletter", 85, "Starting newsletter email sending")
             if self.generate_email:
                 if newsletter_content is None:
                     newsletter_content = self._load_checkpoint('newsletter_content')
@@ -710,10 +725,16 @@ class TheseusInsight:
                 except Exception as e:
                     self._log_error(500, e)
                     raise
+            if progress_callback and not self.generate_podcast:
+                progress_callback("newsletter", 100, "Newsletter email sending complete")
+            if progress_callback and self.generate_podcast:
+                progress_callback("newsletter", 90, "Newsletter email sending complete")
 
             # -----------
             # Stage 7: Generate Podcast (if generate_podcast=True)
             # -----------
+            if progress_callback:
+                progress_callback("podcast", 90, "Starting podcast generation")
             if self.generate_podcast:
                 # Part A: Generate Podcast Script + Audio
                 podcast_content = self._load_checkpoint('podcast_script')
@@ -818,6 +839,8 @@ class TheseusInsight:
                         except Exception as up_e:
                             self._log_error(500, up_e)
                             raise
+            if progress_callback:
+                progress_callback("podcast", 100, "Podcast generation complete")
 
             # -----------
             # Final Step: Mark completion, purge + cleanup

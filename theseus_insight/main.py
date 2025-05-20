@@ -30,10 +30,12 @@ app = FastAPI(
 
 # CORS configuration
 CORS_ORIGINS = [
-    "http://localhost:3000",  # Development frontend
-    "http://localhost:8000",  # Development API
+    "http://localhost:3000",  
+    "http://localhost:8000",  
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8000",
+    "http://localhost:5173",
+    "*"  
 ]
 
 if os.getenv("PRODUCTION_FRONTEND_URL"):

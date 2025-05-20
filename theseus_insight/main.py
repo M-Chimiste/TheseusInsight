@@ -952,7 +952,7 @@ async def run_newsletter_pipeline_endpoint(
                 overall_status_for_tm,
                 message=status_detail,
                 progress=progress_val,
-            )
+                current_step=stage,            )
 
         if loop.is_running():
             # Running from a background thread -> use thread-safe scheduling
@@ -975,7 +975,12 @@ async def run_newsletter_pipeline_endpoint(
                 task_type="custom_newsletter_run",
                 config=params.dict()
             )
-            await task_manager.update_task_status(task_id, TaskStatus.PENDING, message="Pipeline initialized.")
+            await task_manager.update_task_status(
+                task_id,
+                TaskStatus.PENDING,
+                message="Pipeline initialized.",
+                current_step="initializing",
+            )
 
             ti_instance = TheseusInsight(
                 research_interests_override=params.research_interests,
@@ -998,13 +1003,20 @@ async def run_newsletter_pipeline_endpoint(
                 await task_manager.update_task_status(
                     task_id,
                     TaskStatus.COMPLETED,
-                    message="Pipeline finished processing."
+                    message="Pipeline finished processing.",
+                    current_step="newsletter_complete",
                 )
 
         except Exception as e:
             error_message = f"Error in newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"
-            if task_manager: 
-                await task_manager.update_task_status(task_id, TaskStatus.FAILED, error=error_message, message=error_message)
+            if task_manager:
+                await task_manager.update_task_status(
+                    task_id,
+                    TaskStatus.FAILED,
+                    error=error_message,
+                    message=error_message,
+                    current_step="newsletter_failed",
+                )
             print(error_message) # Log to server console as well
 
     background_tasks.add_task(background_pipeline_run)

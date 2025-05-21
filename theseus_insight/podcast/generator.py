@@ -21,8 +21,9 @@ from ..data_model import (Dialogue,
                           DialogueOutput,
                           PodcastDescription,
                           ContentSummary)
+from ..data_model.data_handling import PaperDatabase, Podcast
 from ..pdf import SpacyLayoutDocProcessor
-from datetime import datetime
+from datetime import datetime, date
 
 
 @dataclass
@@ -54,7 +55,8 @@ class PodcastGenerator:
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
         pause_duration: float = 0.5,
-        verbose: bool = False
+        verbose: bool = False,
+        db_path: str = None
     ):
         """
         Set up the class with your default settings.
@@ -78,7 +80,10 @@ class PodcastGenerator:
         self.intro_music_path = intro_music_path
         self.pause_duration = pause_duration
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
-        
+        if self.db_path:
+            self.db = PaperDatabase(self.db_path)
+        else:
+            self.db = None
         # Validate TTS provider
         valid_providers = ['polly', 'openai']
         if self.tts_provider not in valid_providers:
@@ -547,18 +552,40 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             if progress_callback:
                 progress_callback("Completed", 100)
             
+            if self.db:
+                self._insert_podcast_record(dialog=dialogue, description=description)
+            
             return {
                 "output_file": final_audio_path,
                 "visualizer_file": final_video_path if visualizer else None,
                 "description": description,
                 "dialogue": dialogue.model_dump(),
                 "segments": ", ".join([s.path for s in segments]),
+                "date": datetime.now().strftime("%Y-%m-%d"),
             }
+        
         except Exception as e:
             import traceback
             error_msg = f"Error in generate_podcast: {str(e)}\nTraceback:\n{traceback.format_exc()}"
             print(error_msg)
             raise Exception(error_msg) from e
+        
+    def _insert_podcast_record(self, dialog, description):
+        """
+        Insert a podcast record into the database.
+        """
+        today = date.today()
+        try:
+            podcast_record = Podcast(title=f"Theseus Insight Podcast Episode {today.strftime("%m-%d-%Y")}",
+                                    date=datetime.now().strftime("%Y-%m-%d"),
+                                    description=description,
+                                    script=dialog,
+                                    )
+            self.db.insert_podcast(podcast_record)
+        except Exception as e:
+            print(f"Error inserting podcast record: {e}")
+            pass
+
 
     def regenerate_podcast_from_script(
         self,

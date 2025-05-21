@@ -128,15 +128,18 @@ class DoclingDocProcessor:
 
         processed_data = self._process_doc(doc_path)
         markdown_data = self.export_markdown(processed_data)
-        output_dir = self.output_dir or self.get_default_output_dir(doc_path)
+        
         if self.save_text:
+            output_dir = self.output_dir or self.get_default_output_dir(doc_path)
             with open(f"{output_dir}/text.md", "w") as f:
                 f.write(markdown_data)
         if self.export_tables:
+            output_dir = self.output_dir or self.get_default_output_dir(doc_path)
             tables = self.export_tables_method(output_dir, processed_data)
         else:
             tables = None
         if self.export_figures:
+            output_dir = self.output_dir or self.get_default_output_dir(doc_path)
             figures = self.export_figures_method(output_dir, processed_data)
         else:
             figures = None
@@ -291,18 +294,21 @@ class SpacyLayoutDocProcessor:
         return self.docling_converter.convert(doc_path)
     
     def process_document(self, doc_path):
-        output_dir = self.get_default_output_dir(doc_path)
+        
         processed_doc = self._process_doc(doc_path)
         markdown_data = self.export_markdown(processed_doc)
         if self.save_text:
+            output_dir = self.get_default_output_dir(doc_path)
             with open(f"{output_dir}/text.md", "w") as f:
                 f.write(markdown_data)
         if self.export_tables:
+            output_dir = self.get_default_output_dir(doc_path)
             tables = self.export_tables_method(output_dir, processed_doc)
         else:
             tables = None
 
         if self.export_figures:
+            output_dir = self.get_default_output_dir(doc_path)
             figure_data = self._docling_process_doc(doc_path)
             figures = self.export_figures_method(output_dir, figure_data)
         else:

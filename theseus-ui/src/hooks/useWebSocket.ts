@@ -49,6 +49,12 @@ export interface UseWebSocketReturn {
 const DEFAULT_RETRY_INTERVAL = 5000; // 5 seconds
 const DEFAULT_MAX_RETRIES = 5;
 
+const PLACEHOLDER_TASK_IDS = {
+  newsletter: 'dummy-newsletter-task-id',
+  podcast: 'dummy-podcast-task-id',
+  visualizer: 'dummy-visualizer-task-id',
+};
+
 export const useWebSocket = (
   taskId: string | null,
   type: 'newsletter' | 'podcast' | 'visualizer', // Added 'visualizer' type
@@ -76,6 +82,14 @@ export const useWebSocket = (
       setReadyState(WebSocketReadyState.CLOSED);
       return;
     }
+
+    // Prevent connection attempt with placeholder IDs
+    if (taskId === PLACEHOLDER_TASK_IDS[type]) {
+      // console.log(`useWebSocket: TaskId is a placeholder (${taskId}), not connecting.`);
+      setReadyState(WebSocketReadyState.CLOSED); // Ensure it's marked as closed
+      return;
+    }
+
     if (webSocketRef.current && readyState !== WebSocketReadyState.CLOSED && readyState !== WebSocketReadyState.CLOSING) {
       // console.log('useWebSocket: Already connected or connecting.');
       return;
@@ -154,10 +168,10 @@ export const useWebSocket = (
   };
 
   useEffect(() => {
-    if (taskId) {
+    if (taskId && taskId !== PLACEHOLDER_TASK_IDS[type]) {
       connect();
     } else {
-      disconnect(); // Disconnect if taskId becomes null
+      disconnect(); // Disconnect if taskId becomes null or is a placeholder
     }
 
     return () => {

@@ -126,7 +126,11 @@ class TaskManager:
         """Run the newsletter generation task."""
         try:
             config = self.tasks[task_id]["config"]
-            
+            email_recipients = config.get("emailRecipients", None)
+            research_interests_override = config.get("researchInterests", None)
+            orchestration_config = self.db.get_setting("orchestration")
+            if not orchestration_config:
+                orchestration_config = "config/orchestration.json"
             # Extract configuration
             date_range = config.get("dateRange", {})
             start_date = date_range.get("from", None)
@@ -148,9 +152,12 @@ class TaskManager:
                     "max_new_tokens": 1024,
                     "temperature": 0.1
                 },
-                generate_podcast=False,  # We handle podcast generation separately
-                data_path=os.getenv("THESEUS_DB_PATH", "data/papers.db"),
-                generate_email=False  # We'll handle email sending separately
+                generate_podcast=False,  # We handle podcast generation separately for now
+                data_path=self.db.path,
+                generate_email=True,
+                receiver_address_override=email_recipients,
+                research_interests_override=research_interests_override,
+                orchestration_config=orchestration_config
             )
             
             # Run the pipeline with progress tracking

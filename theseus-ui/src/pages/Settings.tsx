@@ -65,7 +65,6 @@ const Settings: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
-  const [isDarkMode, setIsDarkMode] = useState(true); // TODO: connect to theme context
   const [selectedArxivMain, setSelectedArxivMain] = useState<string>('');
   const [selectedArxivSubs, setSelectedArxivSubs] = useState<string[]>([]);
 
@@ -87,11 +86,6 @@ const Settings: React.FC = () => {
   const { data: emailRecipients, isLoading: isLoadingEmail } = useQuery({
     queryKey: ['emailRecipients'],
     queryFn: () => settingsApi.getEmailRecipients().then(res => res.data),
-  });
-
-  const { data: visualizerSettings, isLoading: isLoadingVisualizer } = useQuery({
-    queryKey: ['visualizerSettings'],
-    queryFn: () => settingsApi.getVisualizerSettings().then(res => res.data),
   });
 
   const { data: modelProviders, isLoading: isLoadingProviders, isError: isErrorProviders } = useQuery<any[], Error>({
@@ -178,7 +172,7 @@ const Settings: React.FC = () => {
     }
   }, [arxivCategories]);
 
-  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingVisualizer || isLoadingProviders) {
+  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
@@ -508,7 +502,7 @@ const Settings: React.FC = () => {
               rows={5}
               label="Your Research Interests"
               value={researchInterests?.interests || ''}
-              onChange={(e) => {
+              onChange={(_e) => {
                 // const newInterests = { interests: e.target.value };
                 // queryClient.setQueryData(['researchInterests'], newInterests);
               }}
@@ -551,7 +545,7 @@ const Settings: React.FC = () => {
               rows={3}
               label="Email Recipients"
               value={emailRecipients?.recipients?.join('\n') || ''}
-              onChange={(e) => {
+              onChange={(_e) => {
                 // const newEmails = { recipients: e.target.value.split('\n').filter(Boolean) };
                 // queryClient.setQueryData(['emailRecipients'], newEmails);
               }}

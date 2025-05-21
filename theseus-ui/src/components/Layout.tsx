@@ -12,7 +12,6 @@ import {
   Toolbar,
   Typography,
   IconButton,
-  useTheme,
 } from '@mui/material';
 import {
   Settings as SettingsIcon,
@@ -32,7 +31,6 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const theme = useTheme();
   const { isDarkMode, toggleTheme } = useCustomTheme();
 
   const menuItems = [

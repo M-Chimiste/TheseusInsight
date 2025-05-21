@@ -614,16 +614,16 @@ async def download_task_artifact(task_id: str, file_type: str):
                 
             # Get the appropriate file path
             if file_type == "audio":
-                file_path = result["final_podcast_path"]
+                file_path = result["output_file"]
                 media_type = "audio/mpeg"
                 filename = "podcast.mp3"
             else:  # video
-                if not result.get("visualizer_path"):
+                if not result.get("visualizer_file"):
                     raise HTTPException(
                         status_code=404,
                         detail="No video visualization available for this podcast"
                     )
-                file_path = result["visualizer_path"]
+                file_path = result["visualizer_file"]
                 media_type = "video/mp4"
                 filename = "podcast.mp4"
                 

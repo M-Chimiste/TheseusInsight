@@ -49,7 +49,7 @@ class DialogueOutput(BaseModel):
         return DialogueOutput(dialogue=merged_dialogue)
 
 class PodcastDescription(BaseModel):
-    podcast_episode_description: str = Field(..., description="The description of the podcast episode")
+    description: str = Field(..., description="The description of the podcast episode")
 
 class ContentSummary(BaseModel):
     summary: str = Field(..., description="The summary of the text")

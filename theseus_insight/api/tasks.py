@@ -6,7 +6,7 @@ from enum import Enum
 from .models import RunStatus, NodeStatus
 from ..theseus_insight import TheseusInsight
 from ..podcast.generator import PodcastGenerator
-from ..data_model import PaperDatabase
+from ..data_model import PaperDatabase, Logs
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -67,7 +67,7 @@ class TaskManager:
         self.tasks[task_id]["status"] = status
         if error:
             self.tasks[task_id]["error"] = error
-            
+        
         # Create status update
         timestamp = datetime.now().isoformat()
         status_obj = RunStatus(
@@ -93,6 +93,11 @@ class TaskManager:
             error=error,
         )
         
+        final_status = status_obj.overallStatus
+        log = Logs(task_id=task_id, 
+                   status=final_status, 
+                   datetime_run=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self.db.insert_log(log)
         # Notify all subscribers
         if task_id in self.status_updates:
             for queue in self.status_updates[task_id]:

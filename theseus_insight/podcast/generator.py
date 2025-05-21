@@ -576,7 +576,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         """
         today = date.today()
         try:
-            podcast_record = Podcast(title=f"Theseus Insight Podcast Episode {today.strftime("%m-%d-%Y")}",
+            podcast_record = Podcast(title=f"Theseus Insight Podcast Episode {today.strftime('%m-%d-%Y')}",
                                     date=datetime.now().strftime("%Y-%m-%d"),
                                     description=description,
                                     script=dialog,

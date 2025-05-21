@@ -187,9 +187,17 @@ class TheseusInsight:
                 self.research_interests = f.read().strip()
         
         # Inference models
-    
-        with open(orchestration_config, 'r') as f:
-            self.orchestration_config = json.load(f)
+        if isinstance(orchestration_config, str):
+            # first see if this is a json string or a path to a file
+            if orchestration_config.startswith('{') and orchestration_config.endswith('}'):
+                self.orchestration_config = json.loads(orchestration_config)
+            else:
+                with open(orchestration_config, 'r') as f:
+                    self.orchestration_config = json.load(f)
+        elif isinstance(orchestration_config, dict):
+            self.orchestration_config = orchestration_config
+        else:
+            raise ValueError("Invalid orchestration config")
 
         # Ensure arxiv_search_categories exists with defaults if not present
         if 'arxiv_search_categories' not in self.orchestration_config:

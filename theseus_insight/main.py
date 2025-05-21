@@ -90,9 +90,6 @@ async def shutdown_event():
         # Close all WebSocket connections
         for task_id in list(manager.active_connections.keys()):
             await manager.close_all(task_id)
-            
-        # Cancel any running tasks
-        await task_manager.cancel_all_tasks()
         
     except Exception as e:
         print(f"Error during shutdown: {e}")
@@ -101,63 +98,63 @@ async def shutdown_event():
 DB_PATH = os.getenv("THESEUS_DB_PATH", "data/papers.db")
 db = PaperDatabase(DB_PATH)
 
-# Models endpoints
-@app.get("/api/models", response_model=List[Model])
-async def get_models():
-    """Get all registered models."""
-    try:
-        db_models = db.get_models()
-        # Convert DB models to API models
-        models = []
-        for model in db_models:
-            provider = next(p for p in db.get_model_providers() if p["id"] == model["provider_id"])
-            models.append(Model(
-                id=str(model["id"]),
-                name=model["name"],
-                provider=provider["name"]
-            ))
-        return models
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# # Models endpoints
+# @app.get("/api/models", response_model=List[Model])
+# async def get_models():
+#     """Get all registered models."""
+#     try:
+#         db_models = db.get_models()
+#         # Convert DB models to API models
+#         models = []
+#         for model in db_models:
+#             provider = next(p for p in db.get_model_providers() if p["id"] == model["provider_id"])
+#             models.append(Model(
+#                 id=str(model["id"]),
+#                 name=model["name"],
+#                 provider=provider["name"]
+#             ))
+#         return models
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/models", response_model=Model, status_code=201)
-async def create_model(model: ModelCreate):
-    """Create a new model."""
-    try:
-        # Validate provider exists
-        providers = db.get_model_providers()
-        if not any(p["id"] == model.provider_id for p in providers):
-            raise HTTPException(status_code=400, detail="Invalid provider_id")
+# @app.post("/api/models", response_model=Model, status_code=201)
+# async def create_model(model: ModelCreate):
+#     """Create a new model."""
+#     try:
+#         # Validate provider exists
+#         providers = db.get_model_providers()
+#         if not any(p["id"] == model.provider_id for p in providers):
+#             raise HTTPException(status_code=400, detail="Invalid provider_id")
         
-        # Add model to database
-        db.add_model(
-            provider_id=model.provider_id,
-            name=model.name,
-            config_json=json.dumps(model.config_json)
-        )
+#         # Add model to database
+#         db.add_model(
+#             provider_id=model.provider_id,
+#             name=model.name,
+#             config_json=json.dumps(model.config_json)
+#         )
         
-        # Get the created model
-        created = db.get_models()[-1]  # Get last inserted model
-        provider = next(p for p in providers if p["id"] == created["provider_id"])
+#         # Get the created model
+#         created = db.get_models()[-1]  # Get last inserted model
+#         provider = next(p for p in providers if p["id"] == created["provider_id"])
         
-        return Model(
-            id=str(created["id"]),
-            name=created["name"],
-            provider=provider["name"]
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+#         return Model(
+#             id=str(created["id"]),
+#             name=created["name"],
+#             provider=provider["name"]
+#         )
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/models/{model_id}")
-async def delete_model(model_id: int):
-    """Delete a model by ID."""
-    try:
-        db.delete_model(model_id)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.delete("/api/models/{model_id}")
+# async def delete_model(model_id: int):
+#     """Delete a model by ID."""
+#     try:
+#         db.delete_model(model_id)
+#         return {"status": "success"}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 # Papers endpoints
 @app.get("/api/papers", response_model=PaginatedResponse)

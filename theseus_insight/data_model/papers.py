@@ -167,7 +167,7 @@ class Paper(BaseModel):
         return v
 
 class Logs(BaseModel):
-    status_code: int
+    task_id: str
     status: str
     datetime_run: str | None = None
 

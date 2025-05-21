@@ -47,7 +47,7 @@ class PaperDatabase:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    status_code INTEGER NOT NULL,
+                    task_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     datetime_run TEXT
                 )
@@ -182,7 +182,7 @@ class PaperDatabase:
                            (newsletter.content, newsletter.start_date, newsletter.end_date, newsletter.date_sent))
 
     def insert_log(self, log: Logs):
-        required_fields = ['status_code', 'status']
+        required_fields = ['task_id', 'status']
         for field in required_fields:
             if not hasattr(log, field) or getattr(log, field) is None:
                 raise ValueError(f"Log object is missing required field: {field}")
@@ -191,11 +191,22 @@ class PaperDatabase:
             raise ValueError("status_code must be an integer")
 
         datetime_run = log.datetime_run or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
+        # check for log existence
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO logs (status_code, status, datetime_run)
-                              VALUES (?, ?, ?)''',
-                           (log.status_code, log.status, datetime_run))
+            cursor.execute('''SELECT status FROM logs WHERE task_id = ?''', (log.task_id,))
+            row = cursor.fetchone()
+            row = row[0] if row else None
+        # Insert a new log if it doesn't exist
+        if not row:
+            with self.get_cursor() as cursor:
+                cursor.execute('''INSERT INTO logs (task_id, status, datetime_run)
+                                VALUES (?, ?, ?)''',
+                            (log.task_id, log.status, datetime_run))
+        # Only update the status
+        else:
+            with self.get_cursor() as cursor:
+                cursor.execute('''UPDATE logs SET status = ? WHERE task_id = ?''',
+                          (log.status, log.task_id))
 
     def get_recent_logs(self, limit: int = 100):
         with self.get_cursor() as cursor:

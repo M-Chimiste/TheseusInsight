@@ -407,22 +407,24 @@ class TheseusInsight:
             data_df = data_df.sort_values(by='score', ascending=False)
             top_n_df = data_df.head(self.top_n)
 
-            # Save all to DB if enabled
-            for _, row in data_df.iterrows():
-                paper = Paper(
-                    title=row['title'],
-                    abstract=row['abstract'],
-                    url=row['pdf_url'],
-                    date_run=TODAY.strftime('%Y-%m-%d'),
-                    date=row['date'].strftime('%Y-%m-%d'),
-                    score=row['score'],
-                    related=row['related'],
-                    rationale=row['rationale'],
-                    cosine_similarity=row['cosine_similarity'],
-                    embedding_model=self.embedding_model_name
-                )
-                if self.db_saving:
+            if self.db_saving:
+                print("Saving papers to DB")
+                # Save all to DB if enabled
+                for _, row in data_df.iterrows():
+                    paper = Paper(
+                        title=row['title'],
+                        abstract=row['abstract'],
+                        url=row['pdf_url'],
+                        date_run=TODAY.strftime('%Y-%m-%d'),
+                        date=row['date'].strftime('%Y-%m-%d'),
+                        score=row['score'],
+                        related=row['related'],
+                        rationale=row['rationale'],
+                        cosine_similarity=row['cosine_similarity'],
+                        embedding_model=self.embedding_model_name
+                    )
                     self.papers_db.insert_paper(paper)
+       
 
             return top_n_df
         except Exception as e:
@@ -676,6 +678,7 @@ class TheseusInsight:
 
                     # Save to DB
                     if self.db_saving:
+                        print("Saving newsletter to DB")
                         newsletter = Newsletter(
                             content=newsletter_content,
                             start_date=self.start_date.strftime('%Y-%m-%d'),

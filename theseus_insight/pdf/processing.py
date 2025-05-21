@@ -115,15 +115,25 @@ class DoclingDocProcessor:
 
     def process_document(self, doc_path):
         """
-        Processes a document and optionally exports tables and figures.
+        Processes an input document located at `doc_path` and performs various operations based on configuration 
+        settings.
+
+        The following steps are performed:
+        1. Processes the original document to generate processed data.
+        2. Exports generated markdown text from processing if enabled (`self.save_text`).
+        - Saves as 'text.md' in a default output directory determined by `doc_path`.
+        3. Extracts and exports tables using an internal method only when configured (via `self.export_tables`). 
+        4. Processes the document further for figures extraction based on configuration settings.
+        - Exports generated figure files to specified directories if enabled (`self.export_figures`).
+
         Args:
-            doc_path (str): The path to the document to be processed.
+            doc_path: str, Path of input document that will be processed.
+
         Returns:
-            dict: A dictionary containing the processed data, tables, and figures.
-              The dictionary has the following keys:
-              - "processed_data": The data processed from the document.
-              - "tables": The exported tables if export_tables is True, otherwise None.
-              - "figures": The exported figures if export_figures is True, otherwise None.
+            dict: A dictionary with keys 'processed_data', 'tables', and 'figures'. 
+                The values are markdown text (if saving was done), extracted tables,
+                and figure data respectively. If a particular export is disabled (`self.export_tables`
+                or `self.export_figures` set to False), the corresponding value will be None.
         """
 
         processed_data = self._process_doc(doc_path)
@@ -294,7 +304,28 @@ class SpacyLayoutDocProcessor:
         return self.docling_converter.convert(doc_path)
     
     def process_document(self, doc_path):
-        
+        """
+        Processes an input document located at `doc_path` and performs various operations based on configuration 
+        settings.
+
+        The following steps are performed:
+        1. Processes the original document to generate processed data.
+        2. Exports generated markdown text from processing if enabled (`self.save_text`).
+        - Saves as 'text.md' in a default output directory determined by `doc_path`.
+        3. Extracts and exports tables using an internal method only when configured (via `self.export_tables`). 
+        4. Processes the document further for figures extraction based on configuration settings.
+        - Exports generated figure files to specified directories if enabled (`self.export_figures`).
+
+        Args:
+            doc_path: str, Path of input document that will be processed.
+
+        Returns:
+            dict: A dictionary with keys 'processed_data', 'tables', and 'figures'. 
+                The values are markdown text (if saving was done), extracted tables,
+                and figure data respectively. If a particular export is disabled (`self.export_tables`
+                or `self.export_figures` set to False), the corresponding value will be None.
+        """
+
         processed_doc = self._process_doc(doc_path)
         markdown_data = self.export_markdown(processed_doc)
         if self.save_text:

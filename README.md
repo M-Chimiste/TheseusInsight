@@ -1,5 +1,9 @@
 # Theseus Insight
 
+<p align="center">
+  <img src="assets/theseus%20insight%20logo.png" alt="Theseus Insight logo" width="300"/>
+</p>
+
 Theseus Insight is a multi-purpose project that processes PDF research papers, ranks them against your research interests, generates personalized newsletters, and can also produce podcast episodes (including optional visualized audio). It uses a combination of FastAPI endpoints, language models (LLMs), text-to-speech engines, and various utility scripts.
 
 ## Table of Contents
@@ -9,6 +13,7 @@ Theseus Insight is a multi-purpose project that processes PDF research papers, r
 - [Installation](#installation)
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
+- [Running the Frontend](#running-the-frontend)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)
@@ -16,8 +21,6 @@ Theseus Insight is a multi-purpose project that processes PDF research papers, r
   - [Visualizer Generation](#visualizer-generation)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
-  - [Core Workflow](#core-workflow)
-  - [Example Usage](#example-usage)
 - [License](#license)
 - [Credits](#credits)
 
@@ -134,6 +137,25 @@ run_paperpal.py       # CLI entrypoint for running the full pipeline
 
 ---
 
+## Environment Variables
+
+Set the following environment variables to enable all optional features. Values can be placed in a `.env` file at the project root.
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | API key for OpenAI models and TTS |
+| `ANTHROPIC_API_KEY` | API key for Anthropic Claude models |
+| `GOOGLE_API_KEY` | API key for Google Gemini models |
+| `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
+| `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
+| `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication |
+| `THESEUS_DB_PATH` | Path to the SQLite database (default `data/papers.db`) |
+| `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
+| `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
+
+---
+
 ## Running the API
 
 Run the FastAPI app using uvicorn:
@@ -143,6 +165,20 @@ uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+---
+
+## Running the Frontend
+
+The optional React interface lives in the `theseus-ui` folder. Use Node.js 18+ and run:
+
+```bash
+cd theseus-ui
+npm install
+npm run dev
+```
+
+This starts a Vite development server on <http://localhost:5173> which proxies API requests to the backend.
 
 ---
 

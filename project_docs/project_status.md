@@ -272,3 +272,24 @@
         - **Issue:** Frontend fails to connect to `ws://localhost:8000/ws/visualizer/{task_id}`.
         - **Diagnosis:** The WebSocket endpoint `/ws/visualizer/{task_id}` was not defined in the FastAPI backend (`theseus_insight/main.py`).
         - **Fix:** Added a new WebSocket endpoint `@app.websocket("/ws/visualizer/{task_id}")` in `theseus_insight/main.py`, mirroring the structure of the existing `newsletter_status` and `podcast_status` endpoints.
+    - **React DevTools WebSocket Warning (Session 20 - Current):**
+        - **Issue:** Console warning "WebSocket connection to 'ws://localhost:8000/ws/.../dummy-...-task-id' failed: WebSocket is closed before the connection is established."
+        - **Diagnosis:** The `useWebSocket` hook was attempting to connect with a placeholder/dummy task ID on initial render before the actual task ID was available. The subsequent re-render with the real task ID caused the initial (dummy) connection attempt to be aborted by the `useEffect` cleanup function.
+        - **Fix:** Modified `useWebSocket.ts` to define `PLACEHOLDER_TASK_IDS`. The `connect` function now checks if the `taskId` matches a placeholder for the given `type` and returns early if it does. The main `useEffect` in the hook also checks against these placeholders before calling `connect` or `disconnect`.
+    - **Visualizer Artifact Download Error (400 Bad Request) (Session 20 - Current):**
+        - **Issue:** After a visualizer task completes, the frontend attempts to download the artifact via GET `/api/tasks/{task_id}/download/video` but receives a 400 Bad Request.
+        - **Diagnosis:** The `download_task_artifact` function in `theseus_insight/main.py` was missing a specific handler for `task["type"] == "visualizer"`. It was falling through to a generic `else` clause that raised an "Unknown task type" error, resulting in the 400.
+        - **Fix:** Added an `elif task["type"] == "visualizer":` block to `download_task_artifact` in `main.py`. This block correctly retrieves the video artifact path from `result["visualizer_file"]` (which `run_visualizer_task` in `tasks.py` already provides) and serves the video file, similar to how podcast videos are handled.
+
+## Next Steps
+- **React Frontend - `Podcast.tsx` Development:**
+    - Test PDF and URL inputs thoroughly, individually and combined.
+    - Test intro music upload and inclusion in the generated podcast.
+    - Test model configuration changes and their effect on generation.
+    - Finalize styling and layout for a polished user experience.
+    - Implement client-side validation for inputs where appropriate.
+- **General:**
+    - Address any TODOs noted in the code (e.g., Dark Mode theme connection in `Settings.tsx`).
+    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`, `Visualizer`).
+    - Review and refactor code for maintainability and scalability as per guidelines.
+- Awaiting next task or specific area of focus from the user for other areas.

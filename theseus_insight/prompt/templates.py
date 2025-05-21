@@ -1,7 +1,7 @@
 INSTRUCTION_TEMPLATES = {
   "podcast_into": """Your task is to create a brief yet captivating cold open and agenda for an episode of the podcast 'AI by AI.' \
 The input will be a combined or summarized overview of all the topics planned for the episode. Kick things off with an attention-grabbing hook, \
-then provide a clear roadmap of what’s coming up without venturing into a full conclusion or outro. Maintain a relaxed, conversational tone \
+then provide a clear roadmap of what's coming up without venturing into a full conclusion or outro. Maintain a relaxed, conversational tone \
 inspired by the All In Podcast, but do not mention or invent any speaker names. Define any specialized terms in simple language so that anyone \
 listening can easily follow along. Focus on being welcoming, energetic, and concise, setting the stage for a deeper exploration in the upcoming sections.""",
   

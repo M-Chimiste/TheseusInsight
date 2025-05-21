@@ -638,6 +638,34 @@ async def download_task_artifact(task_id: str, file_type: str):
                 media_type=media_type,
                 filename=filename
             )
+
+        elif task["type"] == "visualizer": # Added block for visualizer
+            if file_type != "video":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only video format is available for visualizer tasks"
+                )
+            
+            if not result.get("visualizer_file"):
+                raise HTTPException(
+                    status_code=404,
+                    detail="No video visualization available for this visualizer task"
+                )
+            file_path = result["visualizer_file"]
+            media_type = "video/mp4"
+            filename = "visualization.mp4" # Or derive from task/result if needed
+
+            if not os.path.exists(file_path):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Artifact file not found: {file_path}"
+                )
+            
+            return FileResponse(
+                file_path,
+                media_type=media_type,
+                filename=filename
+            )
             
         else:
             raise HTTPException(

@@ -19,6 +19,7 @@ import {
   Podcasts as PodcastIcon,
   Brightness4 as DarkModeIcon,
   Brightness7 as LightModeIcon,
+  Movie as MovieIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 
@@ -37,6 +38,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
+    { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
   ];
 
   return (

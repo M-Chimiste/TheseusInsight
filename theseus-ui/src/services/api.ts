@@ -50,10 +50,8 @@ export const podcastApi = {
     if (introMusicFile) {
       formData.append('intro_music_file', introMusicFile);
     }
-    if (pdfFiles) {
-      pdfFiles.forEach((file) => {
-        formData.append('pdf_files', file);
-      });
+    if (pdfFiles && pdfFiles.length > 0) {
+      pdfFiles.forEach(file => formData.append('pdf_files', file));
     }
     return api.post('/podcast/generate', formData, {
       headers: {
@@ -67,8 +65,18 @@ export const podcastApi = {
 export const taskApi = {
   getTaskStatus: (taskId: string) => api.get(`/tasks/${taskId}/status`),
   getTaskResult: (taskId: string) => api.get(`/tasks/${taskId}/result`),
-  downloadTaskArtifact: (taskId: string, fileType: string) =>
+  downloadTaskArtifact: (taskId: string, fileType: 'markdown' | 'audio' | 'video') => 
     api.get(`/tasks/${taskId}/download/${fileType}`, { responseType: 'blob' }),
+  runVisualizerPipeline: (audioFile: File, visualizerParams: any) => {
+    const formData = new FormData();
+    formData.append('audio_file', audioFile);
+    formData.append('visualizer_params_json', JSON.stringify(visualizerParams));
+    return api.post('/actions/run-visualizer-pipeline', formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+        },
+    });
+  },
 };
 
 // Runs API

@@ -8,6 +8,7 @@ import React from 'react';
 const Settings = React.lazy(() => import('./pages/Settings'));
 const Newsletter = React.lazy(() => import('./pages/Newsletter'));
 const Podcast = React.lazy(() => import('./pages/Podcast'));
+const Visualizer = React.lazy(() => import('./pages/Visualizer'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,7 @@ function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/newsletter" element={<Newsletter />} />
                 <Route path="/podcast" element={<Podcast />} />
+                <Route path="/visualizer" element={<Visualizer />} />
               </Routes>
             </React.Suspense>
           </Layout>

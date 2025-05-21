@@ -51,7 +51,7 @@ const DEFAULT_MAX_RETRIES = 5;
 
 export const useWebSocket = (
   taskId: string | null,
-  type: 'newsletter' | 'podcast', // Or any other types you might have
+  type: 'newsletter' | 'podcast' | 'visualizer', // Added 'visualizer' type
   options?: WebSocketOptions
 ): UseWebSocketReturn => {
   const [lastMessage, setLastMessage] = useState<RunStatusPayload | null>(null);
@@ -60,7 +60,7 @@ export const useWebSocket = (
   const webSocketRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef<number>(0);
 
-  const constructWebSocketUrl = (currentTaskId: string, currentType: 'newsletter' | 'podcast'): string => {
+  const constructWebSocketUrl = (currentTaskId: string, currentType: 'newsletter' | 'podcast' | 'visualizer'): string => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Assuming your backend runs on port 8000. Adjust if different.
     const host = window.location.hostname;

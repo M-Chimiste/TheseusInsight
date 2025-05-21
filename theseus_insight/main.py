@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, date, timedelta
 from fastapi.responses import FileResponse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .data_model.data_handling import PaperDatabase
 from .api.models import (
@@ -788,6 +788,53 @@ async def generate_podcast_pipeline(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error processing podcast request: {str(e)}")
 
+# --- Pydantic Model for Visualizer Params ---
+# Re-using VisualizerSettings for consistency if it matches, or define a specific one if needed.
+# For now, assuming VisualizerSettings from .api.models is suitable.
+from .api.models import VisualizerSettings as VisualizerParamsForPipeline # Alias for clarity
+
+@app.post("/api/actions/run-visualizer-pipeline")
+async def run_visualizer_pipeline_endpoint(
+    background_tasks: BackgroundTasks,
+    audio_file: UploadFile = File(..., description="Audio file to visualize"),
+    visualizer_params_json: str = Form(..., description="JSON string of VisualizerParamsForPipeline")
+):
+    task_id = str(uuid.uuid4())
+    try:
+        visualizer_params = VisualizerParamsForPipeline.parse_raw(visualizer_params_json)
+        
+        temp_dir = f"data/temp/{task_id}"
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        audio_file_path = os.path.join(temp_dir, f"audio_input_{audio_file.filename}")
+        with open(audio_file_path, "wb") as f:
+            f.write(await audio_file.read())
+
+        task_config = {
+            "audio_file_path": audio_file_path,
+            "visualizer_params": visualizer_params.dict(),
+            "output_dir_base": "data/visualizations", # Base directory for task outputs
+            "task_id": task_id
+        }
+
+        await task_manager.create_task(
+            task_id=task_id,
+            task_type="visualizer",
+            config=task_config
+        )
+        
+        background_tasks.add_task(task_manager.run_visualizer_task, task_id)
+        
+        return {"task_id": task_id, "message": "Visualizer generation process initiated."}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format for visualizer_params_json.")
+    except ValidationError as e: # Pydantic validation errors
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error processing visualizer request: {str(e)}")
+
 # Enhance the WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
@@ -914,6 +961,42 @@ async def podcast_status(websocket: WebSocket, task_id: str):
     except Exception as e:
         try:
             await websocket.close(code=4000, reason=str(e))
+        except Exception:
+            pass
+    finally:
+        if status_queue:
+            await task_manager.unsubscribe_from_updates(task_id, status_queue)
+        manager.disconnect(task_id, websocket)
+
+@app.websocket("/ws/visualizer/{task_id}")
+async def visualizer_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for visualizer generation status updates."""
+    status_queue = None
+    try:
+        await manager.connect(task_id, websocket)
+        
+        # Subscribe to task updates
+        status_queue = await task_manager.subscribe_to_updates(task_id)
+        
+        while True:
+            # Wait for status updates
+            status = await status_queue.get()
+            await websocket.send_json(status.dict())
+            
+            # If task is completed or failed, close connection
+            if status.overallStatus in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                break
+                
+    except WebSocketDisconnect:
+        pass
+    except ValueError as e: # Handles task not found from subscribe_to_updates
+        try:
+            await websocket.close(code=4004, reason=str(e)) # Custom code for task not found
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            await websocket.close(code=4000, reason=str(e)) # Generic error
         except Exception:
             pass
     finally:

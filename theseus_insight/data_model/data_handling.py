@@ -94,16 +94,16 @@ class PaperDatabase:
                 cursor.execute('INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)', (provider['id'], provider['name']))
 
             # Create models table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS models (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    provider_id INTEGER NOT NULL,
-                    name TEXT NOT NULL,
-                    config_json TEXT,
-                    FOREIGN KEY (provider_id) REFERENCES model_providers(id),
-                    UNIQUE(provider_id, name)
-                )
-            ''')
+            # cursor.execute('''
+            #     CREATE TABLE IF NOT EXISTS models (
+            #         id INTEGER PRIMARY KEY AUTOINCREMENT,
+            #         provider_id INTEGER NOT NULL,
+            #         name TEXT NOT NULL,
+            #         config_json TEXT,
+            #         FOREIGN KEY (provider_id) REFERENCES model_providers(id),
+            #         UNIQUE(provider_id, name)
+            #     )
+            # ''')
 
     @contextmanager
     def get_cursor(self):
@@ -308,38 +308,38 @@ class PaperDatabase:
             cursor.execute('DELETE FROM model_providers WHERE id = ?', (provider_id,))
 
     # MODELS CRUD
-    def add_model(self, provider_id: int, name: str, config_json: str = None):
-        with self.get_cursor() as cursor:
-            cursor.execute('INSERT OR IGNORE INTO models (provider_id, name, config_json) VALUES (?, ?, ?)', (provider_id, name, config_json))
+    # def add_model(self, provider_id: int, name: str, config_json: str = None):
+    #     with self.get_cursor() as cursor:
+    #         cursor.execute('INSERT OR IGNORE INTO models (provider_id, name, config_json) VALUES (?, ?, ?)', (provider_id, name, config_json))
 
-    def upsert_model(self, provider_id: int, name: str, config_json: str = None):
-        with self.get_cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO models (provider_id, name, config_json) 
-                VALUES (?, ?, ?)
-                ON CONFLICT(provider_id, name) 
-                DO UPDATE SET config_json = excluded.config_json
-            ''', (provider_id, name, config_json))
+    # def upsert_model(self, provider_id: int, name: str, config_json: str = None):
+    #     with self.get_cursor() as cursor:
+    #         cursor.execute('''
+    #             INSERT INTO models (provider_id, name, config_json) 
+    #             VALUES (?, ?, ?)
+    #             ON CONFLICT(provider_id, name) 
+    #             DO UPDATE SET config_json = excluded.config_json
+    #         ''', (provider_id, name, config_json))
 
-    def get_models(self, provider_id: int = None, name: str = None):
-        with self.get_cursor() as cursor:
-            if provider_id is not None and name is not None:
-                cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ? AND name = ?', (provider_id, name))
-                row = cursor.fetchone()
-                return [{'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]}] if row else []
-            elif provider_id is not None:
-                cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ?', (provider_id,))
-            else:
-                cursor.execute('SELECT id, provider_id, name, config_json FROM models')
+    # def get_models(self, provider_id: int = None, name: str = None):
+    #     with self.get_cursor() as cursor:
+    #         if provider_id is not None and name is not None:
+    #             cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ? AND name = ?', (provider_id, name))
+    #             row = cursor.fetchone()
+    #             return [{'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]}] if row else []
+    #         elif provider_id is not None:
+    #             cursor.execute('SELECT id, provider_id, name, config_json FROM models WHERE provider_id = ?', (provider_id,))
+    #         else:
+    #             cursor.execute('SELECT id, provider_id, name, config_json FROM models')
             
-            rows = cursor.fetchall() # Ensure fetchall is used
-            return [
-                {'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]} for row in rows
-            ]
+    #         rows = cursor.fetchall() # Ensure fetchall is used
+    #         return [
+    #             {'id': row[0], 'provider_id': row[1], 'name': row[2], 'config_json': row[3]} for row in rows
+    #         ]
 
-    def delete_model(self, model_id: int):
-        with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM models WHERE id = ?', (model_id,))
+    # def delete_model(self, model_id: int):
+    #     with self.get_cursor() as cursor:
+    #         cursor.execute('DELETE FROM models WHERE id = ?', (model_id,))
 
     # EMAIL RECIPIENTS
     def get_email_recipients(self):

@@ -218,12 +218,26 @@
                 - On "completed": calls `taskApi.downloadTaskArtifact(podcastTaskId, 'audio')`.
                 - Converts blob to object URL, renders "Download Podcast" button.
                 - On "failed": displays error.
+            - **WebSocket Integration (`useWebSocket` hook for Podcast.tsx):**
+                - Connects to `ws://localhost:8000/ws/podcast/{taskId}`.
+                - Handles `RunStatusPayload` to update `pipelineStatus` (stage, progress, message) and `statusMessages` (live log).
+                - Sets `generating` to `false` on task completion/failure.
+                - Prepares download link for audio/video based on `createVisualization` state when task completes with a result.
+    - **`Visualizer.tsx` Page (frontend/src/pages/Visualizer.tsx):**
+        - **Core Functionality:**
+            - Audio file upload component.
+            - Visualization settings form (copied from `Podcast.tsx`).
+            - "Generate Visualization" button.
+            - WebSocket integration (`useWebSocket` with type `'visualizer'`) for live status and log.
+            - Download button for the generated video artifact.
+        - **Backend Integration:**
+            - API endpoint `POST /api/actions/run-visualizer-pipeline` in `main.py` (accepts audio file, visualizer params JSON).
+            - Task `run_visualizer_task` in `tasks.py` (imports `generate_visualizer_video` from `podcast.generator`).
+            - `taskApi.runVisualizerPipeline` in `frontend/src/services/api.ts`.
+            - Added `'visualizer'` to `useWebSocket` hook types.
 
 ## Next Steps
 - **React Frontend - `Podcast.tsx` Development:**
-    - Implement WebSocket for real-time status updates (similar to `Newsletter.tsx`).
-    - Refine the UI for podcast generation status (progress bar, messages, errors).
-    - Ensure robust error handling throughout the generation and download process.
     - Test PDF and URL inputs thoroughly, individually and combined.
     - Test intro music upload and inclusion in the generated podcast.
     - Test model configuration changes and their effect on generation.
@@ -231,7 +245,7 @@
     - Implement client-side validation for inputs where appropriate.
 - **General:**
     - Address any TODOs noted in the code (e.g., Dark Mode theme connection in `Settings.tsx`).
-    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`).
+    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`, `Visualizer`).
     - Review and refactor code for maintainability and scalability as per guidelines.
 - Awaiting next task or specific area of focus from the user for other areas.
 
@@ -247,18 +261,14 @@
         - Addressed by making fields optional (e.g., `podcast_model`, `tts_model` in `OrchestrationConfig`), providing defaults where necessary, and correcting `NodeStatus` model definition mismatches (ensuring `nodeId` was used consistently over `id`).
     - **Streamlit `StreamlitAPIException` (Nested Expanders):**
         - Resolved by restructuring UI in `settings.py` to avoid nesting `st.expander` elements.
-    - **Streamlit `StreamlitValueAssignmentNotAllowedError` (for `st.file_uploader`):**
-        - Resolved by removing problematic session state initialization for `pc_intro_music_file` in `podcast.py`.
-    - **Streamlit `KeyError` / `AttributeError` (Session State in Listener Threads):**
-        - Addressed by ensuring prefixed session state keys (e.g., `nl_...`, `pc_...`) were used and initialized robustly before thread access. Added defensive checks in listener functions.
-    - **Logic error with `st.rerun()` in Streamlit button clicks:**
-        - Corrected order of operations to ensure API calls and thread creations happen *before* `st.rerun()`.
-    - **WebSocket `TimeoutError` (Client-side):**
-        - Investigated, potentially related to connection handshake or server-side processing before `accept()`.
-        - Client-side `UnboundLocalError` in WebSocket listener's exception handling (due to `task_id_key` not being defined in all paths) was fixed by moving key string definitions to an earlier, guaranteed execution point.
-    - **MUI `Grid` component issues (React - `Settings.tsx`):**
-        - `item` prop not recognized by linter/TypeScript despite various import strategies.
-        - Resolved by replacing `Grid` with `Box` component and using flexbox for layout.
-    - **ArXiv Categories dynamic data handling (React - `Settings.tsx`):**
-        - Ensuring correct TypeScript typings for `arxiv_taxonomy.json`.
-        - Mapping lowercase subcategory codes from DB to potentially uppercase codes in the taxonomy file for `Autocomplete` initial value population.
+    - **Streamlit `StreamlitValueAssignmentNotAllowedError` (for `st.file_uploader`):
+    - **Podcast UI Callbacks Not Working (Session 20 - Current):**
+        - **Issue:** Podcast generation starts, but UI does not receive progress updates.
+        - **Diagnosis 1:** `PodcastGenerator.generate_podcast` accepts a `progress_callback`, but `TaskManager.run_podcast_task` was not passing it.
+        - **Fix 1:** Uncommented and correctly passed `self._progress_callback(task_id)` to `podcast_gen.generate_podcast` in `TaskManager.run_podcast_task` (`theseus_insight/api/tasks.py`).
+        - **Diagnosis 2 (Result of Fix 1):** FastAPI warning `RuntimeWarning: coroutine 'TaskManager._progress_callback.<locals>.callback' was never awaited` because the async callback was called from synchronous code (in a thread) without being scheduled on the event loop.
+        - **Fix 2:** Modified `TaskManager._progress_callback` to be a synchronous function. Inside this function, it now retrieves the current event loop and uses `asyncio.run_coroutine_threadsafe` to schedule the `update_task_status` coroutine, ensuring it runs on the main event loop. Added a fallback to `asyncio.run` if the loop isn't running, with a cautionary print statement.
+    - **Visualizer UI WebSocket Connection Error (Session 20 - Current):**
+        - **Issue:** Frontend fails to connect to `ws://localhost:8000/ws/visualizer/{task_id}`.
+        - **Diagnosis:** The WebSocket endpoint `/ws/visualizer/{task_id}` was not defined in the FastAPI backend (`theseus_insight/main.py`).
+        - **Fix:** Added a new WebSocket endpoint `@app.websocket("/ws/visualizer/{task_id}")` in `theseus_insight/main.py`, mirroring the structure of the existing `newsletter_status` and `podcast_status` endpoints.

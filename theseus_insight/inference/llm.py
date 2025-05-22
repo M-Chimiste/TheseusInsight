@@ -15,6 +15,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional
 from pydantic import BaseModel
+import numpy as np
 
 class InferenceModel(ABC):
     """
@@ -230,6 +231,72 @@ class SentenceTransformerInference(InferenceModel):
         return embeddings
 
 
+class OllamaEmbedInference(InferenceModel):
+    """Ollama Embedding Inference for Ollama's embedding API."""
+    def __init__(self,
+                 model_name: str = "nomic-embed-text",
+                 url: str = None):
+        """
+        Initialize Ollama embedding inference.
+        
+        Args:
+            model_name (str): Name of the embedding model (e.g., 'nomic-embed-text')
+            url (str): Ollama server URL, defaults to environment variable or localhost
+        """
+        self.url = url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+        super().__init__(model_name)
+
+    def _get_provider(self) -> str:
+        return "ollama-embed"
+
+    def _load_model(self):
+        from ollama import Client
+        return Client(host=self.url)
+    
+    def invoke(self, text: Union[str, List[str]], to_list: bool = False, 
+               normalize: bool = False, model_name: Optional[str] = None, **kwargs) -> Union[List, object]:
+        """
+        Generate embeddings using the Ollama embedding model.
+
+        Args:
+            text (Union[str, List[str]]): Text or list of texts to embed
+            to_list (bool): Whether to convert embeddings to Python lists
+            normalize (bool): Whether to normalize the embeddings (Note: normalization handled by model)
+            model_name (Optional[str]): Override the default model name if provided
+            **kwargs: Additional arguments
+
+        Returns:
+            Union[List, object]: The generated embeddings
+        """
+        if isinstance(text, str):
+            text = [text]
+        
+        # Generate embeddings for each text
+        embeddings = []
+        for single_text in text:
+            response = self.client.embeddings(
+                model=model_name or self.model_name,
+                prompt=single_text
+            )
+            embeddings.append(response['embedding'])
+        
+        # Convert to numpy arrays for consistency with SentenceTransformer
+        embeddings = [np.array(embedding) for embedding in embeddings]
+        
+        # Handle normalization if requested
+        if normalize:
+            embeddings = [embedding / np.linalg.norm(embedding) for embedding in embeddings]
+        
+        # Convert to list format if requested
+        if to_list:
+            embeddings = [embedding.tolist() for embedding in embeddings]
+        
+        # Return single embedding if only one text was provided
+        if len(embeddings) == 1:
+            return embeddings[0]
+        return embeddings
+
+
 class LlamacppInference(InferenceModel):
     """Llamacpp Inference for local GGUF models using llama-cpp-python."""
     def __init__(self,
@@ -318,6 +385,7 @@ class LLMModelFactory:
         'openai': OpenAIInference,
         'gemini': GeminiInference,
         'sentence-transformer': SentenceTransformerInference,
+        'ollama-embed': OllamaEmbedInference,
         'llamacpp': LlamacppInference
     }
 

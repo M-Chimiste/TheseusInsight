@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import date
@@ -52,7 +53,7 @@ class VisualizerSettings(BaseModel):
     line_width: int = 6
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "theme": "dark",
                 "font_size": 12,
@@ -81,7 +82,7 @@ class TTSModelConfig(BaseModel):
     speaker_2_speed: float = Field(..., ge=0.5, le=3.5)
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "tts_provider": "openai",
                 "tts_model_name": "tts-1",
@@ -107,7 +108,7 @@ class ModelProvider(BaseModel):
     name: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Pagination
 class PaginatedResponse(BaseModel):
@@ -179,10 +180,10 @@ class ResearchInterests(BaseModel):
 
 # Ensure this is at the end or handled correctly if models refer to each other.
 # This is a placeholder for now, actual model definitions will be used from above.
-Model.update_forward_refs()
-ModelConfig.update_forward_refs()
-OrchestrationConfig.update_forward_refs()
-NewsletterConfig.update_forward_refs()
+# Model.update_forward_refs()
+# ModelConfig.update_forward_refs()
+# OrchestrationConfig.update_forward_refs()
+# NewsletterConfig.update_forward_refs()
 
 # --- Podcast Generation Specific Models --- #
 

@@ -22,6 +22,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 ENV POETRY_NO_INTERACTION 1
+ENV RUNNING_IN_DOCKER true
 
 # Install system dependencies
 # ffmpeg is optional, include if your backend directly processes audio/video with it

@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
+import pathlib
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -23,6 +24,20 @@ from .api.models import (
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
 import asyncio
+
+# Determine base path for static files
+IS_RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
+
+if IS_RUNNING_IN_DOCKER:
+    STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend") 
+else:
+    # When running locally, static files are in theseus-ui/dist relative to project root
+    # Assuming main.py is in theseus_insight directory
+    PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent 
+    STATIC_FILES_BASE_DIR = PROJECT_ROOT / "theseus-ui" / "dist"
+
+STATIC_ASSETS_DIR = STATIC_FILES_BASE_DIR / "assets"
+STATIC_INDEX_HTML = STATIC_FILES_BASE_DIR / "index.html"
 
 # Pydantic model for Log entries
 class LogEntry(BaseModel):
@@ -178,18 +193,24 @@ app.add_middleware(
 
 # Serve React Frontend
 # Mount static files (React build) - this should be AFTER all API routes
-app.mount("/assets", StaticFiles(directory="static_frontend/assets"), name="assets")
+# Check if the directory exists before mounting, to prevent startup error if frontend hasn't been built locally
+if STATIC_ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_ASSETS_DIR), name="assets")
+else:
+    print(f"WARNING: Static assets directory not found at {STATIC_ASSETS_DIR}. Frontend may not be served correctly if running locally without a build.")
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):
     """Serves the index.html for any path not caught by API routes or specific static files."""
-    index_path = "static_frontend/index.html"
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
+    if STATIC_INDEX_HTML.exists():
+        return FileResponse(STATIC_INDEX_HTML)
     else:
         # This case should ideally not happen if the Dockerfile copies files correctly
-        # and the frontend builds an index.html
-        raise HTTPException(status_code=404, detail="Frontend index.html not found.")
+        # and the frontend builds an index.html. If running locally, frontend needs to be built.
+        detail_message = f"Frontend index.html not found at {STATIC_INDEX_HTML}."
+        if not IS_RUNNING_IN_DOCKER:
+            detail_message += " Ensure the frontend has been built (e.g., `npm run build` in `theseus-ui` directory)."
+        raise HTTPException(status_code=404, detail=detail_message)
 
 # Papers endpoints
 @app.get("/api/papers", response_model=PaginatedPapersResponse)

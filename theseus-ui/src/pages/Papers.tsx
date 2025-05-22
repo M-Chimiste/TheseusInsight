@@ -10,13 +10,20 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
+import ViewModuleIcon from '@mui/icons-material/ViewModule'; // For Grid view
+import ViewListIcon from '@mui/icons-material/ViewList'; // For List/Row view
 import type { SelectChangeEvent } from '@mui/material';
 import { papersApi } from '../services/api';
 import type { PaperApiResponse, PaginatedPapersResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
+import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
 
-const DEFAULT_PAGE_SIZE = 9; // 3 cards per row, 3 rows
+const DEFAULT_PAGE_SIZE = 9; // 3 cards per row, 3 rows for grid view
+
+type ViewMode = 'grid' | 'list';
 
 const Papers: React.FC = () => {
   // Keep track of all fetched papers for infinite scroll
@@ -27,6 +34,7 @@ const Papers: React.FC = () => {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // Track if more pages are available
   const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('grid'); // New state for view mode
 
   const loader = useRef<HTMLDivElement>(null); // For Intersection Observer
 
@@ -98,6 +106,15 @@ const Papers: React.FC = () => {
     setPageSize(newPageSize);
     // The useEffect for pageSize will handle resetting and fetching
   };
+
+  const handleViewModeChange = (
+    event: React.MouseEvent<HTMLElement>,
+    newViewMode: ViewMode | null, // newViewMode can be null if all buttons are deselected (though we'll enforce selection)
+  ) => {
+    if (newViewMode !== null) {
+      setViewMode(newViewMode);
+    }
+  };
   
   if (loading && allPapers.length === 0) { // Show full page loader only on initial load
     return (
@@ -122,30 +139,56 @@ const Papers: React.FC = () => {
         <Typography variant="h4" gutterBottom component="div">
           Historical Papers
         </Typography>
-        <FormControl sx={{ m: 1, minWidth: 120 }} size="small">
-            <InputLabel id="page-size-select-label">Items per page</InputLabel>
-            <Select<string>
-                labelId="page-size-select-label"
-                id="page-size-select"
-                value={pageSize.toString()}
-                label="Items per page"
-                onChange={handlePageSizeChange}
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <ToggleButtonGroup
+                value={viewMode}
+                exclusive
+                onChange={handleViewModeChange}
+                aria-label="view mode"
+                size="small"
+                sx={{ mr: 2 }}
             >
-                <MenuItem value={"9"}>9</MenuItem>
-                <MenuItem value={"15"}>15</MenuItem>
-                <MenuItem value={"30"}>30</MenuItem>
-                <MenuItem value={"60"}>60</MenuItem>
-            </Select>
-        </FormControl>
+                <ToggleButton value="grid" aria-label="grid view">
+                    <ViewModuleIcon />
+                </ToggleButton>
+                <ToggleButton value="list" aria-label="list view">
+                    <ViewListIcon />
+                </ToggleButton>
+            </ToggleButtonGroup>
+            <FormControl sx={{ m: 1, minWidth: 120 }} size="small">
+                <InputLabel id="page-size-select-label">Items per page</InputLabel>
+                <Select<string>
+                    labelId="page-size-select-label"
+                    id="page-size-select"
+                    value={pageSize.toString()}
+                    label="Items per page"
+                    onChange={handlePageSizeChange}
+                >
+                    <MenuItem value={"9"}>9</MenuItem>
+                    <MenuItem value={"15"}>15</MenuItem>
+                    <MenuItem value={"30"}>30</MenuItem>
+                    <MenuItem value={"60"}>60</MenuItem>
+                </Select>
+            </FormControl>
+        </Box>
       </Box>
       
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        {sortedPapers.map((paper) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={paper.id + "_" + paper.date_run}> {/* Ensure unique key if IDs can repeat across fetches, though unlikely with DB IDs */}
-            <PaperCard paper={paper} />
-          </Grid>
-        ))}
-      </Grid>
+      {/* Conditional Rendering based on viewMode */} 
+      {viewMode === 'grid' ? (
+        <Grid container spacing={3} sx={{ mb: 3 }}>
+          {sortedPapers.map((paper) => (
+            <Grid size={{ xs: 12, sm: 6, md: 4 }} key={paper.id + "_" + paper.date_run + "_grid"}>
+              <PaperCard paper={paper} />
+            </Grid>
+          ))}
+        </Grid>
+      ) : (
+        <Box sx={{ mb: 3 }}>
+          {sortedPapers.map((paper) => (
+            <PaperRowCard key={paper.id + "_" + paper.date_run + "_list"} paper={paper} />
+          ))}
+        </Box>
+      )}
 
       {/* Loader for infinite scroll */} 
       <div ref={loader} style={{ height: '50px', margin: '20px 0' }}>

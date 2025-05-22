@@ -21,11 +21,10 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi, podcastApi, taskApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { useWebSocket, type RunStatusPayload as WS_RunStatusPayload, type NodeStatusPayload as WS_NodeStatusPayload } from '../hooks/useWebSocket';
+import { useWebSocket, type RunStatusPayload as WS_RunStatusPayload } from '../hooks/useWebSocket';
 
 // Corrected Aliases and using type-only import
 interface RunStatusPayload extends WS_RunStatusPayload {}
-interface NodeStatusPayload extends WS_NodeStatusPayload {}
 
 const Podcast: React.FC = () => {
   const queryClient = useQueryClient();
@@ -43,8 +42,6 @@ const Podcast: React.FC = () => {
   const [podcastModelConfig, setPodcastModelConfig] = useState<any>({});
   const [ttsModelConfig, setTtsModelConfig] = useState<any>({});
   const [introMusicFile, setIntroMusicFile] = useState<File | null>(null);
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
   // Initialize local config when loaded
   React.useEffect(() => {

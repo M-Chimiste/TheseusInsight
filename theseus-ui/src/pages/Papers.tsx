@@ -6,16 +6,12 @@ import {
   Alert,
   Grid,
   Button,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
 import ViewModuleIcon from '@mui/icons-material/ViewModule'; // For Grid view
 import ViewListIcon from '@mui/icons-material/ViewList'; // For List/Row view
-import type { SelectChangeEvent } from '@mui/material';
+// import type { SelectChangeEvent } from '@mui/material'; // Commented out as unused
 import { papersApi } from '../services/api';
 import type { PaperApiResponse, PaginatedPapersResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
@@ -101,15 +97,15 @@ const Papers: React.FC = () => {
     return [...allPapers].sort((a, b) => b.score - a.score);
   }, [allPapers]);
 
-  const handlePageSizeChange = (event: SelectChangeEvent<string>) => {
-    const newPageSize = parseInt(event.target.value, 10);
-    setPageSize(newPageSize);
-    // The useEffect for pageSize will handle resetting and fetching
-  };
+  // const handlePageSizeChange = (event: SelectChangeEvent<string>) => {
+  //   const newPageSize = parseInt(event.target.value, 10);
+  //   setPageSize(newPageSize);
+  //   // The useEffect for pageSize will handle resetting and fetching
+  // };
 
   const handleViewModeChange = (
-    event: React.MouseEvent<HTMLElement>,
-    newViewMode: ViewMode | null, // newViewMode can be null if all buttons are deselected (though we'll enforce selection)
+    _event: React.MouseEvent<HTMLElement>, // Prefixed event with _ as it's unused
+    newViewMode: ViewMode | null, 
   ) => {
     if (newViewMode !== null) {
       setViewMode(newViewMode);

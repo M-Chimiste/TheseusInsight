@@ -274,6 +274,20 @@
                 - Added the "Considered Relevant" / "Considered Not Relevant" chip below the score, matching the grid view.
                 - Shortened relevance chip labels to "Relevant" / "Not Relevant" to prevent text cutoff.
                 - Increased date font size by changing Typography variant to `body2`.
+                - Made the entire card content area clickable to expand/collapse details (removed expand icon button).
+                - Removed hyperlink from the title and added a "View on ArXiv" link to the bottom of the expanded details section (matching grid view).
+                - Fixed linter warning for unused `theme` variable in `TruncatedTypography` styled component.
+    - **React Frontend - Dashboard Page (`Dashboard.tsx`, `App.tsx`, `Layout.tsx`):**
+        - Created a new `Dashboard.tsx` page displaying a grid of clickable navigation cards for major application sections (Settings, Newsletter, Podcast, Papers, etc.).
+        - Each card includes an icon, title, and brief description.
+        - Added a route for the Dashboard at the root path (`/`) in `App.tsx`.
+        - Added "Dashboard" as the first item in the sidebar navigation in `Layout.tsx`, using `DashboardIcon`.
+        - Moved the "Settings" card to be the last item on the Dashboard grid.
+
+    - **React Frontend - Linter Warning Fixes:**
+        - **`Papers.tsx`:**
+            - Commented out unused `SelectChangeEvent` import.
+            - Prefixed unused `event` parameter in `handleViewModeChange` with an underscore.
 
 ## Next Steps
 - **React Frontend - `Podcast.tsx` Development:**
@@ -317,40 +331,4 @@
         *   Copies backend application code and the built React frontend (to `/app/static_frontend`).
         *   Creates necessary data directories and exposes port 8000.
         *   Sets the default command to run FastAPI with Uvicorn.
-2.  **`docker-compose.yml` Configuration:**
-    *   Created `docker-compose.yml` to define the application service (`theseus-insight-app`).
-    *   Configured the service to build from the `Dockerfile`.
-    *   Maps host port 8000 to container port 8000.
-    *   Uses `env_file: .env` to load environment variables into the container.
-    *   Mounts the local `./data` directory to `/app/data` in the container for data persistence (SQLite DB, generated files).
-    *   Sets the `THESEUS_DB_PATH` environment variable within the container to `/app/data/papers.db`.
-3.  **FastAPI Backend Updates (`theseus_insight/main.py`):**
-    *   **Lifespan Event Handler:** Replaced deprecated `@app.on_event("startup")` and `@app.on_event("shutdown")` with the `lifespan` context manager for handling startup and shutdown tasks.
-        *   Startup logic includes directory creation, environment variable checks, and pre-population of Orchestration settings (from `../config/orchestration.json`) and Research Interests (from `../config/research_interests.txt`) into the database if they are not already present.
-        *   Shutdown logic includes closing WebSocket connections.
-    *   **Static File Serving:** Added logic to serve the built React frontend:
-        *   Mounted the `/app/static_frontend/assets` directory to `/assets` for serving static assets like CSS, JS, images.
-        *   Added a catch-all GET route (`"/{full_path:path}"`) to serve `static_frontend/index.html` for any path not caught by API routes, enabling client-side routing.
-
-**Previously Implemented (Papers Page - Pagination & Infinite Scrolling):**
-*   Backend: Enhanced `/api/papers` to support `page_size` and return `total_items`, `total_pages`, `current_page`.
-*   Frontend: Updated `Papers.tsx` with infinite scrolling using `IntersectionObserver` and a page size selector.
-
-### To Be Implemented Next:
-
-1.  **Refine Papers Page Functionality (Filters):**
-    *   **Backend Filtering:** Enhance `db.fetch_all_papers()` and the `/api/papers` endpoint to perform filtering (search term, score range, date range) directly at the database level.
-    *   **Advanced Frontend Filtering:** Add UI elements to `Papers.tsx` for users to input filter criteria.
-2.  **Visualizer Page Development & Font Update:** Implement the UI for triggering and viewing audio visualizations. Update font path in relevant backend/UI code to use the newly installed CJK font (`/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`).
-3.  **Newsletter Generation Page Enhancements.**
-4.  **Testing:** Thoroughly test the Dockerized application, including environment variable passing, volume mounts, and functionality of all pages.
-
-### Debug Log:
-
-*   Ensured `db` (database connection) is initialized before the FastAPI `app` instance in `main.py` due to its use in the `lifespan` startup phase.
-*   The WebSocket manager shutdown logic in `lifespan` was made conditional based on the availability of the `manager` object.
-*   The path for the Japanese font in the Docker image is `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` as requested.
-*   Static file serving in `main.py` is configured to serve assets from `/assets` and `index.html` via a catch-all route placed after API routes.
-
----
-(Previous content of project_status.md should be preserved below this block if any)
+2.  **`

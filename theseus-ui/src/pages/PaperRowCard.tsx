@@ -5,12 +5,9 @@ import {
     Typography,
     Box,
     Link,
-    IconButton,
     Collapse,
     Chip
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { styled } from '@mui/material/styles';
 import type { PaperApiResponse } from '../services/api'; // Assuming PaperApiResponse is in services/api
 
@@ -18,7 +15,7 @@ interface PaperRowCardProps {
   paper: PaperApiResponse;
 }
 
-const TruncatedTypography = styled(Typography)(({ theme }) => ({
+const TruncatedTypography = styled(Typography)(() => ({
   display: '-webkit-box',
   WebkitBoxOrient: 'vertical',
   WebkitLineClamp: 2,
@@ -37,13 +34,20 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
 
   return (
     <Card sx={{ display: 'flex', flexDirection: 'column', mb: 2, width: '100%' }}>
-      <CardContent sx={{ flexGrow: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <CardContent 
+        sx={{ 
+            flexGrow: 1, 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'flex-start',
+            cursor: 'pointer'
+        }}
+        onClick={handleExpandClick}
+      >
         <Box sx={{ flexGrow: 1, mr: 2 }}>
-          <Link href={paper.url} target="_blank" rel="noopener noreferrer" sx={{ textDecoration: 'none' }}>
-            <Typography variant="h6" component="div" gutterBottom sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'primary.main' }}>
-              {paper.title}
-            </Typography>
-          </Link>
+          <Typography variant="h6" component="div" gutterBottom sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'primary.main' }}>
+            {paper.title}
+          </Typography>
           <TruncatedTypography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             {paper.abstract}
           </TruncatedTypography>
@@ -71,9 +75,6 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1}}>
             {paper.date}
           </Typography>
-          <IconButton onClick={handleExpandClick} size="small" aria-expanded={expanded} aria-label="show more">
-            {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-          </IconButton>
         </Box>
       </CardContent>
       <Collapse in={expanded} timeout="auto" unmountOnExit>
@@ -90,6 +91,11 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
               </Typography>
             </>
           )}
+          <Typography variant="body2" sx={{mt:2}}>
+            <Link href={paper.url} target="_blank" rel="noopener noreferrer">
+              View on ArXiv
+            </Link>
+          </Typography>
         </CardContent>
       </Collapse>
     </Card>

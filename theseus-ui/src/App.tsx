@@ -13,6 +13,7 @@ const RunHistory = React.lazy(() => import('./pages/RunHistory'));
 const PodcastHistory = React.lazy(() => import('./pages/PodcastHistory'));
 const PodcastDetail = React.lazy(() => import('./pages/PodcastDetail'));
 const Papers = React.lazy(() => import('./pages/Papers'));
+const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,7 +32,7 @@ function App() {
           <Layout>
             <React.Suspense fallback={<div>Loading...</div>}>
               <Routes>
-                <Route path="/" element={<Navigate to="/settings" replace />} />
+                <Route path="/" element={<Dashboard />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/newsletter" element={<Newsletter />} />
                 <Route path="/podcast" element={<Podcast />} />

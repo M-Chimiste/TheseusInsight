@@ -23,6 +23,7 @@ import {
   History as HistoryIcon,
   ListAlt as ListAltIcon,
   MenuBook as MenuBookIcon,
+  Dashboard as DashboardIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 
@@ -38,6 +39,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { isDarkMode, toggleTheme } = useCustomTheme();
 
   const menuItems = [
+    { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },

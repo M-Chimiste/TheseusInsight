@@ -1,0 +1,54 @@
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+
+# venv
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.project
+*.tmproj
+.DS_Store
+
+# Node modules for frontend (if not building in Docker, or to ignore source if only copying build)
+/theseus-ui/node_modules
+/theseus-ui/build # If you build locally and copy, otherwise Docker builds it
+/theseus-ui/.env
+
+# Test files and coverage reports
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+coverage/
+.nyc_output/
+
+# Logs and databases (if not intended to be part of the image, handled by volumes)
+*.log
+# data/papers.db # We want the schema in the image, but not local data. Volume handles runtime data.
+# However, if data dir is entirely volume-managed, we can ignore it.
+# For now, let's assume an empty data directory is copied and then volume mounted.
+
+# Docker specific files
+Dockerfile
+docker-compose.yml
+
+# Git files
+.git
+.gitignore
+
+# Temp files from populate/clear scripts if any residual
+*.sqlite3-journal 

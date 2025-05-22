@@ -27,9 +27,8 @@ FlagEmbedding
 anthropic[bedrock]
 openai
 ollama
-langchain
 soundfile
-kokoro
+google-generativeai
 
 # Data Processing & Management
 pandas
@@ -38,7 +37,7 @@ json_repair
 tabulate
 pydantic
 tqdm
-numba>=0.56.4
+numba
 
 # PDF & Document Processing
 PyPDF2
@@ -61,8 +60,25 @@ appdirs
 # Media Processing
 pydub  # Audio
 moviepy  # Video
+pygame  # Visualization
 
 # YouTube Integration
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+
+# Electron
+fastapi
+uvicorn
+python-multipart
+
+# Additional dependencies
+websockets
+email-validator
+python-jose[cryptography]
+passlib[bcrypt]
+
+streamlit
+plotly
+streamlit-aggrid
+python-multipart

@@ -1,185 +1,203 @@
-# PaperPal
+# Theseus Insight
 
-PaperPal is a tool for sorting and analyzing research papers based on your personal research interests. It's designed to be accessible and customizable, allowing users to adapt it for their specific needs.
+<p align="center">
+  <img src="assets/theseus%20insight%20logo.png" alt="Theseus Insight logo" width="300"/>
+</p>
 
-## Key Features
+Theseus Insight is an end‑to‑end platform for analysing research papers and generating newsletters or podcast episodes from them.  The project provides a FastAPI backend, a React interface and utility scripts that orchestrate language models and text‑to‑speech engines.
 
-- Integration with various language models (Llama 3.1, OpenAI, Anthropic, Gemini) for paper summarization and recommendation
-- Support for using different models for different tasks (judging, content extraction, newsletter generation) based on configuration
-- Automated paper downloads from Papers with Code
-- Saving outputs to a SQLite database
-- Automated email notifications with research digests in Markdown format
-- Customizable research interests
-- Embedding-based paper filtering with configurable similarity thresholds
+## Table of Contents
+- [Overview](#overview)
+- [Quickstart](#quickstart)
+- [Features](#features)
+- [Architecture and Modules](#architecture-and-modules)
+- [Installation](#installation)
+- [Environment Variables](#environment-variables)
+- [Running the API](#running-the-api)
+- [Running the Frontend](#running-the-frontend)
+- [Key Endpoints](#key-endpoints)
+  - [PDF Uploads](#pdf-uploads)
+  - [Podcast Generation](#podcast-generation)
+  - [Script Management](#script-management)
+  - [Visualizer Generation](#visualizer-generation)
+  - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
+- [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
+- [License](#license)
+- [Credits](#credits)
 
-## Requirements
+---
 
-- A machine with good computational resources if you are not using a LLM with an API. CPU and MPS are supported through Ollama. Check out the [Ollama](https://ollama.com/) website for more information.
-- PyTorch 2.4+
-- CUDA 11.7+ (for GPU support)
+## Overview
+
+Theseus Insight fetches and ranks papers from [rXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
+
+---
+
+## Quickstart
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/M-Chimiste/TheseusInsight.git
+   cd TheseusInsight
+   ```
+2. **Create a `.env` file** with the variables described in [Environment Variables](#environment-variables).
+3. **Start the stack with Docker**
+   ```bash
+   docker compose up --build
+   ```
+   The API and built React frontend will be available on <http://localhost:8000>.
+
+During development you can run the React interface separately:
+```bash
+cd theseus-ui
+npm install
+npm run dev
+```
+This starts Vite on <http://localhost:5173> which proxies API requests to the backend.
+
+---
+
+## Features
+
+- **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
+- **React** frontend built with Vite and Material UI, served from the backend in production.
+- **Real‑time progress** streaming over WebSockets for long running tasks.
+- **SQLite database** for storing papers, runs and configuration data.
+- **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
+- **Dockerfile and Compose setup** to run the entire application in containers.
+
+---
+
+## Architecture and Modules
+
+```
+theseus_insight/
+  api/               # FastAPI models, tasks and routes
+  communication/     # Gmail and YouTube helpers
+  data_model/        # SQLite interactions and pydantic models
+  data_processing/   # Arxiv harvesting utilities
+  inference/         # LLM and TTS wrappers
+  pdf/               # PDF parsing helpers
+  podcast/           # Podcast and visualiser generation
+  main.py            # FastAPI entrypoint
+  theseus_insight.py # Pipeline orchestrator
+```
+
+Configuration files live in `config/` and the React app is located in `theseus-ui/`.
+
+---
 
 ## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/M-Chimiste/PaperPal.git
-   cd PaperPal
-   ```
-
-2. Install the requirements:
+If you prefer running locally without Docker:
+1. Install Python dependencies
    ```bash
    pip install -r requirements.txt
    ```
+2. (Optional) install Node.js 18+ and build the frontend
+   ```bash
+   cd theseus-ui
+   npm install
+   npm run build
+   ```
+3. Configure environment variables as shown below.
 
-3. Set up your environment variables:
-   - Create a `.env` file in the project root and add your API keys:
-     ```
-     ANTHROPIC_API_KEY=your_anthropic_key
-     OPENAI_API_KEY=your_openai_key
-     GOOGLE_API_KEY=your_google_api_key
-     GMAIL_SENDER_ADDRESS=your_gmail_address
-     GMAIL_APP_PASSWORD=your_gmail_app_password
-     OLLAMA_URL=http://localhost:11434
-     ```
+---
 
-4. Configure Gmail:
-   - To use Gmail for sending emails, you need to set up an application password. Follow [these instructions](https://support.google.com/mail/answer/185833?hl=en) to create an app password for Gmail.
-   - Add your Gmail address and app password to the `.env` file as shown above.
+## Environment Variables
 
-## Usage
+Create a `.env` file in the project root containing keys and settings:
 
-The main script to run PaperPal is `run_paperpal.py`. You can run it with default settings or customize various parameters:
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | API key for OpenAI models and TTS |
+| `ANTHROPIC_API_KEY` | API key for Anthropic Claude models |
+| `GOOGLE_API_KEY` | API key for Google Gemini models |
+| `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
+| `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
+| `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication |
+| `THESEUS_DB_PATH` | Path to the SQLite database (default `data/papers.db`) |
+| `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
+| `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
+
+---
+
+## Running the API
+
+Run the FastAPI app locally with Uvicorn:
 
 ```bash
-# Run with default settings
-python run_paperpal.py
+uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-### Running with Custom Parameters
 
+Interactive docs are served at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+---
+
+## Running the Frontend
+
+During development use the Vite dev server as shown in the [Quickstart](#quickstart) section.  When using Docker or after running `npm run build`, the compiled frontend is served automatically from FastAPI on port 8000.
+
+---
+
+## Key Endpoints
+
+### PDF Uploads
+- **`POST /api/pdf/upload`** – upload a single PDF.
+- **`POST /api/pdf/batch-upload`** – upload multiple PDFs.
+
+### Podcast Generation
+- **`POST /api/podcast/generate`** – start podcast generation.
+- **`GET /api/podcast/status/{task_id}`** – check task status.
+- **`GET /api/podcast/download/{filename}`** – download the final file.
+
+### Script Management
+- **`POST /api/script/save`** – save a generated script.
+- **`GET /api/script/list`** – list saved scripts.
+- **`GET /api/script/download/{filename}`** – download a script.
+
+### Visualizer Generation
+- **`POST /api/visualizer/generate`** – create a visualiser video.
+- **`GET /api/visualizer/status/{task_id}`** – check generation status.
+
+### Theseus Insight Run Orchestration
+- **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
+
+---
+
+## Using Theseus Insight as a Library
+
+```python
+from theseus_insight import TheseusInsight
+
+ti = TheseusInsight(
+    research_interests_path="config/research_interests.txt",
+    orchestration_config="config/orchestration.json",
+)
+ti.run()
+```
+
+Or via the CLI:
 ```bash
-python run_paperpal.py --n-days 14 --top-n 20 --model-name llama2
+python run_theseus_insight.py --generate-podcast True --generate-email True
 ```
 
-### Available Arguments
-
-- `--research-interests-path`: Path to research interests file (default: "config/research_interests.txt")
-- `--n-days`: Number of days to look back for papers (default: 7)
-- `--top-n`: Number of top papers to return (default: 5)
-- `--use-different-models`: Use different models for different tasks (default: True)
-- `--model-type`: Type of model to use (default: "ollama")
-- `--model-name`: Name of the model to use (default: "hermes3")
-- `--orchestration-config`: Path to config for multiple models (default: "config/orchestration.json")
-- `--embedding-model-name`: Name of the embedding model (default: "Alibaba-NLP/gte-base-en-v1.5")
-- `--trust-remote-code`: Whether to trust remote code (default: True)
-- `--receiver-address`: Email address for notifications (default: None)
-- `--max-new-tokens`: Maximum number of new tokens to generate (default: 1024)
-- `--temperature`: Temperature for text generation (default: 0.1)
-- `--cosine-similarity-threshold`: Threshold for cosine similarity (default: 0.5)
-- `--db-saving`: Whether to save results to database (default: True)
-- `--data-path`: Path to the database file (default: "data/papers.db")
-- `--verbose`: Enable verbose output (default: True)
-- `--start-date`: Start date for paper retrieval (default: None)
-- `--end-date`: End date for paper retrieval (default: None)
-
-## Using Multiple Models
-
-PaperPal supports the use of multiple models for different tasks. This is configured via the `config/orchestration.json` file and leveraged by the `PaperPal` class.
-
-#### Configure `orchestration.json`
-
-Define different models for specific tasks in the `config/orchestration.json` file:
-
-```json
-{
-    "judge_model": {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 1024,
-        "temperature": 0.1,
-        "num_ctx": 4096
-    },
-    "newsletter_model": {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "content_extraction_model": {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_sections_model": {
-        "model_name": "qwen2.5:32b",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_intro_model": {
-        "model_name": "qwen2.5:32b",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
-}
-```
-
-Each task can be configured with:
-- `model_name`: The specific model to use
-- `model_type`: The type of model ("ollama", "anthropic", "openai", or "gemini")
-- `max_new_tokens`: Maximum number of tokens to generate
-- `temperature`: Temperature for text generation
-- `num_ctx`: Context window size (optional, mainly for local models)
-
-### Task-Specific Models
-
-PaperPal now supports different models for various tasks:
-
-- **Judge Model**: Evaluates papers against research interests
-- **Newsletter Model**: Generates the overall newsletter structure
-- **Content Extraction Model**: Extracts and summarizes content from papers
-- **Newsletter Sections Model**: Generates individual paper sections
-- **Newsletter Intro Model**: Creates the newsletter introduction
-
-## Email Formatting
-
-PaperPal now supports Markdown formatting in email newsletters:
-- Headers and sections are properly formatted
-- Links are clickable
-- Text styling (bold, italic) is preserved
-
-## Configuration
-
-- **Model Selection**: Set the `MODEL_TYPE` environment variable to "ollama", "anthropic", "openai", or "gemini" to choose the default model type.
-- **Orchestration**: Configure different models for different tasks in `config/orchestration.json`.
-- **Email**: Configure Gmail API access or modify `communication.py` for other email providers.
-- **Research Interests**: Update `config/research_interests.txt` with your research interests.
-
-## Customization
-
-- **Prompts**: Modify prompts in `paperpal/prompts.py` to adjust the AI's behavior.
-- **Inference**: Add or modify inference methods in `paperpal/inference.py` for different models.
-- **Model Orchestration**: Configure different models for different tasks in `config/orchestration.json`.
-
-## Database
-
-PaperPal uses SQLite to store paper information and generated newsletters. The database schema can be found in `paperpal/data_handling.py`.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+---
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the LICENSE file for details.
+This project is licensed under the [Apache License 2.0](LICENSE) unless otherwise stated.
 
-## Acknowledgements
+---
 
-- [Papers with Code](https://paperswithcode.com/) for providing the research paper data
-- [Hugging Face](https://huggingface.co/) for transformer models and tokenizers
-- [Ollama](https://ollama.com/) for local model support
+## Credits
+
+- [paperswithcode.com](https://paperswithcode.com/) for research paper data.
+- [Docling](https://github.com/doclingjs/docling) for document parsing.
+- [pydub](https://github.com/jiaaro/pydub) for audio processing.
+- [KokoroTTS](https://github.com/fakeyh/kokoro-tts), [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
+- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [SQLite](https://www.sqlite.org/) for backend processing.
+
+Theseus Insight is maintained by [M. Chimiste](https://github.com/fakeyh) & contributors.
+

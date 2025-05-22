@@ -15,6 +15,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional
 from pydantic import BaseModel
+import numpy as np
 
 class InferenceModel(ABC):
     """
@@ -230,6 +231,150 @@ class SentenceTransformerInference(InferenceModel):
         return embeddings
 
 
+class OllamaEmbedInference(InferenceModel):
+    """Ollama Embedding Inference for Ollama's embedding API."""
+    def __init__(self,
+                 model_name: str = "nomic-embed-text",
+                 url: str = None):
+        """
+        Initialize Ollama embedding inference.
+        
+        Args:
+            model_name (str): Name of the embedding model (e.g., 'nomic-embed-text')
+            url (str): Ollama server URL, defaults to environment variable or localhost
+        """
+        self.url = url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+        super().__init__(model_name)
+
+    def _get_provider(self) -> str:
+        return "ollama-embed"
+
+    def _load_model(self):
+        from ollama import Client
+        return Client(host=self.url)
+    
+    def invoke(self, text: Union[str, List[str]], to_list: bool = False, 
+               normalize: bool = False, model_name: Optional[str] = None, **kwargs) -> Union[List, object]:
+        """
+        Generate embeddings using the Ollama embedding model.
+
+        Args:
+            text (Union[str, List[str]]): Text or list of texts to embed
+            to_list (bool): Whether to convert embeddings to Python lists
+            normalize (bool): Whether to normalize the embeddings (Note: normalization handled by model)
+            model_name (Optional[str]): Override the default model name if provided
+            **kwargs: Additional arguments
+
+        Returns:
+            Union[List, object]: The generated embeddings
+        """
+        if isinstance(text, str):
+            text = [text]
+        
+        # Generate embeddings for each text
+        embeddings = []
+        for single_text in text:
+            response = self.client.embeddings(
+                model=model_name or self.model_name,
+                prompt=single_text
+            )
+            embeddings.append(response['embedding'])
+        
+        # Convert to numpy arrays for consistency with SentenceTransformer
+        embeddings = [np.array(embedding) for embedding in embeddings]
+        
+        # Handle normalization if requested
+        if normalize:
+            embeddings = [embedding / np.linalg.norm(embedding) for embedding in embeddings]
+        
+        # Convert to list format if requested
+        if to_list:
+            embeddings = [embedding.tolist() for embedding in embeddings]
+        
+        # Return single embedding if only one text was provided
+        if len(embeddings) == 1:
+            return embeddings[0]
+        return embeddings
+
+
+class LlamacppInference(InferenceModel):
+    """Llamacpp Inference for local GGUF models using llama-cpp-python."""
+    def __init__(self,
+                 model_name: str,
+                 max_new_tokens: int = 4096,
+                 temperature: float = 0.1,
+                 num_ctx: int = 131072,
+                 n_gpu_layers: int = -1,
+                 verbose: bool = False,
+                 **kwargs):
+        """
+        Initialize Llamacpp inference.
+        
+        Args:
+            model_name (str): Path to the GGUF model file
+            max_new_tokens (int): Maximum number of new tokens to generate
+            temperature (float): Sampling temperature
+            num_ctx (int): Context window size
+            n_gpu_layers (int): Number of layers to offload to GPU (-1 for all)
+            verbose (bool): Whether to enable verbose logging
+            **kwargs: Additional arguments to pass to Llama constructor
+        """
+        self.num_ctx = num_ctx
+        self.n_gpu_layers = n_gpu_layers
+        self.verbose = verbose
+        self.model_kwargs = kwargs
+        super().__init__(model_name, max_new_tokens, temperature)
+
+    def _get_provider(self) -> str:
+        return "llamacpp"
+
+    def _load_model(self):
+        from llama_cpp import Llama
+        return Llama(
+            model_path=self.model_name,
+            n_ctx=self.num_ctx,
+            n_gpu_layers=self.n_gpu_layers,
+            verbose=self.verbose,
+            **self.model_kwargs
+        )
+    
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str,
+               max_tokens: Optional[int] = None, temperature: Optional[float] = None,
+               schema: Optional[BaseModel] = None, **kwargs) -> str:
+        """
+        Generate a response using the Llamacpp model.
+
+        Args:
+            messages (List[Dict[str, str]]): List of message dictionaries with 'role' and 'content' keys
+            system_prompt (str): System prompt to prepend to the messages
+            max_tokens (Optional[int]): Override the default max_new_tokens if provided
+            temperature (Optional[float]): Override the default temperature if provided
+            schema (Optional[BaseModel]): Pydantic model for structured output
+
+        Returns:
+            str: The generated response text
+        """
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        
+        # Prepare generation parameters
+        generation_params = {
+            "messages": full_messages,
+            "max_tokens": max_tokens or self.max_new_tokens,
+            "temperature": temperature or self.temperature,
+            **kwargs
+        }
+        
+        # Add schema support for structured output
+        if schema:
+            generation_params["response_format"] = {
+                "type": "json_object",
+                "schema": schema.model_json_schema()
+            }
+        
+        response = self.client.create_chat_completion(**generation_params)
+        return response['choices'][0]['message']['content']
+
+
 class LLMModelFactory:
     """
     Factory class for creating inference model instances.
@@ -239,7 +384,9 @@ class LLMModelFactory:
         'anthropic': AnthropicInference,
         'openai': OpenAIInference,
         'gemini': GeminiInference,
-        'sentence-transformer': SentenceTransformerInference
+        'sentence-transformer': SentenceTransformerInference,
+        'ollama-embed': OllamaEmbedInference,
+        'llamacpp': LlamacppInference
     }
 
     @classmethod

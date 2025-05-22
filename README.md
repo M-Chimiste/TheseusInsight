@@ -29,7 +29,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 
 ## Overview
 
-Theseus Insight fetches and ranks papers from [paperswithcode.com](https://paperswithcode.com/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
+Theseus Insight fetches and ranks papers from [rXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
 
 ---
 
@@ -37,7 +37,7 @@ Theseus Insight fetches and ranks papers from [paperswithcode.com](https://paper
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/youruser/TheseusInsight.git
+   git clone https://github.com/M-Chimiste/TheseusInsight.git
    cd TheseusInsight
    ```
 2. **Create a `.env` file** with the variables described in [Environment Variables](#environment-variables).

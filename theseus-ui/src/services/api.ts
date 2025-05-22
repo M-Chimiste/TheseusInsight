@@ -89,4 +89,41 @@ export const runsApi = {
 export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
+};
+
+export interface LogEntry {
+  task_id: string;
+  status: string;
+  datetime_run: string;
+}
+
+export const getLogs = async (limit: number = 100, fromDate?: string, toDate?: string): Promise<LogEntry[]> => {
+  const params: Record<string, string | number> = { limit };
+  if (fromDate) {
+    params.from_date = fromDate;
+  }
+  if (toDate) {
+    params.to_date = toDate;
+  }
+  const response = await api.get<LogEntry[]>("/logs", { params });
+  return response.data;
+};
+
+// Task API calls
+export interface RunStatusPayload { 
+  taskId: string;
+  status: string;
+  progress?: number;
+  message?: string;
+}
+
+export const getTaskStatus = async (taskId: string): Promise<RunStatusPayload | null> => {
+  if (!taskId || taskId.startsWith("dummy-")) return null; // Avoid calling API with placeholder
+  try {
+    const response = await api.get<RunStatusPayload>(`/tasks/${taskId}/status`);
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching status for task ${taskId}:`, error);
+    return null;
+  }
 }; 

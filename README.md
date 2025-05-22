@@ -4,10 +4,11 @@
   <img src="assets/theseus%20insight%20logo.png" alt="Theseus Insight logo" width="300"/>
 </p>
 
-Theseus Insight is a multi-purpose project that processes PDF research papers, ranks them against your research interests, generates personalized newsletters, and can also produce podcast episodes (including optional visualized audio). It uses a combination of FastAPI endpoints, language models (LLMs), text-to-speech engines, and various utility scripts.
+Theseus Insight is an end‑to‑end platform for analysing research papers and generating newsletters or podcast episodes from them.  The project provides a FastAPI backend, a React interface and utility scripts that orchestrate language models and text‑to‑speech engines.
 
 ## Table of Contents
 - [Overview](#overview)
+- [Quickstart](#quickstart)
 - [Features](#features)
 - [Architecture and Modules](#architecture-and-modules)
 - [Installation](#installation)
@@ -28,35 +29,42 @@ Theseus Insight is a multi-purpose project that processes PDF research papers, r
 
 ## Overview
 
-Theseus Insight is designed to automate tasks around recent research papers. It:
+Theseus Insight fetches and ranks papers from [paperswithcode.com](https://paperswithcode.com/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
 
-1. **Fetches & parses** papers from [paperswithcode.com](https://paperswithcode.com/) dumps within a date range.
-2. **Embeds** papers, checks their relevance to your research interests, and ranks them with large language models.
-3. **Generates** personalized newsletters describing those papers.
-4. **Produces** a TTS-based podcast from PDF or textual content, optionally with a dynamic visualizer video.
-5. **Sends** the newsletter via Gmail (if configured), and can optionally upload podcast videos to YouTube.
+---
 
-It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) for summarization, ranking, or conversation tasks, and can use different TTS providers (Polly, OpenAI TTS, or [KokoroTTS](https://github.com/fakeyh/kokoro-tts)).
+## Quickstart
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/youruser/TheseusInsight.git
+   cd TheseusInsight
+   ```
+2. **Create a `.env` file** with the variables described in [Environment Variables](#environment-variables).
+3. **Start the stack with Docker**
+   ```bash
+   docker compose up --build
+   ```
+   The API and built React frontend will be available on <http://localhost:8000>.
+
+During development you can run the React interface separately:
+```bash
+cd theseus-ui
+npm install
+npm run dev
+```
+This starts Vite on <http://localhost:5173> which proxies API requests to the backend.
 
 ---
 
 ## Features
 
-- **FastAPI** server with endpoints to handle:
-  - Uploading PDFs
-  - Generating scripts & podcasts
-  - Managing TTS visualizer generation
-  - Checking generation status, downloading results
-  - Handling a "Theseus Insight run" that orchestrates the entire pipeline
-- **In-memory or SQLite** database for:
-  - Storing references to papers
-  - Saving newsletters
-  - Tracking podcasts & logs
-- **Flexible LLM usage**: can switch among Anthropic, OpenAI, Ollama, or Gemini for inference tasks.
-- **TTS**: Choose KokoroTTS, Amazon Polly, or OpenAI TTS. Generate final MP3 or WAV files.
-- **Podcast**: Compose multi-speaker dialogues automatically, then convert them to TTS, merge segments into a final audio file, and optionally create a matrix-based visualizer.
-- **Newsletter**: Summarizes new relevant papers, providing references and sending them via email.
-- **Configurable orchestration**: All model and pipeline orchestration is handled via `config/orchestration.json`.
+- **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
+- **React** frontend built with Vite and Material UI, served from the backend in production.
+- **Real‑time progress** streaming over WebSockets for long running tasks.
+- **SQLite database** for storing papers, runs and configuration data.
+- **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
+- **Dockerfile and Compose setup** to run the entire application in containers.
 
 ---
 
@@ -64,82 +72,41 @@ It leverages multiple text models (Anthropic, OpenAI, Ollama, or Google Gemini) 
 
 ```
 theseus_insight/
-  api/
-    routers/
-      pdf.py          # Handles PDF upload
-      podcast.py      # Long-running tasks to generate podcasts
-      script.py       # Script management for saved dialogues
-      visualizer.py   # Endpoint to generate video visualizers from audio
-    theseus_insight_routes.py # Endpoint to orchestrate Theseus Insight runs
-    __init__.py
-    uploads/         # Uploaded files
-    scripts/         # Saved scripts
-  communication/
-    communication.py  # Gmail email sending
-    youtube_integration.py # YouTube uploading
-    __init__.py
-  data_model/
-    dialog.py         # Pydantic models for dialogues
-    data_handling.py  # SQLite DB interactions (papers, newsletters, podcasts)
-    papers.py         # Paper metadata models
-    __init__.py
-  data_processing/
-    arxiv.py          # Arxiv data download/processing
-    harvester.py      # Data harvesting utilities
-    __init__.py
-  inference/
-    llm.py            # LLM classes for Anthropic, OpenAI, Ollama, Gemini, etc.
-    tts.py            # TTS classes for Kokoro, Polly, OpenAI TTS
-    __init__.py
-  pdf/
-    parsers.py        # PDF -> Markdown parsers (using docling)
-    processing.py     # Table & figure extraction from PDFs
-    __init__.py
-  podcast/
-    generator.py      # Podcast generation logic (main: PodcastGenerator)
-    visualizer.py     # Visualizer logic (pygame + moviepy)
-    __init__.py
-  prompt/
-    prompting.py      # Jinja2-based prompt decorator
-    data_models.py
-    newsletter_prompts.py
-    podcast_prompts.py
-    system_prompts.py
-    templates.py
-    __init__.py
-  constants.py        # Project-wide constants
-  main.py             # FastAPI entrypoint
-  theseus_insight.py  # Main orchestrator class (TheseusInsight)
-  utils.py            # Cosine similarity, date helpers, other utilities
-  __init__.py         # Root init
-config/
-  orchestration.json  # Model and pipeline orchestration config
-run_paperpal.py       # CLI entrypoint for running the full pipeline
+  api/               # FastAPI models, tasks and routes
+  communication/     # Gmail and YouTube helpers
+  data_model/        # SQLite interactions and pydantic models
+  data_processing/   # Arxiv harvesting utilities
+  inference/         # LLM and TTS wrappers
+  pdf/               # PDF parsing helpers
+  podcast/           # Podcast and visualiser generation
+  main.py            # FastAPI entrypoint
+  theseus_insight.py # Pipeline orchestrator
 ```
 
-**Key classes include:**
-- `TheseusInsight`: The main orchestrator to download, embed, rank, generate newsletters, produce podcasts, and optionally email or upload final artifacts.
-- `PodcastGenerator`: Assembles multi-speaker dialogues from PDF or text, converts them to TTS, and optionally produces a matrix-based visualizer.
-- Various FastAPI routers for structured endpoints.
+Configuration files live in `config/` and the React app is located in `theseus-ui/`.
 
 ---
 
 ## Installation
 
-1. **Clone or download** this repository.
-2. **Install dependencies**. For example:
+If you prefer running locally without Docker:
+1. Install Python dependencies
    ```bash
    pip install -r requirements.txt
    ```
-   (Make sure your environment has the relevant TTS/LLM dependencies.)
-
-3. **(Optional) Configure LLM & TTS providers** as described in the Environment Variables section.
+2. (Optional) install Node.js 18+ and build the frontend
+   ```bash
+   cd theseus-ui
+   npm install
+   npm run build
+   ```
+3. Configure environment variables as shown below.
 
 ---
 
 ## Environment Variables
 
-Set the following environment variables to enable all optional features. Values can be placed in a `.env` file at the project root.
+Create a `.env` file in the project root containing keys and settings:
 
 | Variable | Purpose |
 |----------|---------|
@@ -158,58 +125,48 @@ Set the following environment variables to enable all optional features. Values 
 
 ## Running the API
 
-Run the FastAPI app using uvicorn:
+Run the FastAPI app locally with Uvicorn:
 
 ```bash
 uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-View interactive docs at [http://localhost:8000/docs](http://localhost:8000/docs).
+Interactive docs are served at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ---
 
 ## Running the Frontend
 
-The optional React interface lives in the `theseus-ui` folder. Use Node.js 18+ and run:
-
-```bash
-cd theseus-ui
-npm install
-npm run dev
-```
-
-This starts a Vite development server on <http://localhost:5173> which proxies API requests to the backend.
+During development use the Vite dev server as shown in the [Quickstart](#quickstart) section.  When using Docker or after running `npm run build`, the compiled frontend is served automatically from FastAPI on port 8000.
 
 ---
 
 ## Key Endpoints
 
 ### PDF Uploads
-- **`POST /api/pdf/upload`**  Upload a single PDF file.
-- **`POST /api/pdf/batch-upload`**  Upload multiple PDFs.
+- **`POST /api/pdf/upload`** – upload a single PDF.
+- **`POST /api/pdf/batch-upload`** – upload multiple PDFs.
 
 ### Podcast Generation
-- **`POST /api/podcast/generate`**  Generate a podcast from PDFs or text.
-- **`GET /api/podcast/status/{task_id}`**  Check status of a podcast generation task.
-- **`GET /api/podcast/download/{filename}`**  Download the final podcast file.
+- **`POST /api/podcast/generate`** – start podcast generation.
+- **`GET /api/podcast/status/{task_id}`** – check task status.
+- **`GET /api/podcast/download/{filename}`** – download the final file.
 
 ### Script Management
-- **`POST /api/script/save`**  Save a generated script.
-- **`GET /api/script/list`**  List saved scripts.
-- **`GET /api/script/download/{filename}`**  Download a saved script.
+- **`POST /api/script/save`** – save a generated script.
+- **`GET /api/script/list`** – list saved scripts.
+- **`GET /api/script/download/{filename}`** – download a script.
 
 ### Visualizer Generation
-- **`POST /api/visualizer/generate`**  Generate a visualizer video.
-- **`GET /api/visualizer/status/{task_id}`**  Check visualizer generation status.
+- **`POST /api/visualizer/generate`** – create a visualiser video.
+- **`GET /api/visualizer/status/{task_id}`** – check generation status.
 
 ### Theseus Insight Run Orchestration
-- **`POST /api/theseus_insight/run`**  Orchestrate the full pipeline (papers, newsletter, podcast, etc).
+- **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
 
 ---
 
 ## Using Theseus Insight as a Library
-
-You can use the main orchestrator directly in your own scripts:
 
 ```python
 from theseus_insight import TheseusInsight
@@ -217,13 +174,11 @@ from theseus_insight import TheseusInsight
 ti = TheseusInsight(
     research_interests_path="config/research_interests.txt",
     orchestration_config="config/orchestration.json",
-    # ... other config options ...
 )
 ti.run()
 ```
 
-Or use the CLI entrypoint:
-
+Or via the CLI:
 ```bash
 python run_theseus_insight.py --generate-podcast True --generate-email True
 ```
@@ -232,7 +187,7 @@ python run_theseus_insight.py --generate-podcast True --generate-email True
 
 ## License
 
-This project is licensed under the [Apache License 2.0](LICENSE) unless otherwise stated in specific files.
+This project is licensed under the [Apache License 2.0](LICENSE) unless otherwise stated.
 
 ---
 

@@ -187,9 +187,6 @@ class PaperDatabase:
             if not hasattr(log, field) or getattr(log, field) is None:
                 raise ValueError(f"Log object is missing required field: {field}")
 
-        if not isinstance(log.status_code, int):
-            raise ValueError("status_code must be an integer")
-
         datetime_run = log.datetime_run or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         # check for log existence
         with self.get_cursor() as cursor:
@@ -254,6 +251,21 @@ class PaperDatabase:
                     'description': row[4]
                 })
             return result
+
+    def fetch_podcast_by_id(self, podcast_id: int):
+        """Fetch a single podcast by its ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT id, title, date, script, description FROM podcasts WHERE id = ?", (podcast_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'title': row[1],
+                    'date': row[2],
+                    'script': json.loads(row[3]), # Ensure script is parsed from JSON string
+                    'description': row[4]
+                }
+            return None
 
     def delete_podcast(self, title: str):
         """Delete a podcast from the database by its title."""

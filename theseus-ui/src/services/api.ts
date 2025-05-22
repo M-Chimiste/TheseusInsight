@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosResponse } from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
@@ -86,7 +87,7 @@ export const runsApi = {
 };
 
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast') => {
+export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };
@@ -105,7 +106,7 @@ export const getLogs = async (limit: number = 100, fromDate?: string, toDate?: s
   if (toDate) {
     params.to_date = toDate;
   }
-  const response = await api.get<LogEntry[]>("/logs", { params });
+  const response: AxiosResponse<LogEntry[]> = await api.get<LogEntry[]>("/logs", { params });
   return response.data;
 };
 
@@ -126,4 +127,39 @@ export const getTaskStatus = async (taskId: string): Promise<RunStatusPayload | 
     console.error(`Error fetching status for task ${taskId}:`, error);
     return null;
   }
+};
+
+// Interfaces for Podcast History
+export interface PodcastScriptItem {
+    text: string;
+    speaker: string;
+    segment_label?: string | null;
+}
+
+export interface PodcastDetailResponse {
+    id: number;
+    title: string;
+    date: string;
+    description: string;
+    script: PodcastScriptItem[];
+}
+
+export interface PodcastListItemResponse {
+    id: number;
+    title: string;
+    date: string;
+    description_snippet: string;
+}
+
+// Podcast History API functions
+export const podcastHistoryApi = {
+    getPodcastHistoryList: async (): Promise<PodcastListItemResponse[]> => {
+        const response: AxiosResponse<PodcastListItemResponse[]> = await api.get<PodcastListItemResponse[]>('/podcasts/history');
+        return response.data;
+    },
+
+    getPodcastDetail: async (podcastId: string): Promise<PodcastDetailResponse> => {
+        const response: AxiosResponse<PodcastDetailResponse> = await api.get<PodcastDetailResponse>(`/podcasts/history/${podcastId}`);
+        return response.data;
+    },
 }; 

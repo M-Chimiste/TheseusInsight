@@ -191,34 +191,31 @@ const Newsletter = () => {
   };
 
   const currentTaskId = pipelineStatus.taskId;
-  const placeholderTaskId = 'dummy-task-id'; // Placeholder for when no task ID is active
+  // const placeholderTaskId = 'dummy-task-id'; // No longer needed for the hook call
 
-  // Hooks must be called unconditionally at the top level.
-  // Pass pipelineStatus.taskId (or a placeholder) to useWebSocket.
-  // useWebSocket is assumed to construct the full URL internally using this taskId and type.
-  // It is also assumed that useWebSocket will return a `status` field containing the parsed message payload.
-  const hookState = useWebSocket(currentTaskId || placeholderTaskId, "newsletter");
+  // Pass currentTaskId directly (can be null). The hook should handle null taskId gracefully.
+  const hookState = useWebSocket(currentTaskId, "newsletter");
 
   useEffect(() => {
     // Only process messages if we have a REAL taskId and a new message
-    if (currentTaskId && currentTaskId !== placeholderTaskId && hookState.lastMessage) {
+    if (currentTaskId && hookState.lastMessage) {
       console.log("[Newsletter.tsx] WebSocket lastMessage received:", hookState.lastMessage); // DEBUG LOG
       handleParsedRunStatus(hookState.lastMessage);
     }
 
     // Handle WebSocket errors for real tasks
     if (currentTaskId && hookState.error) {
-      console.log("[Newsletter.tsx] WebSocket error received:", hookState.error); // DEBUG LOG
+      console.log(`[Newsletter.tsx] WebSocket error for task ${currentTaskId}:`, hookState.error); // DEBUG LOG
       const errorMessage = hookState.error?.toString() || 'WebSocket connection error';
-      if (currentTaskId !== placeholderTaskId) {
-        setPipelineStatus(prev => ({
-          ...prev,
-          isRunning: false,
-          error: errorMessage,
-          message: `WebSocket Error: ${errorMessage}`,
-        }));
-        setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`]);
-      }
+      // if (currentTaskId !== placeholderTaskId) { // This check is redundant if currentTaskId is string | null
+      setPipelineStatus(prev => ({
+        ...prev,
+        isRunning: false,
+        error: errorMessage,
+        message: `WebSocket Error: ${errorMessage}`,
+      }));
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()} for task ${currentTaskId}: ${errorMessage}`]);
+      // }
     }
   }, [currentTaskId, hookState.lastMessage, hookState.error]);
 

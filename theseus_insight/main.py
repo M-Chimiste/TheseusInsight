@@ -15,7 +15,7 @@ from .api.models import (
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
     EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
-    PodcastGenerationParams
+    PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
@@ -885,6 +885,57 @@ async def run_visualizer_pipeline_endpoint(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error processing visualizer request: {str(e)}")
+
+# Podcast History Endpoints
+@app.get("/api/podcasts/history", response_model=List[PodcastListItemResponse])
+async def get_podcast_history_list():
+    """Get a list of all podcasts, sorted by date, for history view."""
+    try:
+        podcasts_data = db.fetch_all_podcasts() # This already sorts by id DESC, which is fine if new IDs are always later dates. If date sorting is strict, we'd sort here.
+        
+        response_items = []
+        for p_data in podcasts_data:
+            description_snippet = (p_data['description'][:150] + '...') if len(p_data['description']) > 150 else p_data['description']
+            response_items.append(
+                PodcastListItemResponse(
+                    id=p_data['id'],
+                    title=p_data['title'],
+                    date=p_data['date'],
+                    description_snippet=description_snippet
+                )
+            )
+        # To strictly sort by date if IDs don't guarantee it:
+        response_items.sort(key=lambda x: datetime.strptime(x.date, '%Y-%m-%d'), reverse=True)
+        return response_items
+    except Exception as e:
+        print(f"Error fetching podcast history list: {e}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred while fetching podcast history.")
+
+@app.get("/api/podcasts/history/{podcast_id}", response_model=PodcastDetailResponse)
+async def get_podcast_detail(podcast_id: int):
+    """Get detailed information for a single podcast, including its parsed script."""
+    try:
+        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        if not podcast_data:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        # The script from db.fetch_podcast_by_id is already a Python list of dicts
+        # Pydantic will validate it against List[PodcastScriptItem]
+        return PodcastDetailResponse(
+            id=podcast_data['id'],
+            title=podcast_data['title'],
+            date=podcast_data['date'],
+            description=podcast_data['description'],
+            script=podcast_data['script'] # Pydantic validation happens here
+        )
+    except HTTPException: # Re-raise HTTPException directly
+        raise
+    except ValidationError as ve: # Catch Pydantic validation errors specifically for the script
+        print(f"Validation error for podcast script (ID: {podcast_id}): {ve}")
+        raise HTTPException(status_code=500, detail=f"Error validating podcast script data for podcast ID {podcast_id}.")
+    except Exception as e:
+        print(f"Error fetching podcast detail (ID: {podcast_id}): {e}")
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred while fetching details for podcast ID {podcast_id}.")
 
 # Enhance the WebSocket connection manager
 class ConnectionManager:

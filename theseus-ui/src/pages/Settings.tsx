@@ -67,6 +67,8 @@ const Settings: React.FC = () => {
   const [tab, setTab] = useState(0);
   const [selectedArxivMain, setSelectedArxivMain] = useState<string>('');
   const [selectedArxivSubs, setSelectedArxivSubs] = useState<string[]>([]);
+  const [researchInterestsInput, setResearchInterestsInput] = useState<string>('');
+  const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -171,6 +173,18 @@ const Settings: React.FC = () => {
       setSelectedArxivSubs(subs);
     }
   }, [arxivCategories]);
+
+  useEffect(() => {
+    if (researchInterests) {
+      setResearchInterestsInput(researchInterests.interests || '');
+    }
+  }, [researchInterests]);
+
+  useEffect(() => {
+    if (emailRecipients) {
+      setEmailRecipientsInput(emailRecipients.recipients?.join('\n') || '');
+    }
+  }, [emailRecipients]);
 
   if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders) {
     return (
@@ -501,19 +515,15 @@ const Settings: React.FC = () => {
               multiline
               rows={5}
               label="Your Research Interests"
-              value={researchInterests?.interests || ''}
-              onChange={(_e) => {
-                // const newInterests = { interests: e.target.value };
-                // queryClient.setQueryData(['researchInterests'], newInterests);
-              }}
+              value={researchInterestsInput}
+              onChange={(e) => setResearchInterestsInput(e.target.value)}
               helperText="Describe your research interests."
             />
             <Box sx={{ mt: 2 }}>
               <Button
                 variant="contained"
                 onClick={() => {
-                    const interestsValue = (document.querySelector('textarea[label="Your Research Interests"]') as HTMLTextAreaElement)?.value || researchInterests?.interests;
-                    updateResearchInterestsMutation.mutate({ interests: interestsValue });
+                  updateResearchInterestsMutation.mutate({ interests: researchInterestsInput });
                 }}
                 disabled={updateResearchInterestsMutation.isPending}
               >
@@ -544,19 +554,15 @@ const Settings: React.FC = () => {
               multiline
               rows={3}
               label="Email Recipients"
-              value={emailRecipients?.recipients?.join('\n') || ''}
-              onChange={(_e) => {
-                // const newEmails = { recipients: e.target.value.split('\n').filter(Boolean) };
-                // queryClient.setQueryData(['emailRecipients'], newEmails);
-              }}
+              value={emailRecipientsInput}
+              onChange={(e) => setEmailRecipientsInput(e.target.value)}
               helperText="Enter one email address per line."
             />
             <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
               <Button
                 variant="contained"
                 onClick={() => {
-                    const recipientsValue = (document.querySelector('textarea[label="Email Recipients"]') as HTMLTextAreaElement)?.value.split('\n').map((s: string) => s.trim()).filter(Boolean) || emailRecipients?.recipients;
-                    updateEmailRecipientsMutation.mutate({ recipients: recipientsValue });
+                  updateEmailRecipientsMutation.mutate({ recipients: emailRecipientsInput.split('\n').map((s: string) => s.trim()).filter(Boolean) });
                 }}
                 disabled={updateEmailRecipientsMutation.isPending}
               >

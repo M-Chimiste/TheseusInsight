@@ -65,7 +65,7 @@ const RunHistory: React.FC = () => {
                 </Typography>
 
                 <Paper sx={{ mb: 2, p: 2 }}>
-                    <Grid container spacing={2} alignItems="center">
+                    <Grid container spacing={2} alignItems="center" justifyContent="center">
                         <Grid size={{ xs: 12, sm: 4 }}>
                             <DatePicker
                                 label="From Date"

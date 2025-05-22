@@ -14,6 +14,7 @@
     - **Database Interaction (`theseus_insight/data_model/data_handling.py`):**
         - `PaperDatabase` class updated with methods for storing/retrieving configurations (general models, ArXiv, etc.) from SQLite. Settings are prioritized from DB, then JSON, then defaults.
         - `get_recent_logs` method enhanced to support date-based filtering for fetching run logs.
+        - Corrected `insert_log` method by removing validation for a non-existent `status_code` attribute on the `Logs` model, which likely caused 500 errors when fetching logs.
     - **Streamlit API Client (`streamlit_app/api_client.py`):**
         - Created a dedicated API client with functions to interact with all FastAPI settings and action endpoints.
         - Includes `APIClientError` custom exception and `API_HOST_URL` configuration.
@@ -249,6 +250,17 @@
             - Provides MUI `DatePicker` components for `fromDate` and `toDate` filtering.
             - Resolved MUI v7 `Grid` API compatibility issues by updating to `size` prop and removing `item` prop.
         - Added "Run History" to sidebar in `Layout.tsx` and routing in `App.tsx`.
+    - **React Frontend - Podcast History & Detail Pages (`theseus-ui/src/pages/PodcastHistory.tsx`, `theseus-ui/src/pages/PodcastDetail.tsx`):**
+        - **Backend (`main.py`, `api/models.py`, `data_model/dialog.py`, `data_model/data_handling.py`):**
+            - Updated Pydantic models (`DialogueItem` for flexible speaker naming, added `PodcastScriptItem`, `PodcastListItemResponse`, `PodcastDetailResponse`).
+            - Added `fetch_podcast_by_id` to `PaperDatabase` to retrieve a single podcast and parse its script.
+            - Created FastAPI endpoints: `GET /api/podcasts/history` (list view with snippets) and `GET /api/podcasts/history/:podcastId` (detail view with full script).
+        - **Frontend (`services/api.ts`, `pages/PodcastHistory.tsx`, `pages/PodcastDetail.tsx`, `App.tsx`, `components/Layout.tsx`):**
+            - Added new interfaces and API functions to `api.ts`.
+            - Created `PodcastHistory.tsx`: Displays list of podcasts as MUI Cards, linking to detail page. Resolved MUI Grid v7 issues.
+            - Created `PodcastDetail.tsx`: Displays full podcast details, including transcript with distinct styling per speaker (supports up to 5 speakers by default, configurable).
+            - Added new routes to `App.tsx` and a "Podcast History" link to the sidebar in `Layout.tsx`.
+            - Corrected `AxiosResponse` import in `api.ts` and added 'visualizer' type to `createWebSocket`.
 
 ## Next Steps
 - **React Frontend - `Podcast.tsx` Development:**
@@ -263,26 +275,17 @@
     - Review and refactor code for maintainability and scalability as per guidelines.
 - Awaiting next task or specific area of focus from the user for other areas.
 
-## Debug Log (Current Session - Podcast.tsx Cleanup & Run History Page)
-- **Goal:** Create a Run History page in the React app & Cleanup `Podcast.tsx`.
-- **Backend (`main.py`, `data_handling.py`):**
-    - Modified `get_recent_logs` in `data_handling.py` to accept `from_date` and `to_date` for filtering.
-    - Added `LogEntry` Pydantic model.
-    - Created `/api/logs` endpoint in `main.py` to expose `get_recent_logs` with query parameters for limit, from_date, to_date.
-- **Frontend (`api.ts`, `RunHistory.tsx`, `Layout.tsx`, `App.tsx`, `Podcast.tsx`):**
-    - Added `LogEntry` interface and `getLogs` function to `api.ts`.
-    - Created `RunHistory.tsx` page component:
-        - Fetches logs using `getLogs`.
-        - Displays logs in a MUI `Table` with pagination.
-        - Implements MUI `DatePicker` for `fromDate` and `toDate` filtering.
-        - Encountered and resolved MUI `Grid` linter errors by:
-            - Initially attempting to remove/re-add `item` prop (incorrect for v7 with direct responsive props).
-            - Identifying MUI v7 `Grid` API changes (renamed to `GridLegacy`, new `Grid` (v2) uses `size` prop).
-            - Corrected `RunHistory.tsx` to use `Grid size={{ xs: 12, sm: 4 }}`.
-            - Ran `npx @mui/codemod v7.0.0/grid-props ./theseus-ui/src --yes` (no other files were modified).
-    - Added "Run History" item to `Layout.tsx` sidebar.
-    - Added route for `/run-history` to `RunHistory` component in `App.tsx`.
-    - **`Podcast.tsx` Cleanup:** Removed unused state variables (`isCompleted`, `downloadUrl`) and the `NodeStatusPayload` interface.
-- **Linter Errors Fixed in `api.ts`:**
-    - Defined a placeholder `RunStatusPayload` interface.
-    - Corrected `getTaskStatus` function to handle API call and potential errors.
+## Debug Log (Current Session - Podcast History Feature)
+- **Goal:** Implement Podcast History and Detail pages.
+- **Backend (`main.py`, `api/models.py`, `data_model/dialog.py`, `data_model/data_handling.py`):**
+    - Changed `DialogueItem.speaker` from `Literal` to `str` for flexibility.
+    - Added `PodcastScriptItem`, `PodcastListItemResponse`, `PodcastDetailResponse` Pydantic models.
+    - Implemented `db.fetch_podcast_by_id()`.
+    - Created `GET /api/podcasts/history` and `GET /api/podcasts/history/:podcastId` endpoints.
+- **Frontend (`services/api.ts`, `pages/PodcastHistory.tsx`, `pages/PodcastDetail.tsx`, `App.tsx`, `components/Layout.tsx`):**
+    - Added corresponding interfaces and API client functions in `api.ts`.
+    - Created `PodcastHistory.tsx` (list view) and `PodcastDetail.tsx` (detail view with styled dialog).
+    - Fixed MUI Grid v7 prop usage in `PodcastHistory.tsx`.
+    - Added routes in `App.tsx` and sidebar link in `Layout.tsx`.
+    - Corrected `AxiosResponse` type-only import in `api.ts` and added `visualizer` type to `createWebSocket`.
+- Resolved `Settings.tsx` text input issue by using local state for `researchInterestsInput` and `emailRecipientsInput`.

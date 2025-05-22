@@ -220,6 +220,25 @@ class PodcastGenerationParams(BaseModel):
     visualizer_params: Optional[PodcastVisualizerParams] = None
     # Intro music file will also be handled as UploadFile directly in the endpoint.
 
+# New models for Podcast History
+class PodcastScriptItem(BaseModel):
+    text: str
+    speaker: str
+    segment_label: Optional[str] = None
+
+class PodcastDetailResponse(BaseModel):
+    id: int
+    title: str
+    date: str
+    description: str
+    script: List[PodcastScriptItem]
+
+class PodcastListItemResponse(BaseModel):
+    id: int
+    title: str
+    date: str
+    description_snippet: str
+
 # Removed the conflicting/simpler NodeStatus definition that was here.
 # class NodeStatus(BaseModel):
 #     id: str 

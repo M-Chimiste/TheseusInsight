@@ -21,6 +21,7 @@ import {
   Brightness7 as LightModeIcon,
   Movie as MovieIcon,
   History as HistoryIcon,
+  ListAlt as ListAltIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 
@@ -41,6 +42,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
+    { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
   ];
 
   return (

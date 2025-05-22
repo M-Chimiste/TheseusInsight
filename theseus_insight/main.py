@@ -21,6 +21,12 @@ from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
 import asyncio
 
+# Pydantic model for Log entries
+class LogEntry(BaseModel):
+    task_id: str
+    status: str
+    datetime_run: str
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Theseus Insight API",
@@ -674,6 +680,26 @@ async def download_task_artifact(task_id: str, file_type: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/logs", response_model=List[LogEntry])
+async def get_logs_api(
+    limit: int = Query(100, gt=0, le=1000),
+    from_date: Optional[str] = Query(None, regex="^\\d{4}-\\d{2}-\\d{2}$"), # YYYY-MM-DD
+    to_date: Optional[str] = Query(None, regex="^\\d{4}-\\d{2}-\\d{2}$") # YYYY-MM-DD
+):
+    """Get recent logs, filterable by date."""
+    try:
+        if from_date and to_date and from_date > to_date:
+            raise HTTPException(status_code=400, detail="from_date cannot be after to_date")
+        
+        logs_data = db.get_recent_logs(limit=limit, from_date=from_date, to_date=to_date)
+        return [LogEntry(**log) for log in logs_data]
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        # Consider logging the exception for server-side debugging
+        print(f"Error fetching logs: {e}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred while fetching logs.")
 
 # Newsletter endpoints
 @app.post("/api/newsletter/run")

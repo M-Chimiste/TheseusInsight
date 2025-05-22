@@ -4,14 +4,16 @@
 - **Overall Refactoring & Feature Implementation (Cumulative - reflects state after user's latest summary):**
     - **FastAPI Backend as Central Hub (`theseus_insight/main.py`, `theseus_insight/api/models.py`, `theseus_insight/api/tasks.py`):**
         - Established FastAPI as the sole interface for all settings management and action triggering (newsletter/podcast generation).
-        - Comprehensive Pydantic models (`ModelConfig`, `OrchestrationConfig`, `ArxivCategoriesConfig`, `ModelProvider`, `EmailRecipients`, `ResearchInterests`, `TTSModelConfig`, `NewsletterRunParams`, `PodcastVisualizerParams`, `PodcastGenerationParams`, `NodeStatus`, `RunStatus`) define data structures for settings and pipeline parameters.
+        - Comprehensive Pydantic models (`ModelConfig`, `OrchestrationConfig`, `ArxivCategoriesConfig`, `ModelProvider`, `EmailRecipients`, `ResearchInterests`, `TTSModelConfig`, `NewsletterRunParams`, `PodcastVisualizerParams`, `PodcastGenerationParams`, `NodeStatus`, `RunStatus`, `LogEntry`) define data structures for settings and pipeline parameters.
         - Settings endpoints (e.g., `/api/settings/orchestration`, `/api/settings/arxiv-categories`, `/api/model-providers`, `/api/settings/email-recipients`, `/api/settings/research-interests`) for GET (retrieve with fallbacks) and PUT (update DB and JSON).
         - Action endpoint `POST /api/actions/run-newsletter-pipeline`: Accepts `NewsletterRunParams`, runs `TheseusInsight.run()` in background, uses `task_manager` for progress.
         - Action endpoint `POST /api/podcast/generate`: Accepts `PodcastGenerationParams` (JSON string in form field) and optional files (`intro_music_file`, `pdf_files`). Uses `task_manager` for task creation and execution.
+        - Action endpoint `GET /api/logs`: Fetches run logs from the database, filterable by date and limit.
         - Introduced `TaskManager` for creating, tracking, and updating status of background tasks (newsletter/podcast) using Pydantic status models.
         - WebSocket endpoints (`/ws/newsletter/{task_id}`, `/ws/podcast/{task_id}`) for streaming real-time `RunStatus` updates.
     - **Database Interaction (`theseus_insight/data_model/data_handling.py`):**
         - `PaperDatabase` class updated with methods for storing/retrieving configurations (general models, ArXiv, etc.) from SQLite. Settings are prioritized from DB, then JSON, then defaults.
+        - `get_recent_logs` method enhanced to support date-based filtering for fetching run logs.
     - **Streamlit API Client (`streamlit_app/api_client.py`):**
         - Created a dedicated API client with functions to interact with all FastAPI settings and action endpoints.
         - Includes `APIClientError` custom exception and `API_HOST_URL` configuration.
@@ -183,7 +185,8 @@
                 - `RunStatusPayload`, `NodeStatusPayload` interfaces defined.
             - `handleGenerateNewsletter` calls API, updates `taskId`, triggering WebSocket.
             - UI: MUI `Card`, `DatePicker`, `TextField`, `Button`, `LinearProgress`, `Alert`, `Chip`.
-    - **`Podcast.tsx` Page (frontend/src/pages/Podcast.tsx) - In Progress:**
+    - **`Podcast.tsx` Page (frontend/src/pages/Podcast.tsx):**
+        - Cleaned up unused state variables (`isCompleted`, `downloadUrl`) and `NodeStatusPayload` interface to reduce linter warnings.
         - **User Request & Initial Structure (Phase 1 Goals):**
             - Inputs for PDF uploads and URLs (add/delete, use simultaneously).
             - "Podcast Model Settings" & "TTS Model Settings" cards (view/edit fetched data).
@@ -206,7 +209,7 @@
             - **Intro Music Upload:**
                 - `Card` with upload button, filename as deletable `Chip`.
             - **Generate Podcast Functionality:**
-                - State: `generating`, `podcastTaskId`, `podcastError`, `isCompleted`, `downloadUrl`.
+                - State: `generating`, `podcastTaskId`, `podcastError`.
                 - `handleGeneratePodcast`:
                     - Constructs `params` for `podcastApi.generatePodcast` (dynamic `input_type`, `urls`, model configs).
                     - Calls `podcastApi.generatePodcast` (multipart form data: params as JSON string, files).
@@ -235,6 +238,17 @@
             - Task `run_visualizer_task` in `tasks.py` (imports `generate_visualizer_video` from `podcast.generator`).
             - `taskApi.runVisualizerPipeline` in `frontend/src/services/api.ts`.
             - Added `'visualizer'` to `useWebSocket` hook types.
+    - **React Frontend - Run History Page (`theseus-ui/src/pages/RunHistory.tsx`):**
+        - Created backend API endpoint `/api/logs` in `main.py` to fetch logs from `logs` table, filterable by date (`from_date`, `to_date`) and `limit`.
+        - Added `LogEntry` Pydantic model in `main.py`.
+        - Updated `data_handling.py` (`get_recent_logs`) to support date filtering.
+        - Added `getLogs` function and `LogEntry` interface to `theseus-ui/src/services/api.ts`.
+        - Created `RunHistory.tsx` component:
+            - Fetches logs using `getLogs`.
+            - Displays logs in a paginated MUI `Table`.
+            - Provides MUI `DatePicker` components for `fromDate` and `toDate` filtering.
+            - Resolved MUI v7 `Grid` API compatibility issues by updating to `size` prop and removing `item` prop.
+        - Added "Run History" to sidebar in `Layout.tsx` and routing in `App.tsx`.
 
 ## Next Steps
 - **React Frontend - `Podcast.tsx` Development:**
@@ -245,51 +259,30 @@
     - Implement client-side validation for inputs where appropriate.
 - **General:**
     - Address any TODOs noted in the code (e.g., Dark Mode theme connection in `Settings.tsx`).
-    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`, `Visualizer`).
+    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`, `Visualizer`, `RunHistory`).
     - Review and refactor code for maintainability and scalability as per guidelines.
 - Awaiting next task or specific area of focus from the user for other areas.
 
-## Debug Log
-- **Cumulative Debug Log (Reflects User Summary):**
-    - **`ModuleNotFoundError` (FastAPI & Streamlit):**
-        - Resolved by ensuring correct Uvicorn execution path (project root) and `sys.path` modifications in `streamlit_app/app.py`.
-    - **`AttributeError` (Streamlit APIClientError, TaskManager methods):**
-        - Corrected by using `str(e)` for exception messages and renaming `task_manager.set_task_status` to `update_task_status`.
-    - **404 Errors (Streamlit API Call, FastAPI endpoint definitions):**
-        - Fixed API URL construction in `api_client.py` (using `API_HOST_URL` correctly) and ensured correct endpoint definitions/paths in FastAPI.
-    - **Pydantic Validation Errors (FastAPI):**
-        - Addressed by making fields optional (e.g., `podcast_model`, `tts_model` in `OrchestrationConfig`), providing defaults where necessary, and correcting `NodeStatus` model definition mismatches (ensuring `nodeId` was used consistently over `id`).
-    - **Streamlit `StreamlitAPIException` (Nested Expanders):**
-        - Resolved by restructuring UI in `settings.py` to avoid nesting `st.expander` elements.
-    - **Streamlit `StreamlitValueAssignmentNotAllowedError` (for `st.file_uploader`):
-    - **Podcast UI Callbacks Not Working (Session 20 - Current):**
-        - **Issue:** Podcast generation starts, but UI does not receive progress updates.
-        - **Diagnosis 1:** `PodcastGenerator.generate_podcast` accepts a `progress_callback`, but `TaskManager.run_podcast_task` was not passing it.
-        - **Fix 1:** Uncommented and correctly passed `self._progress_callback(task_id)` to `podcast_gen.generate_podcast` in `TaskManager.run_podcast_task` (`theseus_insight/api/tasks.py`).
-        - **Diagnosis 2 (Result of Fix 1):** FastAPI warning `RuntimeWarning: coroutine 'TaskManager._progress_callback.<locals>.callback' was never awaited` because the async callback was called from synchronous code (in a thread) without being scheduled on the event loop.
-        - **Fix 2:** Modified `TaskManager._progress_callback` to be a synchronous function. Inside this function, it now retrieves the current event loop and uses `asyncio.run_coroutine_threadsafe` to schedule the `update_task_status` coroutine, ensuring it runs on the main event loop. Added a fallback to `asyncio.run` if the loop isn't running, with a cautionary print statement.
-    - **Visualizer UI WebSocket Connection Error (Session 20 - Current):**
-        - **Issue:** Frontend fails to connect to `ws://localhost:8000/ws/visualizer/{task_id}`.
-        - **Diagnosis:** The WebSocket endpoint `/ws/visualizer/{task_id}` was not defined in the FastAPI backend (`theseus_insight/main.py`).
-        - **Fix:** Added a new WebSocket endpoint `@app.websocket("/ws/visualizer/{task_id}")` in `theseus_insight/main.py`, mirroring the structure of the existing `newsletter_status` and `podcast_status` endpoints.
-    - **React DevTools WebSocket Warning (Session 20 - Current):**
-        - **Issue:** Console warning "WebSocket connection to 'ws://localhost:8000/ws/.../dummy-...-task-id' failed: WebSocket is closed before the connection is established."
-        - **Diagnosis:** The `useWebSocket` hook was attempting to connect with a placeholder/dummy task ID on initial render before the actual task ID was available. The subsequent re-render with the real task ID caused the initial (dummy) connection attempt to be aborted by the `useEffect` cleanup function.
-        - **Fix:** Modified `useWebSocket.ts` to define `PLACEHOLDER_TASK_IDS`. The `connect` function now checks if the `taskId` matches a placeholder for the given `type` and returns early if it does. The main `useEffect` in the hook also checks against these placeholders before calling `connect` or `disconnect`.
-    - **Visualizer Artifact Download Error (400 Bad Request) (Session 20 - Current):**
-        - **Issue:** After a visualizer task completes, the frontend attempts to download the artifact via GET `/api/tasks/{task_id}/download/video` but receives a 400 Bad Request.
-        - **Diagnosis:** The `download_task_artifact` function in `theseus_insight/main.py` was missing a specific handler for `task["type"] == "visualizer"`. It was falling through to a generic `else` clause that raised an "Unknown task type" error, resulting in the 400.
-        - **Fix:** Added an `elif task["type"] == "visualizer":` block to `download_task_artifact` in `main.py`. This block correctly retrieves the video artifact path from `result["visualizer_file"]` (which `run_visualizer_task` in `tasks.py` already provides) and serves the video file, similar to how podcast videos are handled.
-
-## Next Steps
-- **React Frontend - `Podcast.tsx` Development:**
-    - Test PDF and URL inputs thoroughly, individually and combined.
-    - Test intro music upload and inclusion in the generated podcast.
-    - Test model configuration changes and their effect on generation.
-    - Finalize styling and layout for a polished user experience.
-    - Implement client-side validation for inputs where appropriate.
-- **General:**
-    - Address any TODOs noted in the code (e.g., Dark Mode theme connection in `Settings.tsx`).
-    - Conduct thorough testing across all implemented React pages (`Settings`, `Newsletter`, `Podcast`, `Visualizer`).
-    - Review and refactor code for maintainability and scalability as per guidelines.
-- Awaiting next task or specific area of focus from the user for other areas.
+## Debug Log (Current Session - Podcast.tsx Cleanup & Run History Page)
+- **Goal:** Create a Run History page in the React app & Cleanup `Podcast.tsx`.
+- **Backend (`main.py`, `data_handling.py`):**
+    - Modified `get_recent_logs` in `data_handling.py` to accept `from_date` and `to_date` for filtering.
+    - Added `LogEntry` Pydantic model.
+    - Created `/api/logs` endpoint in `main.py` to expose `get_recent_logs` with query parameters for limit, from_date, to_date.
+- **Frontend (`api.ts`, `RunHistory.tsx`, `Layout.tsx`, `App.tsx`, `Podcast.tsx`):**
+    - Added `LogEntry` interface and `getLogs` function to `api.ts`.
+    - Created `RunHistory.tsx` page component:
+        - Fetches logs using `getLogs`.
+        - Displays logs in a MUI `Table` with pagination.
+        - Implements MUI `DatePicker` for `fromDate` and `toDate` filtering.
+        - Encountered and resolved MUI `Grid` linter errors by:
+            - Initially attempting to remove/re-add `item` prop (incorrect for v7 with direct responsive props).
+            - Identifying MUI v7 `Grid` API changes (renamed to `GridLegacy`, new `Grid` (v2) uses `size` prop).
+            - Corrected `RunHistory.tsx` to use `Grid size={{ xs: 12, sm: 4 }}`.
+            - Ran `npx @mui/codemod v7.0.0/grid-props ./theseus-ui/src --yes` (no other files were modified).
+    - Added "Run History" item to `Layout.tsx` sidebar.
+    - Added route for `/run-history` to `RunHistory` component in `App.tsx`.
+    - **`Podcast.tsx` Cleanup:** Removed unused state variables (`isCompleted`, `downloadUrl`) and the `NodeStatusPayload` interface.
+- **Linter Errors Fixed in `api.ts`:**
+    - Defined a placeholder `RunStatusPayload` interface.
+    - Corrected `getTaskStatus` function to handle API call and potential errors.

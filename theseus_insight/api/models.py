@@ -112,7 +112,10 @@ class ModelProvider(BaseModel):
 # Pagination
 class PaginatedResponse(BaseModel):
     items: List[Any]  # Can be List[Paper], List[Run], etc.
-    nextPage: Optional[int] = None
+    total_items: int
+    total_pages: int
+    current_page: int
+    nextPage: Optional[int] = None # Kept for compatibility, but might be derived
 
 # Newsletter/Podcast config models
 class DateRange(BaseModel):
@@ -238,6 +241,24 @@ class PodcastListItemResponse(BaseModel):
     title: str
     date: str
     description_snippet: str
+
+# Models for Papers Page
+class PaperApiResponse(BaseModel):
+    id: int
+    title: str
+    abstract: str
+    date: str
+    date_run: str
+    score: float # Or int, needs to match db/model
+    rationale: str
+    related: bool
+    cosine_similarity: float
+    url: str
+    embedding_model: str
+
+class PaginatedPapersResponse(PaginatedResponse): # Inherit from existing PaginatedResponse
+    items: List[PaperApiResponse]
+    # total_items, total_pages, current_page, nextPage are inherited
 
 # Removed the conflicting/simpler NodeStatus definition that was here.
 # class NodeStatus(BaseModel):

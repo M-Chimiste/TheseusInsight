@@ -289,3 +289,50 @@
     - Added routes in `App.tsx` and sidebar link in `Layout.tsx`.
     - Corrected `AxiosResponse` type-only import in `api.ts` and added `visualizer` type to `createWebSocket`.
 - Resolved `Settings.tsx` text input issue by using local state for `researchInterestsInput` and `emailRecipientsInput`.
+
+## Project Status Update - <YYYY-MM-DD HH:MM>
+
+### Implemented:
+
+**Papers Page - Pagination & Infinite Scrolling:**
+1.  **Backend Pagination Enhancements (`theseus_insight/api/models.py`, `theseus_insight/main.py`):**
+    *   Updated `PaginatedResponse` Pydantic model to include `total_items`, `total_pages`, and `current_page`.
+    *   Modified the `GET /api/papers` endpoint in `main.py` to accept a `page_size` query parameter and to calculate and return `total_items`, `total_pages`, and `current_page` in the `PaginatedPapersResponse`.
+2.  **Frontend API Service (`theseus-ui/src/services/api.ts`):**
+    *   Updated the `PaginatedPapersResponse` interface to include `total_items`, `total_pages`, and `current_page`.
+    *   Modified `papersApi.getPapers` to accept and pass a `pageSize` parameter to the backend.
+3.  **Papers Page UI (`theseus-ui/src/pages/Papers.tsx`):**
+    *   **Robust Pagination (Initial Step - Now Superseded by Infinite Scroll but foundational):**
+        *   Integrated a page size selector (MUI `Select`) allowing users to choose items per page.
+        *   The MUI `Pagination` component was initially updated to use `total_pages` and `current_page` from the API for accurate page counting and navigation (this component is now removed/commented out in favor of infinite scroll).
+    *   **Infinite Scrolling:**
+        *   Implemented infinite scrolling using `IntersectionObserver`.
+        *   Papers are now loaded continuously as the user scrolls down.
+        *   `allPapers` state accumulates all fetched items.
+        *   `hasNextPage` state tracks if more items can be fetched.
+        *   A loading indicator is shown at the bottom while fetching more items.
+        *   A message indicates when the end of the list is reached.
+        *   The page size selector now controls how many items are fetched in each batch of the infinite scroll.
+        *   Removed the traditional `Pagination` component.
+
+**Previously Implemented (Papers Page - Initial Setup):**
+*   Backend: Defined `PaperApiResponse`, `PaginatedPapersResponse`; updated `/api/papers`.
+*   Frontend: Added API service, `PaperCard.tsx`, `Papers.tsx` (initial grid view), routing & navigation.
+
+### To Be Implemented Next:
+
+1.  **Refine Papers Page Functionality (Filters):**
+    *   **Backend Filtering:** Enhance `db.fetch_all_papers()` and the `/api/papers` endpoint to perform filtering (search term, score range, date range) directly at the database level for better performance with infinite scrolling and large datasets.
+    *   **Advanced Frontend Filtering:** Add UI elements (text input for search, sliders for score, date pickers for date range) to `Papers.tsx` for users to input filter criteria. These filters should trigger a reset and refetch of papers with the new criteria.
+2.  **Visualizer Page Development:** Implement the UI for triggering and viewing audio visualizations.
+3.  **Newsletter Generation Page Enhancements:** Improve UI for configuring and running the newsletter pipeline.
+
+### Debug Log:
+
+*   Addressed linter issues related to MUI `Select` component value types and `SelectChangeEvent` imports in `Papers.tsx`.
+*   Ensured `IntersectionObserver` correctly triggers fetching of new data and that loading/end-of-list states are handled appropriately for infinite scroll.
+*   The page size selector now influences the batch size for infinite scroll requests.
+*   The `key` for items in the `Grid` within `Papers.tsx` was made more robust (`paper.id + "_" + paper.date_run`) in case `id`s might not be unique across different fetches if the underlying data source could somehow produce this (though generally database IDs should be unique).
+
+---
+(Previous content of project_status.md should be preserved below this block if any)

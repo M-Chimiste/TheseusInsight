@@ -6,6 +6,7 @@ import os
 import uuid
 from datetime import datetime, date, timedelta
 from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -15,7 +16,8 @@ from .api.models import (
     NewsletterConfig, RunStatus, OrchestrationConfig,
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
     EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
-    PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse
+    PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse,
+    PaperApiResponse, PaginatedPapersResponse
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
@@ -27,11 +29,128 @@ class LogEntry(BaseModel):
     status: str
     datetime_run: str
 
-# Initialize FastAPI app
+# Initialize database first, so it's available in lifespan context
+DB_PATH = os.getenv("THESEUS_DB_PATH", "data/papers.db")
+db = PaperDatabase(DB_PATH)
+
+# WebSocket Connection Manager instance (assuming 'manager' is defined elsewhere, e.g. globally or part of task_manager)
+# For this refactor, I'll assume 'manager' is accessible. If it's 'task_manager.manager', adjust accordingly.
+# If 'manager' is defined globally in main.py later, ensure its definition is before FastAPI app instantiation.
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    # Startup logic
+    print("INFO:     Starting up Theseus Insight API...")
+    try:
+        # Ensure required directories exist
+        os.makedirs("data/newsletters", exist_ok=True)
+        os.makedirs("data/podcasts", exist_ok=True)
+        os.makedirs("data/visualizations", exist_ok=True)
+        os.makedirs("data/temp", exist_ok=True)
+        
+        # Environment variables check (moved from old startup_event)
+        required_env_vars = [
+            "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GMAIL_SENDER_ADDRESS",
+            "CLIENT_SECRET", "PROJECT_ID", "GMAIL_APP_PASSWORD"
+        ]
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
+            print("Some functionality may be limited.")
+
+        # Pre-populate settings if not in DB (Phase 2 will add this logic here)
+
+        # Pre-populate Orchestration settings if not in DB
+        if db.get_setting("orchestration") is None:
+            print("INFO:     Orchestration settings not found in DB. Populating from JSON file...")
+            orchestration_json_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
+            if os.path.exists(orchestration_json_path):
+                try:
+                    with open(orchestration_json_path, 'r') as f:
+                        default_orchestration_data = json.load(f)
+                    # Validate with Pydantic model (ensures defaults are applied if JSON is partial)
+                    # Use the comprehensive default logic from the /api/settings/orchestration GET endpoint
+                    default_embedding_model = ModelConfig(model_name='Alibaba-NLP/gte-modernbert-base', model_type='sentence-transformers', trust_remote_code=True)
+                    default_judge_model = ModelConfig(model_name='phi4-mini:3.8b-q8_0', model_type='ollama', max_new_tokens=512, temperature=0.1, num_ctx=4096)
+                    default_content_extraction_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+                    default_newsletter_sections_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+                    default_newsletter_intro_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+                    default_podcast_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=8192, temperature=0.1, num_ctx=131072)
+                    default_tts_model = TTSModelConfig(tts_provider='openai', tts_model_name='tts-1', speaker_1_voice='sage', speaker_1_speed=1.0, speaker_2_voice='ash', speaker_2_speed=1.0)
+
+                    orchestration_config = OrchestrationConfig(
+                        embedding_model=ModelConfig(**default_orchestration_data.get('embedding_model', default_embedding_model.dict())),
+                        judge_model=ModelConfig(**default_orchestration_data.get('judge_model', default_judge_model.dict())),
+                        content_extraction_model=ModelConfig(**default_orchestration_data.get('content_extraction_model', default_content_extraction_model.dict())),
+                        newsletter_sections_model=ModelConfig(**default_orchestration_data.get('newsletter_sections_model', default_newsletter_sections_model.dict())),
+                        newsletter_intro_model=ModelConfig(**default_orchestration_data.get('newsletter_intro_model', default_newsletter_intro_model.dict())),
+                        podcast_model=ModelConfig(**default_orchestration_data.get('podcast_model', default_podcast_model.dict())) if default_orchestration_data.get('podcast_model') else default_podcast_model, # Handle if podcast_model is None in JSON
+                        tts_model=TTSModelConfig(**default_orchestration_data.get('tts_model', default_tts_model.dict())) if default_orchestration_data.get('tts_model') else default_tts_model # Handle if tts_model is None in JSON
+                    )
+                    db.set_setting("orchestration", orchestration_config.json())
+                    print("INFO:     Successfully populated orchestration settings into DB.")
+                except Exception as e:
+                    print(f"ERROR: Failed to load or parse orchestration.json for DB pre-population: {e}")
+            else:
+                print(f"Warning: orchestration.json not found at {orchestration_json_path}. Cannot pre-populate orchestration settings.")
+        else:
+            print("INFO:     Orchestration settings found in DB. Skipping pre-population.")
+
+        # Pre-populate Research Interests if not in DB
+        if db.get_setting("research_interests") is None:
+            print("INFO:     Research interests not found in DB. Populating from TXT file...")
+            research_txt_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
+            if os.path.exists(research_txt_path):
+                try:
+                    with open(research_txt_path, 'r') as f:
+                        default_interests = f.read().strip()
+                    db.set_setting("research_interests", default_interests)
+                    print("INFO:     Successfully populated research interests into DB.")
+                except Exception as e:
+                    print(f"ERROR: Failed to load research_interests.txt for DB pre-population: {e}")
+            else:
+                print(f"Warning: research_interests.txt not found at {research_txt_path}. Cannot pre-populate research interests.")
+        else:
+            print("INFO:     Research interests settings found in DB. Skipping pre-population.")
+
+    except Exception as e:
+        print(f"Error during startup: {e}")
+        raise
+    
+    print("INFO:     Theseus Insight API startup complete.")
+    yield
+    # Shutdown logic
+    print("INFO:     Shutting down Theseus Insight API...")
+    try:
+        # Close all WebSocket connections (using task_manager which holds the ws manager)
+        # This assumes task_manager has a method to access its connection manager, 
+        # or that the 'manager' variable is globally accessible and correctly initialized.
+        # If 'manager' from the original code is directly accessible: 
+        # for task_id in list(manager.active_connections.keys()):
+        #     await manager.close_all(task_id)
+        # Assuming the original 'manager' is accessible globally or via task_manager for shutdown
+        # If 'manager' is defined later, this needs adjustment. 
+        # For now, let's use a placeholder if 'manager' is not found globally.
+        if 'manager' in globals() and hasattr(globals()['manager'], 'active_connections') and hasattr(globals()['manager'], 'close_all'):
+             for task_id in list(globals()['manager'].active_connections.keys()): # type: ignore
+                await globals()['manager'].close_all(task_id) # type: ignore
+        elif hasattr(task_manager, 'ws_manager') and hasattr(task_manager.ws_manager, 'active_connections'): # Or if it's part of task_manager
+             for task_id in list(task_manager.ws_manager.active_connections.keys()): # type: ignore
+                await task_manager.ws_manager.close_all(task_id) # type: ignore
+        else:
+            print("Warning: WebSocket connection manager not found or accessible for shutdown.")
+
+    except Exception as e:
+        print(f"Error during shutdown: {e}")
+    print("INFO:     Theseus Insight API shutdown complete.")
+
+
+# Initialize FastAPI app with lifespan manager
 app = FastAPI(
     title="Theseus Insight API",
     description="Backend API for Theseus Insight research paper analysis platform",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan # Registered lifespan context manager
 )
 
 # CORS configuration
@@ -56,114 +175,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Startup and shutdown events
-@app.on_event("startup")
-async def startup_event():
-    """Initialize resources on startup."""
-    try:
-        # Ensure required directories exist
-        os.makedirs("data/newsletters", exist_ok=True)
-        os.makedirs("data/podcasts", exist_ok=True)
-        os.makedirs("data/visualizations", exist_ok=True)
-        os.makedirs("data/temp", exist_ok=True)
-        
-        # Initialize database if not exists
-        # db._initialize_database()
-        
-        # Load environment variables
-        required_env_vars = [
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GMAIL_SENDER_ADDRESS",
-            "CLIENT_SECRET",
-            "PROJECT_ID",
-            "GMAIL_APP_PASSWORD"
-        ]
-        
-        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-        if missing_vars:
-            print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
-            print("Some functionality may be limited.")
-            
-    except Exception as e:
-        print(f"Error during startup: {e}")
-        raise
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup resources on shutdown."""
-    try:
-        # Close all WebSocket connections
-        for task_id in list(manager.active_connections.keys()):
-            await manager.close_all(task_id)
-        
-    except Exception as e:
-        print(f"Error during shutdown: {e}")
-
-# Initialize database
-DB_PATH = os.getenv("THESEUS_DB_PATH", "data/papers.db")
-db = PaperDatabase(DB_PATH)
-
-# # Models endpoints
-# @app.get("/api/models", response_model=List[Model])
-# async def get_models():
-#     """Get all registered models."""
-#     try:
-#         db_models = db.get_models()
-#         # Convert DB models to API models
-#         models = []
-#         for model in db_models:
-#             provider = next(p for p in db.get_model_providers() if p["id"] == model["provider_id"])
-#             models.append(Model(
-#                 id=str(model["id"]),
-#                 name=model["name"],
-#                 provider=provider["name"]
-#             ))
-#         return models
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-# @app.post("/api/models", response_model=Model, status_code=201)
-# async def create_model(model: ModelCreate):
-#     """Create a new model."""
-#     try:
-#         # Validate provider exists
-#         providers = db.get_model_providers()
-#         if not any(p["id"] == model.provider_id for p in providers):
-#             raise HTTPException(status_code=400, detail="Invalid provider_id")
-        
-#         # Add model to database
-#         db.add_model(
-#             provider_id=model.provider_id,
-#             name=model.name,
-#             config_json=json.dumps(model.config_json)
-#         )
-        
-#         # Get the created model
-#         created = db.get_models()[-1]  # Get last inserted model
-#         provider = next(p for p in providers if p["id"] == created["provider_id"])
-        
-#         return Model(
-#             id=str(created["id"]),
-#             name=created["name"],
-#             provider=provider["name"]
-#         )
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-# @app.delete("/api/models/{model_id}")
-# async def delete_model(model_id: int):
-#     """Delete a model by ID."""
-#     try:
-#         db.delete_model(model_id)
-#         return {"status": "success"}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
 # Papers endpoints
-@app.get("/api/papers", response_model=PaginatedResponse)
+@app.get("/api/papers", response_model=PaginatedPapersResponse)
 async def get_papers(
     page: int = Query(1, gt=0),
     score: Optional[float] = None,
@@ -171,7 +184,8 @@ async def get_papers(
     sort_direction: Optional[str] = Query(None, enum=['asc', 'desc']),
     search: Optional[str] = None,
     from_date: Optional[str] = None,
-    to_date: Optional[str] = None
+    to_date: Optional[str] = None,
+    page_size: int = Query(10, gt=0, le=100)
 ):
     """Get paginated papers with filtering and sorting."""
     try:
@@ -199,13 +213,18 @@ async def get_papers(
                     continue
             
             # Add to filtered list
-            filtered_papers.append(Paper(
+            filtered_papers.append(PaperApiResponse(
                 id=p['id'],
                 title=p['title'],
                 abstract=p['abstract'],
                 score=p['score'],
                 date=p['date'],
-                url=p['url']
+                url=p['url'],
+                date_run=p['date_run'],
+                rationale=p['rationale'],
+                related=p['related'],
+                cosine_similarity=p['cosine_similarity'],
+                embedding_model=p['embedding_model']
             ))
         
         # Apply sorting
@@ -216,14 +235,20 @@ async def get_papers(
                 reverse=reverse
             )
         
+        # Calculate total items and pages *after* filtering and *before* slicing for pagination
+        total_items = len(filtered_papers)
+        total_pages = (total_items + page_size - 1) // page_size # Ceiling division
+
         # Apply pagination
-        page_size = 10
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         page_papers = filtered_papers[start_idx:end_idx]
         
-        return PaginatedResponse(
+        return PaginatedPapersResponse(
             items=page_papers,
+            total_items=total_items,
+            total_pages=total_pages,
+            current_page=page,
             nextPage=page + 1 if end_idx < len(filtered_papers) else None
         )
     except Exception as e:

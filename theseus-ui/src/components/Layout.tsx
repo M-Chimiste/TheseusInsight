@@ -22,6 +22,7 @@ import {
   Movie as MovieIcon,
   History as HistoryIcon,
   ListAlt as ListAltIcon,
+  MenuBook as MenuBookIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 
@@ -43,6 +44,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
     { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
+    { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
   ];
 
   return (

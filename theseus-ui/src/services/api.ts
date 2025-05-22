@@ -151,6 +151,29 @@ export interface PodcastListItemResponse {
     description_snippet: string;
 }
 
+// Interfaces for Papers Page
+export interface PaperApiResponse {
+  id: number;
+  title: string;
+  abstract: string;
+  date: string;
+  date_run: string;
+  score: number;
+  rationale: string;
+  related: boolean;
+  cosine_similarity: number;
+  url: string;
+  embedding_model: string;
+}
+
+export interface PaginatedPapersResponse {
+  items: PaperApiResponse[];
+  total_items: number;
+  total_pages: number;
+  current_page: number;
+  nextPage: number | null;
+}
+
 // Podcast History API functions
 export const podcastHistoryApi = {
     getPodcastHistoryList: async (): Promise<PodcastListItemResponse[]> => {
@@ -160,6 +183,21 @@ export const podcastHistoryApi = {
 
     getPodcastDetail: async (podcastId: string): Promise<PodcastDetailResponse> => {
         const response: AxiosResponse<PodcastDetailResponse> = await api.get<PodcastDetailResponse>(`/podcasts/history/${podcastId}`);
+        return response.data;
+    },
+};
+
+// Papers API functions
+export const papersApi = {
+    getPapers: async (
+        page: number = 1,
+        pageSize: number = 10,
+        sortField: string = 'date',
+        sortDirection: string = 'desc'
+    ): Promise<PaginatedPapersResponse> => {
+        const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
+            params: { page, page_size: pageSize, sort_field: sortField, sort_direction: sortDirection }
+        });
         return response.data;
     },
 }; 

@@ -1,0 +1,81 @@
+import React, { useState } from 'react';
+import {
+    Card,
+    CardContent,
+    Typography,
+    Box,
+    Link,
+    IconButton,
+    Collapse,
+    Chip
+} from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import { styled } from '@mui/material/styles';
+import type { PaperApiResponse } from '../services/api'; // Assuming PaperApiResponse is in services/api
+
+interface PaperRowCardProps {
+  paper: PaperApiResponse;
+}
+
+const TruncatedTypography = styled(Typography)(({ theme }) => ({
+  display: '-webkit-box',
+  WebkitBoxOrient: 'vertical',
+  WebkitLineClamp: 2,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  maxHeight: '3em', // Approx 2 lines
+  lineHeight: '1.5em' 
+}));
+
+const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  const handleExpandClick = () => {
+    setExpanded(!expanded);
+  };
+
+  return (
+    <Card sx={{ display: 'flex', flexDirection: 'column', mb: 2, width: '100%' }}>
+      <CardContent sx={{ flexGrow: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <Box sx={{ flexGrow: 1, mr: 2 }}>
+          <Link href={paper.url} target="_blank" rel="noopener noreferrer" sx={{ textDecoration: 'none' }}>
+            <Typography variant="h6" component="div" gutterBottom sx={{ color: 'primary.main' }}>
+              {paper.title}
+            </Typography>
+          </Link>
+          <TruncatedTypography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            {paper.abstract}
+          </TruncatedTypography>
+        </Box>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: '120px' }}>
+          <Chip label={`Score: ${paper.score.toFixed(2)}`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 1}}>
+            {paper.date}
+          </Typography>
+          <IconButton onClick={handleExpandClick} size="small" aria-expanded={expanded} aria-label="show more">
+            {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+          </IconButton>
+        </Box>
+      </CardContent>
+      <Collapse in={expanded} timeout="auto" unmountOnExit>
+        <CardContent sx={{ borderTop: '1px solid', borderColor: 'divider', pt: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>Full Abstract:</Typography>
+          <Typography variant="body2" paragraph sx={{ whiteSpace: 'pre-line', maxHeight: '200px', overflowY: 'auto' }}>
+            {paper.abstract}
+          </Typography>
+          {paper.rationale && (
+            <>
+              <Typography variant="subtitle2" gutterBottom sx={{mt:1}}>Rationale:</Typography>
+              <Typography variant="body2" paragraph sx={{ whiteSpace: 'pre-line', maxHeight: '150px', overflowY: 'auto' }}>
+                {paper.rationale}
+              </Typography>
+            </>
+          )}
+        </CardContent>
+      </Collapse>
+    </Card>
+  );
+};
+
+export default PaperRowCard; 

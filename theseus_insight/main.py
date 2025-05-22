@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, date, timedelta
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -174,6 +175,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve React Frontend
+# Mount static files (React build) - this should be AFTER all API routes
+app.mount("/assets", StaticFiles(directory="static_frontend/assets"), name="assets")
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Serves the index.html for any path not caught by API routes or specific static files."""
+    index_path = "static_frontend/index.html"
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    else:
+        # This case should ideally not happen if the Dockerfile copies files correctly
+        # and the frontend builds an index.html
+        raise HTTPException(status_code=404, detail="Frontend index.html not found.")
 
 # Papers endpoints
 @app.get("/api/papers", response_model=PaginatedPapersResponse)

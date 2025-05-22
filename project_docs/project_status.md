@@ -294,45 +294,50 @@
 
 ### Implemented:
 
-**Papers Page - Pagination & Infinite Scrolling:**
-1.  **Backend Pagination Enhancements (`theseus_insight/api/models.py`, `theseus_insight/main.py`):**
-    *   Updated `PaginatedResponse` Pydantic model to include `total_items`, `total_pages`, and `current_page`.
-    *   Modified the `GET /api/papers` endpoint in `main.py` to accept a `page_size` query parameter and to calculate and return `total_items`, `total_pages`, and `current_page` in the `PaginatedPapersResponse`.
-2.  **Frontend API Service (`theseus-ui/src/services/api.ts`):**
-    *   Updated the `PaginatedPapersResponse` interface to include `total_items`, `total_pages`, and `current_page`.
-    *   Modified `papersApi.getPapers` to accept and pass a `pageSize` parameter to the backend.
-3.  **Papers Page UI (`theseus-ui/src/pages/Papers.tsx`):**
-    *   **Robust Pagination (Initial Step - Now Superseded by Infinite Scroll but foundational):**
-        *   Integrated a page size selector (MUI `Select`) allowing users to choose items per page.
-        *   The MUI `Pagination` component was initially updated to use `total_pages` and `current_page` from the API for accurate page counting and navigation (this component is now removed/commented out in favor of infinite scroll).
-    *   **Infinite Scrolling:**
-        *   Implemented infinite scrolling using `IntersectionObserver`.
-        *   Papers are now loaded continuously as the user scrolls down.
-        *   `allPapers` state accumulates all fetched items.
-        *   `hasNextPage` state tracks if more items can be fetched.
-        *   A loading indicator is shown at the bottom while fetching more items.
-        *   A message indicates when the end of the list is reached.
-        *   The page size selector now controls how many items are fetched in each batch of the infinite scroll.
-        *   Removed the traditional `Pagination` component.
+**Dockerization of Application:**
+1.  **Backend Preparation & `Dockerfile` Creation:**
+    *   Created a `.dockerignore` file to exclude unnecessary files from the build context.
+    *   Developed a multi-stage `Dockerfile`:
+        *   **Frontend Stage:** Uses a Node image to build the React application (`theseus-ui`).
+        *   **Backend Stage:** Uses a Python image, sets up the environment, installs system dependencies including `ffmpeg`, `fonts-noto-cjk` (for Japanese font support), and `fontconfig`. Runs `fc-cache` to make the font available.
+        *   Installs Python dependencies from `requirements.txt`.
+        *   Copies backend application code and the built React frontend (to `/app/static_frontend`).
+        *   Creates necessary data directories and exposes port 8000.
+        *   Sets the default command to run FastAPI with Uvicorn.
+2.  **`docker-compose.yml` Configuration:**
+    *   Created `docker-compose.yml` to define the application service (`theseus-insight-app`).
+    *   Configured the service to build from the `Dockerfile`.
+    *   Maps host port 8000 to container port 8000.
+    *   Uses `env_file: .env` to load environment variables into the container.
+    *   Mounts the local `./data` directory to `/app/data` in the container for data persistence (SQLite DB, generated files).
+    *   Sets the `THESEUS_DB_PATH` environment variable within the container to `/app/data/papers.db`.
+3.  **FastAPI Backend Updates (`theseus_insight/main.py`):**
+    *   **Lifespan Event Handler:** Replaced deprecated `@app.on_event("startup")` and `@app.on_event("shutdown")` with the `lifespan` context manager for handling startup and shutdown tasks.
+        *   Startup logic includes directory creation, environment variable checks, and pre-population of Orchestration settings (from `../config/orchestration.json`) and Research Interests (from `../config/research_interests.txt`) into the database if they are not already present.
+        *   Shutdown logic includes closing WebSocket connections.
+    *   **Static File Serving:** Added logic to serve the built React frontend:
+        *   Mounted the `/app/static_frontend/assets` directory to `/assets` for serving static assets like CSS, JS, images.
+        *   Added a catch-all GET route (`"/{full_path:path}"`) to serve `static_frontend/index.html` for any path not caught by API routes, enabling client-side routing.
 
-**Previously Implemented (Papers Page - Initial Setup):**
-*   Backend: Defined `PaperApiResponse`, `PaginatedPapersResponse`; updated `/api/papers`.
-*   Frontend: Added API service, `PaperCard.tsx`, `Papers.tsx` (initial grid view), routing & navigation.
+**Previously Implemented (Papers Page - Pagination & Infinite Scrolling):**
+*   Backend: Enhanced `/api/papers` to support `page_size` and return `total_items`, `total_pages`, `current_page`.
+*   Frontend: Updated `Papers.tsx` with infinite scrolling using `IntersectionObserver` and a page size selector.
 
 ### To Be Implemented Next:
 
 1.  **Refine Papers Page Functionality (Filters):**
-    *   **Backend Filtering:** Enhance `db.fetch_all_papers()` and the `/api/papers` endpoint to perform filtering (search term, score range, date range) directly at the database level for better performance with infinite scrolling and large datasets.
-    *   **Advanced Frontend Filtering:** Add UI elements (text input for search, sliders for score, date pickers for date range) to `Papers.tsx` for users to input filter criteria. These filters should trigger a reset and refetch of papers with the new criteria.
-2.  **Visualizer Page Development:** Implement the UI for triggering and viewing audio visualizations.
-3.  **Newsletter Generation Page Enhancements:** Improve UI for configuring and running the newsletter pipeline.
+    *   **Backend Filtering:** Enhance `db.fetch_all_papers()` and the `/api/papers` endpoint to perform filtering (search term, score range, date range) directly at the database level.
+    *   **Advanced Frontend Filtering:** Add UI elements to `Papers.tsx` for users to input filter criteria.
+2.  **Visualizer Page Development & Font Update:** Implement the UI for triggering and viewing audio visualizations. Update font path in relevant backend/UI code to use the newly installed CJK font (`/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`).
+3.  **Newsletter Generation Page Enhancements.**
+4.  **Testing:** Thoroughly test the Dockerized application, including environment variable passing, volume mounts, and functionality of all pages.
 
 ### Debug Log:
 
-*   Addressed linter issues related to MUI `Select` component value types and `SelectChangeEvent` imports in `Papers.tsx`.
-*   Ensured `IntersectionObserver` correctly triggers fetching of new data and that loading/end-of-list states are handled appropriately for infinite scroll.
-*   The page size selector now influences the batch size for infinite scroll requests.
-*   The `key` for items in the `Grid` within `Papers.tsx` was made more robust (`paper.id + "_" + paper.date_run`) in case `id`s might not be unique across different fetches if the underlying data source could somehow produce this (though generally database IDs should be unique).
+*   Ensured `db` (database connection) is initialized before the FastAPI `app` instance in `main.py` due to its use in the `lifespan` startup phase.
+*   The WebSocket manager shutdown logic in `lifespan` was made conditional based on the availability of the `manager` object.
+*   The path for the Japanese font in the Docker image is `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` as requested.
+*   Static file serving in `main.py` is configured to serve assets from `/assets` and `index.html` via a catch-all route placed after API routes.
 
 ---
 (Previous content of project_status.md should be preserved below this block if any)

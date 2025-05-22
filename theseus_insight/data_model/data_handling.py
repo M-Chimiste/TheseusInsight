@@ -208,16 +208,32 @@ class PaperDatabase:
                 cursor.execute('''UPDATE logs SET status = ? WHERE task_id = ?''',
                           (log.status, log.task_id))
 
-    def get_recent_logs(self, limit: int = 100):
+    def get_recent_logs(self, limit: int = 100, from_date: str = None, to_date: str = None):
+        query = '''SELECT task_id, status, datetime_run
+                   FROM logs'''
+        params = []
+        conditions = []
+
+        if from_date:
+            conditions.append("datetime_run >= ?")
+            params.append(f"{from_date} 00:00:00")
+        
+        if to_date:
+            conditions.append("datetime_run <= ?")
+            params.append(f"{to_date} 23:59:59")
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY datetime_run DESC LIMIT ?"
+        params.append(limit)
+
         with self.get_cursor() as cursor:
-            cursor.execute('''SELECT status_code, status, datetime_run 
-                             FROM logs 
-                             ORDER BY datetime_run DESC 
-                             LIMIT ?''', (limit,))
+            cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
             return [
                 {
-                    'status_code': row[0],
+                    'task_id': row[0],
                     'status': row[1],
                     'datetime_run': row[2]
                 }

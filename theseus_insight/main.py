@@ -19,7 +19,7 @@ from .api.models import (
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
     EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
     PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse,
-    PaperApiResponse, PaginatedPapersResponse
+    PaperApiResponse, PaginatedPapersResponse, NewsletterRunParams
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
@@ -29,42 +29,35 @@ import asyncio
 IS_RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
 
 if IS_RUNNING_IN_DOCKER:
-    STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend") 
+    STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend")
 else:
-    # When running locally, static files are in theseus-ui/dist relative to project root
-    # Assuming main.py is in theseus_insight directory
-    PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent 
+    PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
     STATIC_FILES_BASE_DIR = PROJECT_ROOT / "theseus-ui" / "dist"
 
 STATIC_ASSETS_DIR = STATIC_FILES_BASE_DIR / "assets"
 STATIC_INDEX_HTML = STATIC_FILES_BASE_DIR / "index.html"
 
-# Pydantic model for Log entries
+# Pydantic model for Log entries (defined before use in get_logs_api)
 class LogEntry(BaseModel):
     task_id: str
     status: str
     datetime_run: str
 
-# Initialize database first, so it's available in lifespan context
+# Initialize database first
 DB_PATH = os.getenv("THESEUS_DB_PATH", "data/papers.db")
 db = PaperDatabase(DB_PATH)
 
-# WebSocket Connection Manager instance (assuming 'manager' is defined elsewhere, e.g. globally or part of task_manager)
-# For this refactor, I'll assume 'manager' is accessible. If it's 'task_manager.manager', adjust accordingly.
-# If 'manager' is defined globally in main.py later, ensure its definition is before FastAPI app instantiation.
-
+# Lifespan context manager
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     # Startup logic
     print("INFO:     Starting up Theseus Insight API...")
     try:
-        # Ensure required directories exist
         os.makedirs("data/newsletters", exist_ok=True)
         os.makedirs("data/podcasts", exist_ok=True)
         os.makedirs("data/visualizations", exist_ok=True)
         os.makedirs("data/temp", exist_ok=True)
         
-        # Environment variables check (moved from old startup_event)
         required_env_vars = [
             "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GMAIL_SENDER_ADDRESS",
             "CLIENT_SECRET", "PROJECT_ID", "GMAIL_APP_PASSWORD"
@@ -72,11 +65,7 @@ async def lifespan(app_instance: FastAPI):
         missing_vars = [var for var in required_env_vars if not os.getenv(var)]
         if missing_vars:
             print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
-            print("Some functionality may be limited.")
 
-        # Pre-populate settings if not in DB (Phase 2 will add this logic here)
-
-        # Pre-populate Orchestration settings if not in DB
         if db.get_setting("orchestration") is None:
             print("INFO:     Orchestration settings not found in DB. Populating from JSON file...")
             orchestration_json_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
@@ -84,8 +73,6 @@ async def lifespan(app_instance: FastAPI):
                 try:
                     with open(orchestration_json_path, 'r') as f:
                         default_orchestration_data = json.load(f)
-                    # Validate with Pydantic model (ensures defaults are applied if JSON is partial)
-                    # Use the comprehensive default logic from the /api/settings/orchestration GET endpoint
                     default_embedding_model = ModelConfig(model_name='Alibaba-NLP/gte-modernbert-base', model_type='sentence-transformers', trust_remote_code=True)
                     default_judge_model = ModelConfig(model_name='phi4-mini:3.8b-q8_0', model_type='ollama', max_new_tokens=512, temperature=0.1, num_ctx=4096)
                     default_content_extraction_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
@@ -93,26 +80,23 @@ async def lifespan(app_instance: FastAPI):
                     default_newsletter_intro_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
                     default_podcast_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=8192, temperature=0.1, num_ctx=131072)
                     default_tts_model = TTSModelConfig(tts_provider='openai', tts_model_name='tts-1', speaker_1_voice='sage', speaker_1_speed=1.0, speaker_2_voice='ash', speaker_2_speed=1.0)
-
                     orchestration_config = OrchestrationConfig(
                         embedding_model=ModelConfig(**default_orchestration_data.get('embedding_model', default_embedding_model.dict())),
                         judge_model=ModelConfig(**default_orchestration_data.get('judge_model', default_judge_model.dict())),
                         content_extraction_model=ModelConfig(**default_orchestration_data.get('content_extraction_model', default_content_extraction_model.dict())),
                         newsletter_sections_model=ModelConfig(**default_orchestration_data.get('newsletter_sections_model', default_newsletter_sections_model.dict())),
                         newsletter_intro_model=ModelConfig(**default_orchestration_data.get('newsletter_intro_model', default_newsletter_intro_model.dict())),
-                        podcast_model=ModelConfig(**default_orchestration_data.get('podcast_model', default_podcast_model.dict())) if default_orchestration_data.get('podcast_model') else default_podcast_model, # Handle if podcast_model is None in JSON
-                        tts_model=TTSModelConfig(**default_orchestration_data.get('tts_model', default_tts_model.dict())) if default_orchestration_data.get('tts_model') else default_tts_model # Handle if tts_model is None in JSON
+                        podcast_model=ModelConfig(**default_orchestration_data.get('podcast_model', default_podcast_model.dict())) if default_orchestration_data.get('podcast_model') else default_podcast_model,
+                        tts_model=TTSModelConfig(**default_orchestration_data.get('tts_model', default_tts_model.dict())) if default_orchestration_data.get('tts_model') else default_tts_model
                     )
                     db.set_setting("orchestration", orchestration_config.json())
                     print("INFO:     Successfully populated orchestration settings into DB.")
                 except Exception as e:
                     print(f"ERROR: Failed to load or parse orchestration.json for DB pre-population: {e}")
             else:
-                print(f"Warning: orchestration.json not found at {orchestration_json_path}. Cannot pre-populate orchestration settings.")
+                print(f"Warning: orchestration.json not found at {orchestration_json_path}.")
         else:
             print("INFO:     Orchestration settings found in DB. Skipping pre-population.")
-
-        # Pre-populate Research Interests if not in DB
         if db.get_setting("research_interests") is None:
             print("INFO:     Research interests not found in DB. Populating from TXT file...")
             research_txt_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
@@ -125,92 +109,48 @@ async def lifespan(app_instance: FastAPI):
                 except Exception as e:
                     print(f"ERROR: Failed to load research_interests.txt for DB pre-population: {e}")
             else:
-                print(f"Warning: research_interests.txt not found at {research_txt_path}. Cannot pre-populate research interests.")
+                print(f"Warning: research_interests.txt not found at {research_txt_path}.")
         else:
             print("INFO:     Research interests settings found in DB. Skipping pre-population.")
-
     except Exception as e:
-        print(f"Error during startup: {e}")
-        raise
-    
+        print(f"Error during startup pre-population: {e}")
     print("INFO:     Theseus Insight API startup complete.")
     yield
     # Shutdown logic
     print("INFO:     Shutting down Theseus Insight API...")
     try:
-        # Close all WebSocket connections (using task_manager which holds the ws manager)
-        # This assumes task_manager has a method to access its connection manager, 
-        # or that the 'manager' variable is globally accessible and correctly initialized.
-        # If 'manager' from the original code is directly accessible: 
-        # for task_id in list(manager.active_connections.keys()):
-        #     await manager.close_all(task_id)
-        # Assuming the original 'manager' is accessible globally or via task_manager for shutdown
-        # If 'manager' is defined later, this needs adjustment. 
-        # For now, let's use a placeholder if 'manager' is not found globally.
-        if 'manager' in globals() and hasattr(globals()['manager'], 'active_connections') and hasattr(globals()['manager'], 'close_all'):
-             for task_id in list(globals()['manager'].active_connections.keys()): # type: ignore
-                await globals()['manager'].close_all(task_id) # type: ignore
-        elif hasattr(task_manager, 'ws_manager') and hasattr(task_manager.ws_manager, 'active_connections'): # Or if it's part of task_manager
-             for task_id in list(task_manager.ws_manager.active_connections.keys()): # type: ignore
-                await task_manager.ws_manager.close_all(task_id) # type: ignore
+        if 'manager' in globals() and hasattr(globals()['manager'], 'active_connections'): 
+             for task_id in list(globals()['manager'].active_connections.keys()): 
+                await globals()['manager'].close_all(task_id) 
+        elif hasattr(task_manager, 'ws_manager') and hasattr(task_manager.ws_manager, 'active_connections'): 
+             for task_id in list(task_manager.ws_manager.active_connections.keys()): 
+                await task_manager.ws_manager.close_all(task_id) 
         else:
-            print("Warning: WebSocket connection manager not found or accessible for shutdown.")
-
+            print("Warning: WebSocket connection manager not found for shutdown.")
     except Exception as e:
         print(f"Error during shutdown: {e}")
     print("INFO:     Theseus Insight API shutdown complete.")
 
-
-# Initialize FastAPI app with lifespan manager
+# Initialize FastAPI app
 app = FastAPI(
     title="Theseus Insight API",
     description="Backend API for Theseus Insight research paper analysis platform",
     version="0.1.0",
-    lifespan=lifespan # Registered lifespan context manager
+    lifespan=lifespan
 )
 
-# CORS configuration
+# CORS middleware
 CORS_ORIGINS = [
-    "http://localhost:3000",  
-    "http://localhost:8000",  
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:8000",
-    "http://localhost:5173",
-    "*"  
+    "http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000", "http://localhost:5173", "*"
 ]
-
 if os.getenv("PRODUCTION_FRONTEND_URL"):
     CORS_ORIGINS.append(os.getenv("PRODUCTION_FRONTEND_URL"))
-
-# Add CORS middleware
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-# Serve React Frontend
-# Mount static files (React build) - this should be AFTER all API routes
-# Check if the directory exists before mounting, to prevent startup error if frontend hasn't been built locally
-if STATIC_ASSETS_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=STATIC_ASSETS_DIR), name="assets")
-else:
-    print(f"WARNING: Static assets directory not found at {STATIC_ASSETS_DIR}. Frontend may not be served correctly if running locally without a build.")
-
-@app.get("/{full_path:path}")
-async def serve_react_app(full_path: str):
-    """Serves the index.html for any path not caught by API routes or specific static files."""
-    if STATIC_INDEX_HTML.exists():
-        return FileResponse(STATIC_INDEX_HTML)
-    else:
-        # This case should ideally not happen if the Dockerfile copies files correctly
-        # and the frontend builds an index.html. If running locally, frontend needs to be built.
-        detail_message = f"Frontend index.html not found at {STATIC_INDEX_HTML}."
-        if not IS_RUNNING_IN_DOCKER:
-            detail_message += " Ensure the frontend has been built (e.g., `npm run build` in `theseus-ui` directory)."
-        raise HTTPException(status_code=404, detail=detail_message)
+# --- API Route Definitions START --- #
 
 # Papers endpoints
 @app.get("/api/papers", response_model=PaginatedPapersResponse)
@@ -226,67 +166,35 @@ async def get_papers(
 ):
     """Get paginated papers with filtering and sorting."""
     try:
-        # Get all papers first
         papers = db.fetch_all_papers()
         filtered_papers = []
-        
-        # Convert to Paper objects and apply filters
         for p in papers:
-            # Skip if doesn't meet score threshold
-            if score is not None and p['score'] < score:
-                continue
-                
-            # Skip if outside date range
-            if from_date and p['date'] < from_date:
-                continue
-            if to_date and p['date'] > to_date:
-                continue
-                
-            # Skip if doesn't match search term
+            if score is not None and p['score'] < score: continue
+            if from_date and p['date'] < from_date: continue
+            if to_date and p['date'] > to_date: continue
             if search:
                 search_lower = search.lower()
                 if (search_lower not in p['title'].lower() and 
                     search_lower not in p['abstract'].lower()):
                     continue
-            
-            # Add to filtered list
             filtered_papers.append(PaperApiResponse(
-                id=p['id'],
-                title=p['title'],
-                abstract=p['abstract'],
-                score=p['score'],
-                date=p['date'],
-                url=p['url'],
-                date_run=p['date_run'],
-                rationale=p['rationale'],
-                related=p['related'],
-                cosine_similarity=p['cosine_similarity'],
+                id=p['id'], title=p['title'], abstract=p['abstract'],
+                score=p['score'], date=p['date'], url=p['url'],
+                date_run=p['date_run'], rationale=p['rationale'],
+                related=p['related'], cosine_similarity=p['cosine_similarity'],
                 embedding_model=p['embedding_model']
             ))
-        
-        # Apply sorting
         if sort_field:
             reverse = sort_direction == 'desc'
-            filtered_papers.sort(
-                key=lambda x: getattr(x, sort_field),
-                reverse=reverse
-            )
-        
-        # Calculate total items and pages *after* filtering and *before* slicing for pagination
+            filtered_papers.sort(key=lambda x: getattr(x, sort_field), reverse=reverse)
         total_items = len(filtered_papers)
-        total_pages = (total_items + page_size - 1) // page_size # Ceiling division
-
-        # Apply pagination
+        total_pages = (total_items + page_size - 1) // page_size
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         page_papers = filtered_papers[start_idx:end_idx]
-        
         return PaginatedPapersResponse(
-            items=page_papers,
-            total_items=total_items,
-            total_pages=total_pages,
-            current_page=page,
-            nextPage=page + 1 if end_idx < len(filtered_papers) else None
+            items=page_papers, total_items=total_items, total_pages=total_pages,
+            current_page=page, nextPage=page + 1 if end_idx < len(filtered_papers) else None
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -505,7 +413,6 @@ async def send_test_email():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Runs endpoints
 @app.get("/api/runs", response_model=PaginatedResponse)
 async def get_runs(
     page: int = Query(1, gt=0),
@@ -601,7 +508,6 @@ async def delete_run_artifact(run_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Task status endpoints
 @app.get("/api/tasks/{task_id}/status")
 async def get_task_status(task_id: str):
     """Get the current status of a task."""
@@ -763,7 +669,6 @@ async def get_logs_api(
         print(f"Error fetching logs: {e}")
         raise HTTPException(status_code=500, detail="An internal server error occurred while fetching logs.")
 
-# Newsletter endpoints
 @app.post("/api/newsletter/run")
 async def run_newsletter(
     background_tasks: BackgroundTasks,
@@ -801,7 +706,6 @@ async def run_newsletter(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Podcast endpoints
 @app.post("/api/podcast/generate")
 async def generate_podcast_pipeline(
     background_tasks: BackgroundTasks,
@@ -1168,14 +1072,6 @@ async def visualizer_status(websocket: WebSocket, task_id: str):
             await task_manager.unsubscribe_from_updates(task_id, status_queue)
         manager.disconnect(task_id, websocket)
 
-# --- Pydantic Model for the new endpoint ---
-class NewsletterRunParams(BaseModel):
-    start_date: str = Field(..., example=date.today().strftime("%Y-%m-%d"))
-    end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
-    email_recipients: List[str] = Field(default_factory=list, example=["test@example.com"])
-    research_interests: str = Field(..., example="AI in healthcare") # Made non-optional
-    generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
-
 # --- Endpoint for Running TheseusInsight Newsletter Pipeline ---
 @app.post("/api/actions/run-newsletter-pipeline", response_model=Dict[str, str])
 async def run_newsletter_pipeline_endpoint(
@@ -1267,4 +1163,22 @@ async def run_newsletter_pipeline_endpoint(
             print(error_message) # Log to server console as well
 
     background_tasks.add_task(background_pipeline_run)
-    return {"task_id": task_id, "message": "Newsletter generation process has been initiated."} 
+    return {"task_id": task_id, "message": "Newsletter generation process has been initiated."}
+
+# --- Serve React Frontend --- #
+# This block MUST come AFTER all other API routes have been defined.
+if STATIC_ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_ASSETS_DIR), name="assets")
+else:
+    print(f"WARNING: Static assets directory not found at {STATIC_ASSETS_DIR}. Frontend may not be served correctly if running locally without a build.")
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Serves the index.html for any path not caught by API routes or specific static files."""
+    if STATIC_INDEX_HTML.exists():
+        return FileResponse(STATIC_INDEX_HTML)
+    else:
+        detail_message = f"Frontend index.html not found at {STATIC_INDEX_HTML}."
+        if not IS_RUNNING_IN_DOCKER:
+            detail_message += " Ensure the frontend has been built (e.g., `npm run build` in `theseus-ui` directory)."
+        raise HTTPException(status_code=404, detail=detail_message) 

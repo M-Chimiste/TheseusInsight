@@ -34,14 +34,22 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardActionArea onClick={handleExpandClick} sx={{ flexGrow: 1}}>
         <CardContent>
-          <Typography variant="h6" component="div" gutterBottom sx={{fontWeight: 'bold'}}>
+          <Typography variant="h6" component="div" gutterBottom sx={{fontWeight: 'bold', color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'text.primary'}}>
             {paper.title}
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, gap: 0.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, gap: 0.5, flexWrap: 'wrap' }}>
             <ScoreIcon fontSize="small" color="action" />
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'text.secondary', mr: 1 }}>
               Score: {paper.score.toFixed(2)} 
             </Typography>
+            {paper.related !== undefined && (
+                <Chip 
+                    label={paper.related ? "Relevant" : "Not Relevant"} 
+                    color={paper.related ? "success" : "default"} 
+                    size="small"
+                    sx={{mr: 1}}
+                />
+            )}
             <Tooltip title={`Date Published: ${format(new Date(paper.date), 'MMM d, yyyy')}\nDate Processed: ${format(new Date(paper.date_run), 'MMM d, yyyy')}\nEmbedding Model: ${paper.embedding_model}`}>
                 <InfoOutlinedIcon fontSize='small' color='action' sx={{ ml: 0.5}}/>
             </Tooltip>

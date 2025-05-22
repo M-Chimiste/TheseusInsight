@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import date
+from datetime import date, timedelta
 
 # Basic domain entities
 class Model(BaseModel):
@@ -242,6 +242,14 @@ class PodcastListItemResponse(BaseModel):
     title: str
     date: str
     description_snippet: str
+
+# --- Pydantic Model for Newsletter Run Pipeline ---
+class NewsletterRunParams(BaseModel):
+    start_date: str = Field(..., example=date.today().strftime("%Y-%m-%d"))
+    end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
+    email_recipients: List[str] = Field(default_factory=list, example=["test@example.com"])
+    research_interests: str = Field(..., example="AI in healthcare")
+    generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
 
 # Models for Papers Page
 class PaperApiResponse(BaseModel):

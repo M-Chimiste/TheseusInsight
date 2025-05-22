@@ -40,7 +40,7 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
       <CardContent sx={{ flexGrow: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <Box sx={{ flexGrow: 1, mr: 2 }}>
           <Link href={paper.url} target="_blank" rel="noopener noreferrer" sx={{ textDecoration: 'none' }}>
-            <Typography variant="h6" component="div" gutterBottom sx={{ color: 'primary.main' }}>
+            <Typography variant="h6" component="div" gutterBottom sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'primary.main' }}>
               {paper.title}
             </Typography>
           </Link>
@@ -49,8 +49,26 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
           </TruncatedTypography>
         </Box>
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: '120px' }}>
-          <Chip label={`Score: ${paper.score.toFixed(2)}`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 1}}>
+          <Chip 
+            label={`Score: ${paper.score.toFixed(2)}`} 
+            size="small" 
+            color="primary" 
+            variant="outlined" 
+            sx={{ 
+              mb: 1,
+              borderColor: theme => theme.palette.mode === 'dark' ? theme.palette.primary.main : undefined,
+              color: theme => theme.palette.mode === 'dark' ? theme.palette.common.white : theme.palette.primary.main,
+            }} 
+          />
+          {paper.related !== undefined && (
+             <Chip 
+                label={paper.related ? "Relevant" : "Not Relevant"} 
+                color={paper.related ? "success" : "default"} 
+                size="small"
+                sx={{mb: 1, width: '100%'}} // Make chip full width of its container
+             />
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1}}>
             {paper.date}
           </Typography>
           <IconButton onClick={handleExpandClick} size="small" aria-expanded={expanded} aria-label="show more">

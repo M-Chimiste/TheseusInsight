@@ -261,6 +261,19 @@
             - Created `PodcastDetail.tsx`: Displays full podcast details, including transcript with distinct styling per speaker (supports up to 5 speakers by default, configurable).
             - Added new routes to `App.tsx` and a "Podcast History" link to the sidebar in `Layout.tsx`.
             - Corrected `AxiosResponse` import in `api.ts` and added 'visualizer' type to `createWebSocket`.
+    - **React Frontend - Papers Page (`Papers.tsx`, `PaperCard.tsx`, `PaperRowCard.tsx`):**
+        - Enhanced dark mode visibility for paper cards:
+            - Updated primary blue color in `darkTheme` (`styles/theme.ts`) to a lighter shade (`#60a5fa`) for better contrast.
+            - In `PaperRowCard.tsx`:
+                - Title color explicitly set to white in dark mode.
+                - Score `Chip` text color set to white in dark mode, border uses the new lighter primary blue.
+            - In `PaperCard.tsx`:
+                - Title and Score text colors explicitly set to white in dark mode.
+                - Added the "Relevant" / "Not Relevant" chip to the unexpanded card view.
+            - In `PaperRowCard.tsx`:
+                - Added the "Considered Relevant" / "Considered Not Relevant" chip below the score, matching the grid view.
+                - Shortened relevance chip labels to "Relevant" / "Not Relevant" to prevent text cutoff.
+                - Increased date font size by changing Typography variant to `body2`.
 
 ## Next Steps
 - **React Frontend - `Podcast.tsx` Development:**

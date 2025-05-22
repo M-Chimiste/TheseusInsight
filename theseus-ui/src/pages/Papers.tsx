@@ -155,7 +155,7 @@ const Papers: React.FC = () => {
                     <ViewListIcon />
                 </ToggleButton>
             </ToggleButtonGroup>
-            <FormControl sx={{ m: 1, minWidth: 120 }} size="small">
+            {/* <FormControl sx={{ m: 1, minWidth: 120 }} size="small">
                 <InputLabel id="page-size-select-label">Items per page</InputLabel>
                 <Select<string>
                     labelId="page-size-select-label"
@@ -169,7 +169,7 @@ const Papers: React.FC = () => {
                     <MenuItem value={"30"}>30</MenuItem>
                     <MenuItem value={"60"}>60</MenuItem>
                 </Select>
-            </FormControl>
+            </FormControl> */}
         </Box>
       </Box>
       

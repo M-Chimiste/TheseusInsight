@@ -230,6 +230,84 @@ class SentenceTransformerInference(InferenceModel):
         return embeddings
 
 
+class LlamacppInference(InferenceModel):
+    """Llamacpp Inference for local GGUF models using llama-cpp-python."""
+    def __init__(self,
+                 model_name: str,
+                 max_new_tokens: int = 4096,
+                 temperature: float = 0.1,
+                 num_ctx: int = 131072,
+                 n_gpu_layers: int = -1,
+                 verbose: bool = False,
+                 **kwargs):
+        """
+        Initialize Llamacpp inference.
+        
+        Args:
+            model_name (str): Path to the GGUF model file
+            max_new_tokens (int): Maximum number of new tokens to generate
+            temperature (float): Sampling temperature
+            num_ctx (int): Context window size
+            n_gpu_layers (int): Number of layers to offload to GPU (-1 for all)
+            verbose (bool): Whether to enable verbose logging
+            **kwargs: Additional arguments to pass to Llama constructor
+        """
+        self.num_ctx = num_ctx
+        self.n_gpu_layers = n_gpu_layers
+        self.verbose = verbose
+        self.model_kwargs = kwargs
+        super().__init__(model_name, max_new_tokens, temperature)
+
+    def _get_provider(self) -> str:
+        return "llamacpp"
+
+    def _load_model(self):
+        from llama_cpp import Llama
+        return Llama(
+            model_path=self.model_name,
+            n_ctx=self.num_ctx,
+            n_gpu_layers=self.n_gpu_layers,
+            verbose=self.verbose,
+            **self.model_kwargs
+        )
+    
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str,
+               max_tokens: Optional[int] = None, temperature: Optional[float] = None,
+               schema: Optional[BaseModel] = None, **kwargs) -> str:
+        """
+        Generate a response using the Llamacpp model.
+
+        Args:
+            messages (List[Dict[str, str]]): List of message dictionaries with 'role' and 'content' keys
+            system_prompt (str): System prompt to prepend to the messages
+            max_tokens (Optional[int]): Override the default max_new_tokens if provided
+            temperature (Optional[float]): Override the default temperature if provided
+            schema (Optional[BaseModel]): Pydantic model for structured output
+
+        Returns:
+            str: The generated response text
+        """
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        
+        # Prepare generation parameters
+        generation_params = {
+            "messages": full_messages,
+            "max_tokens": max_tokens or self.max_new_tokens,
+            "temperature": temperature or self.temperature,
+            **kwargs
+        }
+        
+        # Add schema support for structured output
+        if schema:
+            generation_params["response_format"] = {
+                "type": "json_object",
+                "schema": schema.model_json_schema()
+            }
+        
+        response = self.client.create_chat_completion(**generation_params)
+        return response['choices'][0]['message']['content']
+
+
 class LLMModelFactory:
     """
     Factory class for creating inference model instances.
@@ -239,7 +317,8 @@ class LLMModelFactory:
         'anthropic': AnthropicInference,
         'openai': OpenAIInference,
         'gemini': GeminiInference,
-        'sentence-transformer': SentenceTransformerInference
+        'sentence-transformer': SentenceTransformerInference,
+        'llamacpp': LlamacppInference
     }
 
     @classmethod

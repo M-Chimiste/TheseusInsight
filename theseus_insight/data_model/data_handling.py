@@ -544,3 +544,29 @@ class PaperDatabase:
                 WHERE status IN ('completed', 'failed') 
                 AND start_time < ?
             ''', (cutoff_date,))
+
+    def mark_interrupted_tasks_as_failed(self):
+        """Mark all pending/processing tasks as failed on startup (they were interrupted)."""
+        current_time = datetime.datetime.now().isoformat()
+        with self.get_cursor() as cursor:
+            # First, get the count of tasks to be marked as failed for logging
+            cursor.execute('''
+                SELECT COUNT(*) FROM tasks 
+                WHERE status IN ('pending', 'processing')
+            ''')
+            count = cursor.fetchone()[0]
+            
+            if count > 0:
+                # Mark interrupted tasks as failed
+                cursor.execute('''
+                    UPDATE tasks 
+                    SET status = 'failed', 
+                        error = 'Task was interrupted by server restart',
+                        message = 'Task failed due to server restart',
+                        end_time = ?,
+                        current_step = 'interrupted'
+                    WHERE status IN ('pending', 'processing')
+                ''', (current_time,))
+                print(f"INFO:     Marked {count} interrupted tasks as failed on startup.")
+            
+            return count

@@ -19,8 +19,22 @@ class TaskManager:
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
         self.db = PaperDatabase(os.getenv("THESEUS_DB_PATH", "data/papers.db"))
         
+        # Mark any interrupted tasks as failed on startup
+        interrupted_count = self.db.mark_interrupted_tasks_as_failed()
+        
         # Clean up old tasks on startup
         self.db.cleanup_old_tasks(days_old=7)
+        
+    async def cleanup(self):
+        """Clean up all asyncio resources."""
+        for task_id, queues in self.status_updates.items():
+            for queue in queues:
+                # Put a sentinel value to unblock any waiting consumers
+                try:
+                    queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass
+        self.status_updates.clear()
         
     async def create_task(self, task_id: str, task_type: str, config: dict):
         """Create a new task."""
@@ -123,6 +137,11 @@ class TaskManager:
         if task_id in self.status_updates:
             for queue in self.status_updates[task_id]:
                 await queue.put(status_obj)
+                
+        # Clean up queues for completed/failed tasks
+        if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+            if task_id in self.status_updates:
+                del self.status_updates[task_id]
 
     def _progress_callback(self, task_id: str):
         """Create a progress callback function for TheseusInsight."""

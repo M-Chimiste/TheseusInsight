@@ -37,10 +37,6 @@ const getDaysDifference = (date1: Date, date2: Date): number => {
 };
 
 // Interfaces for form data
-interface DateRange {
-  from: string;
-  to: string;
-}
 
 const Newsletter = () => {
   const today = new Date();

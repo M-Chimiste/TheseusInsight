@@ -28,7 +28,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 // import type { SelectChangeEvent } from '@mui/material'; // Commented out as unused
 import { papersApi } from '../services/api';
-import type { PaperApiResponse, PaginatedPapersResponse } from '../services/api';
+import type { PaperApiResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
 import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
 
@@ -50,7 +50,7 @@ const Papers: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [pageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // Track if more pages are available
   const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<ViewMode>('grid'); // New state for view mode

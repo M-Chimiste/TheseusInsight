@@ -12,7 +12,6 @@ import {
   CardContent,
   CardActionArea,
   Grid,
-  Box,
 } from '@mui/material';
 import { format } from 'date-fns';
 

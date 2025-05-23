@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 
-export enum WebSocketReadyState {
-  CONNECTING = 0,
-  OPEN = 1,
-  CLOSING = 2,
-  CLOSED = 3,
-}
+export const WebSocketReadyState = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+} as const;
+
+export type WebSocketReadyState = typeof WebSocketReadyState[keyof typeof WebSocketReadyState];
 
 interface WebSocketOptions {
   onOpen?: (event: WebSocketEventMap['open']) => void;
@@ -50,7 +52,6 @@ export interface UseWebSocketReturn {
 }
 
 const DEFAULT_RETRY_INTERVAL = 5000; // 5 seconds
-const DEFAULT_MAX_RETRIES = 5;
 
 const PLACEHOLDER_TASK_IDS = {
   newsletter: 'dummy-newsletter-task-id',

@@ -11,11 +11,10 @@ import {
   Container,
 } from '@mui/material';
 import { taskApi } from '../services/api'; // Assuming api.ts will be updated
-import { useWebSocket, type RunStatusPayload as WS_RunStatusPayload, type NodeStatusPayload as WS_NodeStatusPayload } from '../hooks/useWebSocket';
+import { useWebSocket, type RunStatusPayload as WS_RunStatusPayload } from '../hooks/useWebSocket';
 
 // Aliases for WebSocket payload types
 interface RunStatusPayload extends WS_RunStatusPayload {}
-interface NodeStatusPayload extends WS_NodeStatusPayload {}
 
 interface VisualizerParamsType {
   matrix_count: number;

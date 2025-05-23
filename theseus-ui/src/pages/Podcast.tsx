@@ -21,10 +21,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi, podcastApi, taskApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { useWebSocket, type RunStatusPayload as WS_RunStatusPayload } from '../hooks/useWebSocket';
+import { useTaskState } from '../hooks/useTaskState';
 
-// Corrected Aliases and using type-only import
-interface RunStatusPayload extends WS_RunStatusPayload {}
+// Interface for podcast generation state
 
 const Podcast: React.FC = () => {
   const queryClient = useQueryClient();
@@ -65,15 +64,10 @@ const Podcast: React.FC = () => {
   const [urls, setUrls] = useState<string[]>([]);
 
   // Podcast generation state
-  const [generating, setGenerating] = useState<boolean>(false);
-  const [podcastTaskId, setPodcastTaskId] = useState<string | null>(null);
-  const [podcastError, setPodcastError] = useState<string | null>(null);
   const [statusMessages, setStatusMessages] = useState<string[]>([]); // For live log
-  const [pipelineStatus, setPipelineStatus] = useState({ // For overall status display
-    stage: '',
-    progress: 0,
-    message: "No active podcast generation task. Configure and click 'Generate Podcast' to start.",
-  });
+  
+  // Use the new task state hook
+  const { taskState, setTaskId, isCheckingForActiveTasks } = useTaskState('podcast');
 
   interface VisualizerParamsType {
     matrix_count: number;
@@ -130,15 +124,7 @@ const Podcast: React.FC = () => {
 
   // Handler to call generatePodcast API
   const handleGeneratePodcast = async () => {
-    setGenerating(true);
-    setPodcastError(null);
     setStatusMessages([]); // Clear previous logs
-    setPipelineStatus({ // Reset pipeline status
-        stage: 'Initiating...',
-        progress: 5,
-        message: 'Preparing to generate podcast...',
-    });
-    // setPodcastTaskId(null); // Clear previous task ID so WebSocket disconnects/reconnects correctly
 
     try {
       const params = {
@@ -152,8 +138,7 @@ const Podcast: React.FC = () => {
       };
 
       if (params.input_type === 'none') {
-        setPodcastError('Please provide PDF files or URLs.');
-        setGenerating(false);
+        setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Please provide PDF files or URLs.`]);
         return;
       }
 
@@ -162,12 +147,10 @@ const Podcast: React.FC = () => {
         introMusicFile || undefined,
         pdfFiles.length > 0 ? pdfFiles : undefined
       );
-      setPodcastTaskId(response.data.task_id);
+      setTaskId(response.data.task_id);
     } catch (err: any) {
-      setPodcastError(err.response?.data?.detail || err.message || 'Failed to start podcast generation');
-      setPipelineStatus(prev => ({ ...prev, stage: 'Failed to Start', message: `Error: ${err.response?.data?.detail || err.message || "An unknown error occurred."}`}));
-    } finally {
-      // setGenerating(false); // generating will be false when WebSocket says completed/failed
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to start podcast generation';
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`]);
     }
   };
 
@@ -211,70 +194,34 @@ const Podcast: React.FC = () => {
     setUrls(prev => prev.filter((_u, i) => i !== index));
   };
 
-  // WebSocket integration
-  const placeholderTaskId = 'dummy-podcast-task-id';
-  const wsHookState = useWebSocket(podcastTaskId || placeholderTaskId, "podcast");
-
-  const handleParsedRunStatus = (payload: RunStatusPayload) => {
-    const mainNode = payload.nodes && payload.nodes.length > 0 ? payload.nodes[0] : null;
-
-    const logMessage = `[${payload.overallStatus?.toUpperCase()}] ${new Date().toLocaleTimeString()}: ${mainNode?.message || payload.error || 'Status update'}`;
-    setStatusMessages(prev => [...prev, logMessage].slice(-100)); // Keep last 100 messages
-
-    setPipelineStatus({
-      stage: mainNode?.message || (payload.overallStatus === 'failed' ? 'Failed' : pipelineStatus.stage),
-      progress: mainNode?.progress ?? (payload.overallStatus === 'completed' ? 100 : (payload.overallStatus === 'failed' ? 0 : pipelineStatus.progress)),
-      message: mainNode?.message || payload.error || (payload.overallStatus === 'completed' ? 'Completed successfully' : 'Processing...'),
-    });
-    setPodcastError(payload.error || null); 
-    
-    if (payload.overallStatus === 'completed' || payload.overallStatus === 'failed') {
-      setGenerating(false);
-    }
-    if (payload.overallStatus === 'completed' && (payload as any).result) {
-        console.log("Podcast generation completed, result:", (payload as any).result);
-    }
-  };
-
+  // Update status messages when task state changes
   useEffect(() => {
-    if (podcastTaskId && podcastTaskId !== placeholderTaskId && wsHookState.lastMessage) {
-      console.log("[Podcast.tsx] WebSocket lastMessage received:", wsHookState.lastMessage);
-      handleParsedRunStatus(wsHookState.lastMessage as RunStatusPayload);
+    if (taskState.taskId && taskState.message) {
+      const logMessage = `[${taskState.stage.toUpperCase()}] ${new Date().toLocaleTimeString()}: ${taskState.message}`;
+      setStatusMessages(prev => [...prev, logMessage].slice(-100)); // Keep last 100 messages
     }
-
-    if (podcastTaskId && wsHookState.error) {
-      console.log("[Podcast.tsx] WebSocket error received:", wsHookState.error);
-      const errorMessage = wsHookState.error?.toString() || 'WebSocket connection error';
-      if (podcastTaskId !== placeholderTaskId) {
-        setPodcastError(errorMessage);
-        setPipelineStatus(prev => ({ ...prev, stage: 'WebSocket Error', message: `Error: ${errorMessage}`}));
-        setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`].slice(-100));
-        setGenerating(false);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [podcastTaskId, wsHookState.lastMessage, wsHookState.error, createVisualization]);
+  }, [taskState.message, taskState.stage, taskState.taskId]);
 
   // Download button state and logic
   const [downloadInfo, setDownloadInfo] = useState<{ url: string | null, filename: string, type: 'audio' | 'video' | null }>({ url: null, filename: 'podcast', type: null });
 
   useEffect(() => {
-    if (wsHookState.lastMessage?.overallStatus === 'completed' && podcastTaskId && (wsHookState.lastMessage as any).result) {
+    if (taskState.taskId && taskState.result && !taskState.isRunning) {
         const artifactType = createVisualization ? 'video' : 'audio';
         const filename = artifactType === 'video' ? 'podcast_visualization.mp4' : 'podcast_audio.mp3';
         const blobType = artifactType === 'video' ? 'video/mp4' : 'audio/mpeg';
 
-        taskApi.downloadTaskArtifact(podcastTaskId, artifactType)
+        taskApi.downloadTaskArtifact(taskState.taskId, artifactType)
             .then(downloadRes => {
                 const blob = new Blob([downloadRes.data], { type: blobType });
                 setDownloadInfo({ url: URL.createObjectURL(blob), filename, type: artifactType });
             })
             .catch(err => {
                 console.error("Failed to download artifact:", err);
-                setPodcastError("Failed to prepare download link for the artifact.");
+                setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Failed to prepare download link for the artifact.`]);
             });
     }
-  }, [wsHookState.lastMessage, podcastTaskId, createVisualization]);
+  }, [taskState.taskId, taskState.result, taskState.isRunning, createVisualization]);
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -559,28 +506,30 @@ const Podcast: React.FC = () => {
               variant="contained"
               color="primary"
               fullWidth
-              disabled={pdfFiles.length === 0 && urls.length === 0 || generating}
+              disabled={pdfFiles.length === 0 && urls.length === 0 || taskState.isRunning || isCheckingForActiveTasks}
               onClick={handleGeneratePodcast}
               sx={{ py: 1.5, fontSize: '1.1rem' }}
             >
-              {generating ? `Generating... (${pipelineStatus.stage} ${pipelineStatus.progress.toFixed(0)}%)` : 'Generate Podcast'}
+              {isCheckingForActiveTasks ? 'Checking for active tasks...' :
+               taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
+               'Generate Podcast'}
             </Button>
-            {generating && <CircularProgress sx={{ mt: 2, display: 'block', marginLeft: 'auto', marginRight: 'auto' }} />}
-            {podcastError && (
+            {taskState.isRunning && <CircularProgress sx={{ mt: 2, display: 'block', marginLeft: 'auto', marginRight: 'auto' }} />}
+            {taskState.error && (
               <Typography color="error" sx={{ mt: 2, textAlign: 'center' }}>
-                {podcastError}
+                {taskState.error}
               </Typography>
             )}
-            {podcastTaskId && !generating && wsHookState.readyState === 1 && wsHookState.lastMessage?.overallStatus !== 'completed' && wsHookState.lastMessage?.overallStatus !== 'failed' && (
+            {taskState.taskId && taskState.isRunning && (
               <Typography sx={{ mt: 2, textAlign: 'center' }}>
-                Podcast generation in progress. Task ID: {podcastTaskId}
+                Podcast generation in progress. Task ID: {taskState.taskId}
                 <br />
-                Status: {pipelineStatus.message} ({pipelineStatus.progress.toFixed(0)}%)
+                Status: {taskState.message} ({taskState.progress.toFixed(0)}%)
               </Typography>
             )}
-            {wsHookState.lastMessage?.overallStatus === 'completed' && (
+            {taskState.taskId && !taskState.isRunning && !taskState.error && (
                <Typography sx={{ mt: 2, textAlign: 'center' }} color="success.main">
-                 Podcast Ready! Task ID: {podcastTaskId}
+                 Podcast Ready! Task ID: {taskState.taskId}
                </Typography>
             )}
             {downloadInfo.url && (

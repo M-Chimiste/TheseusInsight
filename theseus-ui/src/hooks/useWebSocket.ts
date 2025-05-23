@@ -23,8 +23,11 @@ export interface RunStatusPayload {
   taskId: string;
   nodes: NodeStatusPayload[];
   overallStatus: 'pending' | 'processing' | 'completed' | 'failed';
+  currentStep?: string | null;
+  progress?: number | null;
+  message?: string | null;
+  result?: Record<string, any> | null;
   error?: string | null;
-  // Add any other fields your backend sends at the top level of the status message
 }
 
 export interface NodeStatusPayload {

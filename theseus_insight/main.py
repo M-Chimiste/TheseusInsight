@@ -119,12 +119,15 @@ async def lifespan(app_instance: FastAPI):
     # Shutdown logic
     print("INFO:     Shutting down Theseus Insight API...")
     try:
+        # Clean up TaskManager resources
+        await task_manager.cleanup()
+        print("INFO:     TaskManager cleanup completed.")
+        
+        # Clean up WebSocket connections
         if 'manager' in globals() and hasattr(globals()['manager'], 'active_connections'): 
              for task_id in list(globals()['manager'].active_connections.keys()): 
-                await globals()['manager'].close_all(task_id) 
-        elif hasattr(task_manager, 'ws_manager') and hasattr(task_manager.ws_manager, 'active_connections'): 
-             for task_id in list(task_manager.ws_manager.active_connections.keys()): 
-                await task_manager.ws_manager.close_all(task_id) 
+                await globals()['manager'].close_all(task_id)
+             print("INFO:     WebSocket connections closed.")
         else:
             print("Warning: WebSocket connection manager not found for shutdown.")
     except Exception as e:
@@ -516,6 +519,16 @@ async def get_task_status(task_id: str):
         if not status:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tasks/active")
+async def get_active_tasks(task_types: Optional[str] = Query(None)):
+    """Get all active tasks, optionally filtered by type."""
+    try:
+        types_filter = task_types.split(',') if task_types else None
+        active_tasks = task_manager.db.get_active_tasks(task_types=types_filter)
+        return {"active_tasks": active_tasks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -977,6 +990,11 @@ async def newsletter_status(websocket: WebSocket, task_id: str):
         while True:
             # Wait for status updates
             status = await status_queue.get()
+            
+            # Check for cleanup sentinel
+            if status is None:
+                break
+                
             await websocket.send_json(status.dict())
             
             # If task is completed or failed, close connection
@@ -1013,6 +1031,11 @@ async def podcast_status(websocket: WebSocket, task_id: str):
         while True:
             # Wait for status updates
             status = await status_queue.get()
+            
+            # Check for cleanup sentinel
+            if status is None:
+                break
+                
             await websocket.send_json(status.dict())
             
             # If task is completed or failed, close connection
@@ -1049,6 +1072,11 @@ async def visualizer_status(websocket: WebSocket, task_id: str):
         while True:
             # Wait for status updates
             status = await status_queue.get()
+            
+            # Check for cleanup sentinel
+            if status is None:
+                break
+                
             await websocket.send_json(status.dict())
             
             # If task is completed or failed, close connection

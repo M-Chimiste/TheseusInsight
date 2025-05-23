@@ -11,7 +11,8 @@ import {
   IconButton,
   Tooltip,
   Container,
-  Chip
+  Chip,
+  CircularProgress
 } from '@mui/material';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -19,8 +20,8 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import { settingsApi } from '../services/api'; // Assuming API service is correctly set up
-import { useWebSocket } from '../hooks/useWebSocket'; // Assuming WebSocket hook is available
+import { settingsApi } from '../services/api';
+import { useTaskState } from '../hooks/useTaskState';
 
 // Helper to get date N days ago or N days from now
 const getDateByOffset = (days: number, fromDate: Date = new Date()): Date => {
@@ -35,40 +36,10 @@ const getDaysDifference = (date1: Date, date2: Date): number => {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end day
 };
 
-// Frontend state for the pipeline
-interface PipelineStatus {
-  isRunning: boolean;
-  stage: string;
-  progress: number;
-  message: string;
-  error: string | null;
-  taskId: string | null;
-}
-
-// Interfaces to represent the WebSocket JSON payload from the backend (RunStatus model)
-interface NodeStatusPayload {
-  nodeId: string;
-  name?: string;
-  status: string; // e.g., TaskStatus enum from backend
-  message?: string;
-  progress?: number; // Percentage 0-100 from backend
-  timestamp?: string;
-  error?: string;
-  // inputs & outputs are omitted as they are not primarily used for live status display here
-}
-
-interface RunStatusPayload {
-  taskId: string;
-  pipelineType?: string;
-  nodes: NodeStatusPayload[];
-  overallStatus: string; // e.g., TaskStatus enum from backend
-  current_step?: string; // Not consistently sent by backend tasks.py for progress
-  progress?: number;     // Not consistently sent by backend tasks.py for progress
-  message?: string;      // Not consistently sent by backend tasks.py for progress
-  error?: string | null; // Overall error for the run (allow null)
-  result?: Record<string, any>;
-  start_time?: string;
-  end_time?: string;
+// Interfaces for form data
+interface DateRange {
+  from: string;
+  to: string;
 }
 
 const Newsletter = () => {
@@ -83,14 +54,9 @@ const Newsletter = () => {
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [researchInterests, setResearchInterests] = useState<string>('');
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
-  const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>({
-    isRunning: false,
-    stage: '',
-    progress: 0,
-    message: "No active newsletter generation task. Configure and click 'Generate Newsletter' to start.",
-    error: null,
-    taskId: null,
-  });
+  
+  // Use the new task state hook
+  const { taskState, setTaskId, isCheckingForActiveTasks } = useTaskState('newsletter');
 
   // Fetch default settings
   useEffect(() => {
@@ -159,81 +125,22 @@ const Newsletter = () => {
     setEmailRecipientsInput(updatedEmails.join('\\n'));
   };
 
-  // Processes the parsed RunStatus payload from WebSocket to update UI state
-  const handleParsedRunStatus = (payload: RunStatusPayload) => {
-    const mainNode = payload.nodes && payload.nodes.length > 0 ? payload.nodes[0] : null;
-
-    // Update live log messages
-    const logMessage = `[${payload.overallStatus.toUpperCase()}] ${new Date().toLocaleTimeString()}: ${mainNode?.message || payload.error || 'Status update'}`;
-    setStatusMessages(prev => [...prev, logMessage]);
-
-    // Update pipeline status for progress bar and summary text
-    setPipelineStatus(prev => ({
-      ...prev,
-      // Use mainNode.message for stage, fallback to overall status or previous stage
-      stage: mainNode?.message || (payload.overallStatus === 'FAILED' ? 'Failed' : prev.stage),
-      // Progress comes from the mainNode
-      progress: mainNode?.progress ?? (payload.overallStatus === 'COMPLETED' ? 100 : (payload.overallStatus === 'FAILED' ? 0 : prev.progress)),
-      // Display mainNode message, or overall error if present, or fallback
-      message: mainNode?.message || payload.error || (payload.overallStatus === 'COMPLETED' ? 'Completed successfully' : 'Processing...'),
-      // Prioritize overall error, then node error
-      error: payload.error || mainNode?.error || null,
-      isRunning: payload.overallStatus !== 'COMPLETED' && payload.overallStatus !== 'FAILED',
-      // Ensure taskId from payload is used if it's the first time or changes (though unlikely for an ongoing task)
-      taskId: payload.taskId || prev.taskId, 
-    }));
-
-    // If task is fully completed or failed, you might want to do additional cleanup or state changes here
-    // For instance, if you want useWebSocket to disconnect or stop trying for this specific task ID:
-    // if (payload.overallStatus === 'COMPLETED' || payload.overallStatus === 'FAILED') {
-    //   setPipelineStatus(prev => ({ ...prev, taskId: null })); // This would make currentTaskId null
-    // }
-  };
-
-  const currentTaskId = pipelineStatus.taskId;
-  // const placeholderTaskId = 'dummy-task-id'; // No longer needed for the hook call
-
-  // Pass currentTaskId directly (can be null). The hook should handle null taskId gracefully.
-  const hookState = useWebSocket(currentTaskId, "newsletter");
-
+  // Update status messages when task state changes
   useEffect(() => {
-    // Only process messages if we have a REAL taskId and a new message
-    if (currentTaskId && hookState.lastMessage) {
-      console.log("[Newsletter.tsx] WebSocket lastMessage received:", hookState.lastMessage); // DEBUG LOG
-      handleParsedRunStatus(hookState.lastMessage);
+    if (taskState.taskId && taskState.message) {
+      const logMessage = `[${taskState.stage.toUpperCase()}] ${new Date().toLocaleTimeString()}: ${taskState.message}`;
+      setStatusMessages(prev => [...prev, logMessage]);
     }
-
-    // Handle WebSocket errors for real tasks
-    if (currentTaskId && hookState.error) {
-      console.log(`[Newsletter.tsx] WebSocket error for task ${currentTaskId}:`, hookState.error); // DEBUG LOG
-      const errorMessage = hookState.error?.toString() || 'WebSocket connection error';
-      // if (currentTaskId !== placeholderTaskId) { // This check is redundant if currentTaskId is string | null
-      setPipelineStatus(prev => ({
-        ...prev,
-        isRunning: false,
-        error: errorMessage,
-        message: `WebSocket Error: ${errorMessage}`,
-      }));
-      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()} for task ${currentTaskId}: ${errorMessage}`]);
-      // }
-    }
-  }, [currentTaskId, hookState.lastMessage, hookState.error]);
+  }, [taskState.message, taskState.stage, taskState.taskId]);
 
   const handleGenerateNewsletter = async () => {
     if (!researchInterests.trim()) {
-      setPipelineStatus(prev => ({ ...prev, error: "Research Interests cannot be empty." }));
+      // Show error in status messages
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Research Interests cannot be empty.`]);
       return;
     }
 
     setStatusMessages([]);
-    setPipelineStatus({
-      isRunning: true,
-      stage: 'Initiating...',
-      progress: 5,
-      message: 'Preparing to generate newsletter...',
-      error: null,
-      taskId: null, // Will be set by API response
-    });
 
     try {
       const params = {
@@ -243,18 +150,11 @@ const Newsletter = () => {
         research_interests: researchInterests,
       };
       const response = await settingsApi.runNewsletterPipeline(params);
-      setPipelineStatus(prev => ({ ...prev, taskId: response.data.task_id, message: `Task ${response.data.task_id} started.` }));
+      setTaskId(response.data.task_id);
     } catch (err: any) {
       console.error("Failed to start newsletter pipeline:", err);
       const errorMessage = err.response?.data?.detail || err.message || "An unknown error occurred.";
-      setPipelineStatus({
-        isRunning: false,
-        stage: 'Failed to Start',
-        progress: 0,
-        message: `Error: ${errorMessage}`,
-        error: errorMessage,
-        taskId: null,
-      });
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`]);
     }
   };
   
@@ -360,12 +260,14 @@ const Newsletter = () => {
           color="primary"
           fullWidth
           size="large"
-          startIcon={<RocketLaunchIcon />}
+          startIcon={isCheckingForActiveTasks ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
           onClick={handleGenerateNewsletter}
-          disabled={pipelineStatus.isRunning}
+          disabled={taskState.isRunning || isCheckingForActiveTasks}
           sx={{ py: 1.5, mb: 3, fontSize: '1.1rem' }}
         >
-          {pipelineStatus.isRunning ? `Generating... (${pipelineStatus.stage} ${pipelineStatus.progress.toFixed(0)}%)` : '🚀 Generate Newsletter'}
+          {isCheckingForActiveTasks ? 'Checking for active tasks...' :
+           taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
+           '🚀 Generate Newsletter'}
         </Button>
 
         {/* Pipeline Status Section */}
@@ -374,24 +276,30 @@ const Newsletter = () => {
             <Typography variant="h6" fontWeight={600} gutterBottom>
               Pipeline Status
             </Typography>
-            {pipelineStatus.error && (
+            {taskState.error && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                {pipelineStatus.error}
+                {taskState.error}
               </Alert>
             )}
-            {pipelineStatus.isRunning && (
+            {taskState.isRunning && (
               <Box sx={{ mb: 2 }}>
-                <Typography variant="body1" gutterBottom>{pipelineStatus.stage} - {pipelineStatus.message}</Typography>
-                <LinearProgress variant="determinate" value={pipelineStatus.progress} />
+                <Typography variant="body1" gutterBottom>{taskState.stage} - {taskState.message}</Typography>
+                <LinearProgress variant="determinate" value={taskState.progress} />
               </Box>
             )}
-            {!pipelineStatus.isRunning && !pipelineStatus.error && pipelineStatus.taskId && (
+            {!taskState.isRunning && !taskState.error && taskState.taskId && (
                  <Alert severity="success" sx={{ mb: 2 }}>
-                    Task {pipelineStatus.taskId} completed successfully.
+                    Task {taskState.taskId} completed successfully.
                  </Alert>
             )}
-             {!pipelineStatus.isRunning && !pipelineStatus.taskId && (
-                 <Typography variant="body1" color="text.secondary">{pipelineStatus.message}</Typography>
+             {!taskState.isRunning && !taskState.taskId && !isCheckingForActiveTasks && (
+                 <Typography variant="body1" color="text.secondary">{taskState.message}</Typography>
+            )}
+            {isCheckingForActiveTasks && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <CircularProgress size={20} />
+                <Typography variant="body1" color="text.secondary">Checking for active tasks...</Typography>
+              </Box>
             )}
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Live Log:</Typography>
             <Box 

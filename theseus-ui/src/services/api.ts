@@ -66,6 +66,10 @@ export const podcastApi = {
 export const taskApi = {
   getTaskStatus: (taskId: string) => api.get(`/tasks/${taskId}/status`),
   getTaskResult: (taskId: string) => api.get(`/tasks/${taskId}/result`),
+  getActiveTasks: (taskTypes?: string[]) => {
+    const params = taskTypes ? { task_types: taskTypes.join(',') } : {};
+    return api.get('/tasks/active', { params });
+  },
   downloadTaskArtifact: (taskId: string, fileType: 'markdown' | 'audio' | 'video') => 
     api.get(`/tasks/${taskId}/download/${fileType}`, { responseType: 'blob' }),
   runVisualizerPipeline: (audioFile: File, visualizerParams: any) => {

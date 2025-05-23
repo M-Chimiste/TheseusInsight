@@ -105,17 +105,21 @@ const Newsletter = () => {
   // Email parsing
   const parseAndSetEmails = (input: string) => {
     const parsed = input
-      .split(/[,\\n\\s]+/)
+      .split(/[,\n\s]+/)
       .map(email => email.trim())
-      .filter(email => email && /^[^\s@]+@[^\s@]+\\.[^\s@]+$/.test(email)); // Basic email validation
+      .filter(email => email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)); // Basic email validation
     setEmailRecipients(Array.from(new Set(parsed))); // Remove duplicates
   };
 
   const handleEmailInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setEmailRecipientsInput(event.target.value);
+    const newValue = event.target.value;
+    setEmailRecipientsInput(newValue);
+    // Parse emails in real-time as user types
+    parseAndSetEmails(newValue);
   };
   
   const handleEmailInputBlur = () => {
+    // Also parse on blur to ensure consistency
     parseAndSetEmails(emailRecipientsInput);
   };
 
@@ -227,7 +231,7 @@ const Newsletter = () => {
               onBlur={handleEmailInputBlur}
               multiline
               rows={3}
-              helperText="Enter emails separated by commas, spaces, or newlines. Validated emails will appear as tags below."
+              helperText="Enter emails separated by commas, spaces, or line breaks. Valid emails will appear as tags below in real-time."
               sx={{ mb: 1 }}
             />
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2, minHeight: '30px' }}>

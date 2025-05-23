@@ -15,6 +15,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
 - [Running the Frontend](#running-the-frontend)
+- [Running as a Desktop App with Electron](#running-as-a-desktop-app-with-electron)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)
@@ -137,7 +138,20 @@ Interactive docs are served at [http://localhost:8000/docs](http://localhost:800
 
 ## Running the Frontend
 
+
 During development use the Vite dev server as shown in the [Quickstart](#quickstart) section.  When using Docker or after running `npm run build`, the compiled frontend is served automatically from FastAPI on port 8000.
+
+## Running as a Desktop App with Electron
+
+An Electron entry point is provided to bundle the React UI with the Python backend. After building the frontend, launch the desktop app with:
+
+```bash
+cd theseus-ui
+npm run build
+npm run electron
+```
+
+The Electron main process starts the FastAPI server automatically and loads the interface in a desktop window.
 
 ---
 

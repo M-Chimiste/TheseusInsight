@@ -93,6 +93,23 @@ class PaperDatabase:
             for provider in INITIAL_PROVIDERS:
                 cursor.execute('INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)', (provider['id'], provider['name']))
 
+            # Create tasks table for persistent task state management
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    error TEXT,
+                    result_json TEXT,
+                    progress REAL DEFAULT 0,
+                    current_step TEXT,
+                    message TEXT
+                )
+            ''')
+
             # Create models table
             # cursor.execute('''
             #     CREATE TABLE IF NOT EXISTS models (
@@ -405,3 +422,125 @@ class PaperDatabase:
 
     def set_visualizer_settings(self, settings):
         self.set_setting('visualizer_settings', json.dumps(settings))
+
+    # TASK PERSISTENCE OPERATIONS
+    def insert_task(self, task_id: str, task_type: str, status: str, config: dict, start_time: str = None, progress: float = 0, current_step: str = None, message: str = None):
+        """Insert a new task into the database."""
+        if not start_time:
+            start_time = datetime.datetime.now().isoformat()
+        
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                INSERT OR REPLACE INTO tasks 
+                (task_id, task_type, status, config_json, start_time, progress, current_step, message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (task_id, task_type, status, json.dumps(config), start_time, progress, current_step, message))
+
+    def update_task_status(self, task_id: str, status: str, progress: float = None, current_step: str = None, message: str = None, error: str = None, result: dict = None, end_time: str = None):
+        """Update task status and other fields."""
+        with self.get_cursor() as cursor:
+            # Build dynamic update query based on provided parameters
+            fields_to_update = ["status = ?"]
+            params = [status]
+            
+            if progress is not None:
+                fields_to_update.append("progress = ?")
+                params.append(progress)
+            if current_step is not None:
+                fields_to_update.append("current_step = ?")
+                params.append(current_step)
+            if message is not None:
+                fields_to_update.append("message = ?")
+                params.append(message)
+            if error is not None:
+                fields_to_update.append("error = ?")
+                params.append(error)
+            if result is not None:
+                fields_to_update.append("result_json = ?")
+                params.append(json.dumps(result))
+            if end_time is not None:
+                fields_to_update.append("end_time = ?")
+                params.append(end_time)
+            
+            params.append(task_id)  # WHERE clause parameter
+            
+            query = f"UPDATE tasks SET {', '.join(fields_to_update)} WHERE task_id = ?"
+            cursor.execute(query, params)
+
+    def get_task(self, task_id: str) -> dict | None:
+        """Get a task by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                SELECT task_id, task_type, status, config_json, start_time, end_time, 
+                       error, result_json, progress, current_step, message
+                FROM tasks WHERE task_id = ?
+            ''', (task_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'task_id': row[0],
+                    'type': row[1],
+                    'status': row[2],
+                    'config': json.loads(row[3]) if row[3] else {},
+                    'start_time': row[4],
+                    'end_time': row[5],
+                    'error': row[6],
+                    'result': json.loads(row[7]) if row[7] else None,
+                    'progress': row[8],
+                    'current_step': row[9],
+                    'message': row[10]
+                }
+            return None
+
+    def get_active_tasks(self, task_types: list = None) -> list:
+        """Get all active (non-completed/failed) tasks, optionally filtered by type."""
+        with self.get_cursor() as cursor:
+            query = '''
+                SELECT task_id, task_type, status, config_json, start_time, end_time, 
+                       error, result_json, progress, current_step, message
+                FROM tasks 
+                WHERE status NOT IN ('completed', 'failed')
+            '''
+            params = []
+            
+            if task_types:
+                placeholders = ','.join('?' * len(task_types))
+                query += f' AND task_type IN ({placeholders})'
+                params.extend(task_types)
+            
+            query += ' ORDER BY start_time DESC'
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            tasks = []
+            for row in rows:
+                tasks.append({
+                    'task_id': row[0],
+                    'type': row[1],
+                    'status': row[2],
+                    'config': json.loads(row[3]) if row[3] else {},
+                    'start_time': row[4],
+                    'end_time': row[5],
+                    'error': row[6],
+                    'result': json.loads(row[7]) if row[7] else None,
+                    'progress': row[8],
+                    'current_step': row[9],
+                    'message': row[10]
+                })
+            return tasks
+
+    def delete_task(self, task_id: str):
+        """Delete a task from the database."""
+        with self.get_cursor() as cursor:
+            cursor.execute('DELETE FROM tasks WHERE task_id = ?', (task_id,))
+
+    def cleanup_old_tasks(self, days_old: int = 7):
+        """Clean up completed/failed tasks older than specified days."""
+        cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=days_old)).isoformat()
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM tasks 
+                WHERE status IN ('completed', 'failed') 
+                AND start_time < ?
+            ''', (cutoff_date,))

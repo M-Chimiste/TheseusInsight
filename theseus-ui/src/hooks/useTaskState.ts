@@ -1,0 +1,152 @@
+import { useState, useEffect, useCallback } from 'react';
+import { taskApi } from '../services/api';
+import { useWebSocket } from './useWebSocket';
+
+export interface TaskState {
+  taskId: string | null;
+  isRunning: boolean;
+  stage: string;
+  progress: number;
+  message: string;
+  error: string | null;
+  result?: any;
+}
+
+export interface UseTaskStateReturn {
+  taskState: TaskState;
+  setTaskId: (taskId: string | null) => void;
+  clearTask: () => void;
+  isCheckingForActiveTasks: boolean;
+}
+
+const DEFAULT_TASK_STATE: TaskState = {
+  taskId: null,
+  isRunning: false,
+  stage: '',
+  progress: 0,
+  message: "No active task. Configure and start a new task.",
+  error: null,
+};
+
+export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'): UseTaskStateReturn => {
+  const [taskState, setTaskState] = useState<TaskState>(DEFAULT_TASK_STATE);
+  const [isCheckingForActiveTasks, setIsCheckingForActiveTasks] = useState(true);
+
+  // WebSocket connection for real-time updates
+  const { lastMessage } = useWebSocket(taskState.taskId, taskType);
+
+  // Check for active tasks on mount
+  useEffect(() => {
+    const checkForActiveTasks = async () => {
+      try {
+        setIsCheckingForActiveTasks(true);
+        // Check for both the base type and the custom type (e.g., 'newsletter' and 'custom_newsletter_run')
+        const taskTypesToCheck = [taskType, `custom_${taskType}_run`];
+        const response = await taskApi.getActiveTasks(taskTypesToCheck);
+        const activeTasks = response.data.active_tasks || [];
+        
+        console.log(`[useTaskState] Checking for active ${taskType} tasks:`, {
+          taskTypesToCheck,
+          activeTasks,
+          totalFound: activeTasks.length
+        });
+        
+        // Find the most recent active task for this type
+        const activeTask = activeTasks.find((task: any) => 
+          task.type === taskType || 
+          task.type === `custom_${taskType}_run` ||
+          task.task_type === taskType ||
+          task.task_type === `custom_${taskType}_run`
+        );
+        
+        console.log(`[useTaskState] Found active task for ${taskType}:`, activeTask);
+
+        if (activeTask) {
+          // Restore task state from database
+          setTaskState({
+            taskId: activeTask.task_id,
+            isRunning: activeTask.status === 'pending' || activeTask.status === 'processing',
+            stage: activeTask.current_step || activeTask.status,
+            progress: activeTask.progress || 0,
+            message: activeTask.message || `Resuming ${taskType} task...`,
+            error: activeTask.error || null,
+            result: activeTask.result,
+          });
+        } else {
+          // No active tasks found
+          setTaskState(DEFAULT_TASK_STATE);
+        }
+      } catch (error) {
+        console.error(`Error checking for active ${taskType} tasks:`, error);
+        setTaskState(DEFAULT_TASK_STATE);
+      } finally {
+        setIsCheckingForActiveTasks(false);
+      }
+    };
+
+    checkForActiveTasks();
+  }, [taskType]);
+
+  // Handle WebSocket messages
+  useEffect(() => {
+    if (lastMessage && taskState.taskId) {
+      const mainNode = lastMessage.nodes && lastMessage.nodes.length > 0 ? lastMessage.nodes[0] : null;
+      
+      setTaskState(prev => ({
+        ...prev,
+        isRunning: lastMessage.overallStatus === 'processing' || lastMessage.overallStatus === 'pending',
+        stage: mainNode?.message || lastMessage.overallStatus || prev.stage,
+        progress: mainNode?.progress ?? (
+          lastMessage.overallStatus === 'completed' ? 100 : 
+          lastMessage.overallStatus === 'failed' ? 0 : 
+          prev.progress
+        ),
+        message: mainNode?.message || lastMessage.error || (
+          lastMessage.overallStatus === 'completed' ? 'Completed successfully' : 
+          lastMessage.overallStatus === 'failed' ? 'Task failed' :
+          'Processing...'
+        ),
+        error: lastMessage.error || null,
+        result: lastMessage.result || prev.result,
+      }));
+
+      // Clear task when completed or failed
+      if (lastMessage.overallStatus === 'completed' || lastMessage.overallStatus === 'failed') {
+        setTimeout(() => {
+          setTaskState(prev => ({
+            ...prev,
+            taskId: null,
+            isRunning: false,
+          }));
+        }, 2000); // Keep the completion/error message visible for 2 seconds
+      }
+    }
+  }, [lastMessage, taskState.taskId]);
+
+  const setTaskId = useCallback((taskId: string | null) => {
+    if (taskId) {
+      setTaskState(prev => ({
+        ...prev,
+        taskId,
+        isRunning: true,
+        stage: 'Initiating...',
+        progress: 5,
+        message: `Starting ${taskType} task...`,
+        error: null,
+      }));
+    } else {
+      setTaskState(DEFAULT_TASK_STATE);
+    }
+  }, [taskType]);
+
+  const clearTask = useCallback(() => {
+    setTaskState(DEFAULT_TASK_STATE);
+  }, []);
+
+  return {
+    taskState,
+    setTaskId,
+    clearTask,
+    isCheckingForActiveTasks,
+  };
+}; 

@@ -519,6 +519,16 @@ async def get_task_status(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/tasks/active")
+async def get_active_tasks(task_types: Optional[str] = Query(None)):
+    """Get all active tasks, optionally filtered by type."""
+    try:
+        types_filter = task_types.split(',') if task_types else None
+        active_tasks = task_manager.db.get_active_tasks(task_types=types_filter)
+        return {"active_tasks": active_tasks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/tasks/{task_id}/result")
 async def get_task_result(task_id: str):
     """Get the result of a completed task."""

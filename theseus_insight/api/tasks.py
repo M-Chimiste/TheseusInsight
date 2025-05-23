@@ -16,25 +16,34 @@ class TaskStatus(str, Enum):
 
 class TaskManager:
     def __init__(self):
-        self.tasks: Dict[str, Dict] = {}
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
         self.db = PaperDatabase(os.getenv("THESEUS_DB_PATH", "data/papers.db"))
         
+        # Clean up old tasks on startup
+        self.db.cleanup_old_tasks(days_old=7)
+        
     async def create_task(self, task_id: str, task_type: str, config: dict):
         """Create a new task."""
-        self.tasks[task_id] = {
-            "type": task_type,
-            "config": config,
-            "status": TaskStatus.PENDING,
-            "start_time": datetime.now().isoformat(),
-            "error": None,
-            "result": None
-        }
+        start_time = datetime.now().isoformat()
+        
+        # Store task in database
+        self.db.insert_task(
+            task_id=task_id,
+            task_type=task_type,
+            status=TaskStatus.PENDING.value,
+            config=config,
+            start_time=start_time,
+            progress=0,
+            current_step="initializing",
+            message="Task created"
+        )
+        
+        # Initialize WebSocket subscriptions
         self.status_updates[task_id] = []
         
     def get_task_status(self, task_id: str) -> Optional[Dict]:
         """Get the current status of a task."""
-        return self.tasks.get(task_id)
+        return self.db.get_task(task_id)
         
     async def subscribe_to_updates(self, task_id: str) -> asyncio.Queue:
         """Subscribe to status updates for a task."""
@@ -61,14 +70,28 @@ class TaskManager:
         result: dict | None = None,
     ) -> None:
         """Update task status and notify subscribers."""
-        if task_id not in self.tasks:
+        # Check if task exists in database
+        task = self.db.get_task(task_id)
+        if not task:
             raise ValueError(f"Task {task_id} not found")
-            
-        self.tasks[task_id]["status"] = status
-        if error:
-            self.tasks[task_id]["error"] = error
         
-        # Create status update
+        # Calculate final progress based on status
+        final_progress = progress if status == TaskStatus.PROCESSING else (100 if status == TaskStatus.COMPLETED else 0)
+        
+        # Update task in database
+        end_time = datetime.now().isoformat() if status in [TaskStatus.COMPLETED, TaskStatus.FAILED] else None
+        self.db.update_task_status(
+            task_id=task_id,
+            status=status.value,
+            progress=final_progress,
+            current_step=current_step,
+            message=message,
+            error=error,
+            result=result,
+            end_time=end_time
+        )
+        
+        # Create status update for WebSocket clients
         timestamp = datetime.now().isoformat()
         status_obj = RunStatus(
             taskId=task_id,
@@ -77,27 +100,25 @@ class TaskManager:
                     nodeId="main",
                     status=status,
                     message=message,
-                    progress=progress
-                    if status == TaskStatus.PROCESSING
-                    else (100 if status == TaskStatus.COMPLETED else 0),
+                    progress=final_progress,
                     timestamp=timestamp,
                 )
             ],
             overallStatus=status,
             currentStep=current_step,
-            progress=progress
-            if status == TaskStatus.PROCESSING
-            else (100 if status == TaskStatus.COMPLETED else 0),
+            progress=final_progress,
             message=message,
             result=result,
             error=error,
         )
         
+        # Log to the logs table as well
         final_status = status_obj.overallStatus
         log = Logs(task_id=task_id, 
                    status=final_status, 
                    datetime_run=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         self.db.insert_log(log)
+        
         # Notify all subscribers
         if task_id in self.status_updates:
             for queue in self.status_updates[task_id]:
@@ -130,7 +151,10 @@ class TaskManager:
     async def run_newsletter_task(self, task_id: str):
         """Run the newsletter generation task."""
         try:
-            config = self.tasks[task_id]["config"]
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            config = task["config"]
             email_recipients = config.get("emailRecipients", None)
             research_interests_override = config.get("researchInterests", None)
             orchestration_config = self.db.get_setting("orchestration")
@@ -182,9 +206,7 @@ class TaskManager:
                 progress_callback=progress_callback
             )
             
-            # Store the result
-            self.tasks[task_id]["result"] = result
-            
+            # Result will be stored via update_task_status call
             await self.update_task_status(
                 task_id,
                 TaskStatus.COMPLETED,
@@ -207,7 +229,10 @@ class TaskManager:
     async def run_podcast_task(self, task_id: str):
         """Run the podcast generation task."""
         try:
-            config = self.tasks[task_id]["config"]
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            config = task["config"]
             
             # Initialize podcast generator
             # The text_model parameter expects the entire model configuration dictionary.
@@ -288,9 +313,7 @@ class TaskManager:
                 progress_callback=self._progress_callback(task_id) # If PodcastGenerator takes a callback
             )
             
-            # Store the result
-            self.tasks[task_id]["result"] = result
-            
+            # Result will be stored via update_task_status call
             await self.update_task_status(
                 task_id,
                 TaskStatus.COMPLETED,
@@ -313,7 +336,10 @@ class TaskManager:
     async def run_visualizer_task(self, task_id: str):
         """Run the audio visualization task."""
         try:
-            config = self.tasks[task_id]["config"]
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            config = task["config"]
             audio_file_path = config.get("audio_file_path")
             visualizer_params_dict = config.get("visualizer_params")
             output_dir_base = config.get("output_dir_base", "data/visualizations")
@@ -379,7 +405,6 @@ class TaskManager:
             result = {
                 "visualizer_file": final_video_path # Ensure this key matches what main.py expects for video downloads
             }
-            self.tasks[task_id]["result"] = result
             
             await self.update_task_status(
                 task_id,

@@ -90,8 +90,12 @@ class TheseusInsight:
                  publish_podcast=False,
                  visualizer=True,
                  save_dialogue=True,
-                 checkpoint_dir="checkpoints"
-                ):
+                 checkpoint_dir="checkpoints",
+                 task_id=None):
+        
+        # Store task_id for logging
+        self.task_id = task_id or f"theseus_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
         self.verbose = verbose
         self.save_dialogue = save_dialogue
         self.checkpoint_dir = checkpoint_dir
@@ -311,7 +315,7 @@ class TheseusInsight:
     def _log_error(self, status_code: int, error: Exception):
         """Helper to log errors to the database and optionally send an email."""
         error_msg = f"{type(error).__name__}: {str(error)}"
-        log = Logs(status_code=status_code, status=error_msg)
+        log = Logs(task_id=self.task_id, status=f"ERROR_{status_code}")
         self.papers_db.insert_log(log)
 
         # Send error notification email only once per run
@@ -731,7 +735,7 @@ class TheseusInsight:
                     self.communication.send_email()
                     # Log successful email
                     self.papers_db.insert_log(
-                        Logs(status_code=200, status=f"Successfully sent newsletter to {self.receiver_address}")
+                        Logs(task_id=self.task_id, status=f"EMAIL_SUCCESS: Successfully sent newsletter to {self.receiver_address}")
                     )
                 except Exception as e:
                     self._log_error(500, e)
@@ -873,7 +877,7 @@ class TheseusInsight:
                     print(f"Failed to purge Ollama cache for some models: {e}")
 
             # Log final success
-            self.papers_db.insert_log(Logs(status_code=200, status="Successfully completed Theseus Insight run"))
+            self.papers_db.insert_log(Logs(task_id=self.task_id, status="COMPLETED: Successfully completed Theseus Insight run"))
 
             # Optionally remove all checkpoints on success
             self._cleanup_checkpoints()

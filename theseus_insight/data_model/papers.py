@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, Field, field_validator
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any
@@ -54,7 +53,15 @@ class ArxivRecord(BaseModel):
             str: The text content of the found element, or empty string if not found.
         """
         try:
-            return xml.find(_ARXIV_NS + tag).text.strip()
+            text = xml.find(_ARXIV_NS + tag).text
+            if text:
+                # Clean up the text by removing newlines and normalizing whitespace
+                # This is especially important for titles which can have line breaks
+                import re
+                # Replace all whitespace (including newlines, tabs) with single spaces
+                cleaned_text = re.sub(r'\s+', ' ', text)
+                return cleaned_text.strip()
+            return ""
         except Exception:  # noqa: BLE001 E722
             return ""
 

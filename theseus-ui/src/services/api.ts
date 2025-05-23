@@ -192,11 +192,27 @@ export const papersApi = {
     getPapers: async (
         page: number = 1,
         pageSize: number = 10,
-        sortField: string = 'date',
-        sortDirection: string = 'desc'
+        sortField: string = 'score',
+        sortDirection: string = 'desc',
+        minScore?: number,
+        fromDate?: string,
+        toDate?: string,
+        search?: string
     ): Promise<PaginatedPapersResponse> => {
+        const params: Record<string, any> = {
+            page,
+            page_size: pageSize,
+            sort_field: sortField,
+            sort_direction: sortDirection
+        };
+        
+        if (minScore !== undefined) params.score = minScore;
+        if (fromDate) params.from_date = fromDate;
+        if (toDate) params.to_date = toDate;
+        if (search) params.search = search;
+
         const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
-            params: { page, page_size: pageSize, sort_field: sortField, sort_direction: sortDirection }
+            params
         });
         return response.data;
     },

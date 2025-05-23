@@ -1133,7 +1133,8 @@ async def run_newsletter_pipeline_endpoint(
                 generate_podcast=params.generate_podcast_run,
                 db_saving=True, 
                 data_path=run_db_path,
-                verbose=True 
+                verbose=True,
+                task_id=task_id
             )
             await asyncio.to_thread(
                 ti_instance.run,

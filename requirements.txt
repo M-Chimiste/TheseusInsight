@@ -1,27 +1,16 @@
 # Core ML & Deep Learning
 torch
-torchvision
-torchaudio
 transformers
-accelerate
-bitsandbytes
-einops
 numpy
-scipy
 
 # NLP & Text Processing
 spacy
 spacy-layout
 tiktoken
-phonemizer
 unidecode
-chardet
-lxml
-sentencepiece
 
 # Embeddings & Vector Search
 sentence-transformers
-FlagEmbedding
 
 # LLM & AI Services
 anthropic[bedrock]
@@ -32,30 +21,21 @@ google-generativeai
 
 # Data Processing & Management
 pandas
-openpyxl
 json_repair
-tabulate
 pydantic
 tqdm
-numba
 
 # PDF & Document Processing
-PyPDF2
-pymupdf
 docling
 
 # Web & API
 requests
-requests-aws4auth
 
 # Development & Utilities
 python-dotenv
-jupyterlab
 tenacity
 markdown2
 Jinja2
-munch
-appdirs
 
 # Media Processing
 pydub  # Audio
@@ -64,7 +44,6 @@ pygame  # Visualization
 
 # YouTube Integration
 google-api-python-client
-google-auth-httplib2
 google-auth-oauthlib
 
 # Electron
@@ -72,13 +51,3 @@ fastapi
 uvicorn
 python-multipart
 
-# Additional dependencies
-websockets
-email-validator
-python-jose[cryptography]
-passlib[bcrypt]
-
-streamlit
-plotly
-streamlit-aggrid
-python-multipart

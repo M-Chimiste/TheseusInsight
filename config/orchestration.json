@@ -16,7 +16,7 @@
     "trust_remote_code": null
   },
   "content_extraction_model": {
-    "model_name": "hf.co/bartowski/google_gemma-3-27b-it-qat-GGUF:Q4_K_M",
+    "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
@@ -24,7 +24,7 @@
     "trust_remote_code": null
   },
   "newsletter_sections_model": {
-    "model_name": "hf.co/bartowski/google_gemma-3-27b-it-qat-GGUF:Q4_K_M",
+    "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,

@@ -332,3 +332,53 @@
         *   Creates necessary data directories and exposes port 8000.
         *   Sets the default command to run FastAPI with Uvicorn.
 2.  **`
+
+## Latest Updates (December 2024)
+
+### Fixed: Intermittent KeyError in rank_papers Method
+**Date**: December 2024  
+**Issue**: Intermittent KeyErrors occurring in `rank_papers` method line 387, especially after processing hundreds of papers when using Ollama with schema validation.
+
+**Root Cause**: Even with Ollama schema enforcement, the model could sometimes return:
+- Malformed JSON that couldn't be parsed
+- Valid JSON missing required keys (`score`, `related`, `rationale`)
+- Invalid data types or values outside expected ranges
+
+**Solution Implemented**: Comprehensive error handling and retry mechanism in `theseus_insight/theseus_insight.py`:
+
+1. **Retry Logic**: 
+   - Up to 3 attempts per paper before fallback
+   - 1-second delay between retry attempts
+   - Graceful degradation with default values for failed papers
+
+2. **JSON Validation**:
+   - Robust JSON parsing with `json_repair.loads()`
+   - Validation of required keys existence
+   - Type conversion validation and error handling
+   - Score range validation (1-10) with clamping
+
+3. **Partial Checkpointing**:
+   - Progress saved every 50 papers to `ranking_partial` checkpoint
+   - Resume capability from last successful checkpoint
+   - Automatic cleanup of partial checkpoints on completion
+
+4. **Cache Management**:
+   - Added `_clear_judge_model_cache()` method
+   - Automatic Ollama cache clearing after consecutive failures
+   - Helps resolve potential model context corruption
+
+5. **Enhanced Logging**:
+   - Detailed error messages with paper indices and attempt numbers
+   - Raw response logging for debugging
+   - Failure tracking and reporting
+
+**Files Modified**:
+- `theseus_insight/theseus_insight.py`: Added robust error handling, retry logic, and partial checkpointing
+- Added time import for retry delays
+- Enhanced rank_papers method with comprehensive validation
+
+**Impact**: 
+- Eliminates pipeline failures due to intermittent JSON issues
+- Provides detailed debugging information for troubleshooting
+- Maintains data integrity with fallback values
+- Enables recovery from partial failures

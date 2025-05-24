@@ -110,18 +110,6 @@ class PaperDatabase:
                 )
             ''')
 
-            # Create models table
-            # cursor.execute('''
-            #     CREATE TABLE IF NOT EXISTS models (
-            #         id INTEGER PRIMARY KEY AUTOINCREMENT,
-            #         provider_id INTEGER NOT NULL,
-            #         name TEXT NOT NULL,
-            #         config_json TEXT,
-            #         FOREIGN KEY (provider_id) REFERENCES model_providers(id),
-            #         UNIQUE(provider_id, name)
-            #     )
-            # ''')
-
     @contextmanager
     def get_cursor(self):
         """Context manager for database connections."""
@@ -170,11 +158,11 @@ class PaperDatabase:
 
         with self.get_cursor() as cursor:
             cursor.execute('''INSERT INTO papers
-                (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
                 (paper.title, paper.abstract, paper.date, paper.date_run,
                  paper.score, paper.rationale, paper.related, paper.cosine_similarity,
-                 paper.url, paper.embedding_model))
+                 paper.url, paper.embedding_model, paper.embedding))
 
     def insert_newsletter(self, newsletter: Newsletter):
         required_fields = ['content', 'start_date', 'end_date', 'date_sent']
@@ -307,7 +295,7 @@ class PaperDatabase:
 
     def fetch_all_papers(self):
         with self.get_cursor() as cursor:
-            cursor.execute("SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model FROM papers ORDER BY id DESC")
+            cursor.execute("SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding FROM papers ORDER BY id DESC")
             rows = cursor.fetchall()
             result = []
             for row in rows:
@@ -322,9 +310,217 @@ class PaperDatabase:
                     'related': row[7],
                     'cosine_similarity': row[8],
                     'url': row[9],
-                    'embedding_model': row[10]
+                    'embedding_model': row[10],
+                    'embedding': row[11]
                 })
             return result
+
+    def find_similar_papers(self, query_embedding: list, limit: int = 10, similarity_threshold: float = 0.7):
+        """Find papers similar to the given embedding using cosine similarity.
+        
+        Args:
+            query_embedding: List of floats representing the query embedding
+            limit: Maximum number of results to return
+            similarity_threshold: Minimum similarity score (0-1)
+            
+        Returns:
+            List of papers with similarity scores, ordered by similarity (highest first)
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                       cosine_similarity, url, embedding_model, embedding,
+                       (embedding <=> %s::vector) as similarity_distance,
+                       (1 - (embedding <=> %s::vector)) as similarity_score
+                FROM papers 
+                WHERE embedding IS NOT NULL
+                AND (1 - (embedding <=> %s::vector)) >= %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+            ''', (query_embedding, query_embedding, query_embedding, similarity_threshold, query_embedding, limit))
+            
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'date_run': row[4],
+                    'score': row[5],
+                    'rationale': row[6],
+                    'related': row[7],
+                    'cosine_similarity': row[8],
+                    'url': row[9],
+                    'embedding_model': row[10],
+                    'embedding': row[11],
+                    'similarity_distance': row[12],
+                    'similarity_score': row[13]
+                })
+            return result
+
+    def find_papers_by_semantic_search(self, query_text: str, embedding_model, limit: int = 10, similarity_threshold: float = 0.7):
+        """Find papers similar to a text query by first generating an embedding.
+        
+        Args:
+            query_text: Text to search for
+            embedding_model: Model instance to generate embeddings
+            limit: Maximum number of results to return
+            similarity_threshold: Minimum similarity score (0-1)
+            
+        Returns:
+            List of papers with similarity scores, ordered by similarity (highest first)
+        """
+        query_embedding = embedding_model.invoke(query_text)
+        return self.find_similar_papers(query_embedding, limit, similarity_threshold)
+
+    def get_papers_without_embeddings(self):
+        """Get papers that don't have embeddings saved.
+        
+        Returns:
+            List of papers missing embeddings
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                       cosine_similarity, url, embedding_model
+                FROM papers 
+                WHERE embedding IS NULL
+                ORDER BY id DESC
+            ''')
+            
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'date_run': row[4],
+                    'score': row[5],
+                    'rationale': row[6],
+                    'related': row[7],
+                    'cosine_similarity': row[8],
+                    'url': row[9],
+                    'embedding_model': row[10],
+                    'embedding': None
+                })
+            return result
+
+    def update_paper_embedding(self, paper_id: int, embedding: list):
+        """Update the embedding for a specific paper.
+        
+        Args:
+            paper_id: ID of the paper to update
+            embedding: List of floats representing the embedding
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE papers 
+                SET embedding = %s 
+                WHERE id = %s
+            ''', (embedding, paper_id))
+
+    def get_paper_embedding(self, paper_id: int):
+        """Get the embedding for a specific paper.
+        
+        Args:
+            paper_id: ID of the paper
+            
+        Returns:
+            List of floats representing the embedding, or None if not found
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                SELECT embedding FROM papers 
+                WHERE id = %s AND embedding IS NOT NULL
+            ''', (paper_id,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def find_similar_papers_to_existing(self, paper_id: int, limit: int = 10, similarity_threshold: float = 0.7):
+        """Find papers similar to an existing paper using its stored embedding.
+        
+        Args:
+            paper_id: ID of the reference paper
+            limit: Maximum number of results to return (excluding the reference paper itself)
+            similarity_threshold: Minimum similarity score (0-1)
+            
+        Returns:
+            Dict containing reference paper info and list of similar papers with similarity scores
+        """
+        # Get the reference paper and its embedding
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                       cosine_similarity, url, embedding_model, embedding
+                FROM papers 
+                WHERE id = %s AND embedding IS NOT NULL
+            ''', (paper_id,))
+            
+            reference_row = cursor.fetchone()
+            if not reference_row:
+                return None
+            
+            reference_paper = {
+                'id': reference_row[0],
+                'title': reference_row[1],
+                'abstract': reference_row[2],
+                'date': reference_row[3],
+                'date_run': reference_row[4],
+                'score': reference_row[5],
+                'rationale': reference_row[6],
+                'related': reference_row[7],
+                'cosine_similarity': reference_row[8],
+                'url': reference_row[9],
+                'embedding_model': reference_row[10],
+                'embedding': reference_row[11]
+            }
+            
+            reference_embedding = reference_row[11]
+            
+            # Find similar papers (excluding the reference paper itself)
+            cursor.execute('''
+                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                       cosine_similarity, url, embedding_model, embedding,
+                       (embedding <=> %s::vector) as similarity_distance,
+                       (1 - (embedding <=> %s::vector)) as similarity_score
+                FROM papers 
+                WHERE embedding IS NOT NULL
+                AND id != %s
+                AND (1 - (embedding <=> %s::vector)) >= %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+            ''', (reference_embedding, reference_embedding, paper_id, 
+                  reference_embedding, similarity_threshold, reference_embedding, limit))
+            
+            similar_rows = cursor.fetchall()
+            similar_papers = []
+            for row in similar_rows:
+                similar_papers.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'date_run': row[4],
+                    'score': row[5],
+                    'rationale': row[6],
+                    'related': row[7],
+                    'cosine_similarity': row[8],
+                    'url': row[9],
+                    'embedding_model': row[10],
+                    'embedding': row[11],
+                    'similarity_distance': row[12],
+                    'similarity_score': row[13]
+                })
+            
+            return {
+                'reference_paper': reference_paper,
+                'similar_papers': similar_papers,
+                'total_similar': len(similar_papers)
+            }
 
     # SETTINGS CRUD
     def get_setting(self, key: str):

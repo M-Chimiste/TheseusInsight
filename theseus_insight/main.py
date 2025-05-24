@@ -19,7 +19,8 @@ from .api.models import (
     VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
     EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
     PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse,
-    PaperApiResponse, PaginatedPapersResponse, NewsletterRunParams
+    PaperApiResponse, PaginatedPapersResponse, NewsletterRunParams,
+    SimilaritySearchRequest, SimilaritySearchResponse, SimilarPapersRequest, SimilarPapersResponse
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
@@ -199,6 +200,189 @@ async def get_papers(
             items=page_papers, total_items=total_items, total_pages=total_pages,
             current_page=page, nextPage=page + 1 if end_idx < len(filtered_papers) else None
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/papers/similarity-search", response_model=SimilaritySearchResponse)
+async def semantic_similarity_search(request: SimilaritySearchRequest):
+    """Perform semantic similarity search on papers using embeddings."""
+    try:
+        # Get the orchestration config to load the embedding model
+        orchestration_json = db.get_setting("orchestration")
+        if not orchestration_json:
+            raise HTTPException(status_code=500, detail="Orchestration config not found")
+        
+        orchestration_config = json.loads(orchestration_json)
+        embedding_model_config = orchestration_config.get('embedding_model')
+        if not embedding_model_config:
+            raise HTTPException(status_code=500, detail="Embedding model config not found")
+        
+        # Initialize the embedding model
+        from .inference import SentenceTransformerInference
+        embedding_model = SentenceTransformerInference(
+            embedding_model_config['model_name'], 
+            remote_code=embedding_model_config.get('trust_remote_code', False)
+        )
+        
+        # Perform similarity search
+        similar_papers = db.find_papers_by_semantic_search(
+            query_text=request.query_text,
+            embedding_model=embedding_model,
+            limit=request.limit,
+            similarity_threshold=request.similarity_threshold
+        )
+        
+        # Convert to API response format
+        results = []
+        for p in similar_papers:
+            paper_response = PaperApiResponse(
+                id=p['id'], title=p['title'], abstract=p['abstract'],
+                score=p['score'], date=p['date'], url=p['url'],
+                date_run=p['date_run'], rationale=p['rationale'],
+                related=p['related'], cosine_similarity=p['cosine_similarity'],
+                embedding_model=p['embedding_model']
+            )
+            # Add similarity score as additional metadata if needed
+            if 'similarity_score' in p:
+                paper_response.similarity_score = p['similarity_score']
+            results.append(paper_response)
+        
+        return SimilaritySearchResponse(
+            query_text=request.query_text,
+            results=results,
+            total_results=len(results)
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/papers/without-embeddings")
+async def get_papers_without_embeddings():
+    """Get papers that don't have embeddings saved."""
+    try:
+        papers = db.get_papers_without_embeddings()
+        results = []
+        for p in papers:
+            results.append(PaperApiResponse(
+                id=p['id'], title=p['title'], abstract=p['abstract'],
+                score=p['score'], date=p['date'], url=p['url'],
+                date_run=p['date_run'], rationale=p['rationale'],
+                related=p['related'], cosine_similarity=p['cosine_similarity'],
+                embedding_model=p['embedding_model']
+            ))
+        return {"papers": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/papers/{paper_id}/update-embedding")
+async def update_paper_embedding(paper_id: int):
+    """Generate and update embedding for a specific paper."""
+    try:
+        # Get the paper details
+        papers = db.fetch_all_papers()
+        paper = next((p for p in papers if p['id'] == paper_id), None)
+        if not paper:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        
+        if paper['embedding'] is not None:
+            return {"message": "Paper already has an embedding", "updated": False}
+        
+        # Get the orchestration config to load the embedding model
+        orchestration_json = db.get_setting("orchestration")
+        if not orchestration_json:
+            raise HTTPException(status_code=500, detail="Orchestration config not found")
+        
+        orchestration_config = json.loads(orchestration_json)
+        embedding_model_config = orchestration_config.get('embedding_model')
+        if not embedding_model_config:
+            raise HTTPException(status_code=500, detail="Embedding model config not found")
+        
+        # Initialize the embedding model
+        from .inference import SentenceTransformerInference
+        embedding_model = SentenceTransformerInference(
+            embedding_model_config['model_name'], 
+            remote_code=embedding_model_config.get('trust_remote_code', False)
+        )
+        
+        # Generate embedding for the paper's abstract
+        embedding = embedding_model.invoke(paper['abstract'])
+        if hasattr(embedding, 'tolist'):
+            embedding = embedding.tolist()
+        elif not isinstance(embedding, list):
+            embedding = list(embedding)
+        
+        # Update the paper with the new embedding
+        db.update_paper_embedding(paper_id, embedding)
+        
+        return {"message": "Embedding updated successfully", "updated": True}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/papers/{paper_id}/similar", response_model=SimilarPapersResponse)
+async def find_similar_papers_to_existing(
+    paper_id: int,
+    limit: int = Query(10, gt=0, le=50, description="Maximum number of similar papers to return"),
+    similarity_threshold: float = Query(0.7, ge=0.0, le=1.0, description="Minimum similarity score (0-1)")
+):
+    """Find papers similar to an existing paper using its stored embedding."""
+    try:
+        # Find similar papers using the database method
+        result = db.find_similar_papers_to_existing(
+            paper_id=paper_id,
+            limit=limit,
+            similarity_threshold=similarity_threshold
+        )
+        
+        if result is None:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Paper with ID {paper_id} not found or has no embedding"
+            )
+        
+        # Convert reference paper to API response format
+        ref_paper_data = result['reference_paper']
+        reference_paper = PaperApiResponse(
+            id=ref_paper_data['id'],
+            title=ref_paper_data['title'],
+            abstract=ref_paper_data['abstract'],
+            score=ref_paper_data['score'],
+            date=ref_paper_data['date'],
+            url=ref_paper_data['url'],
+            date_run=ref_paper_data['date_run'],
+            rationale=ref_paper_data['rationale'],
+            related=ref_paper_data['related'],
+            cosine_similarity=ref_paper_data['cosine_similarity'],
+            embedding_model=ref_paper_data['embedding_model']
+        )
+        
+        # Convert similar papers to API response format
+        similar_papers = []
+        for p in result['similar_papers']:
+            paper_response = PaperApiResponse(
+                id=p['id'],
+                title=p['title'],
+                abstract=p['abstract'],
+                score=p['score'],
+                date=p['date'],
+                url=p['url'],
+                date_run=p['date_run'],
+                rationale=p['rationale'],
+                related=p['related'],
+                cosine_similarity=p['cosine_similarity'],
+                embedding_model=p['embedding_model'],
+                similarity_score=p['similarity_score']  # Include the similarity score
+            )
+            similar_papers.append(paper_response)
+        
+        return SimilarPapersResponse(
+            reference_paper=reference_paper,
+            similar_papers=similar_papers,
+            total_similar=result['total_similar']
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

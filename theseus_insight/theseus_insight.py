@@ -6,6 +6,7 @@ import pickle
 import random
 import datetime
 import warnings
+import time
 from tqdm import tqdm
 from dotenv import load_dotenv
 import json_repair
@@ -384,35 +385,157 @@ class TheseusInsight:
             print(f"Warning: Failed to clean up temp_data directory: {cleanup_error}")
             self._log_error(500, cleanup_error)
 
+    def _clear_judge_model_cache(self):
+        """Clear Ollama cache for the judge model to resolve potential context issues."""
+        try:
+            if (hasattr(self, 'judge_inference') and 
+                hasattr(self.judge_inference, 'provider') and 
+                self.judge_inference.provider == "ollama"):
+                model_name = self.judge_model_config.get('model_name')
+                if model_name:
+                    if self.verbose:
+                        print(f"Clearing Ollama cache for judge model: {model_name}")
+                    purge_ollama_cache(OLLAMA_URL, model_name)
+        except Exception as e:
+            if self.verbose:
+                print(f"Failed to clear judge model cache: {e}")
+
     def rank_papers(self, data_df):
         """Given embedded papers, use judge model to score them."""
         try:
             abstracts = list(data_df['abstract'])
             scores, related, rationale = [], [], []
-            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Ranking papers"):
-                messages = [
-                    {"role": "user", "content": research_prompt(self.research_interests, abstract)}
-                ]
-                # Depending on single-model or multi-model
+            failed_papers = []
+            consecutive_failures = 0
+            
+            # Check for partial checkpoint
+            partial_checkpoint = self._load_checkpoint('ranking_partial')
+            start_index = 0
+            if partial_checkpoint is not None:
+                scores = partial_checkpoint.get('scores', [])
+                related = partial_checkpoint.get('related', [])
+                rationale = partial_checkpoint.get('rationale', [])
+                failed_papers = partial_checkpoint.get('failed_papers', [])
+                start_index = len(scores)
+                if self.verbose:
+                    print(f"Resuming ranking from paper {start_index + 1}/{len(abstracts)}")
+            
+            for i, abstract in enumerate(tqdm(abstracts[start_index:], 
+                                            disable=not self.verbose, 
+                                            desc="Ranking papers",
+                                            initial=start_index, 
+                                            total=len(abstracts))):
+                actual_index = start_index + i
+                success = False
+                attempts = 0
+                max_attempts = 3
                 
-                if self.judge_inference.provider == "ollama":
-                    response = self.judge_inference.invoke(
-                        messages=messages,
-                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-                        schema=ResearchInterestsPromptData
-                    )
-                else:
-                    # E.g. Anthropic or OpenAI
-                    response = self.judge_inference.invoke(
-                        messages=messages,
-                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
-                    )
+                while not success and attempts < max_attempts:
+                    attempts += 1
+                    try:
+                        # Clear cache on second attempt if using Ollama
+                        if attempts == 2 and consecutive_failures > 2:
+                            self._clear_judge_model_cache()
+                            
+                        messages = [
+                            {"role": "user", "content": research_prompt(self.research_interests, abstract)}
+                        ]
+                        
+                        if self.judge_inference.provider == "ollama":
+                            response = self.judge_inference.invoke(
+                                messages=messages,
+                                system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                                schema=ResearchInterestsPromptData
+                            )
+                        else:
+                            # E.g. Anthropic or OpenAI
+                            response = self.judge_inference.invoke(
+                                messages=messages,
+                                system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
+                            )
 
-                response_json = json_repair.loads(response)
-                scores.append(int(response_json['score']))
-                related.append(bool(response_json['related']))
-                rationale.append(response_json['rationale'])
+                        # Parse and validate JSON response
+                        try:
+                            response_json = json_repair.loads(response)
+                        except Exception as json_error:
+                            if self.verbose:
+                                print(f"JSON parsing failed for paper {actual_index+1}, attempt {attempts}: {json_error}")
+                                print(f"Raw response: {response[:200]}...")
+                            if attempts == max_attempts:
+                                raise json_error
+                            continue
+                        
+                        # Validate required keys exist
+                        required_keys = ['score', 'related', 'rationale']
+                        missing_keys = [key for key in required_keys if key not in response_json]
+                        
+                        if missing_keys:
+                            if self.verbose:
+                                print(f"Missing keys {missing_keys} for paper {actual_index+1}, attempt {attempts}")
+                                print(f"Response JSON: {response_json}")
+                            if attempts == max_attempts:
+                                raise KeyError(f"Missing required keys in response: {missing_keys}")
+                            continue
+                        
+                        # Validate and convert values
+                        try:
+                            score_val = int(response_json['score'])
+                            related_val = bool(response_json['related'])
+                            rationale_val = str(response_json['rationale'])
+                            
+                            # Validate score range
+                            if not (1 <= score_val <= 10):
+                                if self.verbose:
+                                    print(f"Invalid score {score_val} for paper {actual_index+1}, attempt {attempts}")
+                                if attempts == max_attempts:
+                                    score_val = max(1, min(10, score_val))  # Clamp to valid range
+                                else:
+                                    continue
+                            
+                            scores.append(score_val)
+                            related.append(related_val)
+                            rationale.append(rationale_val)
+                            success = True
+                            consecutive_failures = 0  # Reset counter on success
+                            
+                        except (ValueError, TypeError) as conversion_error:
+                            if self.verbose:
+                                print(f"Value conversion failed for paper {actual_index+1}, attempt {attempts}: {conversion_error}")
+                                print(f"Response JSON: {response_json}")
+                            if attempts == max_attempts:
+                                raise conversion_error
+                            continue
+                            
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error processing paper {actual_index+1}, attempt {attempts}: {e}")
+                        if attempts == max_attempts:
+                            # Use default values for failed paper
+                            if self.verbose:
+                                print(f"Using default values for failed paper {actual_index+1}")
+                            scores.append(1)  # Default low score
+                            related.append(False)  # Default not related
+                            rationale.append(f"Failed to process: {str(e)[:100]}")
+                            failed_papers.append(actual_index)
+                            consecutive_failures += 1
+                            success = True
+                        else:
+                            # Add small delay before retry
+                            time.sleep(1)
 
+                # Save partial progress every 50 papers
+                if (actual_index + 1) % 50 == 0:
+                    partial_data = {
+                        'scores': scores,
+                        'related': related,
+                        'rationale': rationale,
+                        'failed_papers': failed_papers
+                    }
+                    self._save_checkpoint('ranking_partial', partial_data)
+
+            if failed_papers and self.verbose:
+                print(f"Warning: {len(failed_papers)} papers failed processing and received default scores")
+                
             data_df['score'] = scores
             data_df['related'] = related
             data_df['rationale'] = rationale
@@ -423,6 +546,13 @@ class TheseusInsight:
                 print("Saving papers to DB")
                 # Save all to DB if enabled
                 for _, row in data_df.iterrows():
+                    # Convert numpy array to list if needed for embedding
+                    embedding = row['abstract_embedding']
+                    if hasattr(embedding, 'tolist'):
+                        embedding = embedding.tolist()
+                    elif not isinstance(embedding, list):
+                        embedding = list(embedding)
+                    
                     paper = Paper(
                         title=row['title'],
                         abstract=row['abstract'],
@@ -433,11 +563,16 @@ class TheseusInsight:
                         related=row['related'],
                         rationale=row['rationale'],
                         cosine_similarity=row['cosine_similarity'],
-                        embedding_model=self.embedding_model_name
+                        embedding_model=self.embedding_model_name,
+                        embedding=embedding
                     )
                     self.papers_db.insert_paper(paper)
        
-
+            # Clean up partial checkpoint on success
+            partial_checkpoint_path = os.path.join(self.checkpoint_dir, 'ranking_partial_checkpoint.pkl')
+            if os.path.exists(partial_checkpoint_path):
+                os.remove(partial_checkpoint_path)
+                
             return top_n_df
         except Exception as e:
             self._log_error(500, e)

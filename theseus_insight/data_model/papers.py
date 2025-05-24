@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from ..constants import _ARXIV_NS
 
 
@@ -165,6 +165,7 @@ class Paper(BaseModel):
     cosine_similarity: float
     url: str
     embedding_model: str
+    embedding: Optional[List[float]] = Field(default=None, description="Vector embedding of the paper's abstract")
 
     @field_validator('score')
     @classmethod

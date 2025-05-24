@@ -59,7 +59,7 @@ class TheseusInsight:
                  temperature=0.1,
                  cosine_similarity_threshold=0.5,
                  db_saving=True,
-                 data_path="data/papers.db",
+                 data_path=os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"),
                  generate_podcast=False,
                  intro_music_path=None,
                  output_format: str = "mp3",

@@ -1,9 +1,9 @@
 import os
 import json
 import datetime
-import sqlite3
-from pathlib import Path
 from contextlib import contextmanager
+import psycopg
+from pgvector.psycopg import register_vector
 
 from .papers import Newsletter, Paper, Logs, Podcast
 
@@ -19,57 +19,57 @@ INITIAL_PROVIDERS = [
 class PaperDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        # Ensure parent directory exists
-        Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._initialize_db()
 
     def _initialize_db(self):
         """Initialize the database and create tables if they don't exist."""
         with self.get_cursor() as cursor:
+            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
             # Create papers table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS papers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     title TEXT NOT NULL,
                     abstract TEXT NOT NULL,
-                    date TEXT NOT NULL,
-                    date_run TEXT NOT NULL,
-                    score REAL NOT NULL,
+                    date DATE NOT NULL,
+                    date_run DATE NOT NULL,
+                    score DOUBLE PRECISION NOT NULL,
                     rationale TEXT NOT NULL,
                     related BOOLEAN NOT NULL,
-                    cosine_similarity REAL NOT NULL,
+                    cosine_similarity DOUBLE PRECISION NOT NULL,
                     url TEXT NOT NULL,
-                    embedding_model TEXT NOT NULL
+                    embedding_model TEXT NOT NULL,
+                    embedding VECTOR
                 )
             ''')
 
             # Create logs table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     task_id TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    datetime_run TEXT
+                    datetime_run TIMESTAMP
                 )
             ''')
 
             # Create newsletters table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS newsletters (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     content TEXT NOT NULL,
-                    start_date TEXT NOT NULL,
-                    end_date TEXT NOT NULL,
-                    date_sent TEXT NOT NULL
+                    start_date DATE NOT NULL,
+                    end_date DATE NOT NULL,
+                    date_sent DATE NOT NULL
                 )
             ''')
 
             # Create podcasts table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS podcasts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     title TEXT NOT NULL,
-                    date TEXT NOT NULL,
+                    date DATE NOT NULL,
                     script TEXT NOT NULL,
                     description TEXT NOT NULL
                 )
@@ -91,7 +91,7 @@ class PaperDatabase:
                 )
             ''')
             for provider in INITIAL_PROVIDERS:
-                cursor.execute('INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)', (provider['id'], provider['name']))
+                cursor.execute('INSERT INTO model_providers (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING', (provider['id'], provider['name']))
 
             # Create tasks table for persistent task state management
             cursor.execute('''
@@ -100,11 +100,11 @@ class PaperDatabase:
                     task_type TEXT NOT NULL,
                     status TEXT NOT NULL,
                     config_json TEXT NOT NULL,
-                    start_time TEXT NOT NULL,
-                    end_time TEXT,
+                    start_time TIMESTAMP NOT NULL,
+                    end_time TIMESTAMP,
                     error TEXT,
                     result_json TEXT,
-                    progress REAL DEFAULT 0,
+                    progress DOUBLE PRECISION DEFAULT 0,
                     current_step TEXT,
                     message TEXT
                 )
@@ -125,7 +125,8 @@ class PaperDatabase:
     @contextmanager
     def get_cursor(self):
         """Context manager for database connections."""
-        conn = sqlite3.connect(self.db_path)
+        conn = psycopg.connect(self.db_path)
+        register_vector(conn)
         try:
             cursor = conn.cursor()
             yield cursor
@@ -141,7 +142,7 @@ class PaperDatabase:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
         with self.get_cursor() as cursor:
             cursor.execute('''INSERT INTO podcasts (title, date, script, description)
-                              VALUES (?, ?, ?, ?)''',
+                              VALUES (%s, %s, %s, %s)''',
                            (podcast.title, podcast.date, json.dumps(podcast.script), podcast.description))
             
     def insert_paper(self, paper: Paper):
@@ -168,11 +169,11 @@ class PaperDatabase:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
 
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO papers 
+            cursor.execute('''INSERT INTO papers
                 (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                (paper.title, paper.abstract, paper.date, paper.date_run, 
-                 paper.score, paper.rationale, paper.related, paper.cosine_similarity, 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                (paper.title, paper.abstract, paper.date, paper.date_run,
+                 paper.score, paper.rationale, paper.related, paper.cosine_similarity,
                  paper.url, paper.embedding_model))
 
     def insert_newsletter(self, newsletter: Newsletter):
@@ -195,7 +196,7 @@ class PaperDatabase:
 
         with self.get_cursor() as cursor:
             cursor.execute('''INSERT INTO newsletters (content, start_date, end_date, date_sent)
-                              VALUES (?, ?, ?, ?)''',
+                              VALUES (%s, %s, %s, %s)''',
                            (newsletter.content, newsletter.start_date, newsletter.end_date, newsletter.date_sent))
 
     def insert_log(self, log: Logs):
@@ -207,19 +208,19 @@ class PaperDatabase:
         datetime_run = log.datetime_run or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         # check for log existence
         with self.get_cursor() as cursor:
-            cursor.execute('''SELECT status FROM logs WHERE task_id = ?''', (log.task_id,))
+            cursor.execute('''SELECT status FROM logs WHERE task_id = %s''', (log.task_id,))
             row = cursor.fetchone()
             row = row[0] if row else None
         # Insert a new log if it doesn't exist
         if not row:
             with self.get_cursor() as cursor:
                 cursor.execute('''INSERT INTO logs (task_id, status, datetime_run)
-                                VALUES (?, ?, ?)''',
+                                VALUES (%s, %s, %s)''',
                             (log.task_id, log.status, datetime_run))
         # Only update the status
         else:
             with self.get_cursor() as cursor:
-                cursor.execute('''UPDATE logs SET status = ? WHERE task_id = ?''',
+                cursor.execute('''UPDATE logs SET status = %s WHERE task_id = %s''',
                           (log.status, log.task_id))
 
     def get_recent_logs(self, limit: int = 100, from_date: str = None, to_date: str = None):
@@ -229,17 +230,17 @@ class PaperDatabase:
         conditions = []
 
         if from_date:
-            conditions.append("datetime_run >= ?")
+            conditions.append("datetime_run >= %s")
             params.append(f"{from_date} 00:00:00")
         
         if to_date:
-            conditions.append("datetime_run <= ?")
+            conditions.append("datetime_run <= %s")
             params.append(f"{to_date} 23:59:59")
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " ORDER BY datetime_run DESC LIMIT ?"
+        query += " ORDER BY datetime_run DESC LIMIT %s"
         params.append(limit)
 
         with self.get_cursor() as cursor:
@@ -272,7 +273,7 @@ class PaperDatabase:
     def fetch_podcast_by_id(self, podcast_id: int):
         """Fetch a single podcast by its ID."""
         with self.get_cursor() as cursor:
-            cursor.execute("SELECT id, title, date, script, description FROM podcasts WHERE id = ?", (podcast_id,))
+            cursor.execute("SELECT id, title, date, script, description FROM podcasts WHERE id = %s", (podcast_id,))
             row = cursor.fetchone()
             if row:
                 return {
@@ -287,7 +288,7 @@ class PaperDatabase:
     def delete_podcast(self, title: str):
         """Delete a podcast from the database by its title."""
         with self.get_cursor() as cursor:
-            cursor.execute("DELETE FROM podcasts WHERE title = ?", (title,))
+            cursor.execute("DELETE FROM podcasts WHERE title = %s", (title,))
 
     def fetch_all_newsletters(self):
         with self.get_cursor() as cursor:
@@ -328,7 +329,7 @@ class PaperDatabase:
     # SETTINGS CRUD
     def get_setting(self, key: str):
         with self.get_cursor() as cursor:
-            cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+            cursor.execute('SELECT value FROM settings WHERE key = %s', (key,))
             row = cursor.fetchone()
             return row[0] if row else None
 
@@ -338,11 +339,11 @@ class PaperDatabase:
         if not isinstance(key, str):
             key = str(key)
         with self.get_cursor() as cursor:
-            cursor.execute('REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
+            cursor.execute('INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', (key, value))
 
     def delete_setting(self, key: str):
         with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM settings WHERE key = ?', (key,))
+            cursor.execute('DELETE FROM settings WHERE key = %s', (key,))
 
     def get_all_settings(self):
         with self.get_cursor() as cursor:
@@ -352,7 +353,7 @@ class PaperDatabase:
     # MODEL PROVIDERS CRUD
     def add_model_provider(self, id: int, name: str):
         with self.get_cursor() as cursor:
-            cursor.execute('INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)', (id, name))
+            cursor.execute('INSERT INTO model_providers (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING', (id, name))
 
     def get_model_providers(self):
         with self.get_cursor() as cursor:
@@ -361,7 +362,7 @@ class PaperDatabase:
 
     def delete_model_provider(self, provider_id: int):
         with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM model_providers WHERE id = ?', (provider_id,))
+            cursor.execute('DELETE FROM model_providers WHERE id = %s', (provider_id,))
 
     # MODELS CRUD
     # def add_model(self, provider_id: int, name: str, config_json: str = None):
@@ -431,49 +432,57 @@ class PaperDatabase:
         
         with self.get_cursor() as cursor:
             cursor.execute('''
-                INSERT OR REPLACE INTO tasks 
+                INSERT INTO tasks
                 (task_id, task_type, status, config_json, start_time, progress, current_step, message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (task_id) DO UPDATE SET
+                    task_type = EXCLUDED.task_type,
+                    status = EXCLUDED.status,
+                    config_json = EXCLUDED.config_json,
+                    start_time = EXCLUDED.start_time,
+                    progress = EXCLUDED.progress,
+                    current_step = EXCLUDED.current_step,
+                    message = EXCLUDED.message
             ''', (task_id, task_type, status, json.dumps(config), start_time, progress, current_step, message))
 
     def update_task_status(self, task_id: str, status: str, progress: float = None, current_step: str = None, message: str = None, error: str = None, result: dict = None, end_time: str = None):
         """Update task status and other fields."""
         with self.get_cursor() as cursor:
             # Build dynamic update query based on provided parameters
-            fields_to_update = ["status = ?"]
+            fields_to_update = ["status = %s"]
             params = [status]
             
             if progress is not None:
-                fields_to_update.append("progress = ?")
+                fields_to_update.append("progress = %s")
                 params.append(progress)
             if current_step is not None:
-                fields_to_update.append("current_step = ?")
+                fields_to_update.append("current_step = %s")
                 params.append(current_step)
             if message is not None:
-                fields_to_update.append("message = ?")
+                fields_to_update.append("message = %s")
                 params.append(message)
             if error is not None:
-                fields_to_update.append("error = ?")
+                fields_to_update.append("error = %s")
                 params.append(error)
             if result is not None:
-                fields_to_update.append("result_json = ?")
+                fields_to_update.append("result_json = %s")
                 params.append(json.dumps(result))
             if end_time is not None:
-                fields_to_update.append("end_time = ?")
+                fields_to_update.append("end_time = %s")
                 params.append(end_time)
             
             params.append(task_id)  # WHERE clause parameter
             
-            query = f"UPDATE tasks SET {', '.join(fields_to_update)} WHERE task_id = ?"
+            query = f"UPDATE tasks SET {', '.join(fields_to_update)} WHERE task_id = %s"
             cursor.execute(query, params)
 
     def get_task(self, task_id: str) -> dict | None:
         """Get a task by ID."""
         with self.get_cursor() as cursor:
             cursor.execute('''
-                SELECT task_id, task_type, status, config_json, start_time, end_time, 
+                SELECT task_id, task_type, status, config_json, start_time, end_time,
                        error, result_json, progress, current_step, message
-                FROM tasks WHERE task_id = ?
+                FROM tasks WHERE task_id = %s
             ''', (task_id,))
             row = cursor.fetchone()
             if row:
@@ -504,7 +513,7 @@ class PaperDatabase:
             params = []
             
             if task_types:
-                placeholders = ','.join('?' * len(task_types))
+                placeholders = ','.join(['%s'] * len(task_types))
                 query += f' AND task_type IN ({placeholders})'
                 params.extend(task_types)
             
@@ -533,16 +542,16 @@ class PaperDatabase:
     def delete_task(self, task_id: str):
         """Delete a task from the database."""
         with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM tasks WHERE task_id = ?', (task_id,))
+            cursor.execute('DELETE FROM tasks WHERE task_id = %s', (task_id,))
 
     def cleanup_old_tasks(self, days_old: int = 7):
         """Clean up completed/failed tasks older than specified days."""
         cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=days_old)).isoformat()
         with self.get_cursor() as cursor:
             cursor.execute('''
-                DELETE FROM tasks 
-                WHERE status IN ('completed', 'failed') 
-                AND start_time < ?
+                DELETE FROM tasks
+                WHERE status IN ('completed', 'failed')
+                AND start_time < %s
             ''', (cutoff_date,))
 
     def mark_interrupted_tasks_as_failed(self):
@@ -551,7 +560,7 @@ class PaperDatabase:
         with self.get_cursor() as cursor:
             # First, get the count of tasks to be marked as failed for logging
             cursor.execute('''
-                SELECT COUNT(*) FROM tasks 
+                SELECT COUNT(*) FROM tasks
                 WHERE status IN ('pending', 'processing')
             ''')
             count = cursor.fetchone()[0]
@@ -559,11 +568,11 @@ class PaperDatabase:
             if count > 0:
                 # Mark interrupted tasks as failed
                 cursor.execute('''
-                    UPDATE tasks 
-                    SET status = 'failed', 
+                    UPDATE tasks
+                    SET status = 'failed',
                         error = 'Task was interrupted by server restart',
                         message = 'Task failed due to server restart',
-                        end_time = ?,
+                        end_time = %s,
                         current_step = 'interrupted'
                     WHERE status IN ('pending', 'processing')
                 ''', (current_time,))

@@ -17,7 +17,7 @@ class TaskStatus(str, Enum):
 class TaskManager:
     def __init__(self):
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
-        self.db = PaperDatabase(os.getenv("THESEUS_DB_PATH", "data/papers.db"))
+        self.db = PaperDatabase(os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"))
         
         # Mark any interrupted tasks as failed on startup
         interrupted_count = self.db.mark_interrupted_tasks_as_failed()

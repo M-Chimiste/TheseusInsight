@@ -82,3 +82,5 @@ streamlit
 plotly
 streamlit-aggrid
 python-multipart
+psycopg[binary]
+pgvector

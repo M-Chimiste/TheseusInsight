@@ -44,8 +44,8 @@ class LogEntry(BaseModel):
     datetime_run: str
 
 # Initialize database first
-DB_PATH = os.getenv("THESEUS_DB_PATH", "data/papers.db")
-db = PaperDatabase(DB_PATH)
+DB_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
+db = PaperDatabase(DB_URL)
 
 # Lifespan context manager
 @asynccontextmanager
@@ -743,7 +743,7 @@ async def generate_podcast_pipeline(
             "tts_model_config": generation_params.tts_model_config.dict(),
             "create_visualization": generation_params.create_visualization,
             "db_saving": True, # Default, can be made configurable if needed
-            "data_path": DB_PATH, # Global DB path
+            "data_path": DB_URL, # Global DB URL
             "verbose": True, # Default, can be made configurable
             "output_dir_base": "data/podcasts", # Base directory for task outputs
             "task_id": task_id # Pass task_id for organizing outputs
@@ -1107,7 +1107,7 @@ async def run_newsletter_pipeline_endpoint(
     background_tasks: BackgroundTasks
 ):
     task_id = str(uuid.uuid4())
-    run_db_path = DB_PATH
+    run_db_path = DB_URL
     loop = asyncio.get_event_loop()
 
     def pipeline_progress_callback(stage: str, progress_val: float, message: str):

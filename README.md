@@ -62,7 +62,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
 - **React** frontend built with Vite and Material UI, served from the backend in production.
 - **Real‑time progress** streaming over WebSockets for long running tasks.
-- **SQLite database** for storing papers, runs and configuration data.
+- **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Dockerfile and Compose setup** to run the entire application in containers.
 
@@ -74,7 +74,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 theseus_insight/
   api/               # FastAPI models, tasks and routes
   communication/     # Gmail and YouTube helpers
-  data_model/        # SQLite interactions and pydantic models
+  data_model/        # PostgreSQL interactions and pydantic models
   data_processing/   # Arxiv harvesting utilities
   inference/         # LLM and TTS wrappers
   pdf/               # PDF parsing helpers
@@ -116,7 +116,7 @@ Create a `.env` file in the project root containing keys and settings:
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication |
-| `THESEUS_DB_PATH` | Path to the SQLite database (default `data/papers.db`) |
+| `DATABASE_URL` | Connection string for the PostgreSQL database (default `postgresql://theseus:theseus@localhost:5432/theseusdb`) |
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
@@ -197,7 +197,7 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
 - [KokoroTTS](https://github.com/fakeyh/kokoro-tts), [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
-- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [SQLite](https://www.sqlite.org/) for backend processing.
+- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for backend processing.
 
 Theseus Insight is maintained by [M. Chimiste](https://github.com/fakeyh) & contributors.
 

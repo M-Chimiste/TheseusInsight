@@ -34,8 +34,9 @@ def parse_args():
     parser.add_argument("--db-saving", type=bool, default=True,
                        help="Whether to save results to database")
     
-    parser.add_argument("--data-path", type=str, default="data/papers.db",
-                       help="Path to the database file")
+    parser.add_argument("--db-url", "--data-path", dest="db_url", type=str,
+                       default="postgresql://theseus:theseus@localhost:5432/theseusdb",
+                       help="Database connection URL")
     
     parser.add_argument("--verbose", type=bool, default=True,
                        help="Whether to print verbose output")
@@ -73,7 +74,7 @@ if __name__ == "__main__":
         temperature=args.temperature,
         cosine_similarity_threshold=args.cosine_similarity_threshold,
         db_saving=args.db_saving,
-        data_path=args.data_path,
+        data_path=args.db_url,
         verbose=args.verbose,
         start_date=args.start_date,
         end_date=args.end_date,

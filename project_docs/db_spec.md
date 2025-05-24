@@ -1,6 +1,6 @@
 # Theseus Insight - Database Specification v0.9.0
 
-> SQLite schema created automatically by `PaperDatabase._initialize_db()` during application start-up
+> PostgreSQL schema (with pgvector) created automatically by `PaperDatabase._initialize_db()` during application start-up
 
 ---
 
@@ -22,11 +22,11 @@ The default file path is `data/papers.db`; it can be overridden via the CLI flag
 
 | Property             | Default value                                                                                                                                                    | Notes                                                  |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| **Engine**           | SQLite 3                                                                                                                                                         | Zero-config for local dev; no external server          |
-| **File location**    | `data/papers.db`                                                                                                                                                 | Created on first run; parent directory is auto-created |
-| **Connection model** | One short-lived connection per CRUD call (context-manager wraps `sqlite3.connect`)                                                                               |                                                        |
-| **Future migration** | Schema is ANSI-SQL compliant; a `postgres.sql` migration script can be generated loss-lessly (all TEXT → `text`, REAL → `double precision`, BOOLEAN → `boolean`) |                                                        |
-
+| **Engine**           | PostgreSQL + pgvector |
+|                          | Requires running Postgres server |
+| **Connection string**| `postgresql://theseus:theseus@localhost:5432/theseusdb` |
+|                          | Provided via `DATABASE_URL` environment variable |
+| **Connection model** | One connection per CRUD call using `psycopg` |
 ---
 
 ## 3. Entity-Relationship Overview

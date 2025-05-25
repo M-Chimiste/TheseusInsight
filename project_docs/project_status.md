@@ -1,6 +1,136 @@
 # Project Status
 
 ## Implemented
+
+### Latest Update: Sidebar Navigation Reordering
+
+**UI Enhancement**: Reordered the sidebar navigation menu in the React frontend to improve user experience.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/components/Layout.tsx`)**:
+  - Moved "Papers" to appear after "Visualizer" (was previously last)
+  - Moved "Run History" to be the last item in the sidebar
+  - New order: Dashboard → Settings → Newsletter Builder → Podcast Creator → Visualizer → Papers → Podcast History → Run History
+
+**Previous Bug Fix**: Fixed UnboundLocalError in Newsletter Pipeline
+
+**Bug Fixed**: Resolved a critical UnboundLocalError that occurred when all papers in the pipeline were already present in the database.
+
+**Issue**: When running the newsletter pipeline with 1944 papers already in the database, the code would crash with `UnboundLocalError: cannot access local variable 'filtered_df' where it is not associated with a value`. This happened because the embedding stage had a logic gap where `filtered_df` wasn't defined in certain edge cases.
+
+**Root Cause**: In the embedding stage, when `self.db_saving` was True and all papers already existed in the database, the code path didn't always ensure `filtered_df` was properly defined before trying to use it.
+
+**Solution**: Added a safety check in `theseus_insight/theseus_insight.py` that ensures `filtered_df` is always defined before the checkpoint save operation. If `filtered_df` is not defined, it creates an empty DataFrame with the proper structure to allow the pipeline to continue gracefully.
+
+**Benefits**:
+- Newsletter pipeline no longer crashes when all papers are duplicates
+- Graceful handling of edge cases in the embedding stage
+- Better error resilience for database-heavy scenarios
+- Maintains pipeline flow even when no new papers need processing
+
+### Previous Update: Task Abort Functionality
+
+**Feature Added**: Added an abort button to the newsletter pipeline interface that allows users to terminate running tasks.
+
+**Implementation**:
+
+1. **Frontend (`theseus-ui/src/pages/Newsletter.tsx`)**:
+   - Added abort button that appears only when a task is running
+   - Button shows "Aborting..." state with loading spinner during abort request
+   - Added `isAborting` state to manage button state
+   - Positioned abort button next to the main generate button
+   - Added error handling for abort requests with user feedback
+
+2. **API Service (`theseus-ui/src/services/api.ts`)**:
+   - Added `abortTask(taskId: string)` method to `settingsApi`
+   - Makes POST request to `/api/tasks/{task_id}/abort` endpoint
+
+3. **Backend API (`theseus_insight/main.py`)**:
+   - Added `POST /api/tasks/{task_id}/abort` endpoint
+   - Validates task exists and is in abortable state (PENDING or PROCESSING)
+   - Marks task as FAILED with "Task aborted by user" message
+   - Returns success response confirming abort
+
+**Benefits**:
+- Users can now stop long-running newsletter generation tasks
+- Prevents resource waste when users realize they need to change parameters
+- Provides immediate feedback when abort is requested
+- Task state is properly updated to reflect user-initiated termination
+
+### Previous Update: ArXiv API Error Handling and Email Notifications
+
+**Issue Fixed**: The pipeline was crashing with a KeyError when ArXiv API returned 503 errors and no papers were retrieved, causing a hard failure instead of graceful handling.
+
+**Solution Implemented**:
+
+1. **ArXiv Data Processing (`theseus_insight/data_processing/arxiv.py`)**:
+   - Added empty DataFrame handling in `download_and_process_data()` method
+   - When no records are retrieved (due to 503 errors or no papers in date range), returns properly structured empty DataFrame
+   - Prevents KeyError on 'created' column by ensuring DataFrame has expected structure
+
+2. **Pipeline Error Handling (`theseus_insight/theseus_insight.py`)**:
+   - Added `_handle_no_papers_found()` method to gracefully handle empty paper results
+   - Sends informative email notification to users when no papers are found
+   - Logs the event to database with "NO_PAPERS_FOUND" status
+   - Early pipeline exit when no papers available, preventing unnecessary processing
+
+3. **Email Notification System**:
+   - Sends user-friendly notification explaining possible causes (ArXiv API issues, no new papers, network problems)
+   - Includes search parameters and date range in notification
+   - Fixed RFC 5322 compliance issue by properly handling email Subject headers
+   - Prevents duplicate Subject headers that were causing Gmail to reject emails
+
+4. **Pipeline Stage Improvements**:
+   - Enhanced embedding stage to handle empty DataFrames gracefully
+   - Updated ranking stage to skip processing when no papers available
+   - Newsletter generation handles empty paper sets appropriately
+
+**Benefits**:
+- No more hard crashes when ArXiv API is temporarily unavailable
+- Users receive informative notifications instead of silence
+- Pipeline continues to function during ArXiv outages
+- Better user experience with clear communication about issues
+
+### Previous Update: Duplicate Paper Handling (Quality of Life Fix)
+- **Database Layer (`theseus_insight/data_model/data_handling.py`):**
+  - Added `paper_exists_by_url(url: str) -> bool` method to check if a paper with a given URL already exists in the database
+  - Added `get_paper_by_url(url: str) -> dict | None` method to retrieve paper details by URL
+  - Modified `insert_paper()` method to accept `skip_duplicates: bool = True` parameter and return `bool` indicating success
+  - When `skip_duplicates=True`, the method checks for existing papers by URL and skips insertion if found, returning `False`
+  - When `skip_duplicates=False`, the method forces insertion regardless of duplicates (original behavior)
+
+- **Pipeline Integration (`theseus_insight/theseus_insight.py`):**
+  - **Embedding Stage Optimization:** Added duplicate checking before embedding to save computational resources
+    - When `db_saving=True`, checks for existing papers by URL before processing
+    - Skips embedding for papers that already exist in the database
+    - Only processes new papers through the embedding pipeline
+    - Handles edge case where all papers are duplicates (creates empty filtered dataframe)
+  
+  - **Ranking Stage Enhancement:** Modified paper saving logic to track and handle duplicates gracefully
+    - Uses `insert_paper(paper, skip_duplicates=True)` to attempt insertion
+    - Tracks `saved_count`, `duplicate_count`, and `duplicate_urls` for reporting
+    - Provides verbose logging of duplicate papers being skipped
+    - Filters duplicate papers from `top_n_df` to exclude them from newsletter generation
+    - Backfills `top_n_df` with additional non-duplicate papers if needed to maintain desired count
+  
+  - **Newsletter Generation Safeguards:** Added handling for cases where no new papers are available
+    - Checks for empty paper lists at multiple stages (ranking, sections, content generation)
+    - Generates appropriate fallback content: "No new papers found for this newsletter period..."
+    - Handles email generation with empty content gracefully
+    - Prevents pipeline crashes when all papers are duplicates
+
+- **Error Prevention:** The implementation ensures no errors are thrown when duplicates are encountered
+  - Papers are silently skipped with optional verbose logging
+  - Pipeline continues normally even when all papers are duplicates
+  - Maintains backward compatibility with existing code
+
+- **Testing:** Created `test_duplicate_handling.py` script to verify functionality
+  - Tests paper existence checking before and after insertion
+  - Verifies duplicate detection and skipping behavior
+  - Tests forced insertion without duplicate checking
+  - Validates paper retrieval by URL
+
+This quality-of-life improvement prevents duplicate papers from cluttering the database while ensuring the newsletter pipeline remains robust and informative even when processing previously seen papers.
 - **Overall Refactoring & Feature Implementation (Cumulative - reflects state after user's latest summary):**
     - **FastAPI Backend as Central Hub (`theseus_insight/main.py`, `theseus_insight/api/models.py`, `theseus_insight/api/tasks.py`):**
         - Established FastAPI as the sole interface for all settings management and action triggering (newsletter/podcast generation).

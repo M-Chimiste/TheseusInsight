@@ -133,7 +133,54 @@ class PaperDatabase:
                               VALUES (%s, %s, %s, %s)''',
                            (podcast.title, podcast.date, json.dumps(podcast.script), podcast.description))
             
-    def insert_paper(self, paper: Paper):
+    def paper_exists_by_url(self, url: str) -> bool:
+        """Check if a paper with the given URL already exists in the database."""
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) FROM papers WHERE url = %s', (url,))
+            count = cursor.fetchone()[0]
+            return count > 0
+
+    def get_paper_by_url(self, url: str) -> dict | None:
+        """Get paper details by URL if it exists."""
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                       cosine_similarity, url, embedding_model, embedding
+                FROM papers WHERE url = %s
+            ''', (url,))
+            row = cursor.fetchone()
+            if row:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
+                return {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': date_str,
+                    'date_run': date_run_str,
+                    'score': row[5],
+                    'rationale': row[6],
+                    'related': row[7],
+                    'cosine_similarity': row[8],
+                    'url': row[9],
+                    'embedding_model': row[10],
+                    'embedding': row[11]
+                }
+            return None
+
+    def insert_paper(self, paper: Paper, skip_duplicates: bool = True) -> bool:
+        """
+        Insert a paper into the database.
+        
+        Args:
+            paper: Paper object to insert
+            skip_duplicates: If True, skip insertion if paper URL already exists
+            
+        Returns:
+            bool: True if paper was inserted, False if skipped due to duplicate
+        """
         required_fields = [
             'title', 'abstract', 'date', 'date_run', 
             'score', 'rationale', 'related', 'cosine_similarity', 'url', 'embedding_model'
@@ -156,6 +203,10 @@ class PaperDatabase:
         except ValueError:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
 
+        # Check for duplicates if requested
+        if skip_duplicates and self.paper_exists_by_url(paper.url):
+            return False  # Paper already exists, skipping
+
         with self.get_cursor() as cursor:
             cursor.execute('''INSERT INTO papers
                 (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding)
@@ -163,6 +214,7 @@ class PaperDatabase:
                 (paper.title, paper.abstract, paper.date, paper.date_run,
                  paper.score, paper.rationale, paper.related, paper.cosine_similarity,
                  paper.url, paper.embedding_model, paper.embedding))
+        return True  # Paper was inserted
 
     def insert_newsletter(self, newsletter: Newsletter):
         required_fields = ['content', 'start_date', 'end_date', 'date_sent']

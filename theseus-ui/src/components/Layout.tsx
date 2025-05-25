@@ -44,9 +44,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
-    { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
-    { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
     { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
+    { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
+    { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
   ];
 
   return (

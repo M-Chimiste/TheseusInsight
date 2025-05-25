@@ -741,6 +741,35 @@ async def get_task_result(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/tasks/{task_id}/abort")
+async def abort_task(task_id: str):
+    """Abort a running task."""
+    try:
+        task = task_manager.get_task_status(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            
+        if task["status"] not in [TaskStatus.PENDING, TaskStatus.PROCESSING]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task cannot be aborted (current status: {task['status']})"
+            )
+            
+        # Mark task as failed with abort message
+        await task_manager.update_task_status(
+            task_id,
+            TaskStatus.FAILED,
+            message="Task aborted by user",
+            error="Task was manually aborted",
+            current_step="aborted"
+        )
+        
+        return {"status": "success", "message": f"Task {task_id} has been aborted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/tasks/{task_id}/download/{file_type}")
 async def download_task_artifact(task_id: str, file_type: str):
     """Download a task artifact (newsletter or podcast)."""

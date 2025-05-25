@@ -101,6 +101,22 @@ class ArxivDataProcessor:
         )
         records = harvester.harvest()
         data_df = harvester.to_dataframe()
+        
+        # Handle case where no records were retrieved
+        if data_df.empty or len(records) == 0:
+            print(f"No records found for date range {start_date} to {end_date}")
+            print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+            
+            # Create an empty DataFrame with the expected structure for downstream processing
+            empty_df = pd.DataFrame(columns=[
+                'id', 'url', 'pdf_url', 'title', 'abstract', 'categories', 
+                'created', 'updated', 'doi', 'authors', 'affiliation'
+            ])
+            # Add the 'date' column that downstream code expects
+            empty_df['date'] = pd.to_datetime([])
+            return empty_df
+        
+        # Normal case: process the retrieved records
         data_df['date'] = pd.to_datetime(data_df['created'])
         return data_df
             

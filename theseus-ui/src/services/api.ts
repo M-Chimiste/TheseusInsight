@@ -25,6 +25,7 @@ export const settingsApi = {
   getModelProviders: () => api.get('/model-providers'),
   getModels: () => api.get('/models'),
   runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
+  abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
 };
 
 // Newsletter API

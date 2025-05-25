@@ -1099,36 +1099,40 @@ class PaperDatabase:
                     
                     # Build hybrid query using full-text search ranking
                     semantic_query = f"""
-                        SELECT 
-                            p.id, p.title, p.abstract, p.date, p.date_run, p.score, p.rationale, p.related, 
+                        SELECT
+                            p.id, p.title, p.abstract, p.date, p.date_run, p.score, p.rationale, p.related,
                             p.cosine_similarity, p.url, p.embedding_model, p.embedding,
                             (1 - (p.embedding <=> %s::vector)) as semantic_score,
                             COALESCE(
-                                GREATEST(
-                                    ts_rank_cd(p.search_vector, plainto_tsquery('english', %s), 32),
-                                    ts_rank_cd(p.title_vector, plainto_tsquery('english', %s), 32) * 2.0,
-                                    ts_rank_cd(p.abstract_vector, plainto_tsquery('english', %s), 32)
-                                ), 0.0
+                                ts_rank_cd(
+                                    setweight(p.title_vector, 'A') ||
+                                    setweight(p.abstract_vector, 'B'),
+                                    plainto_tsquery('english', %s),
+                                    32
+                                ),
+                                0.0
                             ) as keyword_score,
                             (
-                                ({semantic_weight} * (1 - (p.embedding <=> %s::vector))) + 
+                                ({semantic_weight} * (1 - (p.embedding <=> %s::vector))) +
                                 ({keyword_weight} * COALESCE(
-                                    GREATEST(
-                                        ts_rank_cd(p.search_vector, plainto_tsquery('english', %s), 32),
-                                        ts_rank_cd(p.title_vector, plainto_tsquery('english', %s), 32) * 2.0,
-                                        ts_rank_cd(p.abstract_vector, plainto_tsquery('english', %s), 32)
-                                    ), 0.0
+                                    ts_rank_cd(
+                                        setweight(p.title_vector, 'A') ||
+                                        setweight(p.abstract_vector, 'B'),
+                                        plainto_tsquery('english', %s),
+                                        32
+                                    ),
+                                    0.0
                                 ))
                             ) as hybrid_score
                         FROM papers p
                         WHERE {where_clause}
                         ORDER BY hybrid_score DESC
                     """
-                    
+
                     count_query = f"SELECT COUNT(*) FROM papers WHERE {where_clause}"
-                    
-                    # Parameters: query_embedding + 4 text queries (for keyword scoring) + query_embedding + 3 text queries (for hybrid score) + where params
-                    query_params = [query_embedding, query_text, query_text, query_text, query_embedding, query_text, query_text, query_text] + where_params
+
+                    # Parameters: query_embedding, query_text, query_embedding, query_text plus where params
+                    query_params = [query_embedding, query_text, query_embedding, query_text] + where_params
                     count_params = where_params
                 
                 # Get total count

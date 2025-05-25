@@ -2,7 +2,59 @@
 
 ## Implemented
 
-### Latest Update: Sidebar Navigation Reordering
+### Latest Update: Sticky Layout for Similarity View
+
+**UI Enhancement**: Implemented a sticky layout for the similarity view to keep the header and reference paper visible while scrolling through similar papers.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/pages/SimilarityView.tsx`)**:
+  - Made the header bar sticky at the top with `position: sticky` and `zIndex: 1000`
+  - Made the reference paper section sticky on the left side
+  - Reference paper can scroll internally if content exceeds viewport height
+  - Similar papers list scrolls independently on the right side
+  - Removed "Similar Papers (x of x found)" text as requested
+  - Cleaned up unused `totalSimilar` state and related code
+  - Adjusted height calculations to account for sticky header (`calc(100vh - 64px)`)
+
+**User Experience**: 
+- Header controls (limit dropdown, close buttons) remain accessible while scrolling
+- Reference paper stays visible for easy comparison with similar papers
+- Similar papers list scrolls smoothly without affecting other UI elements
+- Cleaner interface without redundant count information
+
+**Previous Enhancement**: Custom Reference Paper Card for Similarity View
+
+**UI Enhancement**: Created a dedicated, compact reference paper card for the similarity view that displays all information without expansion controls.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/pages/ReferencePaperCard.tsx`)** - **NEW FILE**:
+  - Created custom component specifically for reference paper display
+  - Non-expandable design with all information visible
+  - Header section with title, score, relevance tags, and metadata
+  - Elegant divider separating header from body content
+  - Body section with abstract, rationale, and ArXiv link
+  - Compact layout optimized for sidebar display
+  - Top-aligned content instead of centered
+
+- **Frontend (`theseus-ui/src/pages/SimilarityView.tsx`)**:
+  - Replaced expandable PaperCard with custom ReferencePaperCard
+  - Removed unused PaperCard import
+  - Updated left panel layout for better content flow
+
+**User Experience**: The reference paper now takes up much less vertical space while showing all relevant information, allowing more room for the similar papers list and eliminating the need for expansion controls.
+
+**Previous Enhancement**: Enhanced Paper Row View with Relevance Tags
+
+**UI Enhancement**: Added "Considered Relevant" / "Considered Not Relevant" tags to the expanded row view in the Papers page.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/pages/PaperRowCard.tsx`)**:
+  - Added full relevance tag in the expanded view section
+  - Now shows "Considered Relevant" or "Considered Not Relevant" (matching grid view behavior)
+  - Positioned between the rationale section and the ArXiv link
+  - Uses same styling as the grid view (green for relevant, default for not relevant)
+
+**Previous Enhancement**: Sidebar Navigation Reordering
 
 **UI Enhancement**: Reordered the sidebar navigation menu in the React frontend to improve user experience.
 

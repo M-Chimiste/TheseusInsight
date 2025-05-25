@@ -20,10 +20,11 @@ import SearchIcon from '@mui/icons-material/Search';
 interface PaperCardProps {
   paper: PaperApiResponse;
   onFindSimilar?: (paper: PaperApiResponse) => void;
+  initialExpanded?: boolean;
 }
 
-const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar }) => {
-  const [expanded, setExpanded] = useState(false);
+const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpanded = false }) => {
+  const [expanded, setExpanded] = useState(initialExpanded);
 
   const handleExpandClick = () => {
     setExpanded(!expanded);

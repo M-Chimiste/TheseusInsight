@@ -94,6 +94,13 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar }) => 
               </Typography>
             </>
           )}
+          {paper.related !== undefined && (
+             <Chip 
+               label={paper.related ? "Considered Relevant" : "Considered Not Relevant"} 
+               color={paper.related ? "success" : "default"} 
+               sx={{mb:1}}
+             />
+          )}
           <Typography variant="body2" sx={{mt:2}}>
             <Link href={paper.url} target="_blank" rel="noopener noreferrer">
               View on ArXiv

@@ -16,8 +16,8 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
 import { papersApi } from '../services/api';
 import type { PaperApiResponse, SimilarPapersResponse } from '../services/api';
-import PaperCard from './PaperCard';
 import PaperRowCard from './PaperRowCard';
+import ReferencePaperCard from './ReferencePaperCard';
 
 interface SimilarityViewProps {
   referencePaper: PaperApiResponse;
@@ -29,7 +29,6 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState<number>(10);
-  const [totalSimilar, setTotalSimilar] = useState<number>(0);
 
 
   const fetchSimilarPapers = useCallback(async (selectedLimit: number) => {
@@ -44,7 +43,6 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
       );
       
       setSimilarPapers(response.similar_papers);
-      setTotalSimilar(response.total_similar);
     } catch (err: any) {
       console.error("Error fetching similar papers:", err);
       
@@ -84,21 +82,26 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header with close button and controls */}
+      {/* Header with close button and controls - STICKY */}
       <Box sx={{ 
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'space-between', 
-        p: 2, 
+        px: 2, 
+        py: 1, 
         borderBottom: 1, 
         borderColor: 'divider',
-        backgroundColor: 'background.paper'
+        backgroundColor: 'background.paper',
+        minHeight: 'auto',
+        position: 'sticky',
+        top: 0,
+        zIndex: 1000
       }}>
-        <Typography variant="h5" component="h1">
+        <Typography variant="h6" component="h1" sx={{ fontWeight: 600 }}>
           Similar Papers
         </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <FormControl size="small" sx={{ minWidth: 100 }}>
             <InputLabel id="limit-select-label">Show</InputLabel>
             <Select
               labelId="limit-select-label"
@@ -107,18 +110,18 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
               label="Show"
               onChange={handleLimitChange}
             >
-              <MenuItem value={10}>10 papers</MenuItem>
-              <MenuItem value={30}>30 papers</MenuItem>
-              <MenuItem value={50}>50 papers</MenuItem>
-              <MenuItem value={100}>100 papers</MenuItem>
-              <MenuItem value={200}>200 papers</MenuItem>
+              <MenuItem value={10}>10</MenuItem>
+              <MenuItem value={30}>30</MenuItem>
+              <MenuItem value={50}>50</MenuItem>
+              <MenuItem value={100}>100</MenuItem>
+              <MenuItem value={200}>200</MenuItem>
             </Select>
           </FormControl>
-          <Box>
-            <IconButton onClick={onClose} aria-label="back to papers">
+          <Box sx={{ display: 'flex' }}>
+            <IconButton onClick={onClose} aria-label="back to papers" size="small">
               <ArrowBackIcon />
             </IconButton>
-            <IconButton onClick={onClose} aria-label="close">
+            <IconButton onClick={onClose} aria-label="close" size="small">
               <CloseIcon />
             </IconButton>
           </Box>
@@ -127,55 +130,56 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
 
       {/* Main content area */}
       <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left side - Reference paper */}
+        {/* Left side - Reference paper - STICKY */}
         <Box sx={{ 
           width: '40%', 
-          p: 2, 
           borderRight: 1, 
           borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'sticky',
+          top: 0,
+          height: 'calc(100vh - 64px)', // Subtract header height
           overflow: 'auto'
         }}>
-          <Typography variant="h6" gutterBottom>
-            Reference Paper
-          </Typography>
-          <PaperCard paper={referencePaper} />
+          <Box sx={{ p: 1.5 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+              Reference Paper
+            </Typography>
+            <ReferencePaperCard paper={referencePaper} />
+          </Box>
         </Box>
 
-        {/* Right side - Similar papers */}
+        {/* Right side - Similar papers - SCROLLABLE */}
         <Box sx={{ 
           width: '60%', 
-          p: 2, 
           overflow: 'auto',
-          display: 'flex',
-          flexDirection: 'column'
+          height: 'calc(100vh - 64px)' // Subtract header height
         }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">
-              Similar Papers ({similarPapers.length} of {totalSimilar} found)
-            </Typography>
+          <Box sx={{ p: 1.5 }}>
             {loading && (
-              <CircularProgress size={20} />
+              <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                <CircularProgress size={20} />
+              </Box>
             )}
-          </Box>
-          
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
-            </Alert>
-          )}
+            
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
 
-          {similarPapers.length === 0 && !loading && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              No similar papers found for this paper.
-            </Alert>
-          )}
+            {similarPapers.length === 0 && !loading && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                No similar papers found for this paper.
+              </Alert>
+            )}
 
-          {/* Similar papers list */}
-          <Box sx={{ flex: 1 }}>
+            {/* Similar papers list */}
             {similarPapers.map((paper, index) => (
-              <Box key={`${paper.id}_${paper.date_run}_similar_${index}`} sx={{ mb: 2 }}>
-                <Paper elevation={1} sx={{ p: 1 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <Box key={`${paper.id}_${paper.date_run}_similar_${index}`} sx={{ mb: 1.5 }}>
+                <Paper elevation={1} sx={{ p: 0.75 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
                     <Typography variant="body2" color="primary" sx={{ fontWeight: 'bold', mr: 1 }}>
                       Similarity: {((paper.similarity_score || 0) * 100).toFixed(1)}%
                     </Typography>

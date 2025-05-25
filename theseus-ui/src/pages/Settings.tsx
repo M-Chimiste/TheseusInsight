@@ -581,77 +581,9 @@ const Settings: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Podcast Model Settings Section */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              Podcast Model Settings
-            </Typography>
-            <Tooltip title="Configure the model used for podcast generation.">
-              <InfoOutlinedIcon color="action" />
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Configure the model used for podcast generation.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            {orchestrationConfig?.podcast_model ? (
-              renderModelConfigFields('podcast_model', orchestrationConfig.podcast_model)
-            ) : (
-              <Typography>Loading podcast model configuration...</Typography>
-            )}
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  if (orchestrationConfig) updateOrchestrationMutation.mutate(orchestrationConfig);
-                }}
-                disabled={updateOrchestrationMutation.isPending || !orchestrationConfig}
-              >
-                Save Podcast Model Settings
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
 
-      {/* TTS Model Settings Section */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              TTS Model Settings
-            </Typography>
-            <Tooltip title="Configure the Text-to-Speech (TTS) model settings.">
-              <InfoOutlinedIcon color="action" />
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Configure the Text-to-Speech (TTS) model and parameters for podcast generation.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            {orchestrationConfig?.tts_model ? (
-              renderModelConfigFields('tts_model', orchestrationConfig.tts_model)
-            ) : (
-              <Typography>Loading TTS model configuration...</Typography>
-            )}
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  if (orchestrationConfig) updateOrchestrationMutation.mutate(orchestrationConfig);
-                }}
-                disabled={updateOrchestrationMutation.isPending || !orchestrationConfig}
-              >
-                Save TTS Model Settings
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
     </Container>
   );
 };
 
-export default Settings; 
+export default Settings;

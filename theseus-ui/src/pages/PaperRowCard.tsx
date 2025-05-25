@@ -6,13 +6,16 @@ import {
     Box,
     Link,
     Collapse,
-    Chip
+    Chip,
+    Button
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
+import SearchIcon from '@mui/icons-material/Search';
 import type { PaperApiResponse } from '../services/api'; // Assuming PaperApiResponse is in services/api
 
 interface PaperRowCardProps {
   paper: PaperApiResponse;
+  onFindSimilar?: (paper: PaperApiResponse) => void;
 }
 
 const TruncatedTypography = styled(Typography)(() => ({
@@ -25,7 +28,7 @@ const TruncatedTypography = styled(Typography)(() => ({
   lineHeight: '1.5em' 
 }));
 
-const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
+const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar }) => {
   const [expanded, setExpanded] = useState(false);
 
   const handleExpandClick = () => {
@@ -91,11 +94,32 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper }) => {
               </Typography>
             </>
           )}
+          {paper.related !== undefined && (
+             <Chip 
+               label={paper.related ? "Considered Relevant" : "Considered Not Relevant"} 
+               color={paper.related ? "success" : "default"} 
+               sx={{mb:1}}
+             />
+          )}
           <Typography variant="body2" sx={{mt:2}}>
             <Link href={paper.url} target="_blank" rel="noopener noreferrer">
               View on ArXiv
             </Link>
           </Typography>
+          {onFindSimilar && (
+            <Button
+              variant="outlined"
+              color="primary"
+              startIcon={<SearchIcon />}
+              onClick={(e) => {
+                e.stopPropagation();
+                onFindSimilar(paper);
+              }}
+              sx={{ mt: 2 }}
+            >
+              Find Similar
+            </Button>
+          )}
         </CardContent>
       </Collapse>
     </Card>

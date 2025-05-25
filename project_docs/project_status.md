@@ -1,6 +1,188 @@
 # Project Status
 
 ## Implemented
+
+### Latest Update: Sticky Layout for Similarity View
+
+**UI Enhancement**: Implemented a sticky layout for the similarity view to keep the header and reference paper visible while scrolling through similar papers.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/pages/SimilarityView.tsx`)**:
+  - Made the header bar sticky at the top with `position: sticky` and `zIndex: 1000`
+  - Made the reference paper section sticky on the left side
+  - Reference paper can scroll internally if content exceeds viewport height
+  - Similar papers list scrolls independently on the right side
+  - Removed "Similar Papers (x of x found)" text as requested
+  - Cleaned up unused `totalSimilar` state and related code
+  - Adjusted height calculations to account for sticky header (`calc(100vh - 64px)`)
+
+**User Experience**: 
+- Header controls (limit dropdown, close buttons) remain accessible while scrolling
+- Reference paper stays visible for easy comparison with similar papers
+- Similar papers list scrolls smoothly without affecting other UI elements
+- Cleaner interface without redundant count information
+
+**Previous Enhancement**: Custom Reference Paper Card for Similarity View
+
+**UI Enhancement**: Created a dedicated, compact reference paper card for the similarity view that displays all information without expansion controls.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/pages/ReferencePaperCard.tsx`)** - **NEW FILE**:
+  - Created custom component specifically for reference paper display
+  - Non-expandable design with all information visible
+  - Header section with title, score, relevance tags, and metadata
+  - Elegant divider separating header from body content
+  - Body section with abstract, rationale, and ArXiv link
+  - Compact layout optimized for sidebar display
+  - Top-aligned content instead of centered
+
+- **Frontend (`theseus-ui/src/pages/SimilarityView.tsx`)**:
+  - Replaced expandable PaperCard with custom ReferencePaperCard
+  - Removed unused PaperCard import
+  - Updated left panel layout for better content flow
+
+**User Experience**: The reference paper now takes up much less vertical space while showing all relevant information, allowing more room for the similar papers list and eliminating the need for expansion controls.
+
+**Previous Enhancement**: Enhanced Paper Row View with Relevance Tags
+
+**UI Enhancement**: Added "Considered Relevant" / "Considered Not Relevant" tags to the expanded row view in the Papers page.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/pages/PaperRowCard.tsx`)**:
+  - Added full relevance tag in the expanded view section
+  - Now shows "Considered Relevant" or "Considered Not Relevant" (matching grid view behavior)
+  - Positioned between the rationale section and the ArXiv link
+  - Uses same styling as the grid view (green for relevant, default for not relevant)
+
+**Previous Enhancement**: Sidebar Navigation Reordering
+
+**UI Enhancement**: Reordered the sidebar navigation menu in the React frontend to improve user experience.
+
+**Changes Made**:
+- **Frontend (`theseus-ui/src/components/Layout.tsx`)**:
+  - Moved "Papers" to appear after "Visualizer" (was previously last)
+  - Moved "Run History" to be the last item in the sidebar
+  - New order: Dashboard → Settings → Newsletter Builder → Podcast Creator → Visualizer → Papers → Podcast History → Run History
+
+**Previous Bug Fix**: Fixed UnboundLocalError in Newsletter Pipeline
+
+**Bug Fixed**: Resolved a critical UnboundLocalError that occurred when all papers in the pipeline were already present in the database.
+
+**Issue**: When running the newsletter pipeline with 1944 papers already in the database, the code would crash with `UnboundLocalError: cannot access local variable 'filtered_df' where it is not associated with a value`. This happened because the embedding stage had a logic gap where `filtered_df` wasn't defined in certain edge cases.
+
+**Root Cause**: In the embedding stage, when `self.db_saving` was True and all papers already existed in the database, the code path didn't always ensure `filtered_df` was properly defined before trying to use it.
+
+**Solution**: Added a safety check in `theseus_insight/theseus_insight.py` that ensures `filtered_df` is always defined before the checkpoint save operation. If `filtered_df` is not defined, it creates an empty DataFrame with the proper structure to allow the pipeline to continue gracefully.
+
+**Benefits**:
+- Newsletter pipeline no longer crashes when all papers are duplicates
+- Graceful handling of edge cases in the embedding stage
+- Better error resilience for database-heavy scenarios
+- Maintains pipeline flow even when no new papers need processing
+
+### Previous Update: Task Abort Functionality
+
+**Feature Added**: Added an abort button to the newsletter pipeline interface that allows users to terminate running tasks.
+
+**Implementation**:
+
+1. **Frontend (`theseus-ui/src/pages/Newsletter.tsx`)**:
+   - Added abort button that appears only when a task is running
+   - Button shows "Aborting..." state with loading spinner during abort request
+   - Added `isAborting` state to manage button state
+   - Positioned abort button next to the main generate button
+   - Added error handling for abort requests with user feedback
+
+2. **API Service (`theseus-ui/src/services/api.ts`)**:
+   - Added `abortTask(taskId: string)` method to `settingsApi`
+   - Makes POST request to `/api/tasks/{task_id}/abort` endpoint
+
+3. **Backend API (`theseus_insight/main.py`)**:
+   - Added `POST /api/tasks/{task_id}/abort` endpoint
+   - Validates task exists and is in abortable state (PENDING or PROCESSING)
+   - Marks task as FAILED with "Task aborted by user" message
+   - Returns success response confirming abort
+
+**Benefits**:
+- Users can now stop long-running newsletter generation tasks
+- Prevents resource waste when users realize they need to change parameters
+- Provides immediate feedback when abort is requested
+- Task state is properly updated to reflect user-initiated termination
+
+### Previous Update: ArXiv API Error Handling and Email Notifications
+
+**Issue Fixed**: The pipeline was crashing with a KeyError when ArXiv API returned 503 errors and no papers were retrieved, causing a hard failure instead of graceful handling.
+
+**Solution Implemented**:
+
+1. **ArXiv Data Processing (`theseus_insight/data_processing/arxiv.py`)**:
+   - Added empty DataFrame handling in `download_and_process_data()` method
+   - When no records are retrieved (due to 503 errors or no papers in date range), returns properly structured empty DataFrame
+   - Prevents KeyError on 'created' column by ensuring DataFrame has expected structure
+
+2. **Pipeline Error Handling (`theseus_insight/theseus_insight.py`)**:
+   - Added `_handle_no_papers_found()` method to gracefully handle empty paper results
+   - Sends informative email notification to users when no papers are found
+   - Logs the event to database with "NO_PAPERS_FOUND" status
+   - Early pipeline exit when no papers available, preventing unnecessary processing
+
+3. **Email Notification System**:
+   - Sends user-friendly notification explaining possible causes (ArXiv API issues, no new papers, network problems)
+   - Includes search parameters and date range in notification
+   - Fixed RFC 5322 compliance issue by properly handling email Subject headers
+   - Prevents duplicate Subject headers that were causing Gmail to reject emails
+
+4. **Pipeline Stage Improvements**:
+   - Enhanced embedding stage to handle empty DataFrames gracefully
+   - Updated ranking stage to skip processing when no papers available
+   - Newsletter generation handles empty paper sets appropriately
+
+**Benefits**:
+- No more hard crashes when ArXiv API is temporarily unavailable
+- Users receive informative notifications instead of silence
+- Pipeline continues to function during ArXiv outages
+- Better user experience with clear communication about issues
+
+### Previous Update: Duplicate Paper Handling (Quality of Life Fix)
+- **Database Layer (`theseus_insight/data_model/data_handling.py`):**
+  - Added `paper_exists_by_url(url: str) -> bool` method to check if a paper with a given URL already exists in the database
+  - Added `get_paper_by_url(url: str) -> dict | None` method to retrieve paper details by URL
+  - Modified `insert_paper()` method to accept `skip_duplicates: bool = True` parameter and return `bool` indicating success
+  - When `skip_duplicates=True`, the method checks for existing papers by URL and skips insertion if found, returning `False`
+  - When `skip_duplicates=False`, the method forces insertion regardless of duplicates (original behavior)
+
+- **Pipeline Integration (`theseus_insight/theseus_insight.py`):**
+  - **Embedding Stage Optimization:** Added duplicate checking before embedding to save computational resources
+    - When `db_saving=True`, checks for existing papers by URL before processing
+    - Skips embedding for papers that already exist in the database
+    - Only processes new papers through the embedding pipeline
+    - Handles edge case where all papers are duplicates (creates empty filtered dataframe)
+  
+  - **Ranking Stage Enhancement:** Modified paper saving logic to track and handle duplicates gracefully
+    - Uses `insert_paper(paper, skip_duplicates=True)` to attempt insertion
+    - Tracks `saved_count`, `duplicate_count`, and `duplicate_urls` for reporting
+    - Provides verbose logging of duplicate papers being skipped
+    - Filters duplicate papers from `top_n_df` to exclude them from newsletter generation
+    - Backfills `top_n_df` with additional non-duplicate papers if needed to maintain desired count
+  
+  - **Newsletter Generation Safeguards:** Added handling for cases where no new papers are available
+    - Checks for empty paper lists at multiple stages (ranking, sections, content generation)
+    - Generates appropriate fallback content: "No new papers found for this newsletter period..."
+    - Handles email generation with empty content gracefully
+    - Prevents pipeline crashes when all papers are duplicates
+
+- **Error Prevention:** The implementation ensures no errors are thrown when duplicates are encountered
+  - Papers are silently skipped with optional verbose logging
+  - Pipeline continues normally even when all papers are duplicates
+  - Maintains backward compatibility with existing code
+
+- **Testing:** Created `test_duplicate_handling.py` script to verify functionality
+  - Tests paper existence checking before and after insertion
+  - Verifies duplicate detection and skipping behavior
+  - Tests forced insertion without duplicate checking
+  - Validates paper retrieval by URL
+
+This quality-of-life improvement prevents duplicate papers from cluttering the database while ensuring the newsletter pipeline remains robust and informative even when processing previously seen papers.
 - **Overall Refactoring & Feature Implementation (Cumulative - reflects state after user's latest summary):**
     - **FastAPI Backend as Central Hub (`theseus_insight/main.py`, `theseus_insight/api/models.py`, `theseus_insight/api/tasks.py`):**
         - Established FastAPI as the sole interface for all settings management and action triggering (newsletter/podcast generation).
@@ -332,3 +514,136 @@
         *   Creates necessary data directories and exposes port 8000.
         *   Sets the default command to run FastAPI with Uvicorn.
 2.  **`
+
+## Latest Updates (December 2024)
+
+### Fixed: Intermittent KeyError in rank_papers Method
+**Date**: December 2024  
+**Issue**: Intermittent KeyErrors occurring in `rank_papers` method line 387, especially after processing hundreds of papers when using Ollama with schema validation.
+
+**Root Cause**: Even with Ollama schema enforcement, the model could sometimes return:
+- Malformed JSON that couldn't be parsed
+- Valid JSON missing required keys (`score`, `related`, `rationale`)
+- Invalid data types or values outside expected ranges
+
+**Solution Implemented**: Comprehensive error handling and retry mechanism in `theseus_insight/theseus_insight.py`:
+
+1. **Retry Logic**: 
+   - Up to 3 attempts per paper before fallback
+   - 1-second delay between retry attempts
+   - Graceful degradation with default values for failed papers
+
+2. **JSON Validation**:
+   - Robust JSON parsing with `json_repair.loads()`
+   - Validation of required keys existence
+   - Type conversion validation and error handling
+   - Score range validation (1-10) with clamping
+
+3. **Partial Checkpointing**:
+   - Progress saved every 50 papers to `ranking_partial` checkpoint
+   - Resume capability from last successful checkpoint
+   - Automatic cleanup of partial checkpoints on completion
+
+4. **Cache Management**:
+   - Added `_clear_judge_model_cache()` method
+   - Automatic Ollama cache clearing after consecutive failures
+   - Helps resolve potential model context corruption
+
+5. **Enhanced Logging**:
+   - Detailed error messages with paper indices and attempt numbers
+   - Raw response logging for debugging
+   - Failure tracking and reporting
+
+**Files Modified**:
+- `theseus_insight/theseus_insight.py`: Added robust error handling, retry logic, and partial checkpointing
+- Added time import for retry delays
+- Enhanced rank_papers method with comprehensive validation
+
+**Impact**: 
+- Eliminates pipeline failures due to intermittent JSON issues
+- Provides detailed debugging information for troubleshooting
+- Maintains data integrity with fallback values
+- Enables recovery from partial failures
+
+### Added: Similarity Search Feature in Papers Page
+**Date**: December 2024  
+**Feature**: Interactive similarity search functionality for papers with vector embeddings.
+
+**Implementation Details**:
+
+1. **API Integration**:
+   - Added `findSimilarPapers` function to `theseus-ui/src/services/api.ts`
+   - Utilizes existing `/api/papers/{paper_id}/similar` endpoint
+   - Added `SimilarPapersResponse` interface for type safety
+
+2. **UI Components Enhanced**:
+   - **PaperCard.tsx**: Added "Find Similar" button in expanded view with `onFindSimilar` prop
+   - **PaperRowCard.tsx**: Added "Find Similar" button in expanded view with `onFindSimilar` prop
+   - **SimilarityView.tsx**: New component for similarity search results display
+
+3. **SimilarityView Component Features**:
+   - Split-screen layout: Reference paper (40% left) and similar papers (60% right)
+   - Infinite scroll for similar papers with pagination
+   - Similarity score display as percentage for each result
+   - Back/Close buttons to return to original view
+   - Scroll position preservation when returning to main view
+
+4. **Papers.tsx Integration**:
+   - Added `similarity` view mode to existing `grid`/`list` modes
+   - State management for selected paper and scroll position
+   - Conditional rendering to hide filters/headers in similarity view
+   - `handleFindSimilar` function to transition to similarity view
+   - `handleCloseSimilarity` function to return to previous view with scroll restoration
+
+5. **User Experience**:
+   - Click "Find Similar" on any expanded paper card
+   - View transforms to show reference paper on left, similar papers on right
+   - Similar papers displayed as row cards with similarity percentages
+   - Infinite scroll loads more similar papers automatically
+   - Back arrow or X button returns to original papers view
+   - Original scroll position is restored when returning
+
+**Files Modified**:
+- `theseus-ui/src/services/api.ts`: Added similarity search API function and interfaces
+- `theseus-ui/src/pages/PaperCard.tsx`: Added Find Similar button and onFindSimilar prop
+- `theseus-ui/src/pages/PaperRowCard.tsx`: Added Find Similar button and onFindSimilar prop
+- `theseus-ui/src/pages/SimilarityView.tsx`: New component for similarity search results
+- `theseus-ui/src/pages/Papers.tsx`: Integrated similarity view mode and state management
+
+**Technical Features**:
+- Leverages existing vector embedding infrastructure
+- Configurable similarity threshold (default 0.6 for more results)
+- Responsive layout with proper overflow handling
+- Error handling for failed similarity searches
+- Loading states and empty state handling
+
+### Enhanced: Similarity Search with Configurable Limits
+**Date**: December 2024  
+**Enhancement**: Added dropdown to allow users to select the number of similar papers to display.
+
+**Implementation Details**:
+
+1. **Dynamic Limit Selection**:
+   - Added dropdown with options: 10, 30, 50, 100 papers
+   - Replaces previous hardcoded limit of 10 papers
+   - Automatic re-fetch when limit changes
+
+2. **UI Improvements**:
+   - **SimilarityView.tsx**: Added FormControl with Select dropdown in header
+   - Shows "X of Y found" to indicate total available similar papers
+   - Loading indicator during fetch operations
+   - Removed infinite scroll in favor of explicit limit selection
+
+3. **User Experience**:
+   - Immediate feedback when changing limits
+   - Clear indication of how many papers are shown vs. available
+   - Simplified interface without complex pagination
+
+**Files Modified**:
+- `theseus-ui/src/pages/SimilarityView.tsx`: Added limit dropdown and updated state management
+
+**Technical Implementation**:
+- Removed infinite scroll complexity
+- Simplified state management with single `limit` state
+- Direct API calls with selected limit parameter
+- Type-safe SelectChangeEvent handling

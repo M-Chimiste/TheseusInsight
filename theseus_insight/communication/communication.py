@@ -66,7 +66,7 @@ class GmailCommunication:
         self.email_message = None
         self.verbose = verbose
         if not db_path:
-            db_path = os.getenv('THESEUS_DB_PATH', 'data/papers.db')
+            db_path = os.getenv('DATABASE_URL', 'postgresql://theseus:theseus@localhost:5432/theseusdb')
         self.db_path = db_path
         self.db = PaperDatabase(self.db_path)
         if not self.app_password:

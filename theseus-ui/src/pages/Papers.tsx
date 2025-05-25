@@ -31,10 +31,11 @@ import { papersApi } from '../services/api';
 import type { PaperApiResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
 import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
+import SimilarityView from './SimilarityView'; // Import the new SimilarityView
 
 const DEFAULT_PAGE_SIZE = 9; // 3 cards per row, 3 rows for grid view
 
-type ViewMode = 'grid' | 'list';
+type ViewMode = 'grid' | 'list' | 'similarity';
 
 interface FilterState {
   minScore: number;
@@ -53,7 +54,11 @@ const Papers: React.FC = () => {
   const [pageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // Track if more pages are available
   const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
-  const [viewMode, setViewMode] = useState<ViewMode>('grid'); // New state for view mode
+  const [viewMode, setViewMode] = useState<ViewMode>('grid'); // Updated to include similarity
+  
+  // Similarity view state
+  const [selectedPaper, setSelectedPaper] = useState<PaperApiResponse | null>(null);
+  const [scrollPosition, setScrollPosition] = useState<number>(0);
   
   // Filter state
   const [filters, setFilters] = useState<FilterState>({
@@ -85,6 +90,7 @@ const Papers: React.FC = () => {
         'score', 
         'desc',
         appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
+        appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
         appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
         appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
         appliedFilters.search || undefined
@@ -142,19 +148,34 @@ const Papers: React.FC = () => {
     };
   }, [loading, hasNextPage, currentPage, pageSize, fetchPapers, initialLoadComplete]);
 
+  // No need for client-side filtering anymore since it's handled at database level
   const sortedPapers = useMemo(() => {
-    // Papers are already sorted by the API, no need to re-sort
-    // But we can do client-side filtering for maxScore since API only supports minScore
-    return allPapers.filter(paper => paper.score <= appliedFilters.maxScore);
-  }, [allPapers, appliedFilters.maxScore]);
+    return allPapers;
+  }, [allPapers]);
 
   const handleViewModeChange = (
     _event: React.MouseEvent<HTMLElement>,
     newViewMode: ViewMode | null, 
   ) => {
-    if (newViewMode !== null) {
+    if (newViewMode !== null && newViewMode !== 'similarity') {
       setViewMode(newViewMode);
     }
+  };
+
+  const handleFindSimilar = (paper: PaperApiResponse) => {
+    // Save current scroll position
+    setScrollPosition(window.scrollY);
+    setSelectedPaper(paper);
+    setViewMode('similarity');
+  };
+
+  const handleCloseSimilarity = () => {
+    setViewMode('grid'); // or return to previous view mode
+    setSelectedPaper(null);
+    // Restore scroll position
+    setTimeout(() => {
+      window.scrollTo(0, scrollPosition);
+    }, 100);
   };
 
   const handleApplyFilters = () => {
@@ -220,7 +241,10 @@ const Papers: React.FC = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box sx={{ p: 3 }}>
+      <Box sx={{ p: viewMode === 'similarity' ? 0 : 3 }}>
+        {/* Show header and filters only when not in similarity view */}
+        {viewMode !== 'similarity' && (
+          <>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2}}>
           <Typography variant="h4" gutterBottom component="div">
             Historical Papers
@@ -349,25 +373,35 @@ const Papers: React.FC = () => {
               </Tooltip>
             </Stack>
           </Box>
+            )}
+          </>
         )}
         
         {/* Conditional Rendering based on viewMode */} 
-        {viewMode === 'grid' ? (
+        {viewMode === 'similarity' && selectedPaper ? (
+          <SimilarityView
+            referencePaper={selectedPaper}
+            onClose={handleCloseSimilarity}
+          />
+        ) : viewMode === 'grid' ? (
           <Grid container spacing={3} sx={{ mb: 3 }}>
             {sortedPapers.map((paper) => (
               <Grid size={{ xs: 12, sm: 6, md: 4 }} key={paper.id + "_" + paper.date_run + "_grid"}>
-                <PaperCard paper={paper} />
+                <PaperCard paper={paper} onFindSimilar={handleFindSimilar} />
               </Grid>
             ))}
           </Grid>
         ) : (
           <Box sx={{ mb: 3 }}>
             {sortedPapers.map((paper) => (
-              <PaperRowCard key={paper.id + "_" + paper.date_run + "_list"} paper={paper} />
+              <PaperRowCard key={paper.id + "_" + paper.date_run + "_list"} paper={paper} onFindSimilar={handleFindSimilar} />
             ))}
           </Box>
         )}
 
+        {/* Show infinite scroll elements only when not in similarity view */}
+        {viewMode !== 'similarity' && (
+          <>
         {/* Loader for infinite scroll */} 
         <div ref={loader} style={{ height: '50px', margin: '20px 0' }}>
           {loading && initialLoadComplete && <CircularProgress sx={{ display: 'block', margin: 'auto' }}/>}
@@ -381,6 +415,8 @@ const Papers: React.FC = () => {
 
         {!loading && !hasNextPage && initialLoadComplete && allPapers.length === 0 && (
            <Alert severity="info" sx={{mt: 2}}>No papers found for the current criteria.</Alert>
+            )}
+          </>
         )}
       </Box>
     </LocalizationProvider>

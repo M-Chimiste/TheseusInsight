@@ -20,6 +20,7 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import StopIcon from '@mui/icons-material/Stop';
 import { settingsApi } from '../services/api';
 import { useTaskState } from '../hooks/useTaskState';
 
@@ -50,6 +51,7 @@ const Newsletter = () => {
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [researchInterests, setResearchInterests] = useState<string>('');
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
+  const [isAborting, setIsAborting] = useState<boolean>(false);
   
   // Use the new task state hook
   const { taskState, setTaskId, isCheckingForActiveTasks } = useTaskState('newsletter');
@@ -157,6 +159,23 @@ const Newsletter = () => {
       setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`]);
     }
   };
+
+  const handleAbortTask = async () => {
+    if (!taskState.taskId) return;
+    
+    setIsAborting(true);
+    try {
+      await settingsApi.abortTask(taskState.taskId);
+      setStatusMessages(prev => [...prev, `[ABORT] ${new Date().toLocaleTimeString()}: Task abort requested`]);
+      // The task state will be updated via WebSocket when the task is actually terminated
+    } catch (err: any) {
+      console.error("Failed to abort task:", err);
+      const errorMessage = err.response?.data?.detail || err.message || "Failed to abort task";
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`]);
+    } finally {
+      setIsAborting(false);
+    }
+  };
   
 
   return (
@@ -254,21 +273,37 @@ const Newsletter = () => {
           </CardContent>
         </Card>
         
-        {/* Action Button */}
-        <Button
-          variant="contained"
-          color="primary"
-          fullWidth
-          size="large"
-          startIcon={isCheckingForActiveTasks ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
-          onClick={handleGenerateNewsletter}
-          disabled={taskState.isRunning || isCheckingForActiveTasks}
-          sx={{ py: 1.5, mb: 3, fontSize: '1.1rem' }}
-        >
-          {isCheckingForActiveTasks ? 'Checking for active tasks...' :
-           taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
-           '🚀 Generate Newsletter'}
-        </Button>
+        {/* Action Buttons */}
+        <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            fullWidth
+            size="large"
+            startIcon={isCheckingForActiveTasks ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
+            onClick={handleGenerateNewsletter}
+            disabled={taskState.isRunning || isCheckingForActiveTasks}
+            sx={{ py: 1.5, fontSize: '1.1rem' }}
+          >
+            {isCheckingForActiveTasks ? 'Checking for active tasks...' :
+             taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
+             '🚀 Generate Newsletter'}
+          </Button>
+          
+          {taskState.isRunning && (
+            <Button
+              variant="outlined"
+              color="error"
+              size="large"
+              startIcon={isAborting ? <CircularProgress size={20} color="inherit" /> : <StopIcon />}
+              onClick={handleAbortTask}
+              disabled={isAborting}
+              sx={{ py: 1.5, fontSize: '1.1rem', minWidth: '140px' }}
+            >
+              {isAborting ? 'Aborting...' : 'Abort'}
+            </Button>
+          )}
+        </Box>
 
         {/* Pipeline Status Section */}
         <Card>

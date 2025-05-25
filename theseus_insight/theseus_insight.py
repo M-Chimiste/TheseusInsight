@@ -5,7 +5,8 @@ import shutil
 import pickle
 import random
 import datetime
-import warnings
+import time
+import pandas as pd
 from tqdm import tqdm
 from dotenv import load_dotenv
 import json_repair
@@ -59,7 +60,7 @@ class TheseusInsight:
                  temperature=0.1,
                  cosine_similarity_threshold=0.5,
                  db_saving=True,
-                 data_path="data/papers.db",
+                 data_path=os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"),
                  generate_podcast=False,
                  intro_music_path=None,
                  output_format: str = "mp3",
@@ -384,35 +385,224 @@ class TheseusInsight:
             print(f"Warning: Failed to clean up temp_data directory: {cleanup_error}")
             self._log_error(500, cleanup_error)
 
+    def _clear_judge_model_cache(self):
+        """Clear Ollama cache for the judge model to resolve potential context issues."""
+        try:
+            if (hasattr(self, 'judge_inference') and 
+                hasattr(self.judge_inference, 'provider') and 
+                self.judge_inference.provider == "ollama"):
+                model_name = self.judge_model_config.get('model_name')
+                if model_name:
+                    if self.verbose:
+                        print(f"Clearing Ollama cache for judge model: {model_name}")
+                    purge_ollama_cache(OLLAMA_URL, model_name)
+        except Exception as e:
+            if self.verbose:
+                print(f"Failed to clear judge model cache: {e}")
+
+    def _handle_no_papers_found(self):
+        """Handle the case where no papers were found from ArXiv."""
+        if self.verbose:
+            print("No papers found from ArXiv for the specified date range and categories.")
+        
+        # Log the event
+        log = Logs(
+            task_id=self.task_id, 
+            status="NO_PAPERS_FOUND",
+            datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        )
+        self.papers_db.insert_log(log)
+        
+        # Send notification email if email generation is enabled
+        if self.generate_email and self.receiver_address:
+            try:
+                no_papers_message = f"""
+No Research Papers Found - Theseus Insight
+
+Dear Subscriber,
+
+We attempted to retrieve research papers from ArXiv for the period {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}, but no papers were found matching your criteria.
+
+This could be due to:
+• ArXiv API temporary unavailability (503 errors)
+• No new papers published in your specified categories during this period
+• Network connectivity issues
+
+Search Parameters:
+• Date Range: {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}
+• Categories: {getattr(self, 'arxiv_filter_categories', 'Not specified')}
+
+We'll try again during the next scheduled run. If this issue persists, please check the ArXiv status or contact support.
+
+Best regards,
+Theseus Insight Team
+                """.strip()
+                
+                # Compose the email message
+                self.communication.compose_message(
+                    content=no_papers_message,
+                    start_date=self.start_date,
+                    end_date=self.end_date
+                )
+                # Replace the subject to indicate no papers found (remove existing and set new)
+                if self.communication.email_message:
+                    del self.communication.email_message['Subject']
+                    self.communication.email_message['Subject'] = "Theseus Insight - No Papers Found"
+                self.communication.send_email()
+                
+                if self.verbose:
+                    print(f"Sent 'no papers found' notification to {self.receiver_address}")
+                    
+                # Log successful email notification
+                self.papers_db.insert_log(
+                    Logs(
+                        task_id=self.task_id, 
+                        status=f"EMAIL_NO_PAPERS_NOTIFICATION: Sent to {self.receiver_address}",
+                        datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    )
+                )
+                
+            except Exception as e:
+                if self.verbose:
+                    print(f"Failed to send 'no papers found' notification: {e}")
+                self._log_error(500, e)
+
     def rank_papers(self, data_df):
         """Given embedded papers, use judge model to score them."""
         try:
             abstracts = list(data_df['abstract'])
             scores, related, rationale = [], [], []
-            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Ranking papers"):
-                messages = [
-                    {"role": "user", "content": research_prompt(self.research_interests, abstract)}
-                ]
-                # Depending on single-model or multi-model
+            failed_papers = []
+            consecutive_failures = 0
+            
+            # Check for partial checkpoint
+            partial_checkpoint = self._load_checkpoint('ranking_partial')
+            start_index = 0
+            if partial_checkpoint is not None:
+                scores = partial_checkpoint.get('scores', [])
+                related = partial_checkpoint.get('related', [])
+                rationale = partial_checkpoint.get('rationale', [])
+                failed_papers = partial_checkpoint.get('failed_papers', [])
+                start_index = len(scores)
+                if self.verbose:
+                    print(f"Resuming ranking from paper {start_index + 1}/{len(abstracts)}")
+            
+            for i, abstract in enumerate(tqdm(abstracts[start_index:], 
+                                            disable=not self.verbose, 
+                                            desc="Ranking papers",
+                                            initial=start_index, 
+                                            total=len(abstracts))):
+                actual_index = start_index + i
+                success = False
+                attempts = 0
+                max_attempts = 3
                 
-                if self.judge_inference.provider == "ollama":
-                    response = self.judge_inference.invoke(
-                        messages=messages,
-                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-                        schema=ResearchInterestsPromptData
-                    )
-                else:
-                    # E.g. Anthropic or OpenAI
-                    response = self.judge_inference.invoke(
-                        messages=messages,
-                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
-                    )
+                while not success and attempts < max_attempts:
+                    attempts += 1
+                    try:
+                        # Clear cache on second attempt if using Ollama
+                        if attempts == 2 and consecutive_failures > 2:
+                            self._clear_judge_model_cache()
+                            
+                        messages = [
+                            {"role": "user", "content": research_prompt(self.research_interests, abstract)}
+                        ]
+                        
+                        if self.judge_inference.provider == "ollama":
+                            response = self.judge_inference.invoke(
+                                messages=messages,
+                                system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                                schema=ResearchInterestsPromptData
+                            )
+                        else:
+                            # E.g. Anthropic or OpenAI
+                            response = self.judge_inference.invoke(
+                                messages=messages,
+                                system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
+                            )
 
-                response_json = json_repair.loads(response)
-                scores.append(int(response_json['score']))
-                related.append(bool(response_json['related']))
-                rationale.append(response_json['rationale'])
+                        # Parse and validate JSON response
+                        try:
+                            response_json = json_repair.loads(response)
+                        except Exception as json_error:
+                            if self.verbose:
+                                print(f"JSON parsing failed for paper {actual_index+1}, attempt {attempts}: {json_error}")
+                                print(f"Raw response: {response[:200]}...")
+                            if attempts == max_attempts:
+                                raise json_error
+                            continue
+                        
+                        # Validate required keys exist
+                        required_keys = ['score', 'related', 'rationale']
+                        missing_keys = [key for key in required_keys if key not in response_json]
+                        
+                        if missing_keys:
+                            if self.verbose:
+                                print(f"Missing keys {missing_keys} for paper {actual_index+1}, attempt {attempts}")
+                                print(f"Response JSON: {response_json}")
+                            if attempts == max_attempts:
+                                raise KeyError(f"Missing required keys in response: {missing_keys}")
+                            continue
+                        
+                        # Validate and convert values
+                        try:
+                            score_val = int(response_json['score'])
+                            related_val = bool(response_json['related'])
+                            rationale_val = str(response_json['rationale'])
+                            
+                            # Validate score range
+                            if not (1 <= score_val <= 10):
+                                if self.verbose:
+                                    print(f"Invalid score {score_val} for paper {actual_index+1}, attempt {attempts}")
+                                if attempts == max_attempts:
+                                    score_val = max(1, min(10, score_val))  # Clamp to valid range
+                                else:
+                                    continue
+                            
+                            scores.append(score_val)
+                            related.append(related_val)
+                            rationale.append(rationale_val)
+                            success = True
+                            consecutive_failures = 0  # Reset counter on success
+                            
+                        except (ValueError, TypeError) as conversion_error:
+                            if self.verbose:
+                                print(f"Value conversion failed for paper {actual_index+1}, attempt {attempts}: {conversion_error}")
+                                print(f"Response JSON: {response_json}")
+                            if attempts == max_attempts:
+                                raise conversion_error
+                            continue
+                            
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error processing paper {actual_index+1}, attempt {attempts}: {e}")
+                        if attempts == max_attempts:
+                            # Use default values for failed paper
+                            if self.verbose:
+                                print(f"Using default values for failed paper {actual_index+1}")
+                            scores.append(1)  # Default low score
+                            related.append(False)  # Default not related
+                            rationale.append(f"Failed to process: {str(e)[:100]}")
+                            failed_papers.append(actual_index)
+                            consecutive_failures += 1
+                            success = True
+                        else:
+                            # Add small delay before retry
+                            time.sleep(1)
 
+                # Save partial progress every 50 papers
+                if (actual_index + 1) % 50 == 0:
+                    partial_data = {
+                        'scores': scores,
+                        'related': related,
+                        'rationale': rationale,
+                        'failed_papers': failed_papers
+                    }
+                    self._save_checkpoint('ranking_partial', partial_data)
+
+            if failed_papers and self.verbose:
+                print(f"Warning: {len(failed_papers)} papers failed processing and received default scores")
+                
             data_df['score'] = scores
             data_df['related'] = related
             data_df['rationale'] = rationale
@@ -421,8 +611,19 @@ class TheseusInsight:
 
             if self.db_saving:
                 print("Saving papers to DB")
-                # Save all to DB if enabled
+                # Save all to DB if enabled, tracking duplicates
+                saved_count = 0
+                duplicate_count = 0
+                duplicate_urls = []
+                
                 for _, row in data_df.iterrows():
+                    # Convert numpy array to list if needed for embedding
+                    embedding = row['abstract_embedding']
+                    if hasattr(embedding, 'tolist'):
+                        embedding = embedding.tolist()
+                    elif not isinstance(embedding, list):
+                        embedding = list(embedding)
+                    
                     paper = Paper(
                         title=row['title'],
                         abstract=row['abstract'],
@@ -433,11 +634,45 @@ class TheseusInsight:
                         related=row['related'],
                         rationale=row['rationale'],
                         cosine_similarity=row['cosine_similarity'],
-                        embedding_model=self.embedding_model_name
+                        embedding_model=self.embedding_model_name,
+                        embedding=embedding
                     )
-                    self.papers_db.insert_paper(paper)
+                    
+                    # Try to insert paper, tracking duplicates
+                    was_inserted = self.papers_db.insert_paper(paper, skip_duplicates=True)
+                    if was_inserted:
+                        saved_count += 1
+                    else:
+                        duplicate_count += 1
+                        duplicate_urls.append(row['pdf_url'])
+                        if self.verbose:
+                            print(f"Skipped duplicate paper: {row['title']}")
+                
+                if self.verbose:
+                    print(f"Database save complete: {saved_count} new papers saved, {duplicate_count} duplicates skipped")
+                
+                # Filter out duplicates from top_n_df for newsletter generation
+                if duplicate_count > 0:
+                    # Remove duplicate papers from the top_n_df to exclude them from newsletter
+                    original_count = len(top_n_df)
+                    top_n_df = top_n_df[~top_n_df['pdf_url'].isin(duplicate_urls)].reset_index(drop=True)
+                    
+                    # If we filtered out papers from top_n, we might need to get more from data_df
+                    if len(top_n_df) < self.top_n:
+                        remaining_needed = self.top_n - len(top_n_df)
+                        # Get additional papers from data_df that aren't duplicates
+                        additional_papers = data_df[~data_df['pdf_url'].isin(duplicate_urls + list(top_n_df['pdf_url']))].head(remaining_needed)
+                        if len(additional_papers) > 0:
+                            top_n_df = pd.concat([top_n_df, additional_papers]).reset_index(drop=True)
+                    
+                    if self.verbose:
+                        print(f"Newsletter will use {len(top_n_df)} papers (excluded {original_count - len(top_n_df)} duplicates from top papers)")
        
-
+            # Clean up partial checkpoint on success
+            partial_checkpoint_path = os.path.join(self.checkpoint_dir, 'ranking_partial_checkpoint.pkl')
+            if os.path.exists(partial_checkpoint_path):
+                os.remove(partial_checkpoint_path)
+                
             return top_n_df
         except Exception as e:
             self._log_error(500, e)
@@ -455,7 +690,6 @@ class TheseusInsight:
          - Generate podcast (audio + optional visualizer)
          - Save dialogue JSON
          - Insert podcast into DB
-         - Optionally publish to YouTube
         """
         data_df = None
         embedded_df = None
@@ -479,6 +713,12 @@ class TheseusInsight:
                         print("No 'papers_downloaded' checkpoint. Starting fresh: downloading papers.")
                     process_data = ArxivDataProcessor(start_date=self.start_date, end_date=self.end_date)
                     data_df = process_data.download_and_process_data()
+                    
+                    # Check if no papers were found and handle gracefully
+                    if data_df.empty:
+                        self._handle_no_papers_found()
+                        return  # Exit early since there's nothing to process
+                    
                     self._save_checkpoint('papers_downloaded', data_df)
             else:
                 # If we have a forced stage, see if the user wants to skip some
@@ -489,6 +729,12 @@ class TheseusInsight:
                             print("Forcing download stage.")
                         process_data = ArxivDataProcessor(start_date=self.start_date, end_date=self.end_date)
                         data_df = process_data.download_and_process_data()
+                        
+                        # Check if no papers were found and handle gracefully
+                        if data_df.empty:
+                            self._handle_no_papers_found()
+                            return  # Exit early since there's nothing to process
+                        
                         self._save_checkpoint('papers_downloaded', data_df)
 
             if progress_callback:
@@ -507,30 +753,94 @@ class TheseusInsight:
                         data_df = self._load_checkpoint('papers_downloaded')
                         if data_df is None:
                             raise ValueError("No downloaded papers found to embed.")
-                    if self.verbose:
-                        print("Embedding papers...")
-
-                    abstracts = list(data_df['abstract'])
-                    abstract_embeddings = []
-                    cosine_similarities = []
-                    reserch_embedding = self.embedding_model.invoke(self.research_interests)
-
-                    for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
-                        abstract_embedding = self.embedding_model.invoke(abstract)
-                        sim = cosine_similarity(abstract_embedding, reserch_embedding)
-                        cosine_similarities.append(sim)
-                        abstract_embeddings.append(abstract_embedding)
-
-                    data_df['cosine_similarity'] = cosine_similarities
-                    data_df['abstract_embedding'] = abstract_embeddings
-
-                    # Filter by threshold
-                    filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
-                    filtered_df = filtered_df.reset_index(drop=True)
                     
-                    # Save checkpoint
-                    self._save_checkpoint('papers_embedded', filtered_df)
-                    embedded_df = filtered_df
+                    # Check if we have an empty DataFrame from the download stage
+                    if data_df.empty:
+                        if self.verbose:
+                            print("No papers to embed (empty DataFrame from download stage)")
+                        # Create empty embedded DataFrame and continue
+                        embedded_df = data_df.copy()
+                        embedded_df['cosine_similarity'] = []
+                        embedded_df['abstract_embedding'] = []
+                        self._save_checkpoint('papers_embedded', embedded_df)
+                    else:
+                        if self.verbose:
+                            print("Embedding papers...")
+
+                        # Check for existing papers to avoid unnecessary processing
+                        if self.db_saving:
+                            existing_urls = []
+                            new_papers_mask = []
+                            for _, row in data_df.iterrows():
+                                if self.papers_db.paper_exists_by_url(row['pdf_url']):
+                                    existing_urls.append(row['pdf_url'])
+                                    new_papers_mask.append(False)
+                                else:
+                                    new_papers_mask.append(True)
+                            
+                            if existing_urls and self.verbose:
+                                print(f"Found {len(existing_urls)} papers already in database, will skip embedding for those")
+                                
+                            # Filter to only new papers for embedding
+                            new_papers_df = data_df[new_papers_mask].reset_index(drop=True)
+                            
+                            if len(new_papers_df) == 0:
+                                if self.verbose:
+                                    print("All papers already exist in database, skipping embedding stage")
+                                # Create empty filtered_df to continue pipeline
+                                filtered_df = data_df.iloc[0:0].copy()  # Empty dataframe with same columns
+                                filtered_df['cosine_similarity'] = []
+                                filtered_df['abstract_embedding'] = []
+                            else:
+                                # Process only new papers
+                                abstracts = list(new_papers_df['abstract'])
+                                abstract_embeddings = []
+                                cosine_similarities = []
+                                reserch_embedding = self.embedding_model.invoke(self.research_interests)
+
+                                for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
+                                    abstract_embedding = self.embedding_model.invoke(abstract)
+                                    sim = cosine_similarity(abstract_embedding, reserch_embedding)
+                                    cosine_similarities.append(sim)
+                                    abstract_embeddings.append(abstract_embedding)
+
+                                new_papers_df['cosine_similarity'] = cosine_similarities
+                                new_papers_df['abstract_embedding'] = abstract_embeddings
+
+                                # Filter by threshold
+                                filtered_df = new_papers_df[new_papers_df['cosine_similarity'] >= self.cosine_similarity_threshold]
+                                filtered_df = filtered_df.reset_index(drop=True)
+                        else:
+                            # Original behavior when not saving to DB
+                            abstracts = list(data_df['abstract'])
+                            abstract_embeddings = []
+                            cosine_similarities = []
+                            reserch_embedding = self.embedding_model.invoke(self.research_interests)
+
+                            for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
+                                abstract_embedding = self.embedding_model.invoke(abstract)
+                                sim = cosine_similarity(abstract_embedding, reserch_embedding)
+                                cosine_similarities.append(sim)
+                                abstract_embeddings.append(abstract_embedding)
+
+                            data_df['cosine_similarity'] = cosine_similarities
+                            data_df['abstract_embedding'] = abstract_embeddings
+
+                            # Filter by threshold
+                            filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
+                            filtered_df = filtered_df.reset_index(drop=True)
+                        
+                        # Ensure filtered_df is always defined (safety check)
+                        if 'filtered_df' not in locals():
+                            if self.verbose:
+                                print("Warning: filtered_df was not defined, creating empty dataframe")
+                            filtered_df = data_df.iloc[0:0].copy()  # Empty dataframe with same columns
+                            filtered_df['cosine_similarity'] = []
+                            filtered_df['abstract_embedding'] = []
+                        
+                        # Save checkpoint
+                        self._save_checkpoint('papers_embedded', filtered_df)
+                        embedded_df = filtered_df
 
             if progress_callback:
                 progress_callback("embed", 15, "Paper embedding complete")
@@ -548,10 +858,18 @@ class TheseusInsight:
                         embedded_df = self._load_checkpoint('papers_embedded')
                         if embedded_df is None:
                             raise ValueError("No embedded papers found to rank.")
-                    if self.verbose:
-                        print("Ranking papers...")
-
-                    top_n_df = self.rank_papers(embedded_df)
+                    
+                    # Check if we have any papers to rank
+                    if len(embedded_df) == 0:
+                        if self.verbose:
+                            print("No new papers to rank (all papers already exist in database)")
+                        # Create empty top_n_df
+                        top_n_df = embedded_df.copy()  # Empty dataframe with same structure
+                    else:
+                        if self.verbose:
+                            print("Ranking papers...")
+                        top_n_df = self.rank_papers(embedded_df)
+                    
                     self._save_checkpoint('papers_ranked', top_n_df)
 
                 # free memory from embeddings if needed
@@ -573,72 +891,82 @@ class TheseusInsight:
                         if top_n_df is None:
                             raise ValueError("No ranked papers found to generate newsletter sections.")
 
-                    if self.verbose:
-                        print("Generating newsletter sections (paper-by-paper) ...")
+                    # Check if we have any papers to process
+                    if len(top_n_df) == 0:
+                        if self.verbose:
+                            print("No papers available for newsletter generation (all were duplicates or none met criteria)")
+                        sections_data = {
+                            'sections': [],
+                            'urls_and_titles': []
+                        }
+                        self._save_checkpoint('newsletter_sections', sections_data)
+                    else:
+                        if self.verbose:
+                            print("Generating newsletter sections (paper-by-paper) ...")
 
-                    converter = DocumentConverter()
-                    sections = []
-                    urls_and_titles = []
+                        converter = DocumentConverter()
+                        sections = []
+                        urls_and_titles = []
 
-                    for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Sections"):
-                        intro_text = random.choice(INTRO_TEXT)
-                        
-                        # Convert PDF to markdown
-                        response = converter.convert(row['pdf_url'])
-                        markdown = response.document.export_to_markdown()
+                        for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Sections"):
+                            intro_text = random.choice(INTRO_TEXT)
+                            
+                            # Convert PDF to markdown
+                            response = converter.convert(row['pdf_url'])
+                            markdown = response.document.export_to_markdown()
 
-                        # Summarize the PDF content
-                        messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
-                        
-                        if self.content_extraction_inference.provider == "ollama":
-                            resp = self.content_extraction_inference.invoke(
-                                messages=messages,
-                                system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
-                                schema=SummaryPromptData
+                            # Summarize the PDF content
+                            messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
+                            
+                            if self.content_extraction_inference.provider == "ollama":
+                                resp = self.content_extraction_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
+                                    schema=SummaryPromptData
+                                )
+                            else:
+                                resp = self.content_extraction_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
+                                )
+
+                            resp_json = json_repair.loads(resp)
+                            summarized_paper = resp_json.get('content', resp)
+
+                            # Now produce the "newsletter section" for that paper
+                            context = (
+                                f"Title: {row['title']}\n"
+                                f"Abstract: {row['abstract']}\n"
+                                f"Rationale: {row['rationale']}\n"
+                                f"Summary: {summarized_paper}"
                             )
-                        else:
-                            resp = self.content_extraction_inference.invoke(
-                                messages=messages,
-                                system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
-                            )
+                            messages = [
+                                {"role": "user", 
+                                 "content": newsletter_context_prompt(self.research_interests, context, intro_text)}
+                            ]
+                         
+                            if self.newsletter_sections_inference.provider == "ollama":
+                                resp = self.newsletter_sections_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                    schema=NewsletterPromptData
+                                )
+                            else:
+                                resp = self.newsletter_sections_inference.invoke(
+                                    messages=messages,
+                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                                )
 
-                        resp_json = json_repair.loads(resp)
-                        summarized_paper = resp_json.get('content', resp)
+                            resp_json = json_repair.loads(resp)
+                            draft = f"## {row['title']}\n\n{resp_json['draft']}"
+                            sections.append(draft)
+                            urls_and_titles.append(f"{row['title']}: {row['pdf_url']}")
 
-                        # Now produce the "newsletter section" for that paper
-                        context = (
-                            f"Title: {row['title']}\n"
-                            f"Abstract: {row['abstract']}\n"
-                            f"Rationale: {row['rationale']}\n"
-                            f"Summary: {summarized_paper}"
-                        )
-                        messages = [
-                            {"role": "user", 
-                             "content": newsletter_context_prompt(self.research_interests, context, intro_text)}
-                        ]
-                     
-                        if self.newsletter_sections_inference.provider == "ollama":
-                            resp = self.newsletter_sections_inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                schema=NewsletterPromptData
-                            )
-                        else:
-                            resp = self.newsletter_sections_inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                            )
-
-                        resp_json = json_repair.loads(resp)
-                        draft = f"## {row['title']}\n\n{resp_json['draft']}"
-                        sections.append(draft)
-                        urls_and_titles.append(f"{row['title']}: {row['pdf_url']}")
-
-                    sections_data = {
-                        'sections': sections,
-                        'urls_and_titles': urls_and_titles
-                    }
-                    self._save_checkpoint('newsletter_sections', sections_data)
+                        sections_data = {
+                            'sections': sections,
+                            'urls_and_titles': urls_and_titles
+                        }
+                        self._save_checkpoint('newsletter_sections', sections_data)
             if progress_callback:
                 progress_callback("newsletter", 50, "Newsletter sections generation complete")
 
@@ -659,33 +987,38 @@ class TheseusInsight:
                         print("Building the final newsletter content + intro ...")
 
                     sections = sections_data['sections']
-                    joined_sections = "\n\n".join(sections)
-                    intro_prompt = newsletter_intro_prompt(joined_sections)
-                    messages = [{"role": "user", "content": intro_prompt}]
-
-                    # Model call for the newsletter's intro
-                 
                     
-                    if self.newsletter_intro_inference.provider == "ollama":
-                        resp = self.newsletter_intro_inference.invoke(
-                            messages=messages,
-                            system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                            schema=NewsletterPromptData
-                        )
+                    # Handle case where there are no sections (all papers were duplicates)
+                    if len(sections) == 0:
+                        newsletter_content = "No new papers found for this newsletter period. All papers were either duplicates or did not meet the criteria."
+                        if self.verbose:
+                            print("No sections available - generating empty newsletter message")
                     else:
-                        resp = self.newsletter_intro_inference.invoke(
-                            messages=messages,
-                            system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                        )
+                        joined_sections = "\n\n".join(sections)
+                        intro_prompt = newsletter_intro_prompt(joined_sections)
+                        messages = [{"role": "user", "content": intro_prompt}]
 
-                    try:
-                        resp_json = json_repair.loads(resp)
-                        intro_text = resp_json['draft']
-                    except:
-                        intro_text = resp
+                        # Model call for the newsletter's intro
+                        if self.newsletter_intro_inference.provider == "ollama":
+                            resp = self.newsletter_intro_inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                schema=NewsletterPromptData
+                            )
+                        else:
+                            resp = self.newsletter_intro_inference.invoke(
+                                messages=messages,
+                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                            )
 
-                    # Final newsletter
-                    newsletter_content = intro_text + "\n\n" + joined_sections
+                        try:
+                            resp_json = json_repair.loads(resp)
+                            intro_text = resp_json['draft']
+                        except:
+                            intro_text = resp
+
+                                                 # Final newsletter
+                        newsletter_content = intro_text + "\n\n" + joined_sections
                     self._save_checkpoint('newsletter_content', newsletter_content)
 
                     # Save to DB
@@ -721,9 +1054,12 @@ class TheseusInsight:
                     print("Sending newsletter email...")
 
                 # Construct a simple bulleted list of links
-                urls_and_titles_bulleted = "\n".join(
-                    f"{i+1}. {title}" for i, title in enumerate(sections_data['urls_and_titles'])
-                )
+                if len(sections_data['urls_and_titles']) > 0:
+                    urls_and_titles_bulleted = "\n".join(
+                        f"{i+1}. {title}" for i, title in enumerate(sections_data['urls_and_titles'])
+                    )
+                else:
+                    urls_and_titles_bulleted = "No new papers found for this period."
                 email_body = construct_email_body(
                     newsletter_content,
                     self.start_date.strftime('%Y-%m-%d'),

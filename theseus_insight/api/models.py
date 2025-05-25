@@ -264,10 +264,30 @@ class PaperApiResponse(BaseModel):
     cosine_similarity: float
     url: str
     embedding_model: str
+    similarity_score: Optional[float] = Field(default=None, description="Semantic similarity score when returned from similarity search")
 
 class PaginatedPapersResponse(PaginatedResponse): # Inherit from existing PaginatedResponse
     items: List[PaperApiResponse]
     # total_items, total_pages, current_page, nextPage are inherited
+
+class SimilaritySearchResponse(BaseModel):
+    query_text: str
+    results: List[PaperApiResponse]
+    total_results: int
+
+class SimilaritySearchRequest(BaseModel):
+    query_text: str = Field(..., description="Text to search for semantically similar papers")
+    limit: Optional[int] = Field(10, description="Maximum number of results to return")
+    similarity_threshold: Optional[float] = Field(0.7, description="Minimum similarity score (0-1)")
+
+class SimilarPapersRequest(BaseModel):
+    limit: Optional[int] = Field(10, description="Maximum number of similar papers to return")
+    similarity_threshold: Optional[float] = Field(0.7, description="Minimum similarity score (0-1)")
+
+class SimilarPapersResponse(BaseModel):
+    reference_paper: PaperApiResponse
+    similar_papers: List[PaperApiResponse]
+    total_similar: int
 
 # Removed the conflicting/simpler NodeStatus definition that was here.
 # class NodeStatus(BaseModel):

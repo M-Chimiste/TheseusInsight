@@ -8,19 +8,23 @@ import {
   Link,
   Box,
   Chip,
-  Tooltip
+  Tooltip,
+  Button
 } from '@mui/material';
 import type { PaperApiResponse } from '../services/api'; // Assuming this path is correct
 import { format } from 'date-fns';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ScoreIcon from '@mui/icons-material/Stars'; // Example icon for score
+import SearchIcon from '@mui/icons-material/Search';
 
 interface PaperCardProps {
   paper: PaperApiResponse;
+  onFindSimilar?: (paper: PaperApiResponse) => void;
+  initialExpanded?: boolean;
 }
 
-const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
-  const [expanded, setExpanded] = useState(false);
+const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpanded = false }) => {
+  const [expanded, setExpanded] = useState(initialExpanded);
 
   const handleExpandClick = () => {
     setExpanded(!expanded);
@@ -82,6 +86,16 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
               View on ArXiv
             </Link>
           </Typography>
+          {onFindSimilar && (
+            <Button
+              variant="outlined"
+              color="primary"
+              startIcon={<SearchIcon />}
+              onClick={() => onFindSimilar(paper)}
+            >
+              Find Similar
+            </Button>
+          )}
         </CardContent>
       </Collapse>
     </Card>

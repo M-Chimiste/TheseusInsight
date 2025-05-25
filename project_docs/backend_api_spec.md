@@ -1,4 +1,4 @@
-# Theseus Insight API – Specification (v0.9.0)
+# Theseus Insight API – Specification (v1.0)
 
 > **Base URL**: `http(s)://<host>:<port>/api`
 > All endpoints are JSON-first and CORS-enabled; FastAPI automatically serves interactive docs at `/docs` and `/redoc`.
@@ -11,7 +11,7 @@
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Content-Type       | `application/json` unless otherwise noted                                                                                                                            |
 | Auth               | **None** (all routes are open; add a proxy/auth layer if needed)                                                                                                     |
-| Long-running tasks | `/generate`, `/regenerate`, `/visualizer/generate`, `/theseus_insight/run` return a `task_id`. Poll their companion **`GET …/status/{task_id}`** routes for progress |
+| Long-running tasks | Pipeline endpoints return a `task_id`. Poll **`GET /api/tasks/{task_id}/status`** or use WebSocket updates for progress |
 | Error model        | Standard HTTP status codes with `{"detail": "<message>"}`                                                                                                            |
 
 ---
@@ -33,64 +33,67 @@
 
 ## 3. Route Groups
 
-### 3.1 PDF (`/api/pdf`)
 
-| Method & Path            | Purpose             | Request                                    | Response                                 |
-| ------------------------ | ------------------- | ------------------------------------------ | ---------------------------------------- |
-| **POST** `/upload`       | Upload a single PDF | **multipart/form-data** field `file` (PDF) | `{filename, file_path}`                  |
-| **POST** `/batch-upload` | Upload many PDFs    | `files[]` (array of PDFs)                  | list of `{filename, file_path \| error}` |
+### 3.1 Papers (`/api/papers`)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **GET** | `/api/papers` | Paginated papers with filters |
+| **POST** | `/api/papers/similarity-search` | Semantic similarity search |
+| **POST** | `/api/papers/hybrid-search` | Hybrid semantic + keyword search |
+| **GET** | `/api/papers/without-embeddings` | Papers missing embeddings |
+| **POST** | `/api/papers/{paper_id}/update-embedding` | Generate embedding for a paper |
+| **GET** | `/api/papers/{paper_id}/similar` | Find similar papers |
 
-### 3.2 Script (`/api/script`)
-
-| Method     | Path                    | Purpose                                               |
-| ---------- | ----------------------- | ----------------------------------------------------- |
-| **GET**    | `/list`                 | List all saved scripts                                |
-| **GET**    | `/load/{filename}`      | Fetch a script JSON                                   |
-| **POST**   | `/save?filename={name}` | Save a script – body = `Script`                       |
-| **DELETE** | `/{filename}`           | Delete script (and DB podcast if prefixed `podcast_`) |
-
-Returns standard `200 OK` / `404 Not Found` / `500 Internal Server Error`.
+### 3.2 Newsletter (`/api/newsletter`)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **POST** | `/api/newsletter/run` | Start newsletter generation |
+| **WS** | `/ws/newsletter/{task_id}` | WebSocket progress updates |
+| **POST** | `/api/actions/run-newsletter-pipeline` | Full TheseusInsight newsletter workflow |
 
 ### 3.3 Podcast (`/api/podcast`)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **POST** | `/api/podcast/generate` | Generate podcast |
+| **WS** | `/ws/podcast/{task_id}` | WebSocket progress updates |
+| **GET** | `/api/podcasts/history` | List generated podcasts |
+| **GET** | `/api/podcasts/history/{id}` | Podcast details |
 
-| Method   | Path                   | Purpose                                                                                                       |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **POST** | `/generate`            | Create podcast from URLs, PDFs & config (multipart: `config`, `urls`, `files[]`, optional `intro_music_file`) |
-| **POST** | `/regenerate`          | Regenerate audio from an existing `Script` & new `PodcastGenerationConfig`                                    |
-| **GET**  | `/status/{task_id}`    | Poll progress (`status`, `current_step`, `progress`, `error`, `output_url`)                                   |
-| **GET**  | `/download/{filename}` | Download final MP3/WAV                                                                                        |
+### 3.4 Visualizer
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **POST** | `/api/actions/run-visualizer-pipeline` | Generate waveform video |
+| **WS** | `/ws/visualizer/{task_id}` | Progress updates |
 
-Successful `/generate` and `/regenerate` return `{task_id, status: "processing"}`.
+### 3.5 Settings (`/api/settings`)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **GET** | `/api/settings/orchestration` | Get orchestration config |
+| **PUT** | `/api/settings/orchestration` | Update orchestration config |
+| **GET** | `/api/model-providers` | List model providers |
+| **GET** | `/api/settings/research-interests` | Get research interests |
+| **PUT** | `/api/settings/research-interests` | Update research interests |
+| **GET** | `/api/settings/email-recipients` | Get email recipients |
+| **PUT** | `/api/settings/email-recipients` | Update email recipients |
+| **GET** | `/api/settings/visualizer-settings` | Get default visualizer settings |
+| **PUT** | `/api/settings/visualizer-settings` | Update visualizer settings |
+| **POST** | `/api/settings/send-test-email` | Send test email |
 
-### 3.4 Visualizer (`/api/visualizer`)
+### 3.6 Runs & Logs
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **GET** | `/api/runs` | Paginated run history |
+| **DELETE** | `/api/runs/{run_id}/artifact` | Delete generated artifact |
+| **GET** | `/api/logs` | Retrieve log entries |
 
-| Method   | Path                   | Purpose                                                                            |
-| -------- | ---------------------- | ---------------------------------------------------------------------------------- |
-| **POST** | `/generate`            | Build MP4 waveform/matrix video for an audio file (`file`, optional `config` JSON) |
-| **GET**  | `/status/{task_id}`    | Poll progress (`status`, `progress`, `output_url`)                                 |
-| **GET**  | `/download/{filename}` | Download finished video                                                            |
-
-### 3.5 Settings (`/api`)
-
-| Method                      | Path                                                | Summary                    |
-| --------------------------- | --------------------------------------------------- | -------------------------- |
-| `GET`                       | `/settings`                                         | Key‑value dump             |
-| `GET` \| `PUT` \| `DELETE`  | `/settings/{key}`                                   | CRUD single setting        |
-| `GET` \| `POST` \| `DELETE` | `/providers` / `/providers/{id}`                    | LLM/TTS provider registry  |
-| `GET` \| `POST` \| `DELETE` | `/models?provider_id=` / `/models` / `/models/{id}` | Model configs per provider |
-| `GET` \| `PUT`              | `/settings/email-recipients`                        | Newsletter recipient list  |
-| `GET` \| `PUT`              | `/settings/visualizer-settings`                     | Default visualizer prefs   |
-| `POST`                      | `/settings/send-test-email`                         | Fire a test Gmail message  |
-
-All settings endpoints answer with the persisted object or `{result: "deleted"}`.
-
-### 3.6 Theseus Insight Pipeline (`/api/theseus_insight`)
-
-| Method   | Path   | Purpose                                                                                                                                                                                                                                                                                           |
-| -------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **POST** | `/run` | Kick off the full papers → newsletter → podcast workflow. Multipart body: **`config`** (JSON string) plus optional `research_interests_file`, `orchestration_file`. Returns `{task_id, status: "started"}` and progress via in-memory polling (future `/status` route is inside active task map). |
-
----
+### 3.7 Task Management (`/api/tasks`)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **GET** | `/api/tasks/{task_id}/status` | Poll task status |
+| **GET** | `/api/tasks/active` | List active tasks |
+| **GET** | `/api/tasks/{task_id}/result` | Fetch result payload |
+| **POST** | `/api/tasks/{task_id}/abort` | Abort a running task |
+| **GET** | `/api/tasks/{task_id}/download/{file_type}` | Download task output |
 
 ## 4. Status Objects
 
@@ -110,31 +113,31 @@ Long‑running status routes converge on the following schema:
 
 ## 5. Typical Workflow Example
 
-1. **Upload PDFs**
+1. **Run the newsletter pipeline**
 
    ```bash
-   curl -F "files=@paper1.pdf" -F "files=@paper2.pdf" \
-        http://localhost:8000/api/pdf/batch-upload
+   curl -F "config=$(cat newsletter.json)" \
+        http://localhost:8000/api/newsletter/run
    ```
 
-2. **Generate podcast**
+2. **Monitor progress**
 
    ```bash
-   curl -F "config=$(cat podcast_config.json)" \
-        -F "files=@paper1.pdf" -F "files=@paper2.pdf" \
+   curl http://localhost:8000/api/tasks/<task_id>/status
+   ```
+
+3. **Generate a podcast**
+
+   ```bash
+   curl -F "params_json=$(cat podcast_params.json)" \
+        -F "pdf_files=@paper.pdf" \
         http://localhost:8000/api/podcast/generate
    ```
 
-3. **Poll until done**
+4. **Download result**
 
    ```bash
-   curl http://localhost:8000/api/podcast/status/<task_id>
+   curl -O http://localhost:8000/api/tasks/<task_id>/download/audio
    ```
 
-4. **Download**
-
-   ```bash
-   curl -O http://localhost:8000/api/podcast/download/podcast_final_1715500000.mp3
-   ```
-
-
+*Last updated: 2025-05-25.*

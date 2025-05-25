@@ -382,3 +382,86 @@
 - Provides detailed debugging information for troubleshooting
 - Maintains data integrity with fallback values
 - Enables recovery from partial failures
+
+### Added: Similarity Search Feature in Papers Page
+**Date**: December 2024  
+**Feature**: Interactive similarity search functionality for papers with vector embeddings.
+
+**Implementation Details**:
+
+1. **API Integration**:
+   - Added `findSimilarPapers` function to `theseus-ui/src/services/api.ts`
+   - Utilizes existing `/api/papers/{paper_id}/similar` endpoint
+   - Added `SimilarPapersResponse` interface for type safety
+
+2. **UI Components Enhanced**:
+   - **PaperCard.tsx**: Added "Find Similar" button in expanded view with `onFindSimilar` prop
+   - **PaperRowCard.tsx**: Added "Find Similar" button in expanded view with `onFindSimilar` prop
+   - **SimilarityView.tsx**: New component for similarity search results display
+
+3. **SimilarityView Component Features**:
+   - Split-screen layout: Reference paper (40% left) and similar papers (60% right)
+   - Infinite scroll for similar papers with pagination
+   - Similarity score display as percentage for each result
+   - Back/Close buttons to return to original view
+   - Scroll position preservation when returning to main view
+
+4. **Papers.tsx Integration**:
+   - Added `similarity` view mode to existing `grid`/`list` modes
+   - State management for selected paper and scroll position
+   - Conditional rendering to hide filters/headers in similarity view
+   - `handleFindSimilar` function to transition to similarity view
+   - `handleCloseSimilarity` function to return to previous view with scroll restoration
+
+5. **User Experience**:
+   - Click "Find Similar" on any expanded paper card
+   - View transforms to show reference paper on left, similar papers on right
+   - Similar papers displayed as row cards with similarity percentages
+   - Infinite scroll loads more similar papers automatically
+   - Back arrow or X button returns to original papers view
+   - Original scroll position is restored when returning
+
+**Files Modified**:
+- `theseus-ui/src/services/api.ts`: Added similarity search API function and interfaces
+- `theseus-ui/src/pages/PaperCard.tsx`: Added Find Similar button and onFindSimilar prop
+- `theseus-ui/src/pages/PaperRowCard.tsx`: Added Find Similar button and onFindSimilar prop
+- `theseus-ui/src/pages/SimilarityView.tsx`: New component for similarity search results
+- `theseus-ui/src/pages/Papers.tsx`: Integrated similarity view mode and state management
+
+**Technical Features**:
+- Leverages existing vector embedding infrastructure
+- Configurable similarity threshold (default 0.6 for more results)
+- Responsive layout with proper overflow handling
+- Error handling for failed similarity searches
+- Loading states and empty state handling
+
+### Enhanced: Similarity Search with Configurable Limits
+**Date**: December 2024  
+**Enhancement**: Added dropdown to allow users to select the number of similar papers to display.
+
+**Implementation Details**:
+
+1. **Dynamic Limit Selection**:
+   - Added dropdown with options: 10, 30, 50, 100 papers
+   - Replaces previous hardcoded limit of 10 papers
+   - Automatic re-fetch when limit changes
+
+2. **UI Improvements**:
+   - **SimilarityView.tsx**: Added FormControl with Select dropdown in header
+   - Shows "X of Y found" to indicate total available similar papers
+   - Loading indicator during fetch operations
+   - Removed infinite scroll in favor of explicit limit selection
+
+3. **User Experience**:
+   - Immediate feedback when changing limits
+   - Clear indication of how many papers are shown vs. available
+   - Simplified interface without complex pagination
+
+**Files Modified**:
+- `theseus-ui/src/pages/SimilarityView.tsx`: Added limit dropdown and updated state management
+
+**Technical Implementation**:
+- Removed infinite scroll complexity
+- Simplified state management with single `limit` state
+- Direct API calls with selected limit parameter
+- Type-safe SelectChangeEvent handling

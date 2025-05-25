@@ -160,7 +160,8 @@ app.add_middleware(
 @app.get("/api/papers", response_model=PaginatedPapersResponse)
 async def get_papers(
     page: int = Query(1, gt=0),
-    score: Optional[float] = None,
+    score: Optional[float] = None,  # This is min_score for backward compatibility
+    max_score: Optional[float] = None,  # Add max_score parameter
     sort_field: Optional[str] = Query(None, enum=['date', 'score']),
     sort_direction: Optional[str] = Query(None, enum=['asc', 'desc']),
     search: Optional[str] = None,
@@ -170,35 +171,36 @@ async def get_papers(
 ):
     """Get paginated papers with filtering and sorting."""
     try:
-        papers = db.fetch_all_papers()
-        filtered_papers = []
-        for p in papers:
-            if score is not None and p['score'] < score: continue
-            if from_date and p['date'] < from_date: continue
-            if to_date and p['date'] > to_date: continue
-            if search:
-                search_lower = search.lower()
-                if (search_lower not in p['title'].lower() and 
-                    search_lower not in p['abstract'].lower()):
-                    continue
-            filtered_papers.append(PaperApiResponse(
+        # Use database-level pagination instead of fetching all papers
+        papers_data = db.fetch_papers_paginated(
+            page=page,
+            page_size=page_size,
+            min_score=score,
+            max_score=max_score,
+            sort_field=sort_field or 'score',
+            sort_direction=sort_direction or 'desc',
+            search=search,
+            from_date=from_date,
+            to_date=to_date
+        )
+        
+        # Convert to API response format
+        papers = []
+        for p in papers_data['items']:
+            papers.append(PaperApiResponse(
                 id=p['id'], title=p['title'], abstract=p['abstract'],
                 score=p['score'], date=p['date'], url=p['url'],
                 date_run=p['date_run'], rationale=p['rationale'],
                 related=p['related'], cosine_similarity=p['cosine_similarity'],
                 embedding_model=p['embedding_model']
             ))
-        if sort_field:
-            reverse = sort_direction == 'desc'
-            filtered_papers.sort(key=lambda x: getattr(x, sort_field), reverse=reverse)
-        total_items = len(filtered_papers)
-        total_pages = (total_items + page_size - 1) // page_size
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        page_papers = filtered_papers[start_idx:end_idx]
+        
         return PaginatedPapersResponse(
-            items=page_papers, total_items=total_items, total_pages=total_pages,
-            current_page=page, nextPage=page + 1 if end_idx < len(filtered_papers) else None
+            items=papers, 
+            total_items=papers_data['total_items'], 
+            total_pages=papers_data['total_pages'],
+            current_page=page, 
+            nextPage=page + 1 if papers_data['has_next_page'] else None
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

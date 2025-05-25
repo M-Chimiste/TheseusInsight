@@ -234,14 +234,17 @@ class PaperDatabase:
         with self.get_cursor() as cursor:
             cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
-            return [
-                {
+            result = []
+            for row in rows:
+                # Convert datetime objects to strings if they're not already strings
+                datetime_str = row[2].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row[2], 'strftime') else str(row[2])
+                
+                result.append({
                     'task_id': row[0],
                     'status': row[1],
-                    'datetime_run': row[2]
-                }
-                for row in rows
-            ]
+                    'datetime_run': datetime_str
+                })
+            return result
 
     def fetch_all_podcasts(self):
         with self.get_cursor() as cursor:
@@ -249,10 +252,13 @@ class PaperDatabase:
             rows = cursor.fetchall()
             result = []
             for row in rows:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[2].strftime('%Y-%m-%d') if hasattr(row[2], 'strftime') else str(row[2])
+                
                 result.append({
                     'id': row[0],
                     'title': row[1],
-                    'date': row[2],
+                    'date': date_str,
                     'script': json.loads(row[3]),
                     'description': row[4]
                 })
@@ -264,10 +270,13 @@ class PaperDatabase:
             cursor.execute("SELECT id, title, date, script, description FROM podcasts WHERE id = %s", (podcast_id,))
             row = cursor.fetchone()
             if row:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[2].strftime('%Y-%m-%d') if hasattr(row[2], 'strftime') else str(row[2])
+                
                 return {
                     'id': row[0],
                     'title': row[1],
-                    'date': row[2],
+                    'date': date_str,
                     'script': json.loads(row[3]), # Ensure script is parsed from JSON string
                     'description': row[4]
                 }
@@ -284,12 +293,17 @@ class PaperDatabase:
             rows = cursor.fetchall()
             result = []
             for row in rows:
+                # Convert date objects to strings if they're not already strings
+                start_date_str = row[2].strftime('%Y-%m-%d') if hasattr(row[2], 'strftime') else str(row[2])
+                end_date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_sent_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
                 result.append({
                     'id': row[0],
                     'content': row[1],
-                    'start_date': row[2],
-                    'end_date': row[3],
-                    'date_sent': row[4]
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
+                    'date_sent': date_sent_str
                 })
             return result
 
@@ -299,12 +313,16 @@ class PaperDatabase:
             rows = cursor.fetchall()
             result = []
             for row in rows:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
                 result.append({
                     'id': row[0],
                     'title': row[1],
                     'abstract': row[2],
-                    'date': row[3],
-                    'date_run': row[4],
+                    'date': date_str,
+                    'date_run': date_run_str,
                     'score': row[5],
                     'rationale': row[6],
                     'related': row[7],
@@ -342,12 +360,16 @@ class PaperDatabase:
             rows = cursor.fetchall()
             result = []
             for row in rows:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
                 result.append({
                     'id': row[0],
                     'title': row[1],
                     'abstract': row[2],
-                    'date': row[3],
-                    'date_run': row[4],
+                    'date': date_str,
+                    'date_run': date_run_str,
                     'score': row[5],
                     'rationale': row[6],
                     'related': row[7],
@@ -393,12 +415,16 @@ class PaperDatabase:
             rows = cursor.fetchall()
             result = []
             for row in rows:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
                 result.append({
                     'id': row[0],
                     'title': row[1],
                     'abstract': row[2],
-                    'date': row[3],
-                    'date_run': row[4],
+                    'date': date_str,
+                    'date_run': date_run_str,
                     'score': row[5],
                     'rationale': row[6],
                     'related': row[7],
@@ -464,12 +490,16 @@ class PaperDatabase:
             if not reference_row:
                 return None
             
+            # Convert date objects to strings for reference paper
+            ref_date_str = reference_row[3].strftime('%Y-%m-%d') if hasattr(reference_row[3], 'strftime') else str(reference_row[3])
+            ref_date_run_str = reference_row[4].strftime('%Y-%m-%d') if hasattr(reference_row[4], 'strftime') else str(reference_row[4])
+            
             reference_paper = {
                 'id': reference_row[0],
                 'title': reference_row[1],
                 'abstract': reference_row[2],
-                'date': reference_row[3],
-                'date_run': reference_row[4],
+                'date': ref_date_str,
+                'date_run': ref_date_run_str,
                 'score': reference_row[5],
                 'rationale': reference_row[6],
                 'related': reference_row[7],
@@ -499,12 +529,16 @@ class PaperDatabase:
             similar_rows = cursor.fetchall()
             similar_papers = []
             for row in similar_rows:
+                # Convert date objects to strings for similar papers
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
                 similar_papers.append({
                     'id': row[0],
                     'title': row[1],
                     'abstract': row[2],
-                    'date': row[3],
-                    'date_run': row[4],
+                    'date': date_str,
+                    'date_run': date_run_str,
                     'score': row[5],
                     'rationale': row[6],
                     'related': row[7],
@@ -775,3 +809,113 @@ class PaperDatabase:
                 print(f"INFO:     Marked {count} interrupted tasks as failed on startup.")
             
             return count
+
+    def fetch_papers_paginated(self, page: int = 1, page_size: int = 10, min_score: float = None, 
+                              max_score: float = None, sort_field: str = 'score', sort_direction: str = 'desc',
+                              search: str = None, from_date: str = None, to_date: str = None):
+        """Fetch papers with database-level pagination, filtering, and sorting.
+        
+        Args:
+            page: Page number (1-based)
+            page_size: Number of items per page
+            min_score: Minimum score filter
+            max_score: Maximum score filter
+            sort_field: Field to sort by ('score', 'date', 'id')
+            sort_direction: Sort direction ('asc' or 'desc')
+            search: Search term for title and abstract
+            from_date: Start date filter (YYYY-MM-DD)
+            to_date: End date filter (YYYY-MM-DD)
+            
+        Returns:
+            Dict with 'items', 'total_items', 'total_pages', 'has_next_page'
+        """
+        with self.get_cursor() as cursor:
+            # Build the WHERE clause
+            where_conditions = []
+            params = []
+            
+            if min_score is not None:
+                where_conditions.append("score >= %s")
+                params.append(min_score)
+            
+            if max_score is not None:
+                where_conditions.append("score <= %s")
+                params.append(max_score)
+            
+            if from_date:
+                where_conditions.append("date >= %s")
+                params.append(from_date)
+            
+            if to_date:
+                where_conditions.append("date <= %s")
+                params.append(to_date)
+            
+            if search:
+                where_conditions.append("(LOWER(title) LIKE %s OR LOWER(abstract) LIKE %s)")
+                search_pattern = f"%{search.lower()}%"
+                params.extend([search_pattern, search_pattern])
+            
+            where_clause = ""
+            if where_conditions:
+                where_clause = "WHERE " + " AND ".join(where_conditions)
+            
+            # Validate and sanitize sort parameters
+            valid_sort_fields = {'score': 'score', 'date': 'date', 'id': 'id'}
+            sort_field = valid_sort_fields.get(sort_field, 'score')
+            sort_direction = 'DESC' if sort_direction.lower() == 'desc' else 'ASC'
+            
+            # Get total count
+            count_query = f"""
+                SELECT COUNT(*) 
+                FROM papers 
+                {where_clause}
+            """
+            cursor.execute(count_query, params)
+            total_items = cursor.fetchone()[0]
+            
+            # Calculate pagination
+            total_pages = (total_items + page_size - 1) // page_size
+            offset = (page - 1) * page_size
+            has_next_page = page < total_pages
+            
+            # Get paginated results
+            data_query = f"""
+                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                       cosine_similarity, url, embedding_model, embedding
+                FROM papers 
+                {where_clause}
+                ORDER BY {sort_field} {sort_direction}
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(data_query, params + [page_size, offset])
+            rows = cursor.fetchall()
+            
+            # Convert results
+            items = []
+            for row in rows:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
+                items.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': date_str,
+                    'date_run': date_run_str,
+                    'score': float(row[5]) if row[5] is not None else 0.0,
+                    'rationale': row[6] or '',
+                    'related': bool(row[7]) if row[7] is not None else False,
+                    'cosine_similarity': float(row[8]) if row[8] is not None else 0.0,
+                    'url': row[9] or '',
+                    'embedding_model': row[10] or '',
+                    'embedding': row[11]  # Keep as-is for potential future use
+                })
+            
+            return {
+                'items': items,
+                'total_items': total_items,
+                'total_pages': total_pages,
+                'has_next_page': has_next_page,
+                'current_page': page
+            }

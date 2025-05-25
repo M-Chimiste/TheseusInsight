@@ -168,6 +168,7 @@ export interface PaperApiResponse {
   cosine_similarity: number;
   url: string;
   embedding_model: string;
+  similarity_score?: number; // Optional field for similarity search results
 }
 
 export interface PaginatedPapersResponse {
@@ -176,6 +177,12 @@ export interface PaginatedPapersResponse {
   total_pages: number;
   current_page: number;
   nextPage: number | null;
+}
+
+export interface SimilarPapersResponse {
+  reference_paper: PaperApiResponse;
+  similar_papers: PaperApiResponse[];
+  total_similar: number;
 }
 
 // Podcast History API functions
@@ -199,6 +206,7 @@ export const papersApi = {
         sortField: string = 'score',
         sortDirection: string = 'desc',
         minScore?: number,
+        maxScore?: number,
         fromDate?: string,
         toDate?: string,
         search?: string
@@ -211,11 +219,28 @@ export const papersApi = {
         };
         
         if (minScore !== undefined) params.score = minScore;
+        if (maxScore !== undefined) params.max_score = maxScore;
         if (fromDate) params.from_date = fromDate;
         if (toDate) params.to_date = toDate;
         if (search) params.search = search;
 
         const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
+            params
+        });
+        return response.data;
+    },
+
+    findSimilarPapers: async (
+        paperId: number,
+        limit: number = 10,
+        similarityThreshold: number = 0.7
+    ): Promise<SimilarPapersResponse> => {
+        const params = {
+            limit,
+            similarity_threshold: similarityThreshold
+        };
+
+        const response: AxiosResponse<SimilarPapersResponse> = await api.get<SimilarPapersResponse>(`/papers/${paperId}/similar`, {
             params
         });
         return response.data;

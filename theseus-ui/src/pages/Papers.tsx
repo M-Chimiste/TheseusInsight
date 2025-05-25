@@ -31,10 +31,11 @@ import { papersApi } from '../services/api';
 import type { PaperApiResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
 import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
+import SimilarityView from './SimilarityView'; // Import the new SimilarityView
 
 const DEFAULT_PAGE_SIZE = 9; // 3 cards per row, 3 rows for grid view
 
-type ViewMode = 'grid' | 'list';
+type ViewMode = 'grid' | 'list' | 'similarity';
 
 interface FilterState {
   minScore: number;
@@ -53,7 +54,11 @@ const Papers: React.FC = () => {
   const [pageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // Track if more pages are available
   const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
-  const [viewMode, setViewMode] = useState<ViewMode>('grid'); // New state for view mode
+  const [viewMode, setViewMode] = useState<ViewMode>('grid'); // Updated to include similarity
+  
+  // Similarity view state
+  const [selectedPaper, setSelectedPaper] = useState<PaperApiResponse | null>(null);
+  const [scrollPosition, setScrollPosition] = useState<number>(0);
   
   // Filter state
   const [filters, setFilters] = useState<FilterState>({
@@ -85,6 +90,7 @@ const Papers: React.FC = () => {
         'score', 
         'desc',
         appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
+        appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
         appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
         appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
         appliedFilters.search || undefined
@@ -142,19 +148,34 @@ const Papers: React.FC = () => {
     };
   }, [loading, hasNextPage, currentPage, pageSize, fetchPapers, initialLoadComplete]);
 
+  // No need for client-side filtering anymore since it's handled at database level
   const sortedPapers = useMemo(() => {
-    // Papers are already sorted by the API, no need to re-sort
-    // But we can do client-side filtering for maxScore since API only supports minScore
-    return allPapers.filter(paper => paper.score <= appliedFilters.maxScore);
-  }, [allPapers, appliedFilters.maxScore]);
+    return allPapers;
+  }, [allPapers]);
 
   const handleViewModeChange = (
     _event: React.MouseEvent<HTMLElement>,
     newViewMode: ViewMode | null, 
   ) => {
-    if (newViewMode !== null) {
+    if (newViewMode !== null && newViewMode !== 'similarity') {
       setViewMode(newViewMode);
     }
+  };
+
+  const handleFindSimilar = (paper: PaperApiResponse) => {
+    // Save current scroll position
+    setScrollPosition(window.scrollY);
+    setSelectedPaper(paper);
+    setViewMode('similarity');
+  };
+
+  const handleCloseSimilarity = () => {
+    setViewMode('grid'); // or return to previous view mode
+    setSelectedPaper(null);
+    // Restore scroll position
+    setTimeout(() => {
+      window.scrollTo(0, scrollPosition);
+    }, 100);
   };
 
   const handleApplyFilters = () => {
@@ -220,167 +241,182 @@ const Papers: React.FC = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box sx={{ p: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2}}>
-          <Typography variant="h4" gutterBottom component="div">
-            Historical Papers
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant="outlined"
-              startIcon={<FilterListIcon />}
-              endIcon={showFilters ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-              onClick={() => setShowFilters(!showFilters)}
-              color={hasActiveFilters ? "primary" : "inherit"}
-            >
-              Filters {hasActiveFilters && `(${getActiveFilterChips().length})`}
-            </Button>
-            <ToggleButtonGroup
-                value={viewMode}
-                exclusive
-                onChange={handleViewModeChange}
-                aria-label="view mode"
-                size="small"
-            >
-                <ToggleButton value="grid" aria-label="grid view">
-                    <ViewModuleIcon />
-                </ToggleButton>
-                <ToggleButton value="list" aria-label="list view">
-                    <ViewListIcon />
-                </ToggleButton>
-            </ToggleButtonGroup>
-          </Box>
-        </Box>
-
-        {/* Filter Panel */}
-        <Collapse in={showFilters}>
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Filter Papers
+      <Box sx={{ p: viewMode === 'similarity' ? 0 : 3 }}>
+        {/* Show header and filters only when not in similarity view */}
+        {viewMode !== 'similarity' && (
+          <>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2}}>
+              <Typography variant="h4" gutterBottom component="div">
+                Historical Papers
               </Typography>
-              
-              <Grid container spacing={3}>
-                {/* Search */}
-                <Grid size={{ xs: 12 }}>
-                  <TextField
-                    fullWidth
-                    label="Search in title and abstract"
-                    value={filters.search}
-                    onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                    placeholder="Enter keywords..."
-                  />
-                </Grid>
-
-                {/* Score Range */}
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <Typography gutterBottom>Score Range: {filters.minScore} - {filters.maxScore}</Typography>
-                  <Slider
-                    value={[filters.minScore, filters.maxScore]}
-                    onChange={(_, newValue) => {
-                      const [min, max] = newValue as number[];
-                      setFilters(prev => ({ ...prev, minScore: min, maxScore: max }));
-                    }}
-                    valueLabelDisplay="auto"
-                    min={0}
-                    max={10}
-                    step={0.1}
-                    marks={[
-                      { value: 0, label: '0' },
-                      { value: 5, label: '5' },
-                      { value: 10, label: '10' }
-                    ]}
-                  />
-                </Grid>
-
-                {/* Date Range */}
-                <Grid size={{ xs: 12, md: 3 }}>
-                  <DatePicker
-                    label="From Date"
-                    value={filters.fromDate}
-                    onChange={(newValue) => setFilters(prev => ({ ...prev, fromDate: newValue }))}
-                    slotProps={{ textField: { fullWidth: true } }}
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, md: 3 }}>
-                  <DatePicker
-                    label="To Date"
-                    value={filters.toDate}
-                    onChange={(newValue) => setFilters(prev => ({ ...prev, toDate: newValue }))}
-                    slotProps={{ textField: { fullWidth: true } }}
-                    minDate={filters.fromDate || undefined}
-                  />
-                </Grid>
-              </Grid>
-
-              {/* Filter Actions */}
-              <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                <Button variant="outlined" onClick={handleResetFilters} startIcon={<ClearIcon />}>
-                  Reset
-                </Button>
-                <Button variant="contained" onClick={handleApplyFilters}>
-                  Apply Filters
-                </Button>
-              </Box>
-            </CardContent>
-          </Card>
-        </Collapse>
-
-        {/* Active Filter Chips */}
-        {hasActiveFilters && (
-          <Box sx={{ mb: 2 }}>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Typography variant="body2" sx={{ alignSelf: 'center', mr: 1 }}>
-                Active filters:
-              </Typography>
-              {getActiveFilterChips().map((chipLabel, index) => (
-                <Chip
-                  key={index}
-                  label={chipLabel}
-                  size="small"
-                  color="primary"
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Button
                   variant="outlined"
-                />
-              ))}
-              <Tooltip title="Clear all filters">
-                <IconButton size="small" onClick={handleResetFilters}>
-                  <ClearIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Stack>
-          </Box>
+                  startIcon={<FilterListIcon />}
+                  endIcon={showFilters ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                  onClick={() => setShowFilters(!showFilters)}
+                  color={hasActiveFilters ? "primary" : "inherit"}
+                >
+                  Filters {hasActiveFilters && `(${getActiveFilterChips().length})`}
+                </Button>
+                <ToggleButtonGroup
+                    value={viewMode}
+                    exclusive
+                    onChange={handleViewModeChange}
+                    aria-label="view mode"
+                    size="small"
+                >
+                    <ToggleButton value="grid" aria-label="grid view">
+                        <ViewModuleIcon />
+                    </ToggleButton>
+                    <ToggleButton value="list" aria-label="list view">
+                        <ViewListIcon />
+                    </ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
+            </Box>
+
+            {/* Filter Panel */}
+            <Collapse in={showFilters}>
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Filter Papers
+                  </Typography>
+                  
+                  <Grid container spacing={3}>
+                    {/* Search */}
+                    <Grid size={{ xs: 12 }}>
+                      <TextField
+                        fullWidth
+                        label="Search in title and abstract"
+                        value={filters.search}
+                        onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                        placeholder="Enter keywords..."
+                      />
+                    </Grid>
+
+                    {/* Score Range */}
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <Typography gutterBottom>Score Range: {filters.minScore} - {filters.maxScore}</Typography>
+                      <Slider
+                        value={[filters.minScore, filters.maxScore]}
+                        onChange={(_, newValue) => {
+                          const [min, max] = newValue as number[];
+                          setFilters(prev => ({ ...prev, minScore: min, maxScore: max }));
+                        }}
+                        valueLabelDisplay="auto"
+                        min={0}
+                        max={10}
+                        step={0.1}
+                        marks={[
+                          { value: 0, label: '0' },
+                          { value: 5, label: '5' },
+                          { value: 10, label: '10' }
+                        ]}
+                      />
+                    </Grid>
+
+                    {/* Date Range */}
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <DatePicker
+                        label="From Date"
+                        value={filters.fromDate}
+                        onChange={(newValue) => setFilters(prev => ({ ...prev, fromDate: newValue }))}
+                        slotProps={{ textField: { fullWidth: true } }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <DatePicker
+                        label="To Date"
+                        value={filters.toDate}
+                        onChange={(newValue) => setFilters(prev => ({ ...prev, toDate: newValue }))}
+                        slotProps={{ textField: { fullWidth: true } }}
+                        minDate={filters.fromDate || undefined}
+                      />
+                    </Grid>
+                  </Grid>
+
+                  {/* Filter Actions */}
+                  <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                    <Button variant="outlined" onClick={handleResetFilters} startIcon={<ClearIcon />}>
+                      Reset
+                    </Button>
+                    <Button variant="contained" onClick={handleApplyFilters}>
+                      Apply Filters
+                    </Button>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Collapse>
+
+            {/* Active Filter Chips */}
+            {hasActiveFilters && (
+              <Box sx={{ mb: 2 }}>
+                <Stack direction="row" spacing={1} flexWrap="wrap">
+                  <Typography variant="body2" sx={{ alignSelf: 'center', mr: 1 }}>
+                    Active filters:
+                  </Typography>
+                  {getActiveFilterChips().map((chipLabel, index) => (
+                    <Chip
+                      key={index}
+                      label={chipLabel}
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                    />
+                  ))}
+                  <Tooltip title="Clear all filters">
+                    <IconButton size="small" onClick={handleResetFilters}>
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              </Box>
+            )}
+          </>
         )}
         
         {/* Conditional Rendering based on viewMode */} 
-        {viewMode === 'grid' ? (
+        {viewMode === 'similarity' && selectedPaper ? (
+          <SimilarityView
+            referencePaper={selectedPaper}
+            onClose={handleCloseSimilarity}
+          />
+        ) : viewMode === 'grid' ? (
           <Grid container spacing={3} sx={{ mb: 3 }}>
             {sortedPapers.map((paper) => (
               <Grid size={{ xs: 12, sm: 6, md: 4 }} key={paper.id + "_" + paper.date_run + "_grid"}>
-                <PaperCard paper={paper} />
+                <PaperCard paper={paper} onFindSimilar={handleFindSimilar} />
               </Grid>
             ))}
           </Grid>
         ) : (
           <Box sx={{ mb: 3 }}>
             {sortedPapers.map((paper) => (
-              <PaperRowCard key={paper.id + "_" + paper.date_run + "_list"} paper={paper} />
+              <PaperRowCard key={paper.id + "_" + paper.date_run + "_list"} paper={paper} onFindSimilar={handleFindSimilar} />
             ))}
           </Box>
         )}
 
-        {/* Loader for infinite scroll */} 
-        <div ref={loader} style={{ height: '50px', margin: '20px 0' }}>
-          {loading && initialLoadComplete && <CircularProgress sx={{ display: 'block', margin: 'auto' }}/>}
-        </div>
+        {/* Show infinite scroll elements only when not in similarity view */}
+        {viewMode !== 'similarity' && (
+          <>
+            {/* Loader for infinite scroll */} 
+            <div ref={loader} style={{ height: '50px', margin: '20px 0' }}>
+              {loading && initialLoadComplete && <CircularProgress sx={{ display: 'block', margin: 'auto' }}/>}
+            </div>
 
-        {!loading && !hasNextPage && initialLoadComplete && allPapers.length > 0 && (
-          <Typography textAlign="center" sx={{ my: 2 }}>
-            You've reached the end of the list.
-          </Typography>
-        )}
+            {!loading && !hasNextPage && initialLoadComplete && allPapers.length > 0 && (
+              <Typography textAlign="center" sx={{ my: 2 }}>
+                You've reached the end of the list.
+              </Typography>
+            )}
 
-        {!loading && !hasNextPage && initialLoadComplete && allPapers.length === 0 && (
-           <Alert severity="info" sx={{mt: 2}}>No papers found for the current criteria.</Alert>
+            {!loading && !hasNextPage && initialLoadComplete && allPapers.length === 0 && (
+               <Alert severity="info" sx={{mt: 2}}>No papers found for the current criteria.</Alert>
+            )}
+          </>
         )}
       </Box>
     </LocalizationProvider>

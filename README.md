@@ -22,6 +22,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
   - [Visualizer Generation](#visualizer-generation)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
+- [Database Migration](#database-migration)
 - [License](#license)
 - [Credits](#credits)
 
@@ -182,6 +183,45 @@ Or via the CLI:
 ```bash
 python run_theseus_insight.py --generate-podcast True --generate-email True
 ```
+
+---
+
+## Database Migration
+
+Theseus Insight includes comprehensive database migration tools for transferring data between environments. These tools support exporting data to portable archives and importing them to new databases while handling duplicates intelligently.
+
+### Quick Migration Examples
+
+**Export database to archive:**
+```bash
+python -m theseus_insight.utils.db_migration.db_migrate export \
+    --source-db "postgresql://user:pass@localhost:5432/theseus_dev" \
+    --output ./backup.tar.gz
+```
+
+**Import archive to new database:**
+```bash
+python -m theseus_insight.utils.db_migration.db_migrate import \
+    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --input ./backup.tar.gz
+```
+
+**Direct migration with verification:**
+```bash
+python -m theseus_insight.utils.db_migration.db_migrate migrate \
+    --source-db "postgresql://user:pass@old-server:5432/theseus_dev" \
+    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --verify
+```
+
+### Features
+- **Intelligent duplicate handling** - Papers detected by URL, podcasts by title, newsletters by date range
+- **Compressed archives** - tar.gz format with metadata for easy transfer
+- **Vector embedding preservation** - Maintains exact embeddings during migration
+- **Verification tools** - Compare source and target databases after migration
+- **Flexible import options** - Support for selective imports and batch processing
+
+For detailed documentation and advanced usage examples, see [`theseus_insight/utils/db_migration/README.md`](theseus_insight/utils/db_migration/README.md).
 
 ---
 

@@ -114,8 +114,19 @@ async def lifespan(app_instance: FastAPI):
                 print(f"Warning: research_interests.txt not found at {research_txt_path}.")
         else:
             print("INFO:     Research interests settings found in DB. Skipping pre-population.")
+        
+        # Run media file cleanup
+        print("INFO:     Running media file cleanup...")
+        try:
+            # Allow configuring cleanup age via environment variable
+            cleanup_age_days = int(os.getenv("MEDIA_CLEANUP_AGE_DAYS", "30"))
+            cleanup_old_media_files(max_age_days=cleanup_age_days)
+        except Exception as e:
+            print(f"Warning: Media file cleanup encountered an error: {e}")
+            # Continue startup even if cleanup fails
+            
     except Exception as e:
-        print(f"Error during startup pre-population: {e}")
+        print(f"Error during startup: {e}")
     print("INFO:     Theseus Insight API startup complete.")
     yield
     # Shutdown logic
@@ -805,6 +816,16 @@ async def get_active_tasks(task_types: Optional[str] = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/tasks/recent-completed")
+async def get_recent_completed_tasks(task_types: Optional[str] = Query(None)):
+    """Get recent completed tasks with results available for download."""
+    try:
+        types_filter = task_types.split(',') if task_types else None
+        completed_tasks = task_manager.db.get_recent_completed_tasks(task_types=types_filter)
+        return {"completed_tasks": completed_tasks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/tasks/{task_id}/result")
 async def get_task_result(task_id: str):
     """Get the result of a completed task."""
@@ -865,6 +886,10 @@ async def download_task_artifact(task_id: str, file_type: str):
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
             
+        print(f"DEBUG: Download request for task {task_id}, type: {file_type}")
+        print(f"DEBUG: Task status: {task.get('status')}")
+        print(f"DEBUG: Task type: {task.get('type')}")
+            
         if task["status"] != TaskStatus.COMPLETED:
             raise HTTPException(
                 status_code=400,
@@ -873,7 +898,10 @@ async def download_task_artifact(task_id: str, file_type: str):
             
         result = task.get("result")
         if not result:
+            print(f"DEBUG: No result found for task {task_id}")
             raise HTTPException(status_code=404, detail="No result available for this task")
+            
+        print(f"DEBUG: Task result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
             
         if task["type"] == "newsletter":
             if file_type != "markdown":
@@ -900,20 +928,29 @@ async def download_task_artifact(task_id: str, file_type: str):
                 
             # Get the appropriate file path
             if file_type == "audio":
-                file_path = result["output_file"]
+                file_path = result.get("output_file")
+                if not file_path:
+                    print(f"DEBUG: No 'output_file' key in result for audio download")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No audio file available in task result. Expected 'output_file' key."
+                    )
                 media_type = "audio/mpeg"
                 filename = "podcast.mp3"
             else:  # video
-                if not result.get("visualizer_file"):
+                file_path = result.get("visualizer_file")
+                if not file_path:
+                    print(f"DEBUG: No 'visualizer_file' key in result for video download")
                     raise HTTPException(
                         status_code=404,
-                        detail="No video visualization available for this podcast"
+                        detail="No video visualization available for this podcast. Expected 'visualizer_file' key."
                     )
-                file_path = result["visualizer_file"]
                 media_type = "video/mp4"
                 filename = "podcast.mp4"
                 
+            print(f"DEBUG: Attempting to serve file: {file_path}")
             if not os.path.exists(file_path):
+                print(f"DEBUG: File does not exist at path: {file_path}")
                 raise HTTPException(
                     status_code=404,
                     detail=f"Artifact file not found: {file_path}"
@@ -1519,4 +1556,83 @@ async def serve_react_app(full_path: str):
         detail_message = f"Frontend index.html not found at {STATIC_INDEX_HTML}."
         if not IS_RUNNING_IN_DOCKER:
             detail_message += " Ensure the frontend has been built (e.g., `npm run build` in `theseus-ui` directory)."
-        raise HTTPException(status_code=404, detail=detail_message) 
+        raise HTTPException(status_code=404, detail=detail_message)
+
+def cleanup_old_media_files(max_age_days: int = 30):
+    """
+    Clean up old podcast and visualization files that are older than max_age_days.
+    This preserves database records but removes actual media files to save disk space.
+    """
+    try:
+        cutoff_date = datetime.now() - timedelta(days=max_age_days)
+        total_deleted = 0
+        total_size_freed = 0
+        
+        # Directories to clean
+        cleanup_dirs = [
+            "data/podcasts",
+            "data/visualizations", 
+            "data/temp"  # Also clean temp files
+        ]
+        
+        for base_dir in cleanup_dirs:
+            if not os.path.exists(base_dir):
+                continue
+                
+            print(f"INFO:     Cleaning up old files in {base_dir}...")
+            dir_deleted = 0
+            dir_size_freed = 0
+            
+            # Walk through all subdirectories and files
+            for root, dirs, files in os.walk(base_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        # Get file modification time
+                        file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                        
+                        # Check if file is older than cutoff
+                        if file_mtime < cutoff_date:
+                            file_size = os.path.getsize(file_path)
+                            os.remove(file_path)
+                            
+                            dir_deleted += 1
+                            dir_size_freed += file_size
+                            print(f"INFO:     Deleted old file: {file_path} (age: {(datetime.now() - file_mtime).days} days)")
+                            
+                    except Exception as e:
+                        print(f"Warning: Could not delete file {file_path}: {e}")
+                        continue
+            
+            # Clean up empty directories after file deletion
+            try:
+                for root, dirs, files in os.walk(base_dir, topdown=False):
+                    for dir_name in dirs:
+                        dir_path = os.path.join(root, dir_name)
+                        try:
+                            # Only remove if directory is empty and not the base directory
+                            if not os.listdir(dir_path) and dir_path != base_dir:
+                                os.rmdir(dir_path)
+                                print(f"INFO:     Removed empty directory: {dir_path}")
+                        except Exception as e:
+                            # Directory not empty or other error, skip
+                            continue
+            except Exception as e:
+                print(f"Warning: Error during directory cleanup in {base_dir}: {e}")
+            
+            total_deleted += dir_deleted
+            total_size_freed += dir_size_freed
+            
+            if dir_deleted > 0:
+                size_mb = dir_size_freed / (1024 * 1024)
+                print(f"INFO:     Cleaned {dir_deleted} files from {base_dir}, freed {size_mb:.2f} MB")
+        
+        if total_deleted > 0:
+            total_size_mb = total_size_freed / (1024 * 1024)
+            print(f"INFO:     Total cleanup: {total_deleted} files deleted, {total_size_mb:.2f} MB freed")
+        else:
+            print(f"INFO:     No old files found to clean up (older than {max_age_days} days)")
+            
+    except Exception as e:
+        print(f"ERROR: Failed to run media file cleanup: {e}")
+        # Don't raise the error - we don't want cleanup failure to prevent API startup 

@@ -42,8 +42,10 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
         setIsCheckingForActiveTasks(true);
         // Check for both the base type and the custom type (e.g., 'newsletter' and 'custom_newsletter_run')
         const taskTypesToCheck = [taskType, `custom_${taskType}_run`];
-        const response = await taskApi.getActiveTasks(taskTypesToCheck);
-        const activeTasks = response.data.active_tasks || [];
+        
+        // Check active tasks first
+        const activeResponse = await taskApi.getActiveTasks(taskTypesToCheck);
+        const activeTasks = activeResponse.data.active_tasks || [];
         
         console.log(`[useTaskState] Checking for active ${taskType} tasks:`, {
           taskTypesToCheck,
@@ -52,14 +54,34 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
         });
         
         // Find the most recent active task for this type
-        const activeTask = activeTasks.find((task: any) => 
+        let activeTask = activeTasks.find((task: any) => 
           task.type === taskType || 
           task.type === `custom_${taskType}_run` ||
           task.task_type === taskType ||
           task.task_type === `custom_${taskType}_run`
         );
         
-        console.log(`[useTaskState] Found active task for ${taskType}:`, activeTask);
+        // If no active task found, check for recent completed tasks with results
+        if (!activeTask) {
+          console.log(`[useTaskState] No active tasks found, checking for recent completed tasks...`);
+          const completedResponse = await taskApi.getRecentCompletedTasks(taskTypesToCheck);
+          const completedTasks = completedResponse.data.completed_tasks || [];
+          
+          console.log(`[useTaskState] Found recent completed ${taskType} tasks:`, {
+            taskTypesToCheck,
+            completedTasks,
+            totalFound: completedTasks.length
+          });
+          
+          activeTask = completedTasks.find((task: any) => 
+            task.type === taskType || 
+            task.type === `custom_${taskType}_run` ||
+            task.task_type === taskType ||
+            task.task_type === `custom_${taskType}_run`
+          );
+        }
+        
+        console.log(`[useTaskState] Found task for ${taskType}:`, activeTask);
 
         if (activeTask) {
           // Restore task state from database
@@ -68,16 +90,16 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
             isRunning: activeTask.status === 'pending' || activeTask.status === 'processing',
             stage: activeTask.current_step || activeTask.status,
             progress: activeTask.progress || 0,
-            message: activeTask.message || `Resuming ${taskType} task...`,
+            message: activeTask.message || (activeTask.status === 'completed' ? 'Task completed successfully' : `Resuming ${taskType} task...`),
             error: activeTask.error || null,
             result: activeTask.result,
           });
         } else {
-          // No active tasks found
+          // No active or recent completed tasks found
           setTaskState(DEFAULT_TASK_STATE);
         }
       } catch (error) {
-        console.error(`Error checking for active ${taskType} tasks:`, error);
+        console.error(`Error checking for ${taskType} tasks:`, error);
         setTaskState(DEFAULT_TASK_STATE);
       } finally {
         setIsCheckingForActiveTasks(false);
@@ -90,6 +112,13 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
   // Handle WebSocket messages
   useEffect(() => {
     if (lastMessage && taskState.taskId) {
+      console.log(`[useTaskState] WebSocket message received for ${taskType}:`, {
+        taskId: taskState.taskId,
+        overallStatus: lastMessage.overallStatus,
+        hasResult: !!lastMessage.result,
+        result: lastMessage.result
+      });
+      
       const mainNode = lastMessage.nodes && lastMessage.nodes.length > 0 ? lastMessage.nodes[0] : null;
       
       setTaskState(prev => ({
@@ -110,18 +139,20 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
         result: lastMessage.result || prev.result,
       }));
 
-      // Clear task when completed or failed
-      if (lastMessage.overallStatus === 'completed' || lastMessage.overallStatus === 'failed') {
+      // Don't automatically clear task when completed - let user manually dismiss or restart
+      // This preserves the ability to download artifacts after completion
+      if (lastMessage.overallStatus === 'failed') {
+        // Only auto-clear failed tasks, keep completed ones for downloads
         setTimeout(() => {
           setTaskState(prev => ({
             ...prev,
             taskId: null,
             isRunning: false,
           }));
-        }, 2000); // Keep the completion/error message visible for 2 seconds
+        }, 5000); // Give more time for failed tasks to be reviewed
       }
     }
-  }, [lastMessage, taskState.taskId]);
+  }, [lastMessage, taskState.taskId, taskType]);
 
   const setTaskId = useCallback((taskId: string | null) => {
     if (taskId) {

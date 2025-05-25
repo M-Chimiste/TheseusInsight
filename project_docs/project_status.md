@@ -2,7 +2,141 @@
 
 ## Implemented
 
-### Latest Update: Sticky Layout for Similarity View
+### Latest Update: Visualizer Task Recovery Implementation
+
+**Feature Added**: Task recovery functionality for the Visualizer page to persist running tasks across navigation.
+
+**Problem Solved**: Previously, if users navigated away from the Visualizer page while a visualization was generating, they couldn't return to check the status or download the result. The page would lose track of the running task.
+
+**What Was Implemented**:
+- **Migrated from Direct WebSocket to useTaskState Hook**: Replaced basic `useWebSocket` usage with the sophisticated `useTaskState('visualizer')` hook
+- **Automatic Task Recovery**: When users navigate back to the Visualizer page, it automatically detects and reconnects to any running visualization tasks
+- **Consistent State Management**: Now uses the same task management pattern as Podcast and Newsletter pages
+- **Enhanced Download Logic**: Includes fallback mechanism to fetch task results directly if WebSocket data is missing
+- **Improved User Experience**: Added "Start New Visualization" button and better status messaging
+
+**Implementation Details**:
+- **Hook Migration**: Replaced `useWebSocket` with `useTaskState('visualizer')` for unified task management
+- **State Consolidation**: Removed redundant state variables (`generating`, `taskId`, `error`, `pipelineStatus`) in favor of `taskState` object
+- **Download Enhancement**: Comprehensive download preparation with both WebSocket and direct API fallback mechanisms
+- **Status Messaging**: Real-time log updates that persist across navigation sessions
+- **Error Handling**: Robust error states and user-friendly messaging
+
+**User Experience Benefits**:
+- ✅ **Task Persistence**: Running visualizations continue even if users navigate away
+- ✅ **Status Recovery**: Return to the page and immediately see current progress and status
+- ✅ **Download Availability**: Completed visualizations remain downloadable after navigation
+- ✅ **Consistent Interface**: Matches the reliable behavior of Podcast and Newsletter pages
+- ✅ **Active Task Detection**: Shows "Checking for active tasks..." on page load when appropriate
+
+**Technical Architecture**:
+- **Unified Pattern**: All three generation pages (Newsletter, Podcast, Visualizer) now use identical task management
+- **WebSocket Integration**: Automatic reconnection to running tasks via task ID
+- **Fallback Mechanisms**: Multiple layers of error handling and result fetching
+- **State Synchronization**: Real-time updates with local state management
+- **Build Status**: ✅ TypeScript compilation successful, no linter errors
+
+### Previous Update: Podcast History Page Grid/List View Implementation
+
+**Feature Added**: Grid and list view options for the dedicated Podcast History page, completing the view toggle functionality across both podcast interfaces.
+
+**What it does**:
+- **Dedicated PodcastHistory.tsx Page**: Added view mode toggle to the standalone podcast history page
+- **Consistent UI**: Matches the design patterns from Papers.tsx and main Podcast.tsx implementations
+- **Grid View**: Card-based layout with 3 columns showing title, date, and description snippet with text truncation
+- **List View**: Row-based layout with full content display and "View Details" action chips
+- **Responsive Design**: Adapts to different screen sizes and maintains link functionality to detail pages
+- **Complete Coverage**: Both podcast interfaces (main page section + dedicated history page) now have view toggles
+
+**Implementation Details**:
+- **PodcastHistory.tsx Updates**:
+  - Added `ViewMode` type and state management for 'grid' | 'list' views
+  - Imported Material-UI toggle components (`ToggleButtonGroup`, `ViewModuleIcon`, `ViewListIcon`, `HistoryIcon`)
+  - Added header layout with title and toggle button group
+  - Implemented conditional rendering for both view modes
+  - Enhanced grid view with text truncation (WebkitLineClamp: 3)
+  - Created list view with chips for action indicators
+  - Maintained existing RouterLink navigation to detail pages
+
+**User Experience**:
+- **Unified Interface**: Both podcast history displays now have consistent view options
+- **Clean Toggle**: Visual toggle between grid and list layouts with intuitive icons
+- **Improved Content Display**: Grid view handles long descriptions with proper truncation
+- **Action Clarity**: List view includes visual indicators for clickable items
+- **Navigation Preservation**: All existing link functionality to podcast details maintained
+
+**Technical Architecture**:
+- **Consistent Patterns**: Reuses successful design patterns from Papers.tsx implementation
+- **Type Safety**: Full TypeScript integration with proper interfaces
+- **Component Structure**: Clean separation of concerns with conditional rendering
+- **Performance**: Efficient rendering without unnecessary re-renders
+- **Accessibility**: Proper ARIA labels and semantic HTML structure
+- **✅ Build Status**: All TypeScript checks pass, no linter errors, production build successful
+
+### Automated Media File Cleanup
+
+**Feature Added**: Automated cleanup of old podcast and visualization files at API startup.
+
+**What it does**:
+- Runs automatically every time the API starts up
+- Deletes media files older than 30 days from:
+  - `data/podcasts/` - podcast audio/video files
+  - `data/visualizations/` - visualization video files  
+  - `data/temp/` - temporary files from processing
+- **Preserves all database records** - only removes actual files to save disk space
+- Removes empty directories after file cleanup
+- Provides detailed logging of what was cleaned and how much space was freed
+- Fails gracefully - startup continues even if cleanup encounters errors
+
+**Implementation Details**:
+- Added `cleanup_old_media_files()` function in `main.py`
+- Integrated into FastAPI lifespan startup sequence
+- Configurable age threshold via `MEDIA_CLEANUP_AGE_DAYS` environment variable (defaults to 30 days)
+- Comprehensive error handling to prevent startup failures
+- Detailed logging with file counts and space freed metrics
+
+**Benefits**:
+- Prevents disk space issues from accumulating old media files
+- Maintains database history while managing storage costs
+- Runs automatically without manual intervention
+- Safe operation with graceful error handling
+
+### Latest Update: Podcast Download Link Fix
+
+**Critical Bug Fix**: Fixed the missing download links for completed podcast generation tasks.
+
+**Problem Identified**: 
+- Podcast generation was completing successfully and saving to database
+- Download links weren't appearing on the frontend after completion
+- Root cause: `useTaskState` hook was clearing completed tasks after 2 seconds, preventing download functionality
+
+**Changes Made**:
+- **Backend (`theseus_insight/data_model/data_handling.py`)**:
+  - Added `get_recent_completed_tasks()` method to retrieve completed tasks with results within 24 hours
+  - This ensures download artifacts remain accessible after completion
+
+- **Backend (`theseus_insight/main.py`)**:
+  - Added `/api/tasks/recent-completed` endpoint for frontend to fetch completed tasks with downloads
+  - Enhanced download endpoint with better debugging and error messages
+
+- **Frontend (`theseus-ui/src/hooks/useTaskState.ts`)**:
+  - Modified to check both active and recent completed tasks on initialization
+  - Preserved task results for download even after WebSocket completion
+  - Added comprehensive debugging logs for troubleshooting
+
+- **Frontend (`theseus-ui/src/pages/Podcast.tsx`)**:
+  - Enhanced download effect with fallback mechanism to fetch results directly
+  - Added better error handling and status messages for download preparation
+  - Improved user feedback when downloads are being prepared
+
+- **Frontend (`theseus-ui/src/services/api.ts`)**:
+  - Added `getRecentCompletedTasks()` API method
+
+**Result**: Download links now appear reliably after podcast generation completes, with robust fallback mechanisms for edge cases.
+
+### Podcast Generator PostgreSQL Integration (CRITICAL FIX)
+
+### Previous Update: Sticky Layout for Similarity View
 
 **UI Enhancement**: Implemented a sticky layout for the similarity view to keep the header and reference paper visible while scrolling through similar papers.
 
@@ -496,7 +630,7 @@ This quality-of-life improvement prevents duplicate papers from cluttering the d
     - Created `PodcastHistory.tsx` (list view) and `PodcastDetail.tsx` (detail view with styled dialog).
     - Fixed MUI Grid v7 prop usage in `PodcastHistory.tsx`.
     - Added routes in `App.tsx` and sidebar link in `Layout.tsx`.
-    - Corrected `AxiosResponse` type-only import in `api.ts` and added `visualizer` type to `createWebSocket`.
+    - Corrected `AxiosResponse` type-only import in `api.ts` and added 'visualizer' type to `createWebSocket`.
 - Resolved `Settings.tsx` text input issue by using local state for `researchInterestsInput` and `emailRecipientsInput`.
 
 ## Project Status Update - <YYYY-MM-DD HH:MM>

@@ -71,6 +71,10 @@ export const taskApi = {
     const params = taskTypes ? { task_types: taskTypes.join(',') } : {};
     return api.get('/tasks/active', { params });
   },
+  getRecentCompletedTasks: (taskTypes?: string[]) => {
+    const params = taskTypes ? { task_types: taskTypes.join(',') } : {};
+    return api.get('/tasks/recent-completed', { params });
+  },
   downloadTaskArtifact: (taskId: string, fileType: 'markdown' | 'audio' | 'video') => 
     api.get(`/tasks/${taskId}/download/${fileType}`, { responseType: 'blob' }),
   runVisualizerPipeline: (audioFile: File, visualizerParams: any) => {

@@ -1292,3 +1292,45 @@ class PaperDatabase:
                 'has_next_page': False,
                 'current_page': page
             }
+
+    def get_recent_completed_tasks(self, task_types: list = None, hours_back: int = 24) -> list:
+        """Get recently completed tasks with results, for download purposes."""
+        with self.get_cursor() as cursor:
+            cutoff_time = (datetime.datetime.now() - datetime.timedelta(hours=hours_back)).isoformat()
+            
+            query = '''
+                SELECT task_id, task_type, status, config_json, start_time, end_time, 
+                       error, result_json, progress, current_step, message
+                FROM tasks 
+                WHERE status = 'completed' 
+                AND end_time >= %s
+                AND result_json IS NOT NULL
+            '''
+            params = [cutoff_time]
+            
+            if task_types:
+                placeholders = ','.join(['%s'] * len(task_types))
+                query += f' AND task_type IN ({placeholders})'
+                params.extend(task_types)
+            
+            query += ' ORDER BY end_time DESC'
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            tasks = []
+            for row in rows:
+                tasks.append({
+                    'task_id': row[0],
+                    'type': row[1],
+                    'status': row[2],
+                    'config': json.loads(row[3]) if row[3] else {},
+                    'start_time': row[4],
+                    'end_time': row[5],
+                    'error': row[6],
+                    'result': json.loads(row[7]) if row[7] else None,
+                    'progress': row[8],
+                    'current_step': row[9],
+                    'message': row[10]
+                })
+            return tasks

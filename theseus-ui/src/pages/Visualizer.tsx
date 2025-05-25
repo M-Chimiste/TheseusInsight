@@ -10,11 +10,8 @@ import {
   CircularProgress,
   Container,
 } from '@mui/material';
-import { taskApi } from '../services/api'; // Assuming api.ts will be updated
-import { useWebSocket, type RunStatusPayload as WS_RunStatusPayload } from '../hooks/useWebSocket';
-
-// Aliases for WebSocket payload types
-interface RunStatusPayload extends WS_RunStatusPayload {}
+import { taskApi } from '../services/api';
+import { useTaskState } from '../hooks/useTaskState';
 
 interface VisualizerParamsType {
   matrix_count: number;
@@ -64,22 +61,17 @@ const Visualizer: React.FC = () => {
     trail_color_3: "#ce6bf2",
     glow_passes: 3,
     glow_alpha_decay: 40,
-    font_path: "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", // Default, consider making this configurable or removing if problematic
+    font_path: "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
     resolution_width: 1920,
     resolution_height: 1080,
     fps: 30
   });
 
-  const [generating, setGenerating] = useState<boolean>(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
-  const [pipelineStatus, setPipelineStatus] = useState({
-    stage: '',
-    progress: 0,
-    message: "No active visualization task. Upload an audio file and click 'Generate Visualization' to start.",
-  });
   const [downloadInfo, setDownloadInfo] = useState<{ url: string | null, filename: string }>({ url: null, filename: 'visualization.mp4' });
+
+  // Use the task state hook for task recovery
+  const { taskState, setTaskId, isCheckingForActiveTasks } = useTaskState('visualizer');
 
   const handleAudioFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -91,82 +83,78 @@ const Visualizer: React.FC = () => {
   
   const handleGenerateVisualization = async () => {
     if (!audioFile) {
-      setError('Please upload an audio file first.');
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Please upload an audio file first.`]);
       return;
     }
-    setGenerating(true);
-    setError(null);
     setStatusMessages([]);
-    setPipelineStatus({
-        stage: 'Initiating...',
-        progress: 5,
-        message: 'Preparing to generate visualization...',
-    });
     setDownloadInfo({ url: null, filename: 'visualization.mp4' });
 
-
     try {
-      // This will be defined in services/api.ts later
-      // For now, assuming a function like visualizerApi.generateVisualization exists
       const response = await (taskApi as any).runVisualizerPipeline(audioFile, visualizerParams); 
       setTaskId(response.data.task_id);
     } catch (err: any) {
       const errMsg = err.response?.data?.detail || err.message || 'Failed to start visualization generation';
-      setError(errMsg);
-      setPipelineStatus(prev => ({ ...prev, stage: 'Failed to Start', message: `Error: ${errMsg}`}));
-      setGenerating(false);
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errMsg}`]);
     }
   };
 
-  // WebSocket integration
-  const placeholderTaskId = 'dummy-visualizer-task-id';
-  const wsHookState = useWebSocket(taskId || placeholderTaskId, "visualizer" as any); // Cast 'visualizer' if not in hook's type yet
-
-  const handleParsedRunStatus = (payload: RunStatusPayload) => {
-    const mainNode = payload.nodes && payload.nodes.length > 0 ? payload.nodes[0] : null;
-    const logMessage = `[${payload.overallStatus?.toUpperCase()}] ${new Date().toLocaleTimeString()}: ${mainNode?.message || payload.error || 'Status update'}`;
-    setStatusMessages(prev => [...prev, logMessage].slice(-100));
-
-    setPipelineStatus({
-      stage: mainNode?.message || (payload.overallStatus === 'failed' ? 'Failed' : pipelineStatus.stage),
-      progress: mainNode?.progress ?? (payload.overallStatus === 'completed' ? 100 : (payload.overallStatus === 'failed' ? 0 : pipelineStatus.progress)),
-      message: mainNode?.message || payload.error || (payload.overallStatus === 'completed' ? 'Completed successfully' : 'Processing...'),
-    });
-    setError(payload.error || null);
-    
-    if (payload.overallStatus === 'completed' || payload.overallStatus === 'failed') {
-      setGenerating(false);
-    }
-  };
-
+  // Update status messages when task state changes
   useEffect(() => {
-    if (taskId && taskId !== placeholderTaskId && wsHookState.lastMessage) {
-      handleParsedRunStatus(wsHookState.lastMessage as RunStatusPayload);
+    if (taskState.taskId && taskState.message) {
+      const logMessage = `[${taskState.stage.toUpperCase()}] ${new Date().toLocaleTimeString()}: ${taskState.message}`;
+      setStatusMessages(prev => [...prev, logMessage].slice(-100)); // Keep last 100 messages
     }
-    if (taskId && wsHookState.error) {
-      const errorMessage = wsHookState.error?.toString() || 'WebSocket connection error';
-      if (taskId !== placeholderTaskId) {
-        setError(errorMessage);
-        setPipelineStatus(prev => ({ ...prev, stage: 'WebSocket Error', message: `Error: ${errorMessage}`}));
-        setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: ${errorMessage}`].slice(-100));
-        setGenerating(false);
+  }, [taskState.message, taskState.stage, taskState.taskId]);
+
+  // Download button state and logic
+  useEffect(() => {
+    const prepareDownload = async () => {
+      if (taskState.taskId && !taskState.isRunning) {
+        console.log('Visualizer download effect triggered:', {
+          taskId: taskState.taskId,
+          isRunning: taskState.isRunning,
+          hasResult: !!taskState.result,
+          result: taskState.result
+        });
+
+        let result = taskState.result;
+        
+        // If we don't have a result from WebSocket, try to fetch it directly
+        if (!result) {
+          try {
+            console.log('No result from WebSocket, fetching task result directly...');
+            const taskResultResponse = await taskApi.getTaskResult(taskState.taskId);
+            result = taskResultResponse.data;
+            console.log('Fetched task result:', result);
+          } catch (err) {
+            console.error('Failed to fetch task result:', err);
+            setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Failed to fetch task result for download.`]);
+            return;
+          }
+        }
+
+        if (result) {
+          console.log('Attempting to download visualization artifact:', {
+            taskId: taskState.taskId,
+            resultKeys: Object.keys(result)
+          });
+
+          try {
+            const downloadRes = await taskApi.downloadTaskArtifact(taskState.taskId, 'video');
+            const blob = new Blob([downloadRes.data], { type: 'video/mp4' });
+            setDownloadInfo({ url: URL.createObjectURL(blob), filename: 'visualization.mp4' });
+            setStatusMessages(prev => [...prev, `[SUCCESS] ${new Date().toLocaleTimeString()}: Download link prepared for visualization.`]);
+          } catch (err: any) {
+            console.error("Failed to download artifact:", err);
+            const errorMsg = err.response?.data?.detail || err.message || 'Unknown error';
+            setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Failed to prepare download link: ${errorMsg}`]);
+          }
+        }
       }
-    }
-  }, [taskId, wsHookState.lastMessage, wsHookState.error]);
+    };
 
-  useEffect(() => {
-    if (wsHookState.lastMessage?.overallStatus === 'completed' && taskId && (wsHookState.lastMessage as any).result) {
-        taskApi.downloadTaskArtifact(taskId, 'video') // Assuming 'video' is the artifact type
-            .then(downloadRes => {
-                const blob = new Blob([downloadRes.data], { type: 'video/mp4' });
-                setDownloadInfo({ url: URL.createObjectURL(blob), filename: 'visualization.mp4' });
-            })
-            .catch(err => {
-                console.error("Failed to download artifact:", err);
-                setError("Failed to prepare download link for the visualization.");
-            });
-    }
-  }, [wsHookState.lastMessage, taskId]);
+    prepareDownload();
+  }, [taskState.taskId, taskState.result, taskState.isRunning]);
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -243,33 +231,51 @@ const Visualizer: React.FC = () => {
               variant="contained"
               color="primary"
               fullWidth
-              disabled={!audioFile || generating}
+              disabled={!audioFile || taskState.isRunning || isCheckingForActiveTasks}
               onClick={handleGenerateVisualization}
               sx={{ py: 1.5, fontSize: '1.1rem' }}
             >
-              {generating ? `Generating... (${pipelineStatus.stage} ${pipelineStatus.progress.toFixed(0)}%)` : 'Generate Visualization'}
+              {isCheckingForActiveTasks ? 'Checking for active tasks...' :
+               taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
+               'Generate Visualization'}
             </Button>
-            {generating && <CircularProgress sx={{ mt: 2, display: 'block', marginLeft: 'auto', marginRight: 'auto' }} />}
-            {error && (
+            {taskState.isRunning && <CircularProgress sx={{ mt: 2, display: 'block', marginLeft: 'auto', marginRight: 'auto' }} />}
+            {taskState.error && (
               <Typography color="error" sx={{ mt: 2, textAlign: 'center' }}>
-                {error}
+                {taskState.error}
               </Typography>
             )}
-            {taskId && !generating && wsHookState.readyState === 1 && wsHookState.lastMessage?.overallStatus !== 'completed' && wsHookState.lastMessage?.overallStatus !== 'failed' && (
+            {taskState.taskId && taskState.isRunning && (
               <Typography sx={{ mt: 2, textAlign: 'center' }}>
-                Visualization generation in progress. Task ID: {taskId}
+                Visualization generation in progress. Task ID: {taskState.taskId}
                 <br />
-                Status: {pipelineStatus.message} ({pipelineStatus.progress.toFixed(0)}%)
+                Status: {taskState.message} ({taskState.progress.toFixed(0)}%)
               </Typography>
             )}
-            {wsHookState.lastMessage?.overallStatus === 'completed' && (
+            {taskState.taskId && !taskState.isRunning && !taskState.error && (
                <Typography sx={{ mt: 2, textAlign: 'center' }} color="success.main">
-                 Visualization Ready! Task ID: {taskId}
+                 Visualization Ready! Task ID: {taskState.taskId}
+                 {downloadInfo.url ? ` - Download available below` : ` - Preparing download...`}
                </Typography>
             )}
             {downloadInfo.url && (
               <Button component="a" href={downloadInfo.url} download={downloadInfo.filename} variant="contained" fullWidth sx={{ mt: 2 }}>
                 Download Visualization
+              </Button>
+            )}
+            {taskState.taskId && !taskState.isRunning && (
+              <Button 
+                variant="outlined" 
+                fullWidth 
+                sx={{ mt: 1 }} 
+                onClick={() => {
+                  setDownloadInfo({ url: null, filename: 'visualization.mp4' });
+                  setStatusMessages([]);
+                  // Simple way to reset the entire state
+                  window.location.reload();
+                }}
+              >
+                Start New Visualization
               </Button>
             )}
 

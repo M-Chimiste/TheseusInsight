@@ -20,6 +20,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
   - [Podcast Generation](#podcast-generation)
   - [Script Management](#script-management)
   - [Visualizer Generation](#visualizer-generation)
+  - [Similarity Search](#similarity-search)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
@@ -64,6 +65,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **React** frontend built with Vite and Material UI, served from the backend in production.
 - **Real‑time progress** streaming over WebSockets for long running tasks.
 - **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
+- **Semantic similarity search** via vector embeddings for advanced paper discovery.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Dockerfile and Compose setup** to run the entire application in containers.
 
@@ -121,6 +123,7 @@ Create a `.env` file in the project root containing keys and settings:
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
+| `RUNNING_IN_DOCKER` | Set to `true` in Docker images for correct static file paths |
 
 ---
 
@@ -162,6 +165,12 @@ During development use the Vite dev server as shown in the [Quickstart](#quickst
 - **`POST /api/visualizer/generate`** – create a visualiser video.
 - **`GET /api/visualizer/status/{task_id}`** – check generation status.
 
+### Similarity Search
+- **`POST /api/papers/similarity-search`** – semantic search using embeddings.
+- **`GET /api/papers/without-embeddings`** – list papers missing embeddings.
+- **`POST /api/papers/{paper_id}/update-embedding`** – generate embedding for a paper.
+- **`GET /api/papers/{paper_id}/similar`** – find papers similar to an existing one.
+See [docs/EMBEDDING_FUNCTIONALITY.md](docs/EMBEDDING_FUNCTIONALITY.md) for more details.
 ### Theseus Insight Run Orchestration
 - **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
 

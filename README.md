@@ -305,8 +305,8 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 - [arxiv.org](https://arxiv.org/) for open access to research paper data.
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
-- [KokoroTTS](https://github.com/fakeyh/kokoro-tts), [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
+- [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
 - [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for backend processing.
 
-Theseus Insight is maintained by [M. Chimiste](https://github.com/fakeyh) & contributors.
+Theseus Insight is maintained by [M. Chimiste](https://github.com/M-Chimiste) & contributors.
 

@@ -22,26 +22,60 @@ class PaperDatabase:
         self._initialize_db()
 
     def _initialize_db(self):
-        """Initialize the database and create tables if they don't exist."""
+        """Initialize database tables and indices if they don't exist."""
         with self.get_cursor() as cursor:
+            # Create pgvector extension
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            
             # Create papers table
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS papers (
                     id SERIAL PRIMARY KEY,
                     title TEXT NOT NULL,
                     abstract TEXT NOT NULL,
                     date DATE NOT NULL,
                     date_run DATE NOT NULL,
-                    score DOUBLE PRECISION NOT NULL,
-                    rationale TEXT NOT NULL,
-                    related BOOLEAN NOT NULL,
-                    cosine_similarity DOUBLE PRECISION NOT NULL,
-                    url TEXT NOT NULL,
-                    embedding_model TEXT NOT NULL,
-                    embedding VECTOR
+                    score REAL,
+                    rationale TEXT,
+                    related BOOLEAN DEFAULT FALSE,
+                    cosine_similarity REAL,
+                    url TEXT UNIQUE,
+                    embedding_model TEXT,
+                    embedding vector  -- Let PostgreSQL determine dimension automatically
                 )
-            ''')
+            """)
+            
+            # Add full-text search columns if they don't exist
+            cursor.execute("ALTER TABLE papers ADD COLUMN IF NOT EXISTS search_vector tsvector")
+            cursor.execute("ALTER TABLE papers ADD COLUMN IF NOT EXISTS title_vector tsvector")
+            cursor.execute("ALTER TABLE papers ADD COLUMN IF NOT EXISTS abstract_vector tsvector")
+            
+            # Create GIN indexes for full-text search
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS papers_search_vector_idx 
+                ON papers USING GIN(search_vector)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS papers_title_vector_idx 
+                ON papers USING GIN(title_vector)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS papers_abstract_vector_idx 
+                ON papers USING GIN(abstract_vector)
+            """)
+            
+            # Skip vector index creation for now - will be created manually if needed
+            # The hybrid search will work fine without the vector index, just slower on large datasets
+            
+            # Update existing papers with search vectors
+            cursor.execute("""
+                UPDATE papers 
+                SET 
+                    search_vector = to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, '')),
+                    title_vector = to_tsvector('english', COALESCE(title, '')),
+                    abstract_vector = to_tsvector('english', COALESCE(abstract, ''))
+                WHERE search_vector IS NULL
+            """)
 
             # Create logs table
             cursor.execute('''
@@ -209,11 +243,18 @@ class PaperDatabase:
 
         with self.get_cursor() as cursor:
             cursor.execute('''INSERT INTO papers
-                (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding,
+                 search_vector, title_vector, abstract_vector)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        to_tsvector('english', %s || ' ' || %s),
+                        to_tsvector('english', %s),
+                        to_tsvector('english', %s))''',
                 (paper.title, paper.abstract, paper.date, paper.date_run,
                  paper.score, paper.rationale, paper.related, paper.cosine_similarity,
-                 paper.url, paper.embedding_model, paper.embedding))
+                 paper.url, paper.embedding_model, paper.embedding,
+                 paper.title, paper.abstract,  # for search_vector
+                 paper.title,                  # for title_vector  
+                 paper.abstract))              # for abstract_vector
         return True  # Paper was inserted
 
     def insert_newsletter(self, newsletter: Newsletter):
@@ -969,5 +1010,281 @@ class PaperDatabase:
                 'total_items': total_items,
                 'total_pages': total_pages,
                 'has_next_page': has_next_page,
+                'current_page': page
+            }
+
+    def hybrid_search_papers(self, query_text: str, embedding_model, page: int = 1, page_size: int = 10,
+                           semantic_weight: float = 0.6, keyword_weight: float = 0.4,
+                           min_score: float = None, max_score: float = None,
+                           from_date: str = None, to_date: str = None,
+                           similarity_threshold: float = 0.3):
+        """
+        Perform hybrid search combining semantic similarity and keyword matching.
+        
+        Args:
+            query_text: Search query text
+            embedding_model: Model instance to generate embeddings
+            page: Page number (1-based)
+            page_size: Number of items per page
+            semantic_weight: Weight for semantic similarity score (0-1)
+            keyword_weight: Weight for keyword matching score (0-1)
+            min_score: Minimum score filter for papers
+            max_score: Maximum score filter for papers
+            from_date: Start date filter (YYYY-MM-DD)
+            to_date: End date filter (YYYY-MM-DD)
+            similarity_threshold: Minimum semantic similarity threshold
+            
+        Returns:
+            Dict with 'items', 'total_items', 'total_pages', 'has_next_page'
+        """
+        try:
+            # Generate embedding for the query
+            query_embedding = embedding_model.invoke(query_text)
+            if hasattr(query_embedding, 'tolist'):
+                query_embedding = query_embedding.tolist()
+            elif not isinstance(query_embedding, list):
+                query_embedding = list(query_embedding)
+            
+            with self.get_cursor() as cursor:
+                # Build the WHERE clause for filtering
+                where_conditions = ["embedding IS NOT NULL"]
+                where_params = []
+                
+                if min_score is not None:
+                    where_conditions.append("score >= %s")
+                    where_params.append(min_score)
+                
+                if max_score is not None:
+                    where_conditions.append("score <= %s")
+                    where_params.append(max_score)
+                
+                if from_date:
+                    where_conditions.append("date >= %s")
+                    where_params.append(from_date)
+                
+                if to_date:
+                    where_conditions.append("date <= %s")
+                    where_params.append(to_date)
+                
+                # Add similarity threshold
+                where_conditions.append("(1 - (embedding <=> %s::vector)) >= %s")
+                where_params.extend([query_embedding, similarity_threshold])
+                
+                where_clause = " AND ".join(where_conditions)
+                
+                # Prepare keyword search terms - handle empty search gracefully
+                search_terms = [term.strip() for term in query_text.lower().split() if term.strip()]
+                
+                if not search_terms:
+                    # If no search terms, fall back to semantic-only search
+                    semantic_query = f"""
+                        SELECT 
+                            id, title, abstract, date, date_run, score, rationale, related, 
+                            cosine_similarity, url, embedding_model, embedding,
+                            (1 - (embedding <=> %s::vector)) as semantic_score,
+                            0.0 as keyword_score,
+                            (1 - (embedding <=> %s::vector)) as hybrid_score
+                        FROM papers 
+                        WHERE {where_clause}
+                        ORDER BY hybrid_score DESC
+                    """
+                    
+                    count_query = f"SELECT COUNT(*) FROM papers WHERE {where_clause}"
+                    query_params = [query_embedding, query_embedding] + where_params
+                    count_params = where_params
+                else:
+                    # Use PostgreSQL full-text search with BM25-like ranking
+                    # Create a tsquery from the search terms
+                    search_query = " & ".join(search_terms)  # AND query for all terms
+                    
+                    # Build hybrid query using full-text search ranking
+                    semantic_query = f"""
+                        SELECT 
+                            p.id, p.title, p.abstract, p.date, p.date_run, p.score, p.rationale, p.related, 
+                            p.cosine_similarity, p.url, p.embedding_model, p.embedding,
+                            (1 - (p.embedding <=> %s::vector)) as semantic_score,
+                            COALESCE(
+                                GREATEST(
+                                    ts_rank_cd(p.search_vector, plainto_tsquery('english', %s), 32),
+                                    ts_rank_cd(p.title_vector, plainto_tsquery('english', %s), 32) * 2.0,
+                                    ts_rank_cd(p.abstract_vector, plainto_tsquery('english', %s), 32)
+                                ), 0.0
+                            ) as keyword_score,
+                            (
+                                ({semantic_weight} * (1 - (p.embedding <=> %s::vector))) + 
+                                ({keyword_weight} * COALESCE(
+                                    GREATEST(
+                                        ts_rank_cd(p.search_vector, plainto_tsquery('english', %s), 32),
+                                        ts_rank_cd(p.title_vector, plainto_tsquery('english', %s), 32) * 2.0,
+                                        ts_rank_cd(p.abstract_vector, plainto_tsquery('english', %s), 32)
+                                    ), 0.0
+                                ))
+                            ) as hybrid_score
+                        FROM papers p
+                        WHERE {where_clause}
+                        ORDER BY hybrid_score DESC
+                    """
+                    
+                    count_query = f"SELECT COUNT(*) FROM papers WHERE {where_clause}"
+                    
+                    # Parameters: query_embedding + 4 text queries (for keyword scoring) + query_embedding + 3 text queries (for hybrid score) + where params
+                    query_params = [query_embedding, query_text, query_text, query_text, query_embedding, query_text, query_text, query_text] + where_params
+                    count_params = where_params
+                
+                # Get total count
+                cursor.execute(count_query, count_params)
+                total_items = cursor.fetchone()[0]
+                
+                # Calculate pagination
+                total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 0
+                offset = (page - 1) * page_size
+                has_next_page = page < total_pages
+                
+                # Get paginated results
+                paginated_query = semantic_query + f" LIMIT %s OFFSET %s"
+                cursor.execute(paginated_query, query_params + [page_size, offset])
+                
+                rows = cursor.fetchall()
+                
+                # Convert results
+                items = []
+                for row in rows:
+                    # Convert date objects to strings
+                    date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                    date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                    
+                    items.append({
+                        'id': row[0],
+                        'title': row[1],
+                        'abstract': row[2],
+                        'date': date_str,
+                        'date_run': date_run_str,
+                        'score': float(row[5]) if row[5] is not None else 0.0,
+                        'rationale': row[6] or '',
+                        'related': bool(row[7]) if row[7] is not None else False,
+                        'cosine_similarity': float(row[8]) if row[8] is not None else 0.0,
+                        'url': row[9] or '',
+                        'embedding_model': row[10] or '',
+                        'embedding': row[11],
+                        'semantic_score': float(row[12]) if row[12] is not None else 0.0,
+                        'keyword_score': float(row[13]) if row[13] is not None else 0.0,
+                        'hybrid_score': float(row[14]) if row[14] is not None else 0.0
+                    })
+                
+                return {
+                    'items': items,
+                    'total_items': total_items,
+                    'total_pages': total_pages,
+                    'has_next_page': has_next_page,
+                    'current_page': page
+                }
+                
+        except Exception as e:
+            # Log error but don't print in production
+            import traceback
+            traceback.print_exc()
+            # Fall back to semantic-only search if hybrid search fails
+            return self._fallback_semantic_search(query_embedding, page, page_size, min_score, max_score, from_date, to_date, similarity_threshold)
+
+    def _fallback_semantic_search(self, query_embedding: list, page: int = 1, page_size: int = 10,
+                                 min_score: float = None, max_score: float = None,
+                                 from_date: str = None, to_date: str = None,
+                                 similarity_threshold: float = 0.3):
+        """Fallback to simple semantic search if hybrid search fails."""
+        try:
+            with self.get_cursor() as cursor:
+                # Build the WHERE clause for filtering
+                where_conditions = ["embedding IS NOT NULL"]
+                params = []
+                
+                if min_score is not None:
+                    where_conditions.append("score >= %s")
+                    params.append(min_score)
+                
+                if max_score is not None:
+                    where_conditions.append("score <= %s")
+                    params.append(max_score)
+                
+                if from_date:
+                    where_conditions.append("date >= %s")
+                    params.append(from_date)
+                
+                if to_date:
+                    where_conditions.append("date <= %s")
+                    params.append(to_date)
+                
+                where_conditions.append("(1 - (embedding <=> %s::vector)) >= %s")
+                params.extend([query_embedding, similarity_threshold])
+                
+                where_clause = " AND ".join(where_conditions)
+                
+                # Simple semantic search query
+                count_query = f"SELECT COUNT(*) FROM papers WHERE {where_clause}"
+                cursor.execute(count_query, params)
+                total_items = cursor.fetchone()[0]
+                
+                # Calculate pagination
+                total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 0
+                offset = (page - 1) * page_size
+                has_next_page = page < total_pages
+                
+                semantic_query = f"""
+                    SELECT 
+                        id, title, abstract, date, date_run, score, rationale, related, 
+                        cosine_similarity, url, embedding_model, embedding,
+                        (1 - (embedding <=> %s::vector)) as semantic_score,
+                        0.0 as keyword_score,
+                        (1 - (embedding <=> %s::vector)) as hybrid_score
+                    FROM papers 
+                    WHERE {where_clause}
+                    ORDER BY hybrid_score DESC
+                    LIMIT %s OFFSET %s
+                """
+                
+                cursor.execute(semantic_query, [query_embedding, query_embedding] + params + [page_size, offset])
+                rows = cursor.fetchall()
+                
+                # Convert results
+                items = []
+                for row in rows:
+                    date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                    date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                    
+                    items.append({
+                        'id': row[0],
+                        'title': row[1],
+                        'abstract': row[2],
+                        'date': date_str,
+                        'date_run': date_run_str,
+                        'score': float(row[5]) if row[5] is not None else 0.0,
+                        'rationale': row[6] or '',
+                        'related': bool(row[7]) if row[7] is not None else False,
+                        'cosine_similarity': float(row[8]) if row[8] is not None else 0.0,
+                        'url': row[9] or '',
+                        'embedding_model': row[10] or '',
+                        'embedding': row[11],
+                        'semantic_score': float(row[12]) if row[12] is not None else 0.0,
+                        'keyword_score': float(row[13]) if row[13] is not None else 0.0,
+                        'hybrid_score': float(row[14]) if row[14] is not None else 0.0
+                    })
+                
+                return {
+                    'items': items,
+                    'total_items': total_items,
+                    'total_pages': total_pages,
+                    'has_next_page': has_next_page,
+                    'current_page': page
+                }
+                
+        except Exception as e:
+            # Log error but don't print in production
+            import traceback
+            traceback.print_exc()
+            # Return empty results if everything fails
+            return {
+                'items': [],
+                'total_items': 0,
+                'total_pages': 0,
+                'has_next_page': False,
                 'current_page': page
             }

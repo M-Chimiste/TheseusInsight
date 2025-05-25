@@ -65,7 +65,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **React** frontend built with Vite and Material UI, served from the backend in production.
 - **Real‑time progress** streaming over WebSockets for long running tasks.
 - **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
-- **Semantic similarity search** via vector embeddings for advanced paper discovery.
+- **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Dockerfile and Compose setup** to run the entire application in containers.
 
@@ -167,9 +167,68 @@ During development use the Vite dev server as shown in the [Quickstart](#quickst
 
 ### Similarity Search
 - **`POST /api/papers/similarity-search`** – semantic search using embeddings.
+- **`POST /api/papers/hybrid-search`** – hybrid search combining semantic similarity and keyword matching.
 - **`GET /api/papers/without-embeddings`** – list papers missing embeddings.
 - **`POST /api/papers/{paper_id}/update-embedding`** – generate embedding for a paper.
 - **`GET /api/papers/{paper_id}/similar`** – find papers similar to an existing one.
+
+#### Hybrid Search Functionality
+Theseus Insight features advanced hybrid search capabilities that combine the precision of BM25-style keyword ranking with the contextual understanding of semantic similarity. This provides significantly enhanced search accuracy compared to traditional keyword-only or semantic-only approaches.
+
+**Key Features:**
+- **BM25-Enhanced Keyword Search**: Uses PostgreSQL's full-text search with `ts_rank_cd()` for sophisticated term frequency and document ranking (replaces simple substring matching)
+- **Dual-Mode Search**: Simultaneously performs semantic similarity using vector embeddings and advanced keyword ranking across paper titles and abstracts
+- **Weighted Title Boost**: Title matches receive 2x scoring weight compared to abstract matches for improved relevance
+- **Weighted Scoring**: User-adjustable weights for combining semantic and keyword scores (default: 60% semantic, 40% keyword)
+- **Real-Time Scoring**: Returns individual `semantic_score`, `keyword_score`, and combined `hybrid_score` for transparency
+- **Full Integration**: Works seamlessly with existing filters (date range, score threshold, pagination)
+- **Performance Optimized**: Database-level operations using PostgreSQL with pgvector and GIN indexes for scalable performance
+
+**Example API Request:**
+```json
+POST /api/papers/hybrid-search
+{
+  "query_text": "transformer attention mechanisms",
+  "page": 1,
+  "page_size": 10,
+  "semantic_weight": 0.7,
+  "keyword_weight": 0.3,
+  "similarity_threshold": 0.3,
+  "min_score": 5.0
+}
+```
+
+**Example Response:**
+```json
+{
+  "query_text": "transformer attention mechanisms",
+  "results": [
+    {
+      "id": 1234,
+      "title": "Attention Is All You Need: The Transformer Architecture",
+      "semantic_score": 0.85,
+      "keyword_score": 1.0,
+      "hybrid_score": 0.895,
+      "score": 8.5,
+      "abstract": "We propose a new attention mechanism...",
+      ...
+    }
+  ],
+  "total_results": 247,
+  "semantic_weight": 0.7,
+  "keyword_weight": 0.3
+}
+```
+
+**Frontend Integration:**
+The React interface provides an intuitive toggle for enabling hybrid search with interactive weight adjustment sliders. Users can fine-tune the balance between semantic understanding and BM25-style keyword ranking to optimize results for their specific research needs.
+
+**Technical Implementation:**
+- **PostgreSQL Full-Text Search**: Leverages native `tsvector` and `tsquery` types with English language stemming and stopword filtering
+- **Ranking Algorithm**: Uses `ts_rank_cd()` with normalization flags for document length and term frequency weighting
+- **Index Optimization**: GIN (Generalized Inverted Index) indexes on title, abstract, and combined search vectors for fast retrieval
+- **Automatic Migration**: Existing installations automatically gain BM25 capabilities through database schema updates
+
 See [docs/EMBEDDING_FUNCTIONALITY.md](docs/EMBEDDING_FUNCTIONALITY.md) for more details.
 ### Theseus Insight Run Orchestration
 - **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.

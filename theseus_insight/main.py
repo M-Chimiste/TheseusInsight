@@ -324,7 +324,7 @@ async def update_paper_embedding(paper_id: int):
 @app.get("/api/papers/{paper_id}/similar", response_model=SimilarPapersResponse)
 async def find_similar_papers_to_existing(
     paper_id: int,
-    limit: int = Query(10, gt=0, le=50, description="Maximum number of similar papers to return"),
+    limit: int = Query(10, gt=0, le=200, description="Maximum number of similar papers to return"),
     similarity_threshold: float = Query(0.7, ge=0.0, le=1.0, description="Minimum similarity score (0-1)")
 ):
     """Find papers similar to an existing paper using its stored embedding."""

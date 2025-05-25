@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback} from 'react';
 import {
   Box,
   Typography,
   CircularProgress,
   Alert,
   IconButton,
-  Divider,
   Paper,
   FormControl,
   InputLabel,
@@ -32,7 +31,6 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   const [limit, setLimit] = useState<number>(10);
   const [totalSimilar, setTotalSimilar] = useState<number>(0);
 
-  const loader = useRef<HTMLDivElement>(null);
 
   const fetchSimilarPapers = useCallback(async (selectedLimit: number) => {
     setLoading(true);
@@ -47,9 +45,19 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
       
       setSimilarPapers(response.similar_papers);
       setTotalSimilar(response.total_similar);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error fetching similar papers:", err);
-      setError('Failed to fetch similar papers. Please try again.');
+      
+      // Provide more specific error messages
+      if (err.response?.status === 422) {
+        setError('Invalid request parameters. Please try a smaller limit.');
+      } else if (err.response?.status === 404) {
+        setError('Reference paper not found or has no embedding data.');
+      } else if (err.response?.status >= 500) {
+        setError('Server error occurred. Please try again later.');
+      } else {
+        setError('Failed to fetch similar papers. Please try again.');
+      }
     }
     
     setLoading(false);
@@ -103,6 +111,7 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
               <MenuItem value={30}>30 papers</MenuItem>
               <MenuItem value={50}>50 papers</MenuItem>
               <MenuItem value={100}>100 papers</MenuItem>
+              <MenuItem value={200}>200 papers</MenuItem>
             </Select>
           </FormControl>
           <Box>

@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { LayoutProvider } from './contexts/LayoutContext';
 import Layout from './components/Layout';
 import React from 'react';
 
@@ -28,24 +29,26 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <Router>
-          <Layout>
-            <React.Suspense fallback={<div>Loading...</div>}>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/newsletter" element={<Newsletter />} />
-                <Route path="/podcast" element={<Podcast />} />
-                <Route path="/visualizer" element={<Visualizer />} />
-                <Route path="/papers" element={<Papers />} />
-                <Route path="/run-history" element={<RunHistory />} />
-                <Route path="/podcast-history" element={<PodcastHistory />} />
-                <Route path="/podcast-history/:podcastId" element={<PodcastDetail />} />
-                <Route path="/*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </React.Suspense>
-          </Layout>
-        </Router>
+        <LayoutProvider>
+          <Router>
+            <Layout>
+              <React.Suspense fallback={<div>Loading...</div>}>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/newsletter" element={<Newsletter />} />
+                  <Route path="/podcast" element={<Podcast />} />
+                  <Route path="/visualizer" element={<Visualizer />} />
+                  <Route path="/papers" element={<Papers />} />
+                  <Route path="/run-history" element={<RunHistory />} />
+                  <Route path="/podcast-history" element={<PodcastHistory />} />
+                  <Route path="/podcast-history/:podcastId" element={<PodcastDetail />} />
+                  <Route path="/*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </React.Suspense>
+            </Layout>
+          </Router>
+        </LayoutProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

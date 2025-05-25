@@ -276,6 +276,7 @@ const Papers: React.FC = () => {
 
   const handleApplyFilters = () => {
     setAppliedFilters({ ...filters });
+    setShowFilters(false);
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {

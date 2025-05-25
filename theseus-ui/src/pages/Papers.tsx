@@ -278,6 +278,13 @@ const Papers: React.FC = () => {
     setAppliedFilters({ ...filters });
   };
 
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleApplyFilters();
+    }
+  };
+
   const handleResetFilters = () => {
     const resetFilters = {
       minScore: 0,
@@ -418,6 +425,7 @@ const Papers: React.FC = () => {
                         label="Search in title and abstract"
                         value={filters.search}
                         onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                        onKeyDown={handleSearchKeyDown}
                         placeholder="Enter keywords..."
                         helperText={useHybridSearch ? "Hybrid search: combines semantic similarity with keyword matching" : "Keyword search only"}
                         sx={{ mb: 1.5 }}

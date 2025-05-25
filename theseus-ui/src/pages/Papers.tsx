@@ -375,7 +375,7 @@ const Papers: React.FC = () => {
               borderColor: 'divider',
               minHeight: '64px'
             }}>
-              <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+              <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
                 Historical Papers
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

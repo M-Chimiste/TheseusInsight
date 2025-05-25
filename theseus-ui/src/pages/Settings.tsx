@@ -25,6 +25,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import SettingsIcon from '@mui/icons-material/Settings';
 import taxonomy from '../../../config/arxiv_taxonomy.json';
 
 const MODEL_TABS = [
@@ -353,11 +354,9 @@ const Settings: React.FC = () => {
         </Alert>
       )}
 
-      <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="h4" fontWeight={700}>
-          Settings
+        <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
+          <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> Settings
         </Typography>
-      </Box>
 
       <Card sx={{ mb: 4 }}>
         <CardContent>

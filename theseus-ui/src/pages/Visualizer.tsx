@@ -170,7 +170,7 @@ const Visualizer: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
+      <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
         🎬 Audio Visualizer
       </Typography>
 

@@ -20,7 +20,8 @@ from .api.models import (
     EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
     PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse,
     PaperApiResponse, PaginatedPapersResponse, NewsletterRunParams,
-    SimilaritySearchRequest, SimilaritySearchResponse, SimilarPapersRequest, SimilarPapersResponse
+    SimilaritySearchRequest, SimilaritySearchResponse, SimilarPapersRequest, SimilarPapersResponse,
+    HybridSearchRequest, HybridSearchResponse
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
@@ -256,6 +257,93 @@ async def semantic_similarity_search(request: SimilaritySearchRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/papers/hybrid-search", response_model=HybridSearchResponse)
+async def hybrid_search_papers(request: HybridSearchRequest):
+    """Perform hybrid search combining semantic similarity and keyword matching."""
+    try:
+        # Validate that weights sum to approximately 1.0
+        total_weight = request.semantic_weight + request.keyword_weight
+        if abs(total_weight - 1.0) > 0.01:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Semantic weight ({request.semantic_weight}) and keyword weight ({request.keyword_weight}) should sum to 1.0, got {total_weight}"
+            )
+        
+        # Validate query text
+        if not request.query_text or not request.query_text.strip():
+            raise HTTPException(status_code=400, detail="Query text cannot be empty")
+        
+        # Get the orchestration config to load the embedding model
+        orchestration_json = db.get_setting("orchestration")
+        if not orchestration_json:
+            raise HTTPException(status_code=500, detail="Orchestration config not found")
+        
+        orchestration_config = json.loads(orchestration_json)
+        embedding_model_config = orchestration_config.get('embedding_model')
+        if not embedding_model_config:
+            raise HTTPException(status_code=500, detail="Embedding model config not found")
+        
+        # Initialize the embedding model
+        from .inference import SentenceTransformerInference
+        embedding_model = SentenceTransformerInference(
+            embedding_model_config['model_name'], 
+            remote_code=embedding_model_config.get('trust_remote_code', False)
+        )
+        
+        # Perform hybrid search
+        search_results = db.hybrid_search_papers(
+            query_text=request.query_text,
+            embedding_model=embedding_model,
+            page=request.page,
+            page_size=request.page_size,
+            semantic_weight=request.semantic_weight,
+            keyword_weight=request.keyword_weight,
+            min_score=request.min_score,
+            max_score=request.max_score,
+            from_date=request.from_date,
+            to_date=request.to_date,
+            similarity_threshold=request.similarity_threshold
+        )
+        
+        # Convert to API response format
+        results = []
+        for p in search_results['items']:
+            paper_response = PaperApiResponse(
+                id=p['id'], title=p['title'], abstract=p['abstract'],
+                score=p['score'], date=p['date'], url=p['url'],
+                date_run=p['date_run'], rationale=p['rationale'],
+                related=p['related'], cosine_similarity=p['cosine_similarity'],
+                embedding_model=p['embedding_model'],
+                semantic_score=p.get('semantic_score'),
+                keyword_score=p.get('keyword_score'),
+                hybrid_score=p.get('hybrid_score')
+            )
+            results.append(paper_response)
+        
+        return HybridSearchResponse(
+            query_text=request.query_text,
+            results=results,
+            total_results=search_results['total_items'],
+            total_pages=search_results['total_pages'],
+            current_page=search_results['current_page'],
+            semantic_weight=request.semantic_weight,
+            keyword_weight=request.keyword_weight
+        )
+        
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as e:
+        print(f"ERROR: JSON decode error in orchestration config: {e}")
+        raise HTTPException(status_code=500, detail="Invalid orchestration configuration")
+    except ImportError as e:
+        print(f"ERROR: Import error for embedding model: {e}")
+        raise HTTPException(status_code=500, detail="Embedding model not available")
+    except Exception as e:
+        print(f"ERROR: Unexpected error in hybrid search: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/api/papers/without-embeddings")
 async def get_papers_without_embeddings():

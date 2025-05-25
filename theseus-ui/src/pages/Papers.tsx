@@ -82,6 +82,11 @@ const Papers: React.FC = () => {
     toDate: null,
     search: ''
   });
+  
+  // Hybrid search state
+  const [useHybridSearch, setUseHybridSearch] = useState<boolean>(false);
+  const [semanticWeight, setSemanticWeight] = useState<number>(0.6);
+  const [keywordWeight, setKeywordWeight] = useState<number>(0.4);
 
   const loader = useRef<HTMLDivElement>(null); // For Intersection Observer
 
@@ -97,17 +102,40 @@ const Papers: React.FC = () => {
     setError(null);
     
     try {
-      const data = await papersApi.getPapers(
-        page, 
-        size, 
-        'score', 
-        'desc',
-        appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
-        appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
-        appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
-        appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
-        appliedFilters.search || undefined
-      );
+      let data;
+      if (useHybridSearch && appliedFilters.search) {
+        // Use hybrid search when enabled and search query exists
+        const hybridData = await papersApi.hybridSearch(
+          appliedFilters.search,
+          page,
+          size,
+          semanticWeight,
+          keywordWeight,
+          0.3, // similarity threshold
+          appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
+          appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
+          appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
+          appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined
+        );
+        data = {
+          items: hybridData.results,
+          current_page: hybridData.current_page,
+          nextPage: hybridData.current_page < hybridData.total_pages ? hybridData.current_page + 1 : null
+        };
+      } else {
+        // Use regular search/filtering
+        data = await papersApi.getPapers(
+          page, 
+          size, 
+          'score', 
+          'desc',
+          appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
+          appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
+          appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
+          appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
+          appliedFilters.search || undefined
+        );
+      }
       setAllPapers(prevPapers => isInitialLoad ? data.items : [...prevPapers, ...data.items]);
       setCurrentPage(data.current_page + 1); // Prepare for the next page
       setHasNextPage(data.nextPage !== null);
@@ -123,7 +151,7 @@ const Papers: React.FC = () => {
     } else {
       setLoadingMore(false);
     }
-  }, [hasNextPage, initialLoadComplete, appliedFilters]);
+  }, [hasNextPage, initialLoadComplete, appliedFilters, useHybridSearch, semanticWeight, keywordWeight]);
 
   // Reset papers when filters change
   const resetAndFetch = useCallback(() => {
@@ -248,6 +276,14 @@ const Papers: React.FC = () => {
 
   const handleApplyFilters = () => {
     setAppliedFilters({ ...filters });
+    setShowFilters(false);
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleApplyFilters();
+    }
   };
 
   const handleResetFilters = () => {
@@ -339,7 +375,7 @@ const Papers: React.FC = () => {
               borderColor: 'divider',
               minHeight: '64px'
             }}>
-              <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+              <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
                 Historical Papers
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -377,26 +413,121 @@ const Papers: React.FC = () => {
                 borderColor: 'divider'
               }}>
                 <Card sx={{ borderRadius: 0, boxShadow: 'none', backgroundColor: 'transparent' }}>
-                  <CardContent sx={{ pb: 2 }}>
-                    <Typography variant="h6" gutterBottom>
+                  <CardContent sx={{ py: 2, px: 3 }}>
+                    <Typography variant="h6" sx={{ mb: 2 }}>
                       Filter Papers
                     </Typography>
                     
-                    <Grid container spacing={3}>
-                      {/* Search */}
-                      <Grid size={{ xs: 12 }}>
-                        <TextField
-                          fullWidth
-                          label="Search in title and abstract"
-                          value={filters.search}
-                          onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                          placeholder="Enter keywords..."
+                    {/* Search and Hybrid Toggle Row */}
+                    <Box sx={{ mb: 2 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Search in title and abstract"
+                        value={filters.search}
+                        onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                        onKeyDown={handleSearchKeyDown}
+                        placeholder="Enter keywords..."
+                        helperText={useHybridSearch ? "Hybrid search: combines semantic similarity with keyword matching" : "Keyword search only"}
+                        sx={{ mb: 1.5 }}
+                      />
+                      
+                      {/* Hybrid Search Toggle */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: useHybridSearch ? 1.5 : 0 }}>
+                        <input
+                          type="checkbox"
+                          id="hybrid-search-toggle"
+                          checked={useHybridSearch}
+                          onChange={(e) => setUseHybridSearch(e.target.checked)}
+                          style={{ margin: 0 }}
                         />
-                      </Grid>
+                        <label htmlFor="hybrid-search-toggle">
+                          <Typography variant="body2">
+                            Enable Hybrid Search (combines keyword + semantic similarity)
+                          </Typography>
+                        </label>
+                      </Box>
+                      
+                      {/* Weight Sliders - Compact Layout */}
+                      {useHybridSearch && (
+                        <Box sx={{ 
+                          display: 'flex', 
+                          gap: 3, 
+                          alignItems: 'center',
+                          pl: 2,
+                          py: 1,
+                          backgroundColor: 'action.hover',
+                          borderRadius: 1
+                        }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ minWidth: 'auto', fontSize: '0.75rem' }}>
+                            Weights:
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: '180px' }}>
+                            <Typography variant="caption" sx={{ minWidth: '70px', fontSize: '0.7rem' }}>
+                              Semantic: {semanticWeight}
+                            </Typography>
+                            <Slider
+                              value={semanticWeight}
+                              onChange={(_, newValue) => {
+                                const newSemantic = newValue as number;
+                                setSemanticWeight(newSemantic);
+                                setKeywordWeight(Number((1 - newSemantic).toFixed(2)));
+                              }}
+                              min={0}
+                              max={1}
+                              step={0.1}
+                              size="small"
+                              sx={{ 
+                                flex: 1,
+                                '& .MuiSlider-markLabel': { 
+                                  fontSize: '0.6rem'
+                                }
+                              }}
+                              marks={[
+                                { value: 0, label: '0' },
+                                { value: 0.5, label: '0.5' },
+                                { value: 1, label: '1' }
+                              ]}
+                            />
+                          </Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: '180px' }}>
+                            <Typography variant="caption" sx={{ minWidth: '70px', fontSize: '0.7rem' }}>
+                              Keyword: {keywordWeight}
+                            </Typography>
+                            <Slider
+                              value={keywordWeight}
+                              onChange={(_, newValue) => {
+                                const newKeyword = newValue as number;
+                                setKeywordWeight(newKeyword);
+                                setSemanticWeight(Number((1 - newKeyword).toFixed(2)));
+                              }}
+                              min={0}
+                              max={1}
+                              step={0.1}
+                              size="small"
+                              sx={{ 
+                                flex: 1,
+                                '& .MuiSlider-markLabel': { 
+                                  fontSize: '0.6rem'
+                                }
+                              }}
+                              marks={[
+                                { value: 0, label: '0' },
+                                { value: 0.5, label: '0.5' },
+                                { value: 1, label: '1' }
+                              ]}
+                            />
+                          </Box>
+                        </Box>
+                      )}
+                    </Box>
 
-                      {/* Score Range */}
-                      <Grid size={{ xs: 12, md: 6 }}>
-                        <Typography gutterBottom>Score Range: {filters.minScore} - {filters.maxScore}</Typography>
+                    {/* Score Range and Date Range Row */}
+                    <Grid container spacing={2} sx={{ mb: 2 }}>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Typography variant="body2" sx={{ mb: 1 }}>
+                          Score Range: {filters.minScore} - {filters.maxScore}
+                        </Typography>
                         <Slider
                           value={[filters.minScore, filters.maxScore]}
                           onChange={(_, newValue) => {
@@ -407,6 +538,12 @@ const Papers: React.FC = () => {
                           min={0}
                           max={10}
                           step={0.1}
+                          size="small"
+                          sx={{ 
+                            '& .MuiSlider-markLabel': { 
+                              fontSize: '0.7rem'
+                            }
+                          }}
                           marks={[
                             { value: 0, label: '0' },
                             { value: 5, label: '5' },
@@ -414,33 +551,31 @@ const Papers: React.FC = () => {
                           ]}
                         />
                       </Grid>
-
-                      {/* Date Range */}
-                      <Grid size={{ xs: 12, md: 3 }}>
+                      <Grid size={{ xs: 12, md: 4 }}>
                         <DatePicker
                           label="From Date"
                           value={filters.fromDate}
                           onChange={(newValue) => setFilters(prev => ({ ...prev, fromDate: newValue }))}
-                          slotProps={{ textField: { fullWidth: true } }}
+                          slotProps={{ textField: { fullWidth: true, size: 'small' } }}
                         />
                       </Grid>
-                      <Grid size={{ xs: 12, md: 3 }}>
+                      <Grid size={{ xs: 12, md: 4 }}>
                         <DatePicker
                           label="To Date"
                           value={filters.toDate}
                           onChange={(newValue) => setFilters(prev => ({ ...prev, toDate: newValue }))}
-                          slotProps={{ textField: { fullWidth: true } }}
+                          slotProps={{ textField: { fullWidth: true, size: 'small' } }}
                           minDate={filters.fromDate || undefined}
                         />
                       </Grid>
                     </Grid>
 
                     {/* Filter Actions */}
-                    <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                      <Button variant="outlined" onClick={handleResetFilters} startIcon={<ClearIcon />}>
+                    <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                      <Button variant="outlined" size="small" onClick={handleResetFilters} startIcon={<ClearIcon />}>
                         Reset
                       </Button>
-                      <Button variant="contained" onClick={handleApplyFilters}>
+                      <Button variant="contained" size="small" onClick={handleApplyFilters}>
                         Apply Filters
                       </Button>
                     </Box>

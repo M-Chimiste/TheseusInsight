@@ -265,6 +265,9 @@ class PaperApiResponse(BaseModel):
     url: str
     embedding_model: str
     similarity_score: Optional[float] = Field(default=None, description="Semantic similarity score when returned from similarity search")
+    semantic_score: Optional[float] = Field(default=None, description="Semantic similarity score in hybrid search")
+    keyword_score: Optional[float] = Field(default=None, description="Keyword matching score in hybrid search")
+    hybrid_score: Optional[float] = Field(default=None, description="Combined hybrid search score")
 
 class PaginatedPapersResponse(PaginatedResponse): # Inherit from existing PaginatedResponse
     items: List[PaperApiResponse]
@@ -288,6 +291,27 @@ class SimilarPapersResponse(BaseModel):
     reference_paper: PaperApiResponse
     similar_papers: List[PaperApiResponse]
     total_similar: int
+
+class HybridSearchRequest(BaseModel):
+    query_text: str = Field(..., description="Search query text")
+    page: int = Field(1, gt=0, description="Page number")
+    page_size: int = Field(10, gt=0, le=100, description="Number of results per page")
+    semantic_weight: float = Field(0.6, ge=0.0, le=1.0, description="Weight for semantic similarity")
+    keyword_weight: float = Field(0.4, ge=0.0, le=1.0, description="Weight for keyword matching")
+    similarity_threshold: float = Field(0.3, ge=0.0, le=1.0, description="Minimum semantic similarity threshold")
+    min_score: Optional[float] = Field(None, description="Minimum paper score filter")
+    max_score: Optional[float] = Field(None, description="Maximum paper score filter")
+    from_date: Optional[str] = Field(None, description="Start date filter (YYYY-MM-DD)")
+    to_date: Optional[str] = Field(None, description="End date filter (YYYY-MM-DD)")
+
+class HybridSearchResponse(BaseModel):
+    query_text: str
+    results: List[PaperApiResponse]
+    total_results: int
+    total_pages: int
+    current_page: int
+    semantic_weight: float
+    keyword_weight: float
 
 # Removed the conflicting/simpler NodeStatus definition that was here.
 # class NodeStatus(BaseModel):

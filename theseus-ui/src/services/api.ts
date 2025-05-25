@@ -181,9 +181,19 @@ export interface PaginatedPapersResponse {
 }
 
 export interface SimilarPapersResponse {
-  reference_paper: PaperApiResponse;
-  similar_papers: PaperApiResponse[];
-  total_similar: number;
+    reference_paper: PaperApiResponse;
+    similar_papers: PaperApiResponse[];
+    total_similar: number;
+}
+
+export interface HybridSearchResponse {
+    query_text: string;
+    results: PaperApiResponse[];
+    total_results: number;
+    total_pages: number;
+    current_page: number;
+    semantic_weight: number;
+    keyword_weight: number;
 }
 
 // Podcast History API functions
@@ -244,6 +254,35 @@ export const papersApi = {
         const response: AxiosResponse<SimilarPapersResponse> = await api.get<SimilarPapersResponse>(`/papers/${paperId}/similar`, {
             params
         });
+        return response.data;
+    },
+
+    hybridSearch: async (
+        queryText: string,
+        page: number = 1,
+        pageSize: number = 10,
+        semanticWeight: number = 0.6,
+        keywordWeight: number = 0.4,
+        similarityThreshold: number = 0.3,
+        minScore?: number,
+        maxScore?: number,
+        fromDate?: string,
+        toDate?: string
+    ): Promise<HybridSearchResponse> => {
+        const requestBody = {
+            query_text: queryText,
+            page,
+            page_size: pageSize,
+            semantic_weight: semanticWeight,
+            keyword_weight: keywordWeight,
+            similarity_threshold: similarityThreshold,
+            min_score: minScore,
+            max_score: maxScore,
+            from_date: fromDate,
+            to_date: toDate
+        };
+
+        const response: AxiosResponse<HybridSearchResponse> = await api.post<HybridSearchResponse>('/papers/hybrid-search', requestBody);
         return response.data;
     },
 }; 

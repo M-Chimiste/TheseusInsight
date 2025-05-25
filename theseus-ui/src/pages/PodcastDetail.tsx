@@ -67,7 +67,7 @@ const PodcastDetail: React.FC = () => {
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Card>
         <CardContent>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600 }}>
+          <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
             {podcast.title}
           </Typography>
           <Typography variant="subtitle1" color="text.secondary" gutterBottom>

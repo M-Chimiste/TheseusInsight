@@ -1,4 +1,4 @@
-# Theseus Insight – Frontend ⇄ Backend API Contract (v0.1)
+# Theseus Insight – Frontend ⇄ Backend API Contract (v0.2)
 
 > **Purpose**  Map every HTTP/WebSocket call issued by the current frontend so the backend can expose matching endpoints with the correct shapes. All routes are *relative to the FastAPI root* (e.g. `http://localhost:8000`). Status codes shown are what the frontend expects – stricter codes are fine as long as `response.ok` is **true** in success cases.
 
@@ -16,15 +16,24 @@
 | **Podcast**                       | `POST`   | `/api/podcast/generate`             | `multipart/form‑data`                                       | `{ taskId: string }`  |
 |                                   | `WS`     | `/ws/podcast/{taskId}`              | –                                                           | `RunStatus` stream    |
 | **Papers**                        | `GET`    | `/api/papers`                       | `page, score, sort_field, sort_direction, search, from, to` | `Paginated<Paper>`    |
-| **Runs**                          | `GET`    | `/api/runs`                         | `page, sort_field, sort_direction, from, to`                | `Paginated<Run>`      |
-|                                   | `DELETE` | `/api/runs/{runId}/artifact`        | –                                                           | *(empty / 204)*       |
-| **Settings – orchestration**      | `GET`    | `/api/settings/orchestration`       | –                                                           | `OrchestrationConfig` |
-|                                   | `PUT`    | `/api/settings/orchestration`       | `OrchestrationConfig`                                       | *(empty / 204)*       |
+| **Runs**                        | `GET`    | `/api/runs`                | `page, sort_field, sort_direction, from, to`                | `Paginated<Run>`      |
+|                                 | `DELETE` | `/api/runs/{runId}/artifact`     | –                                                           | *(empty / 204)*       |
+| **Logs**                        | `GET`    | `/api/logs`                | `from_date, to_date, limit`                                 | `LogEntry[]`          |
+| **Podcasts History**            | `GET`    | `/api/podcasts/history`    | –                                                           | `PodcastListItem[]`   |
+|                                 | `GET`    | `/api/podcasts/history/{id}` | –                                                           | `PodcastDetail`       |
+| **Visualizer**                  | `POST`   | `/api/actions/run-visualizer-pipeline` | `multipart/form‑data`                                       | `{ taskId: string }`  |
+|                                 | `WS`     | `/ws/visualizer/{taskId}`  | –                                                           | `RunStatus` stream    |
+| **Task Management**             | `GET`    | `/api/tasks/{taskId}/status` | –                                                           | `TaskStatus`          |
+|                                 | `GET`    | `/api/tasks/active`        | `task_types`                                               | `{ active_tasks: Task[] }` |
+|                                 | `GET`    | `/api/tasks/{taskId}/result` | –                                                           | object                |
+|                                 | `POST`   | `/api/tasks/{taskId}/abort` | –                                                           | `{ status: string }`  |
+|                                 | `GET`    | `/api/tasks/{taskId}/download/{fileType}` | –                                                       | binary                |
+| **Settings – orchestration**    | `GET`    | `/api/settings/orchestration`       | –                                                           | `OrchestrationConfig` |
+|                                 | `PUT`    | `/api/settings/orchestration`       | `OrchestrationConfig`                                       | *(empty / 204)*       |
 | **Settings – research interests** | `PUT`    | `/api/settings/research-interests`  | `{ interests: string }`                                     | *(empty / 204)*       |
-| **Settings – visualizer**         | `PUT`    | `/api/settings/visualizer-settings` | `VisualizerSettings`                                        | *(empty / 204)*       |
-| **Settings – email recipients**   | `PUT`    | `/api/settings/email-recipients`    | `{ recipients: string[] }`                                  | *(empty / 204)*       |
-|                                   | `POST`   | `/api/settings/send-test-email`     | –                                                           | *(empty / 204)*       |
-
+| **Settings – visualizer**       | `PUT`    | `/api/settings/visualizer-settings` | `VisualizerSettings`                                        | *(empty / 204)*       |
+| **Settings – email recipients** | `PUT`    | `/api/settings/email-recipients`    | `{ recipients: string[] }`                                  | *(empty / 204)*       |
+|                                 | `POST`   | `/api/settings/send-test-email`     | –                                                           | *(empty / 204)*       |
 ---
 
 ## 2  Shared Type Definitions (as used in the frontend)
@@ -244,4 +253,4 @@ Frontend treats any non‑OK response as failure and shows a toast. Prefer retur
 
 ---
 
-*Last updated: 2025‑05‑14 – generated automatically from the React codebase.*
+*Last updated: 2025‑05‑25 – generated automatically from the React codebase.*

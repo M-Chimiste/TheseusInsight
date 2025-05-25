@@ -55,7 +55,7 @@ const RunHistory: React.FC = () => {
     return (
         <LocalizationProvider dateAdapter={AdapterDateFns}>
             <Box sx={{ p: 3 }}>
-                <Typography variant="h4" gutterBottom>
+                <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
                     Run History
                 </Typography>
 

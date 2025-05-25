@@ -230,7 +230,7 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 - **Verification tools** - Compare source and target databases after migration
 - **Flexible import options** - Support for selective imports and batch processing
 
-For detailed documentation and advanced usage examples, see [`theseus_insight/utils/db_migration/README.md`](theseus_insight/utils/db_migration/README.md).
+For detailed documentation and advanced usage examples, see [`theseus_insight/docs/db_migration_README.md`](theseus_insight/docs/db_migration_README.md).
 
 ---
 

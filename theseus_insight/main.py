@@ -125,9 +125,8 @@ async def lifespan(app_instance: FastAPI):
         print("INFO:     TaskManager cleanup completed.")
         
         # Clean up WebSocket connections
-        if 'manager' in globals() and hasattr(globals()['manager'], 'active_connections'): 
-             for task_id in list(globals()['manager'].active_connections.keys()): 
-                await globals()['manager'].close_all(task_id)
+        if 'manager' in globals() and hasattr(globals()['manager'], 'cleanup_all'): 
+             await globals()['manager'].cleanup_all()
              print("INFO:     WebSocket connections closed.")
         else:
             print("Warning: WebSocket connection manager not found for shutdown.")
@@ -1182,12 +1181,19 @@ class ConnectionManager:
     async def close_all(self, task_id: str):
         """Close all connections for a task."""
         if task_id in self.active_connections:
-            for connection in self.active_connections[task_id]:
+            connections_to_close = self.active_connections[task_id].copy()
+            for connection in connections_to_close:
                 try:
                     await connection.close(code=1000)
                 except Exception:
                     pass
             del self.active_connections[task_id]
+    
+    async def cleanup_all(self):
+        """Close all active connections."""
+        task_ids = list(self.active_connections.keys())
+        for task_id in task_ids:
+            await self.close_all(task_id)
 
 manager = ConnectionManager()
 

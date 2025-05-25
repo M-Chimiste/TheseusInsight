@@ -27,6 +27,7 @@ class TaskManager:
         
     async def cleanup(self):
         """Clean up all asyncio resources."""
+        # First, notify all waiting consumers to exit
         for task_id, queues in self.status_updates.items():
             for queue in queues:
                 # Put a sentinel value to unblock any waiting consumers
@@ -34,6 +35,29 @@ class TaskManager:
                     queue.put_nowait(None)
                 except asyncio.QueueFull:
                     pass
+        
+        # Give a moment for consumers to process the sentinel values
+        await asyncio.sleep(0.1)
+        
+        # Now properly drain all queues to release semaphores
+        for task_id, queues in self.status_updates.items():
+            for queue in queues:
+                # Drain all remaining items from the queue
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                
+                # For Python 3.9+, try to close the queue
+                if hasattr(queue, '_close'):
+                    try:
+                        queue._close()
+                    except Exception:
+                        pass
+                # For older Python versions, we rely on draining the queue
+                # and letting garbage collection handle the cleanup
+        
         self.status_updates.clear()
         
     async def create_task(self, task_id: str, task_type: str, config: dict):
@@ -72,6 +96,20 @@ class TaskManager:
         """Unsubscribe from status updates."""
         if task_id in self.status_updates and queue in self.status_updates[task_id]:
             self.status_updates[task_id].remove(queue)
+            
+            # Drain the queue to release semaphores
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            
+            # For Python 3.9+, try to close the queue
+            if hasattr(queue, '_close'):
+                try:
+                    queue._close()
+                except Exception:
+                    pass
             
     async def update_task_status(
         self,
@@ -141,6 +179,22 @@ class TaskManager:
         # Clean up queues for completed/failed tasks
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
             if task_id in self.status_updates:
+                # Properly drain all queues for this task
+                for queue in self.status_updates[task_id]:
+                    # Drain any remaining items
+                    while not queue.empty():
+                        try:
+                            queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    
+                    # For Python 3.9+, try to close the queue
+                    if hasattr(queue, '_close'):
+                        try:
+                            queue._close()
+                        except Exception:
+                            pass
+                
                 del self.status_updates[task_id]
 
     def _progress_callback(self, task_id: str):

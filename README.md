@@ -229,7 +229,7 @@ The React interface provides an intuitive toggle for enabling hybrid search with
 - **Index Optimization**: GIN (Generalized Inverted Index) indexes on title, abstract, and combined search vectors for fast retrieval
 - **Automatic Migration**: Existing installations automatically gain BM25 capabilities through database schema updates
 
-See [docs/EMBEDDING_FUNCTIONALITY.md](docs/EMBEDDING_FUNCTIONALITY.md) for more details.
+See [docs/embedding_functionality_README.md](docs/embedding_functionality_README.md) for more details.
 ### Theseus Insight Run Orchestration
 - **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
 
@@ -302,6 +302,7 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 ## Credits
 
 - [paperswithcode.com](https://paperswithcode.com/) for research paper data.
+- [arxiv.org](https://arxiv.org/) for open access to research paper data.
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
 - [KokoroTTS](https://github.com/fakeyh/kokoro-tts), [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.

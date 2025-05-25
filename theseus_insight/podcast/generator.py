@@ -56,7 +56,7 @@ class PodcastGenerator:
         intro_music_path: str = None,
         pause_duration: float = 0.5,
         verbose: bool = False,
-        db_path: str = None
+        db_url: str = None
     ):
         """
         Set up the class with your default settings.
@@ -72,6 +72,7 @@ class PodcastGenerator:
             intro_music_path (str): Path to intro music file
             pause_duration (float): Duration of silence in seconds to add between major segments
             verbose (bool): Whether to print verbose output
+            db_url (str): PostgreSQL database connection URL
         """
         self.verbose = verbose
         self.text_model_config = text_model
@@ -80,8 +81,9 @@ class PodcastGenerator:
         self.intro_music_path = intro_music_path
         self.pause_duration = pause_duration
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
-        if self.db_path:
-            self.db = PaperDatabase(self.db_path)
+        self.db_url = db_url
+        if self.db_url:
+            self.db = PaperDatabase(self.db_url)
         else:
             self.db = None
         # Validate TTS provider
@@ -576,15 +578,31 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         """
         today = date.today()
         try:
-            podcast_record = Podcast(title=f"Theseus Insight Podcast Episode {today.strftime('%m-%d-%Y')}",
-                                    date=datetime.now().strftime("%Y-%m-%d"),
-                                    description=description,
-                                    script=dialog,
-                                    )
+            # Convert dialog to proper format for database storage
+            if hasattr(dialog, 'model_dump'):
+                # If it's a Pydantic model, get the dialogue data
+                script_data = dialog.model_dump()['dialogue']
+            elif hasattr(dialog, 'dialogue'):
+                # If it's a Dialogue object with dialogue attribute
+                script_data = [item.model_dump() if hasattr(item, 'model_dump') else item for item in dialog.dialogue]
+            else:
+                # Assume it's already in the right format
+                script_data = dialog
+            
+            podcast_record = Podcast(
+                title=f"Theseus Insight Podcast Episode {today.strftime('%m-%d-%Y')}",
+                date=datetime.now().strftime("%Y-%m-%d"),
+                description=description,
+                script=script_data,  # This will be properly serialized by the insert_podcast method
+            )
             self.db.insert_podcast(podcast_record)
+            if self.verbose:
+                print(f"Successfully inserted podcast record into database")
         except Exception as e:
             print(f"Error inserting podcast record: {e}")
-            pass
+            import traceback
+            if self.verbose:
+                traceback.print_exc()
 
 
     def regenerate_podcast_from_script(

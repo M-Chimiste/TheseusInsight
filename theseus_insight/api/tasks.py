@@ -322,7 +322,8 @@ class TaskManager:
                 speaker_1_speed=config.get("tts_model_config", {}).get("speaker_1_speed", 1.0),
                 speaker_2_speed=config.get("tts_model_config", {}).get("speaker_2_speed", 1.0),
                 intro_music_path=config.get("intro_music_path", None),
-                verbose=config.get("verbose", True) # Added verbose from config
+                verbose=config.get("verbose", True), # Added verbose from config
+                db_url=config.get("data_path", None)  # Pass the database URL
             )
             
             await self.update_task_status(

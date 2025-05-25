@@ -649,9 +649,17 @@ This quality-of-life improvement prevents duplicate papers from cluttering the d
 - Type-safe SelectChangeEvent handling
 
 ## Latest Update: 2024-12-19
-**Session Focus:** BM25-Enhanced Hybrid Search Implementation
+**Session Focus:** Database Migration & Podcast Generator PostgreSQL Update
 
 ### What Has Been Implemented
+
+#### ✅ Podcast Generator PostgreSQL Integration (CRITICAL FIX)
+- **Database Migration Completion**: Updated PodcastGenerator to use PostgreSQL instead of SQLite
+- **Parameter Rename**: Changed `db_path` to `db_url` to reflect PostgreSQL connection strings
+- **Improved Error Handling**: Enhanced database insertion with better error messages and debugging
+- **Script Serialization Fix**: Fixed podcast script storage to properly handle Pydantic dialogue objects
+- **Integration Updates**: Updated all instantiation points (TheseusInsight, TaskManager) to pass database URLs
+- **Backward Compatibility**: Maintained all existing functionality while switching to PostgreSQL
 
 #### ✅ BM25-Enhanced Hybrid Search (MAJOR UPGRADE)
 - **Database Schema Enhancement**: Added `search_vector`, `title_vector`, and `abstract_vector` columns to papers table
@@ -726,21 +734,24 @@ This quality-of-life improvement prevents duplicate papers from cluttering the d
 
 #### Latest Session (2024-12-19)
 ```
-✅ FIXED: Filter panel spacing and slider overlap issues
-✅ IMPLEMENTED: BM25-enhanced keyword search using PostgreSQL ts_rank_cd()
-✅ CREATED: Database migration system with search vector population
-✅ TESTED: Hybrid search showing improved keyword relevance scoring
-✅ DOCUMENTED: Comprehensive implementation guide and README updates
+✅ FIXED: Podcast Generator PostgreSQL integration issues
+✅ UPDATED: PodcastGenerator constructor to use db_url instead of db_path
+✅ IMPROVED: Database record insertion with proper script serialization
+✅ UPDATED: TheseusInsight class to pass database URL to PodcastGenerator
+✅ UPDATED: TaskManager to pass database URL to PodcastGenerator  
+✅ ENHANCED: Error handling and debugging in podcast database operations
 
 Issues Resolved:
-- Vector index creation handled gracefully (skipped for now due to dimension detection)
-- Transaction rollback issues fixed with proper error handling
-- Search vector auto-population working correctly for existing papers
+- Podcast generator was still expecting SQLite file paths instead of PostgreSQL URLs
+- Script serialization was not properly handling Pydantic dialogue objects
+- Database connections were failing due to incorrect parameter passing
+- Error handling was too basic and didn't provide useful debugging information
 
-Performance Improvements:
-- BM25 scoring: keyword_score now ranges 0.0-1.0+ vs previous binary 0/1
-- Query speed: GIN indexes provide fast full-text search
-- Relevance: Title matches properly weighted 2x higher than abstract matches
+Database Migration Completion:
+- All components now consistently use PostgreSQL connection strings
+- Podcast generation now properly saves to PostgreSQL database
+- Maintains full backward compatibility with existing podcast functionality
+- Enhanced error messages for easier debugging of database issues
 ```
 
 #### Previous Sessions Summary

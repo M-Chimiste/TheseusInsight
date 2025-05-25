@@ -267,7 +267,8 @@ class TheseusInsight:
                 speaker_2_speed=self.orchestration_config.get('tts_model', {}).get('speaker_2_speed', 1.0),
                 instructions_template=INSTRUCTION_TEMPLATES,
                 intro_music_path=self.intro_music_path,
-                verbose=self.verbose
+                verbose=self.verbose,
+                db_url=data_path  # Pass the database URL
             )
         # 4) Arxiv search categories
         self.arxiv_main_category = self.orchestration_config['arxiv_search_categories']['main_category']

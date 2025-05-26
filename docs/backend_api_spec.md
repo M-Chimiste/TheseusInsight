@@ -78,6 +78,8 @@
 | **GET** | `/api/settings/visualizer-settings` | Get default visualizer settings |
 | **PUT** | `/api/settings/visualizer-settings` | Update visualizer settings |
 | **POST** | `/api/settings/send-test-email` | Send test email |
+| **GET** | `/api/settings/credentials` | Retrieve API credentials |
+| **PUT** | `/api/settings/credentials` | Update API credentials |
 
 ### 3.6 Runs & Logs
 | Method | Path | Purpose |

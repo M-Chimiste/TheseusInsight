@@ -634,15 +634,16 @@ const Settings: React.FC = () => {
               <TextField
                 key={key}
                 label={key}
-                type={showCreds[key] ? 'text' : 'password'}
+                type={key === 'OLLAMA_URL' ? 'text' : (showCreds[key] ? 'text' : 'password')}
                 value={credValues[key] || ''}
                 onChange={e => setCredValues({ ...credValues, [key]: e.target.value })}
                 InputProps={{
-                  endAdornment: (
-                    <IconButton onClick={() => setShowCreds({ ...showCreds, [key]: !showCreds[key] })}>
-                      {showCreds[key] ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                    </IconButton>
-                  )
+                  endAdornment:
+                    key === 'OLLAMA_URL' ? null : (
+                      <IconButton onClick={() => setShowCreds({ ...showCreds, [key]: !showCreds[key] })}>
+                        {showCreds[key] ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                      </IconButton>
+                    )
                 }}
               />
             ))}

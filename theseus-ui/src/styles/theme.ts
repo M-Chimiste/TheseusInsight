@@ -1,20 +1,30 @@
 import { createTheme } from '@mui/material/styles';
 
+const baseTheme = {
+  typography: {
+    fontFamily: '"Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+};
+
 export const lightTheme = createTheme({
+  ...baseTheme,
   palette: {
     mode: 'light',
     primary: {
-      main: '#1e3a8a',
-      light: '#1e40af',
-      dark: '#1e3a8a',
+      main: '#6366F1',
+      light: '#818CF8',
+      dark: '#4F46E5',
+    },
+    secondary: {
+      main: '#EC4899',
     },
     background: {
-      default: '#ffffff',
-      paper: '#ffffff',
+      default: '#F9FAFB',
+      paper: '#FFFFFF',
     },
     text: {
       primary: '#111827',
-      secondary: '#4b5563',
+      secondary: '#4B5563',
     },
   },
   components: {
@@ -38,20 +48,24 @@ export const lightTheme = createTheme({
 });
 
 export const darkTheme = createTheme({
+  ...baseTheme,
   palette: {
     mode: 'dark',
     primary: {
-      main: '#60a5fa',
-      light: '#93c5fd',
-      dark: '#60a5fa',
+      main: '#8B5CF6',
+      light: '#A78BFA',
+      dark: '#7C3AED',
+    },
+    secondary: {
+      main: '#EC4899',
     },
     background: {
-      default: '#111827',
-      paper: '#1f2937',
+      default: '#0F172A',
+      paper: '#1E293B',
     },
     text: {
-      primary: '#f3f4f6',
-      secondary: '#9ca3af',
+      primary: '#F8FAFC',
+      secondary: '#94A3B8',
     },
   },
   components: {

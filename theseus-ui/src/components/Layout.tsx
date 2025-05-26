@@ -29,6 +29,7 @@ import {
   ChevronLeft as ChevronLeftIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
+import { useTheme } from '@mui/material/styles';
 import { useLayout } from '../contexts/LayoutContext';
 
 interface LayoutProps {
@@ -40,6 +41,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation();
   const { isDarkMode, toggleTheme } = useCustomTheme();
   const { isDrawerOpen, currentDrawerWidth, toggleDrawer } = useLayout();
+  const theme = useTheme();
+
+  const drawerGradient = isDarkMode
+    ? 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)'
+    : `linear-gradient(180deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`;
 
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
@@ -59,8 +65,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         sx={{
           width: `calc(100% - ${currentDrawerWidth}px)`,
           ml: `${currentDrawerWidth}px`,
-          bgcolor: 'background.paper',
+          bgcolor: isDarkMode ? 'rgba(15,23,42,0.8)' : 'rgba(255,255,255,0.8)',
           color: 'text.primary',
+          backdropFilter: 'blur(6px)',
           transition: 'width 0.3s, margin 0.3s',
         }}
       >
@@ -88,7 +95,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           '& .MuiDrawer-paper': {
             width: currentDrawerWidth,
             boxSizing: 'border-box',
-            background: 'linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%)',
+            background: drawerGradient,
             color: 'white',
             transition: 'width 0.3s',
             overflowX: 'hidden',

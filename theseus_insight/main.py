@@ -25,6 +25,20 @@ from .api.models import (
 )
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
+from . import theseus_insight as ti_module
+
+# List of credential environment variable names
+CREDENTIAL_KEYS = [
+    "GOOGLE_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GMAIL_SENDER_ADDRESS",
+    "GMAIL_APP_PASSWORD",
+    "OLLAMA_URL",
+    "CLIENT_ID",
+    "PROJECT_ID",
+    "CLIENT_SECRET",
+]
 import asyncio
 
 # Determine base path for static files
@@ -59,6 +73,17 @@ async def lifespan(app_instance: FastAPI):
         os.makedirs("data/podcasts", exist_ok=True)
         os.makedirs("data/visualizations", exist_ok=True)
         os.makedirs("data/temp", exist_ok=True)
+
+        # Load credentials from DB (encrypted) and apply to environment
+        for key in CREDENTIAL_KEYS:
+            if key == "OLLAMA_URL":
+                val = db.get_setting(key)
+            else:
+                val = db.get_secret_setting(key)
+            if val:
+                os.environ[key] = val
+                if hasattr(ti_module, key):
+                    setattr(ti_module, key, val)
         
         required_env_vars = [
             "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GMAIL_SENDER_ADDRESS",
@@ -695,8 +720,42 @@ async def send_test_email():
             subject="Theseus Insight - Test Email"
         )
         comm.send_email()
-        
+
         return {"status": "success", "message": "Test email sent successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Credentials Management --- #
+@app.get("/api/settings/credentials")
+async def get_credentials():
+    """Return API credentials from DB or environment."""
+    try:
+        creds = {}
+        for key in CREDENTIAL_KEYS:
+            if key == "OLLAMA_URL":
+                val = db.get_setting(key) or os.getenv(key, "")
+            else:
+                val = db.get_secret_setting(key) or os.getenv(key, "")
+            creds[key] = val
+        return creds
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/settings/credentials")
+async def update_credentials(data: Dict[str, str]):
+    """Update credentials in DB and environment."""
+    try:
+        for key, value in data.items():
+            if key not in CREDENTIAL_KEYS:
+                continue
+            if key == "OLLAMA_URL":
+                db.set_setting(key, value)
+            else:
+                db.set_secret_setting(key, value)
+            os.environ[key] = value
+            if hasattr(ti_module, key):
+                setattr(ti_module, key, value)
+        return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

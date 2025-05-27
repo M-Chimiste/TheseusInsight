@@ -104,6 +104,7 @@ If you prefer running locally without Docker:
    npm run build
    ```
 3. Configure environment variables as shown below.
+4. Run `scripts/setup_database.sh` to create the default PostgreSQL database and role.
 
 ---
 

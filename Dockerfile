@@ -23,6 +23,8 @@ ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 ENV POETRY_NO_INTERACTION 1
 ENV RUNNING_IN_DOCKER true
+ENV OLLAMA_PASSTHROUGH true
+ENV ALLOW_DB_CONNECTION false
 
 # Install system dependencies
 # ffmpeg is optional, include if your backend directly processes audio/video with it
@@ -31,6 +33,7 @@ RUN apt-get update && \
     ffmpeg \
     fonts-noto-cjk \
     fontconfig \
+    postgresql-client \
     # Add any other system dependencies your application might need
     # For example, if your app uses libraries that need compilation tools: build-essential
     && apt-get clean && \
@@ -50,6 +53,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Adjust these COPY commands based on your project structure
 COPY ./theseus_insight ./theseus_insight
 COPY ./config ./config
+COPY ./scripts/wait-for-db.sh ./wait-for-db.sh
 # main.py is inside theseus_insight directory, not in root
 # COPY main.py .
 # Add any other necessary files/folders for the backend (e.g., scripts, utils)
@@ -63,10 +67,13 @@ RUN mkdir -p /app/data/newsletters /app/data/podcasts /app/data/visualizations /
 # Example: if DB_PATH is data/papers.db, then /app/data is fine.
 # If DB_PATH is data/db/papers.db, then RUN mkdir -p /app/data/db
 
+# Make the wait script executable
+RUN chmod +x ./wait-for-db.sh
+
 # Expose the port the app runs on
 EXPOSE 8000
 
 # Command to run the application
 # The host 0.0.0.0 makes it accessible from outside the container
 # Updated to use the correct module path since main.py is in theseus_insight directory
-CMD ["uvicorn", "theseus_insight.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["./wait-for-db.sh", "uvicorn", "theseus_insight.main:app", "--host", "0.0.0.0", "--port", "8000"] 

@@ -85,6 +85,28 @@ async def lifespan(app_instance: FastAPI):
                 if hasattr(ti_module, key):
                     setattr(ti_module, key, val)
         
+        # Handle OLLAMA_URL passthrough for Docker networking
+        ollama_passthrough = os.getenv("OLLAMA_PASSTHROUGH", "true").lower() == "true"
+        is_running_in_docker = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
+        ollama_url = os.getenv("OLLAMA_URL", "")
+        
+        if ollama_passthrough and is_running_in_docker and ollama_url:
+            # Replace localhost, 127.0.0.1, or ::1 with host.docker.internal for Docker containers
+            import re
+            # Match localhost, 127.0.0.1, or ::1 with optional port
+            localhost_pattern = r'(https?://)(?:localhost|127\.0\.0\.1|::1)(:(\d+))?'
+            if re.search(localhost_pattern, ollama_url):
+                # Replace with host.docker.internal
+                new_ollama_url = re.sub(localhost_pattern, r'\1host.docker.internal\2', ollama_url)
+                os.environ["OLLAMA_URL"] = new_ollama_url
+                if hasattr(ti_module, "OLLAMA_URL"):
+                    setattr(ti_module, "OLLAMA_URL", new_ollama_url)
+                print(f"INFO:     OLLAMA_PASSTHROUGH enabled: Modified OLLAMA_URL from {ollama_url} to {new_ollama_url}")
+            else:
+                print(f"INFO:     OLLAMA_PASSTHROUGH enabled but OLLAMA_URL doesn't use localhost: {ollama_url}")
+        elif not ollama_passthrough and is_running_in_docker:
+            print("INFO:     OLLAMA_PASSTHROUGH disabled: Using container networking for Ollama")
+        
         required_env_vars = [
             "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GMAIL_SENDER_ADDRESS",
             "CLIENT_SECRET", "PROJECT_ID", "GMAIL_APP_PASSWORD"
@@ -1605,6 +1627,26 @@ if STATIC_ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_ASSETS_DIR), name="assets")
 else:
     print(f"WARNING: Static assets directory not found at {STATIC_ASSETS_DIR}. Frontend may not be served correctly if running locally without a build.")
+
+# Mount the entire static frontend directory to serve public assets like logo.png
+if STATIC_FILES_BASE_DIR.exists():
+    # Mount with a specific route pattern to avoid conflicts
+    app.mount("/static", StaticFiles(directory=STATIC_FILES_BASE_DIR), name="static")
+    
+    # Also serve specific public assets directly at root level
+    @app.get("/logo.png")
+    async def serve_logo():
+        logo_path = STATIC_FILES_BASE_DIR / "logo.png"
+        if logo_path.exists():
+            return FileResponse(logo_path, media_type="image/png")
+        raise HTTPException(status_code=404, detail="Logo not found")
+    
+    @app.get("/favicon.ico")
+    async def serve_favicon():
+        favicon_path = STATIC_FILES_BASE_DIR / "favicon.ico"
+        if favicon_path.exists():
+            return FileResponse(favicon_path, media_type="image/x-icon")
+        raise HTTPException(status_code=404, detail="Favicon not found")
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):

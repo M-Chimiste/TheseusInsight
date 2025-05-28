@@ -1,0 +1,25 @@
+# Docker Compose override file for enabling external database access
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up
+# 
+# This override file exposes the PostgreSQL database port to allow external connections
+# for database migration, data population, debugging, or administration tasks.
+#
+# SECURITY WARNING: Only use this in development environments or secure networks.
+# The database will be accessible from the host machine and potentially other network clients.
+
+services:
+  db:
+    ports:
+      # Expose PostgreSQL on host port 5433 to avoid conflicts with local PostgreSQL
+      # Connect using: psql -h localhost -p 5433 -U theseus -d theseusdb
+      - "5433:5432"
+    environment:
+      # Allow connections from all addresses (required for external access)
+      # This is only set when external access is explicitly enabled
+      POSTGRES_HOST_AUTH_METHOD: md5
+    # Optional: Add additional configuration for external access
+    command: >
+      postgres
+      -c listen_addresses='*'
+      -c max_connections=100
+      -c shared_preload_libraries=vector 

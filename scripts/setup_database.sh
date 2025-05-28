@@ -1,36 +1,15 @@
 #!/usr/bin/env bash
-# Set up PostgreSQL role and database for Theseus Insight
+# Set up PostgreSQL extensions for Theseus Insight in Docker environment
 
 set -euo pipefail
 
-DB_USER="${DB_USER:-theseus}"
-DB_PASS="${DB_PASS:-theseus}"
-DB_NAME="${DB_NAME:-theseusdb}"
+DB_USER="${POSTGRES_USER:-theseus}"
+DB_PASS="${POSTGRES_PASSWORD:-theseus}"
+DB_NAME="${POSTGRES_DB:-theseusdb}"
 
-# Commands will be executed as the postgres superuser
-# Usage: run this script with a superuser account that can run `psql`
+echo "Setting up pgvector extension for user: $DB_USER, database: $DB_NAME"
 
-psql -v ON_ERROR_STOP=1 <<SQL
-DO
-\$
-BEGIN
-   IF NOT EXISTS (
-      SELECT FROM pg_catalog.pg_roles WHERE rolname = '${DB_USER}'
-   ) THEN
-      CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASS}';
-      ALTER ROLE ${DB_USER} CREATEDB;
-   END IF;
-END
-\$;
+# Enable pgvector extension on the database (user and database already created by Docker)
+psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
-IF NOT EXISTS (
-    SELECT FROM pg_database WHERE datname = '${DB_NAME}'
-) THEN
-    CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-END IF;
-SQL
-
-# Enable pgvector extension on the new database
-psql -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-echo "Database \"$DB_NAME\" and role \"$DB_USER\" are ready."
+echo "pgvector extension enabled for database \"$DB_NAME\"."

@@ -16,6 +16,8 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Running the API](#running-the-api)
 - [Running the Frontend](#running-the-frontend)
 - [External Database Access](#external-database-access)
+- [External Database Access](#external-database-access)
+- [Custom Data Storage Location](#custom-data-storage-location)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)
@@ -239,6 +241,137 @@ For production deployments, use secure connection methods such as:
 - SSH port forwarding
 - Database connection pools with authentication
 - Network firewalls and access controls
+
+---
+
+## Custom Data Storage Location
+
+By default, Theseus Insight stores data in the local `./data` directory and uses Docker named volumes for the PostgreSQL database. For installations with limited internal storage, you can redirect all data to an external drive or custom location.
+
+### Quick Setup for External Storage
+
+**Option 1: Using the helper script (recommended)**
+```bash
+# Start with data stored on external drive
+./scripts/start-with-external-storage.sh
+
+# Or specify a custom path
+./scripts/start-with-external-storage.sh /path/to/your/storage
+
+# Run in detached mode
+./scripts/start-with-external-storage.sh /Volumes/nyx/theseus_insight_data -d
+```
+
+**Option 2: Manual Docker Compose override**
+```bash
+# Set the storage path
+export EXTERNAL_DATA_PATH=/Volumes/nyx/theseus_insight_data
+
+# Start with external storage configuration
+docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up --build
+```
+
+**Option 3: Environment variable in .env file**
+```bash
+# Add to your .env file
+EXTERNAL_DATA_PATH=/Volumes/nyx/theseus_insight_data
+
+# Then start with the external storage override
+docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up --build
+```
+
+### Storage Structure
+
+When using external storage, the following directory structure is created:
+
+```
+/Volumes/nyx/theseus_insight_data/
+├── app_data/                    # Application-generated files
+│   ├── newsletters/             # Generated newsletters
+│   ├── podcasts/               # Generated podcast audio/video
+│   ├── visualizations/         # Generated visualizations
+│   └── temp/                   # Temporary processing files
+└── postgres_data/              # PostgreSQL database files
+    ├── base/                   # Database tables and indexes
+    ├── global/                 # Cluster-wide data
+    ├── pg_wal/                 # Write-ahead log files
+    └── ...                     # Other PostgreSQL system files
+```
+
+### Platform-Specific Paths
+
+**macOS External Drive:**
+```bash
+/Volumes/your_drive_name/theseus_insight_data
+```
+
+**Linux External Drive:**
+```bash
+/mnt/external_drive/theseus_insight_data
+# or
+/media/username/drive_name/theseus_insight_data
+```
+
+**Windows External Drive:**
+```bash
+D:\theseus_insight_data
+# or
+E:\storage\theseus_insight_data
+```
+
+### Configuration Template
+
+Use the provided template to set up your environment:
+
+```bash
+# Copy the template to your .env file
+cp config/external-storage.env.template .env
+
+# Edit .env to set your desired path
+nano .env  # or use your preferred editor
+```
+
+### Data Migration from Default Location
+
+If you've already been running Theseus Insight and want to move existing data to external storage:
+
+```bash
+# Stop the application
+docker-compose down
+
+# Create external storage directory
+mkdir -p /Volumes/nyx/theseus_insight_data/{app_data,postgres_data}
+
+# Copy existing application data
+cp -r ./data/* /Volumes/nyx/theseus_insight_data/app_data/
+
+# Export existing database (if you have data)
+docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_insight_data/postgres_data:/backup alpine sh -c "cp -r /data/* /backup/"
+
+# Start with external storage
+./scripts/start-with-external-storage.sh
+```
+
+### Benefits of External Storage
+
+- **Space Management**: Keep large files (podcasts, visualizations) off limited internal storage
+- **Performance**: Can use faster external SSDs for improved I/O performance
+- **Portability**: Easily move data between machines by moving the external drive
+- **Backup**: Simpler to backup data by cloning the external drive
+- **Scalability**: Easy to upgrade storage capacity without affecting the main system
+
+### Important Considerations
+
+⚠️ **External Drive Requirements:**
+- Must be mounted and accessible before starting the application
+- Requires read/write permissions for the Docker daemon
+- Should use a reliable connection (avoid USB hubs for large data operations)
+- Consider using SSDs for better performance with database operations
+
+⚠️ **macOS Specific Notes:**
+- External drives are typically mounted under `/Volumes/`
+- NTFS drives may need third-party drivers for write access
+- Consider using APFS or exFAT for better macOS compatibility
 
 ---
 

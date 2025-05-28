@@ -50,7 +50,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Adjust these COPY commands based on your project structure
 COPY ./theseus_insight ./theseus_insight
 COPY ./config ./config
-COPY main.py .
+# main.py is inside theseus_insight directory, not in root
+# COPY main.py .
 # Add any other necessary files/folders for the backend (e.g., scripts, utils)
 
 # Copy built frontend from the builder stage
@@ -67,4 +68,5 @@ EXPOSE 8000
 
 # Command to run the application
 # The host 0.0.0.0 makes it accessible from outside the container
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Updated to use the correct module path since main.py is in theseus_insight directory
+CMD ["uvicorn", "theseus_insight.main:app", "--host", "0.0.0.0", "--port", "8000"] 

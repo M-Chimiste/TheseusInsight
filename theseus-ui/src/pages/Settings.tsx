@@ -33,7 +33,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import taxonomy from '../../../config/arxiv_taxonomy.json';
+import taxonomy from '../arxiv_taxonomy.json';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -402,21 +402,28 @@ const Settings: React.FC = () => {
         <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
           {error}
         </Alert>
-      )}
+      </Snackbar>
+
+      <Snackbar
+        open={Boolean(success)}
+        autoHideDuration={4000}
+        onClose={() => setSuccess(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert onClose={() => setSuccess(null)} severity="success" sx={{ width: '100%' }}>
+          {success}
+        </Alert>
+      </Snackbar>
+
       {appPasswordFailed && (
         <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setAppPasswordFailed(false)}>
           Gmail authentication failed. Your application password didn't work. Please enter your credentials again.
         </Alert>
       )}
-      {success && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
-          {success}
-        </Alert>
-      </Snackbar>
 
-        <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
-          <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> Settings
-        </Typography>
+      <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
+        <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> Settings
+      </Typography>
 
       <Card sx={{ mb: 4 }}>
         <CardContent>

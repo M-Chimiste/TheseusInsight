@@ -1,4 +1,3 @@
-
 import datetime
 import gzip
 import json
@@ -26,6 +25,8 @@ class PapersWithCode:
             start_date (str, optional): the string date for the time period selected (MM-DD-YYYY). Defaults to None.
             end_date (srr, optional): the string date for the time period selected (MM-DD-YYYY). Defaults to None.
 
+        If both `start_date` and `end_date` are omitted, the method returns the entire dataset instead of raising an error.
+
         Raises:
             ValueError: Failure to provide a start_date
             ValueError: Failure to provide an end_date
@@ -34,15 +35,23 @@ class PapersWithCode:
             df: dataframe with the requisite queried data based on date.
         """
 
-        if not start_date:
-            start_date=self.start_date
-            if not start_date:
-                raise ValueError("A start_date value must be provided")
-        
-        if not end_date:
+        # Resolve defaults
+        if start_date is None:
+            start_date = self.start_date
+        if end_date is None:
             end_date = self.end_date
-            if not end_date:
-                raise ValueError("An end_date value must be provided")
+
+        # If both dates are still None, return the full dataset
+        if start_date is None and end_date is None:
+            json_data = self.json_data or self._fetch_data()
+            self.json_data = json_data
+            df = pd.DataFrame.from_dict(json_data)
+            df['date'] = pd.to_datetime(df['date'])
+            return df
+
+        # If only one of the dates is provided, raise an explicit error
+        if (start_date is None) != (end_date is None):
+            raise ValueError("Both start_date and end_date must be provided together.")
         
         json_data = self.json_data
         

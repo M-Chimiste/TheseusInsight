@@ -1,0 +1,11 @@
+---
+description: Rules for project tracking.
+globs: 
+---
+
+## Project Status Tracking
+- Create a project_status.md file in the project directory to track progress.
+- After each conversation or coding session, update project_status.md with:
+- What has been implemented
+- What needs to be implemented next
+- A detailed debug log

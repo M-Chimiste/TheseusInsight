@@ -1,42 +1,58 @@
 {
-    "judge_model":
-    {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 1024,
-        "temperature": 0.1,
-        "num_ctx": 4096
-    },
-    "newsletter_model":
-    {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "content_extraction_model":
-    {
-        "model_name": "hermes3",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_sections_model":
-    {
-        "model_name": "qwen2.5:32b",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    },
-    "newsletter_intro_model":
-    {
-        "model_name": "qwen2.5:32b",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
-        "temperature": 0.1,
-        "num_ctx": 131072
-    }
+  "embedding_model": {
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
+    "model_type": "sentence-transformers",
+    "max_new_tokens": null,
+    "temperature": null,
+    "num_ctx": null,
+    "trust_remote_code": true
+  },
+  "judge_model": {
+    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_type": "ollama",
+    "max_new_tokens": 600,
+    "temperature": 0.1,
+    "num_ctx": 4096,
+    "trust_remote_code": null
+  },
+  "content_extraction_model": {
+    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_type": "ollama",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072,
+    "trust_remote_code": null
+  },
+  "newsletter_sections_model": {
+    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_type": "ollama",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072,
+    "trust_remote_code": null
+  },
+  "newsletter_intro_model": {
+    "model_name": "gemini-2.0-flash",
+    "model_type": "gemini",
+    "max_new_tokens": 4096,
+    "temperature": 0.1,
+    "num_ctx": 131072,
+    "trust_remote_code": null
+  },
+  "podcast_model": {
+    "model_name": "gemini-2.0-flash",
+    "model_type": "gemini",
+    "max_new_tokens": 8192,
+    "temperature": 0.1,
+    "num_ctx": 131072,
+    "trust_remote_code": null
+  },
+  "tts_model": {
+    "tts_provider": "openai",
+    "tts_model_name": "tts-1",
+    "speaker_1_voice": "sage",
+    "speaker_1_speed": 1.0,
+    "speaker_2_voice": "ash",
+    "speaker_2_speed": 1.0
+  }
 }

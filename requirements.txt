@@ -1,20 +1,54 @@
-appdirs
-numpy
-pandas
-sentencepiece
-tqdm
-transformers
-jinja2
-python-dotenv
-anthropic
-openai
-pydantic
-json-repair
-llama-cpp-python
+# Core ML & Deep Learning
 torch
-torchao
-requests
+transformers
+numpy
+
+# NLP & Text Processing
+spacy
+spacy-layout
+tiktoken
+unidecode
+
+# Embeddings & Vector Search
 sentence-transformers
+
+# LLM & AI Services
+anthropic[bedrock]
+openai
 ollama
+soundfile
+google-generativeai
+
+# Data Processing & Management
+pandas
+json_repair
+pydantic
+tqdm
+
+# PDF & Document Processing
 docling
+
+# Web & API
+requests
+
+# Development & Utilities
+python-dotenv
+tenacity
 markdown2
+Jinja2
+
+# Media Processing
+pydub  # Audio
+moviepy  # Video
+pygame  # Visualization
+
+# YouTube Integration
+google-api-python-client
+google-auth-oauthlib
+
+# Electron
+fastapi
+uvicorn
+python-multipart
+psycopg2-binary
+pgvector

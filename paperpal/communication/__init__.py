@@ -1,1 +1,0 @@
-from .communication import GmailCommunication, construct_email_body

@@ -1,0 +1,26 @@
+# Docker Compose override file for external storage configuration
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up
+#
+# This override file redirects all data storage to an external drive or custom path.
+# Modify the paths below to match your external drive location.
+#
+# Example usage for macOS external drive:
+# EXTERNAL_DATA_PATH=/Volumes/nyx/theseus_insight_data docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up
+
+services:
+  theseus-insight-app:
+    volumes:
+      # Override the default ./data mount to use external storage
+      # Change this path to your external drive location
+      - ${EXTERNAL_DATA_PATH:-/Volumes/nyx/theseus_insight_data}/app_data:/app/data
+
+  db:
+    volumes:
+      # Override the default named volume to use external storage for PostgreSQL data
+      # This stores the entire PostgreSQL database on the external drive
+      - ${EXTERNAL_DATA_PATH:-/Volumes/nyx/theseus_insight_data}/postgres_data:/var/lib/postgresql/data
+      # Keep the setup script mount as-is (it's just a small initialization file)
+      - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
+
+# When using this override, we don't need the named volumes since we're using direct host mounts
+# The named volumes from the main docker-compose.yml will be ignored in favor of these host mounts 

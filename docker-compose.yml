@@ -1,0 +1,62 @@
+services:
+  theseus-insight-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: theseus_insight_service
+    ports:
+      - "8000:8000" # Maps host port 8000 to container port 8000
+    env_file:
+      - .env # Loads environment variables from .env file in the project root
+    volumes:
+      # Mounts the local ./data directory to /app/data in the container
+      # This persists the SQLite database and any generated files (podcasts, newsletters, etc.)
+      - ./data:/app/data 
+      # Optional: If you want to live-reload backend code changes during development (not for production)
+      # - ./theseus_insight:/app/theseus_insight
+      # - ./main.py:/app/main.py
+      # - ./config:/app/config 
+      # Note: For live-reloading frontend, a different setup (e.g. running Vite dev server and proxying from FastAPI) is usually needed.
+    environment:
+      # You can also define environment variables directly here, 
+      # though .env file is generally preferred for sensitive or numerous variables.
+      # Example: 
+      # - OPENAI_API_KEY=${OPENAI_API_KEY_FROM_HOST_ENV} # If you want to pass from host env differently
+      - DATABASE_URL=postgresql://theseus:theseus@db:5432/theseusdb
+      - PYTHONUNBUFFERED=1 # Already set in Dockerfile, but good to be explicit if needed
+      - OLLAMA_PASSTHROUGH=${OLLAMA_PASSTHROUGH:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    # healthcheck: # Optional: Add a healthcheck for your FastAPI app
+    #   test: ["CMD", "curl", "--fail", "http://localhost:8000/api/settings/model-providers"] # Example endpoint
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s # Give some time for the app to start
+
+# Optional: Define named volumes if you prefer over host-mounted volumes
+# volumes:
+#   theseus_data: 
+# PostgreSQL database with pgvector
+  db:
+    image: ankane/pgvector
+    container_name: theseusinsight-db
+    environment:
+      POSTGRES_USER: theseus
+      POSTGRES_PASSWORD: theseus
+      POSTGRES_DB: theseusdb
+    volumes:
+      - theseus_db_data:/var/lib/postgresql/data
+      - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
+    # Database port is NOT exposed by default for security
+    # Use docker-compose.db-external.yml override to enable external access
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U theseus -d theseusdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  theseus_db_data:

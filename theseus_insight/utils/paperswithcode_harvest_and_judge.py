@@ -192,7 +192,6 @@ def rank_papers(
     judge_model,
     research_interests: str,
     checkpoint_dir: str,
-    top_n: int,
     verbose: bool = True,
 ) -> pd.DataFrame:
     ranked_df = load_checkpoint(checkpoint_dir, "rank")
@@ -284,12 +283,11 @@ def rank_papers(
     df["related"] = related
     df["rationale"] = rationale
     df = df.sort_values(by="score", ascending=False)
-    top_df = df.head(top_n)
-    save_checkpoint(checkpoint_dir, "rank", top_df)
+    save_checkpoint(checkpoint_dir, "rank", df)
     cp = _checkpoint_path(checkpoint_dir, "rank_partial")
     if cp.exists():
         cp.unlink()
-    return top_df
+    return df
 
 
 def insert_papers(
@@ -341,7 +339,6 @@ def harvest_and_judge(
     date_to: Optional[str],
     checkpoint_dir: str,
     db_url: str,
-    top_n: int = 5,
     cosine_threshold: float = 0.5,
 ):
     db = PaperDatabase(db_url)
@@ -394,7 +391,6 @@ def harvest_and_judge(
         judge_model,
         research_interests,
         checkpoint_dir,
-        top_n,
     )
 
     insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], db)
@@ -415,7 +411,6 @@ def parse_args():
         help="Database connection URL",
     )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")
-    parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--cosine-threshold", type=float, default=0.5)
     return parser.parse_args()
 
@@ -427,6 +422,5 @@ if __name__ == "__main__":
         date_to=args.date_to,
         checkpoint_dir=args.checkpoint_dir,
         db_url=args.db_url,
-        top_n=args.top_n,
         cosine_threshold=args.cosine_threshold,
     )

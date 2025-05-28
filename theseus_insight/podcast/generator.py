@@ -502,12 +502,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 out_path = os.path.join(str(output_dir), f"{prefix}_{i:03}.{output_format}")
                 tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
 
-                if i == 0:
-                    label = "intro"
-                elif i == total_lines - 1:
-                    label = "outro"
-                else:
-                    label = f"segment_{i}"
+                # Use the actual segment_label from the DialogueItem instead of inferring from position
+                label = item.segment_label
 
                 segments.append(SegmentInfo(label=label, path=out_path))
                 # Include segment_label in transcript for clarity
@@ -727,12 +723,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             out_path = os.path.join(output_dir, f"{prefix}_{idx:03}.{output_format}")
             tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
 
-            if idx == 0:
-                label = "intro"
-            elif idx == len(dialogue_obj.dialogue) - 1:
-                label = "outro"
-            else:
-                label = f"segment_{idx}"
+            # Use the actual segment_label from the DialogueItem instead of inferring from position
+            label = item.segment_label
 
             segments.append(SegmentInfo(label=label, path=out_path))
             # Include segment_label in transcript for clarity
@@ -826,7 +818,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
         """
         intro_music_path = intro_music_path or self.intro_music_path
         combined = AudioSegment.empty()
-        FADE_MS = 5000  # fade-in / overlap duration in milliseconds
+        CROSSFADE_START_MS = 2000  # Start crossfade 2 seconds before end of speech
+        FADE_DURATION_MS = 3000  # Make the fade duration longer for slower fade
 
         # Find the last index where label == 'intro'
         last_intro_idx = -1
@@ -834,8 +827,19 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             if seg.label == "intro":
                 last_intro_idx = idx
 
+        # Track music length to ensure it plays all the way through
+        music_length_ms = 0
+        music_start_position_ms = 0
+        if intro_music_path and last_intro_idx >= 0:
+            music = AudioSegment.from_file(intro_music_path, format=output_format)
+            music_length_ms = len(music)
+
         for idx, seg in enumerate(segments):
             speech = AudioSegment.from_file(seg.path, format=output_format)
+
+            # Track where music starts in the combined audio
+            if idx == last_intro_idx and intro_music_path:
+                music_start_position_ms = len(combined) + len(speech) - CROSSFADE_START_MS
 
             # If this is the last intro segment and intro music is provided, crossfade music in
             if (
@@ -843,22 +847,49 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 and idx == last_intro_idx
             ):
                 music = AudioSegment.from_file(intro_music_path, format=output_format)
-                crossfade_ms = min(FADE_MS, len(speech), len(music))
-                # Overlay music on the last N ms of the intro speech
-                if crossfade_ms > 0:
-                    speech_no_fade = speech[:-crossfade_ms] if len(speech) > crossfade_ms else AudioSegment.silent(0)
-                    speech_fade = speech[-crossfade_ms:].fade_out(crossfade_ms)
-                    music_fade = music[:crossfade_ms].fade_in(crossfade_ms)
-                    # Overlay music fade-in on top of speech fade-out
-                    overlay = speech_fade.overlay(music_fade)
-                    speech = speech_no_fade + overlay
-                # If music is longer and you want it to continue, append the rest after
-                # speech += music[crossfade_ms:]
+                
+                # Use the smaller of: speech length, crossfade start position, or music length
+                crossfade_start_pos = max(0, len(speech) - CROSSFADE_START_MS)
+                crossfade_duration = min(FADE_DURATION_MS, len(speech) - crossfade_start_pos, len(music))
+                
+                if crossfade_duration > 0:
+                    # Split speech into pre-crossfade and crossfade portions
+                    speech_before_fade = speech[:crossfade_start_pos] if crossfade_start_pos > 0 else AudioSegment.silent(0)
+                    speech_crossfade = speech[crossfade_start_pos:crossfade_start_pos + crossfade_duration]
+                    
+                    # Apply slower, more gradual fade out to speech
+                    speech_faded = speech_crossfade.fade_out(crossfade_duration)
+                    
+                    # Apply slower, more gradual fade in to music (with exponential curve for smoother fade)
+                    music_crossfade = music[:crossfade_duration]
+                    music_faded = music_crossfade.fade_in(crossfade_duration)
+                    
+                    # Overlay the faded music on the faded speech
+                    overlay_section = speech_faded.overlay(music_faded)
+                    
+                    # Reconstruct the speech with crossfade
+                    speech = speech_before_fade + overlay_section
+                    
+                    # Continue with the rest of the music after the crossfade
+                    remaining_music = music[crossfade_duration:]
+                    speech += remaining_music
+                else:
+                    # If crossfade duration is 0 or negative, just append music after speech
+                    speech += music
+                    
             combined += speech
 
-            # Pause between logical blocks (skip if this is the very last segment)
+            # Only add pause between logical blocks if we're not in the middle of playing music
+            # and this isn't the very last segment
             if idx < len(segments) - 1:
-                combined += AudioSegment.silent(int(self.pause_duration * 1000))
+                current_position_ms = len(combined)
+                music_end_position_ms = music_start_position_ms + music_length_ms
+                
+                # Only add pause if music isn't currently playing or if music has finished
+                if (music_length_ms == 0 or  # No music at all
+                    current_position_ms < music_start_position_ms or  # Music hasn't started yet
+                    current_position_ms >= music_end_position_ms):  # Music has finished
+                    combined += AudioSegment.silent(int(self.pause_duration * 1000))
 
         combined.export(output_path, format=output_format)
         self._cleanup_segments(segments)

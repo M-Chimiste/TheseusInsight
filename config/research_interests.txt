@@ -1,4 +1,4 @@
-1. Mixture of experts in Large Language Models as well as alernative architectures to current large language models.
+1. Mixture of experts in Large Language Models as well as alternative architectures to current large language models.
 2. Small language models and their applications.
 3. Training large language models and training advancements to enable: cheaper, faster, better performance.
 4. More efficient inference on large language models.

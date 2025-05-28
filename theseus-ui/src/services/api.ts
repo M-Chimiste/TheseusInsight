@@ -213,6 +213,11 @@ export const podcastHistoryApi = {
         const response: AxiosResponse<PodcastDetailResponse> = await api.get<PodcastDetailResponse>(`/podcasts/history/${podcastId}`);
         return response.data;
     },
+
+    deletePodcast: async (podcastId: number): Promise<{ status: string; message: string }> => {
+        const response: AxiosResponse<{ status: string; message: string }> = await api.delete(`/podcasts/history/${podcastId}`);
+        return response.data;
+    },
 };
 
 // Papers API functions

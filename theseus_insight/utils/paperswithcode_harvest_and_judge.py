@@ -16,10 +16,13 @@ import time
 import pickle
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 from tqdm import tqdm
 import pandas as pd
 import json_repair
+import torch
 
 # Add project root to import path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -39,6 +42,131 @@ from theseus_insight.prompt import (
 from theseus_insight.utils import cosine_similarity, purge_ollama_cache
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+
+
+# ---------------------------------------------------------------
+# Helper functions for database operations
+# ---------------------------------------------------------------
+
+def check_paper_exists(db_url: str, paper_data: tuple) -> bool:
+    """
+    Helper function for multiprocessing database checks.
+    
+    Args:
+        db_url: Database connection URL
+        paper_data: Tuple of (index, paper_url)
+    
+    Returns:
+        bool: True if paper exists in database
+    """
+    from theseus_insight.data_model.data_handling import PaperDatabase
+    
+    idx, paper_url = paper_data
+    db = PaperDatabase(db_url)
+    return db.paper_exists_by_url(paper_url)
+
+
+def get_paper_count(db_url: str) -> int:
+    """
+    Get the total number of papers in the database.
+    
+    Args:
+        db_url: Database connection URL
+    
+    Returns:
+        int: Number of papers in database
+    """
+    from theseus_insight.data_model.data_handling import PaperDatabase
+    
+    try:
+        db = PaperDatabase(db_url)
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM papers")
+            return cursor.fetchone()[0]
+    except Exception:
+        return -1  # Return -1 to indicate error/unknown
+
+
+def should_skip_database_checks(db_url: str, verbose: bool = True) -> bool:
+    """
+    Determine if we should skip database existence checks.
+    
+    Args:
+        db_url: Database connection URL
+        verbose: Whether to print status messages
+    
+    Returns:
+        bool: True if database checks should be skipped
+    """
+    try:
+        paper_count = get_paper_count(db_url)
+        
+        if paper_count == 0:
+            if verbose:
+                print("📊 Database is empty - skipping existence checks")
+            return True
+        elif paper_count < 100:
+            if verbose:
+                print(f"📊 Database has only {paper_count} papers - skipping existence checks for speed")
+            return True
+        else:
+            if verbose:
+                print(f"📊 Database has {paper_count} papers - performing existence checks")
+            return False
+            
+    except Exception as e:
+        if verbose:
+            print(f"⚠️ Could not check database size: {e} - performing existence checks")
+        return False
+
+
+def check_existing_papers_parallel(
+    df: pd.DataFrame, 
+    db_url: str, 
+    max_workers: int = 4,
+    verbose: bool = True
+) -> List[bool]:
+    """
+    Check for existing papers using parallel processing.
+    
+    Args:
+        df: DataFrame with papers to check
+        db_url: Database connection URL
+        max_workers: Maximum number of parallel workers
+        verbose: Whether to show progress
+    
+    Returns:
+        List[bool]: List indicating which papers are new (not existing)
+    """
+    if verbose:
+        print(f"🔍 Checking for existing papers using {max_workers} parallel workers...")
+    
+    # Prepare data for parallel processing
+    paper_data = [
+        (idx, row.get("pdf_url") or row.get("url_pdf")) 
+        for idx, (_, row) in enumerate(df.iterrows())
+    ]
+    
+    existing_mask = []
+    
+    # Use ThreadPoolExecutor for I/O-bound database operations
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        check_func = partial(check_paper_exists, db_url)
+        
+        # Process in parallel with progress bar
+        results = list(tqdm(
+            executor.map(check_func, paper_data),
+            total=len(paper_data),
+            desc="Checking existing papers (parallel)",
+            disable=not verbose
+        ))
+        
+        existing_mask = results
+    
+    # Convert to "new paper" mask (inverse of existing)
+    new_mask = [not exists for exists in existing_mask]
+    
+    return new_mask
 
 
 # ---------------------------------------------------------------
@@ -224,6 +352,8 @@ def embed_papers(
     threshold: float,
     db: PaperDatabase,
     checkpoint_dir: str,
+    batch_size: int = 256,
+    max_workers: int = 4,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -238,6 +368,8 @@ def embed_papers(
         threshold (float): The minimum cosine similarity required for a paper to be considered relevant.
         db (PaperDatabase): The database used to check if a paper already exists.
         checkpoint_dir (str): The directory where the checkpoint is saved.
+        batch_size (int, optional): Number of papers to embed in each batch. 1 = no batching. Defaults to 256.
+        max_workers (int, optional): Maximum number of parallel workers for database checks. Defaults to 4.
         verbose (bool, optional): If True, prints progress messages. Defaults to True.
 
     Returns:
@@ -247,6 +379,8 @@ def embed_papers(
         print("\n" + "="*60)
         print("🧠 STAGE 2: EMBEDDING AND FILTERING PAPERS")
         print("="*60)
+        if batch_size > 1:
+            print(f"⚡ Using batch processing with batch size: {batch_size}")
     
     embedded_df = load_checkpoint(checkpoint_dir, "embed", verbose)
     if embedded_df is not None:
@@ -260,20 +394,34 @@ def embed_papers(
         save_checkpoint(checkpoint_dir, "embed", df, verbose)
         return df
 
-    if verbose:
-        print(f"🔍 Checking for existing papers in database...")
+    # Smart database checking with optimization
+    db_url = db.db_path
+    skip_checks = should_skip_database_checks(db_url, verbose)
     
-    new_mask = []
-    with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
-        for _, row in pbar:
-            exists = db.paper_exists_by_url(row.get("pdf_url") or row.get("url_pdf"))
-            new_mask.append(not exists)
-    
-    new_df = df[new_mask].reset_index(drop=True)
-    
-    if verbose:
-        existing_count = len(df) - len(new_df)
-        print(f"📝 Found {existing_count} existing papers, {len(new_df)} new papers to process")
+    if skip_checks:
+        # Skip database checks entirely for speed
+        new_df = df.copy()
+        if verbose:
+            print(f"📝 Processing all {len(new_df)} papers (database checks skipped)")
+    else:
+        # Use parallel database checking for speed
+        if len(df) > 50 and max_workers > 1:
+            new_mask = check_existing_papers_parallel(df, db_url, max_workers, verbose)
+        else:
+            # Fall back to sequential for small datasets
+            if verbose:
+                print(f"🔍 Checking for existing papers (sequential)...")
+            new_mask = []
+            with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
+                for _, row in pbar:
+                    exists = db.paper_exists_by_url(row.get("pdf_url") or row.get("url_pdf"))
+                    new_mask.append(not exists)
+        
+        new_df = df[new_mask].reset_index(drop=True)
+        
+        if verbose:
+            existing_count = len(df) - len(new_df)
+            print(f"📝 Found {existing_count} existing papers, {len(new_df)} new papers to process")
     
     if new_df.empty:
         embedded_df = new_df.copy()
@@ -284,23 +432,89 @@ def embed_papers(
             print("✅ No new papers to embed")
         return embedded_df
 
+    # Filter out papers with missing or empty abstracts
+    original_count = len(new_df)
+    abstract_mask = new_df["abstract"].notna() & (new_df["abstract"].str.strip() != "")
+    new_df = new_df[abstract_mask].reset_index(drop=True)
+    
+    if verbose and original_count != len(new_df):
+        filtered_out = original_count - len(new_df)
+        print(f"⚠️ Filtered out {filtered_out} papers with missing/empty abstracts")
+    
+    if new_df.empty:
+        embedded_df = new_df.copy()
+        embedded_df["cosine_similarity"] = []
+        embedded_df["abstract_embedding"] = []
+        save_checkpoint(checkpoint_dir, "embed", embedded_df, verbose)
+        if verbose:
+            print("✅ No papers with valid abstracts to embed")
+        return embedded_df
+
     if verbose:
         print(f"🎯 Embedding research interests...")
     research_emb = embedding_model.invoke(research_interests)
     
     if verbose:
         print(f"📄 Embedding {len(new_df)} paper abstracts...")
+        if batch_size > 1:
+            print(f"⚡ Using SentenceTransformer built-in batching with batch_size={batch_size}")
     
-    embeddings = []
-    sims = []
+    # Use SentenceTransformer's built-in batching for maximum efficiency
+    abstracts = list(new_df["abstract"])
     
-    with tqdm(new_df["abstract"], desc="Embedding abstracts", disable=not verbose) as pbar:
-        for abstract in pbar:
-            emb = embedding_model.invoke(abstract)
-            embeddings.append(emb)
+    if batch_size <= 1:
+        # No batching - process one by one with individual progress
+        embeddings = []
+        sims = []
+        with tqdm(abstracts, desc="Embedding abstracts", disable=not verbose) as pbar:
+            for abstract in pbar:
+                emb = embedding_model.invoke(abstract)
+                embeddings.append(emb)
+                sim = cosine_similarity(emb, research_emb)
+                sims.append(sim)
+                pbar.set_postfix({"last_similarity": f"{sim:.3f}"})
+    else:
+        # Use chunked processing for large datasets to avoid MPS memory limits
+        chunk_size = min(batch_size, len(abstracts))  # Process max 50k papers at a time
+        embeddings = []
+        
+        if verbose and len(abstracts) > chunk_size:
+            print(f"📦 Processing in chunks of {chunk_size} papers to avoid GPU memory limits")
+        
+        # Step 1: Generate all embeddings in chunks
+        for chunk_start in tqdm(range(0, len(abstracts), chunk_size), 
+                               desc="Embedding chunks", 
+                               disable=not verbose or len(abstracts) <= chunk_size):
+            chunk_end = min(chunk_start + chunk_size, len(abstracts))
+            chunk_abstracts = abstracts[chunk_start:chunk_end]
+            
+            # if verbose and len(abstracts) > chunk_size:
+            #     print(f"🔄 Embedding chunk {chunk_start//chunk_size + 1}/{(len(abstracts) + chunk_size - 1)//chunk_size}: {len(chunk_abstracts)} papers")
+            
+            # Use SentenceTransformer's efficient built-in batching within chunk
+            chunk_embeddings = embedding_model.invoke(
+                chunk_abstracts, 
+                batch_size=batch_size,
+                show_progress_bar=verbose and len(abstracts) <= chunk_size
+            )
+            
+            # Collect embeddings
+            embeddings.extend(chunk_embeddings)
+            
+            # if verbose and len(abstracts) > chunk_size:
+            #     print(f"✅ Chunk embedded - {len(chunk_embeddings)} embeddings generated")
+        
+        # Step 2: Calculate all similarities after embeddings are complete
+        if verbose:
+            print(f"🧮 Calculating cosine similarities for {len(embeddings)} papers...")
+        
+        sims = []
+        for emb in tqdm(embeddings, desc="Computing similarities", disable=not verbose):
             sim = cosine_similarity(emb, research_emb)
             sims.append(sim)
-            pbar.set_postfix({"last_similarity": f"{sim:.3f}"})
+        
+        if verbose:
+            print(f"✅ All similarities calculated")
     
     new_df["abstract_embedding"] = embeddings
     new_df["cosine_similarity"] = sims
@@ -315,6 +529,8 @@ def embed_papers(
             avg_sim = filtered_df["cosine_similarity"].mean()
             max_sim = filtered_df["cosine_similarity"].max()
             print(f"📊 Similarity stats - Average: {avg_sim:.3f}, Max: {max_sim:.3f}")
+        if batch_size > 1:
+            print(f"⚡ Batching improved efficiency: processed {total_count} papers in {len(embeddings)} batches")
     
     save_checkpoint(checkpoint_dir, "embed", filtered_df, verbose)
     return filtered_df
@@ -569,6 +785,8 @@ def harvest_and_judge(
     checkpoint_dir: str,
     db_url: str,
     cosine_threshold: float = 0.5,
+    batch_size: int = 256,
+    max_workers: int = 4,
     verbose: bool = True,
 ):
     """
@@ -583,6 +801,7 @@ def harvest_and_judge(
         checkpoint_dir (str): The directory where intermediate results are saved for checkpointing.
         db_url (str): The URL of the database where the papers are stored.
         cosine_threshold (float, optional): The minimum cosine similarity required for a paper to be considered relevant. Defaults to 0.5.
+        batch_size (int, optional): Number of papers to embed in each batch. 1 = no batching. Defaults to 1.
         verbose (bool, optional): If True, prints detailed progress messages. Defaults to True.
     """
     if verbose:
@@ -590,6 +809,8 @@ def harvest_and_judge(
         print("="*60)
         print(f"📅 Date range: {date_from or 'All'} to {date_to or 'All'}")
         print(f"🎯 Cosine threshold: {cosine_threshold}")
+        if batch_size > 1:
+            print(f"⚡ Embedding batch size: {batch_size}")
         print(f"📁 Checkpoint directory: {checkpoint_dir}")
         print(f"🗄️ Database: {db_url}")
     
@@ -624,11 +845,27 @@ def harvest_and_judge(
     embedding_cfg = orch_cfg["embedding_model"]
     judge_cfg = orch_cfg["judge_model"]
 
+    # Determine best device for embeddings
+    device = None
+    if torch.backends.mps.is_available():
+        device = "mps"
+        if verbose:
+            print(f"🚀 Using Apple Silicon GPU (MPS) for embeddings")
+    elif torch.cuda.is_available():
+        device = "cuda"
+        if verbose:
+            print(f"🚀 Using CUDA GPU for embeddings")
+    else:
+        device = "cpu"
+        if verbose:
+            print(f"💻 Using CPU for embeddings")
+
     if verbose:
-        print(f"🧠 Loading embedding model: {embedding_cfg['model_name']}")
+        print(f"🧠 Loading embedding model: {embedding_cfg['model_name']} on {device}")
     embedding_model = SentenceTransformerInference(
         embedding_cfg["model_name"],
         remote_code=embedding_cfg.get("trust_remote_code", True),
+        device=device,
     )
     
     judge_model = load_inference_model(judge_cfg, verbose)
@@ -653,6 +890,8 @@ def harvest_and_judge(
         cosine_threshold,
         db,
         checkpoint_dir,
+        batch_size,
+        max_workers,
         verbose,
     )
 
@@ -682,8 +921,8 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Harvest PapersWithCode data, rank and store papers"
     )
-    parser.add_argument("--date-from", help="Start date YYYY-MM-DD", default=None)
-    parser.add_argument("--date-to", help="End date YYYY-MM-DD", default=None)
+    parser.add_argument("--date-from", help="Start date YYYY-MM-DD", default='2024-01-01')
+    parser.add_argument("--date-to", help="End date YYYY-MM-DD", default='2025-05-22')
     parser.add_argument(
         "--db-url",
         default=os.getenv(
@@ -692,7 +931,11 @@ def parse_args():
         help="Database connection URL",
     )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")
-    parser.add_argument("--cosine-threshold", type=float, default=0.5)
+    parser.add_argument("--cosine-threshold", type=float, default=0.65)
+    parser.add_argument("--batch-size", type=int, default=32,
+                       help="Embedding batch size (1 = no batching, higher = more efficient)")
+    parser.add_argument("--max-workers", type=int, default=4,
+                       help="Maximum parallel workers for database checks (1 = sequential)")
     parser.add_argument("--verbose", "-v", action="store_true", default=True, 
                        help="Enable verbose output (default: True)")
     parser.add_argument("--quiet", "-q", action="store_true", 
@@ -711,5 +954,7 @@ if __name__ == "__main__":
         checkpoint_dir=args.checkpoint_dir,
         db_url=args.db_url,
         cosine_threshold=args.cosine_threshold,
+        batch_size=args.batch_size,
+        max_workers=args.max_workers,
         verbose=verbose,
     )

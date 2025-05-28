@@ -1336,6 +1336,27 @@ async def get_podcast_detail(podcast_id: int):
         print(f"Error fetching podcast detail (ID: {podcast_id}): {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred while fetching details for podcast ID {podcast_id}.")
 
+@app.delete("/api/podcasts/history/{podcast_id}")
+async def delete_podcast(podcast_id: int):
+    """Delete a podcast by its ID."""
+    try:
+        # Check if podcast exists first
+        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        if not podcast_data:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        # Delete the podcast
+        was_deleted = db.delete_podcast_by_id(podcast_id)
+        if not was_deleted:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        return {"status": "success", "message": f"Podcast with ID {podcast_id} has been deleted successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting podcast (ID: {podcast_id}): {e}")
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred while deleting podcast ID {podcast_id}.")
+
 # Enhance the WebSocket connection manager
 class ConnectionManager:
     def __init__(self):

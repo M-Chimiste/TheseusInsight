@@ -432,6 +432,24 @@ def embed_papers(
             print("✅ No new papers to embed")
         return embedded_df
 
+    # Filter out papers with missing or empty abstracts
+    original_count = len(new_df)
+    abstract_mask = new_df["abstract"].notna() & (new_df["abstract"].str.strip() != "")
+    new_df = new_df[abstract_mask].reset_index(drop=True)
+    
+    if verbose and original_count != len(new_df):
+        filtered_out = original_count - len(new_df)
+        print(f"⚠️ Filtered out {filtered_out} papers with missing/empty abstracts")
+    
+    if new_df.empty:
+        embedded_df = new_df.copy()
+        embedded_df["cosine_similarity"] = []
+        embedded_df["abstract_embedding"] = []
+        save_checkpoint(checkpoint_dir, "embed", embedded_df, verbose)
+        if verbose:
+            print("✅ No papers with valid abstracts to embed")
+        return embedded_df
+
     if verbose:
         print(f"🎯 Embedding research interests...")
     research_emb = embedding_model.invoke(research_interests)

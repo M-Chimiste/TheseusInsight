@@ -502,12 +502,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 out_path = os.path.join(str(output_dir), f"{prefix}_{i:03}.{output_format}")
                 tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
 
-                if i == 0:
-                    label = "intro"
-                elif i == total_lines - 1:
-                    label = "outro"
-                else:
-                    label = f"segment_{i}"
+                # Use the actual segment_label from the DialogueItem instead of inferring from position
+                label = item.segment_label
 
                 segments.append(SegmentInfo(label=label, path=out_path))
                 # Include segment_label in transcript for clarity
@@ -727,12 +723,8 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             out_path = os.path.join(output_dir, f"{prefix}_{idx:03}.{output_format}")
             tts.invoke(text=text, save_file=True, file_path=out_path, format=output_format)
 
-            if idx == 0:
-                label = "intro"
-            elif idx == len(dialogue_obj.dialogue) - 1:
-                label = "outro"
-            else:
-                label = f"segment_{idx}"
+            # Use the actual segment_label from the DialogueItem instead of inferring from position
+            label = item.segment_label
 
             segments.append(SegmentInfo(label=label, path=out_path))
             # Include segment_label in transcript for clarity

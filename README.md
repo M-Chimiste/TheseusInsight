@@ -15,6 +15,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
 - [Running the Frontend](#running-the-frontend)
+- [External Database Access](#external-database-access)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)
@@ -119,6 +120,8 @@ Create a `.env` file in the project root containing keys and settings:
 | `ANTHROPIC_API_KEY` | API key for Anthropic Claude models |
 | `GOOGLE_API_KEY` | API key for Google Gemini models |
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
+| `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
+| `ALLOW_DB_CONNECTION` | When `true`, enables external access to PostgreSQL database on port 5433 (default `false` for security) |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication |
 | `DATABASE_URL` | Connection string for the PostgreSQL database (default `postgresql://theseus:theseus@localhost:5432/theseusdb`) |
@@ -132,6 +135,20 @@ The application loads these credentials from the database at startup, falling ba
 More details are available in [docs/credential_management_README.md](docs/credential_management_README.md).
 
 Note: The `APP_SECRET_KEY` is used to encrypt sensitive data in the database, such as OAuth tokens and API keys. It should be a long, random string that is kept secret from anyone who might access it. This value will default to an insecure password that is not recommended for production use.
+
+### Ollama Docker Networking
+
+When running Theseus Insight in Docker and using Ollama on your host machine, the `OLLAMA_PASSTHROUGH` environment variable controls network routing:
+
+- **`OLLAMA_PASSTHROUGH=true` (default)**: Automatically redirects localhost URLs (e.g., `http://localhost:11434`) to `host.docker.internal` for Docker containers to access the host machine's Ollama installation.
+- **`OLLAMA_PASSTHROUGH=false`**: Uses standard container networking, expecting Ollama to be running within the Docker network.
+
+**Examples:**
+- **Host Ollama with passthrough**: Set `OLLAMA_URL=http://localhost:11434` and `OLLAMA_PASSTHROUGH=true` in your `.env` file
+- **Container Ollama**: Set `OLLAMA_URL=http://ollama:11434` and `OLLAMA_PASSTHROUGH=false` if running Ollama as a separate Docker service
+
+This allows seamless switching between development (local Ollama) and production (containerized Ollama) environments without changing URLs manually.
+
 ---
 
 ## Running the API
@@ -149,6 +166,79 @@ Interactive docs are served at [http://localhost:8000/docs](http://localhost:800
 ## Running the Frontend
 
 During development use the Vite dev server as shown in the [Quickstart](#quickstart) section.  When using Docker or after running `npm run build`, the compiled frontend is served automatically from FastAPI on port 8000.
+
+---
+
+## External Database Access
+
+By default, the PostgreSQL database runs in an isolated Docker container and is not accessible from external tools. For development, debugging, data migration, or administrative tasks, you can enable external database access.
+
+### Enabling External Access
+
+**Option 1: Using the helper script (recommended)**
+```bash
+# Start with external database access enabled
+./scripts/start-with-db-access.sh
+
+# Or pass additional docker-compose arguments
+./scripts/start-with-db-access.sh -d  # Run in detached mode
+```
+
+**Option 2: Manual Docker Compose override**
+```bash
+# Start with both compose files
+docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
+```
+
+**Option 3: Environment variable in .env file**
+```bash
+# Add to your .env file
+ALLOW_DB_CONNECTION=true
+
+# Then start normally (this sets the variable but you still need the override file)
+docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
+```
+
+### Connection Details
+
+When external access is enabled, the database is accessible on:
+- **Host**: `localhost`
+- **Port**: `5433` (to avoid conflicts with local PostgreSQL)
+- **Database**: `theseusdb`
+- **Username**: `theseus`
+- **Password**: `theseus`
+
+### Example Connections
+
+**Using psql command line:**
+```bash
+psql -h localhost -p 5433 -U theseus -d theseusdb
+```
+
+**Using pgAdmin:**
+- Server: `localhost:5433`
+- Maintenance database: `theseusdb`
+- Username: `theseus`
+- Password: `theseus`
+
+**Using Python/SQLAlchemy:**
+```python
+from sqlalchemy import create_engine
+engine = create_engine("postgresql://theseus:theseus@localhost:5433/theseusdb")
+```
+
+### Security Considerations
+
+⚠️ **Important**: Only enable external database access in development environments or secure networks. When enabled:
+- The database accepts connections from any IP address on the host machine
+- Database credentials are transmitted over the network
+- The database port is exposed on the host machine
+
+For production deployments, use secure connection methods such as:
+- VPN tunnels
+- SSH port forwarding
+- Database connection pools with authentication
+- Network firewalls and access controls
 
 ---
 

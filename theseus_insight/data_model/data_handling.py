@@ -4,8 +4,8 @@ import datetime
 import base64
 import hashlib
 from contextlib import contextmanager
-import psycopg
-from pgvector.psycopg import register_vector
+import psycopg2
+from pgvector.psycopg2 import register_vector
 
 from .papers import Newsletter, Paper, Logs, Podcast
 
@@ -23,9 +23,27 @@ class PaperDatabase:
         self.db_path = db_path
         self._initialize_db()
 
+    @contextmanager
+    def get_cursor(self, register_vectors=True):
+        """Context manager for database connections."""
+        conn = psycopg2.connect(self.db_path)
+        try:
+            # Try to register vector type, but don't fail if extension doesn't exist yet
+            if register_vectors:
+                try:
+                    register_vector(conn)
+                except psycopg2.ProgrammingError:
+                    # Vector extension not yet created, that's okay for initialization
+                    pass
+            cursor = conn.cursor()
+            yield cursor
+            conn.commit()
+        finally:
+            conn.close()
+
     def _initialize_db(self):
         """Initialize database tables and indices if they don't exist."""
-        with self.get_cursor() as cursor:
+        with self.get_cursor(register_vectors=False) as cursor:
             # Create pgvector extension
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
             
@@ -145,18 +163,6 @@ class PaperDatabase:
                     message TEXT
                 )
             ''')
-
-    @contextmanager
-    def get_cursor(self):
-        """Context manager for database connections."""
-        conn = psycopg.connect(self.db_path)
-        register_vector(conn)
-        try:
-            cursor = conn.cursor()
-            yield cursor
-            conn.commit()
-        finally:
-            conn.close()
 
     def insert_podcast(self, podcast: Podcast):
         # Validate date formats

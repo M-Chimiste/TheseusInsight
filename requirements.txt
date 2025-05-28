@@ -50,4 +50,5 @@ google-auth-oauthlib
 fastapi
 uvicorn
 python-multipart
-psycopg
+psycopg2-binary
+pgvector

@@ -151,10 +151,18 @@ const Settings: React.FC = () => {
     onError: (error: any) => setError(error.message),
   });
 
+  const [appPasswordFailed, setAppPasswordFailed] = useState(false);
+
   const sendTestEmailMutation = useMutation({
     mutationFn: () => settingsApi.sendTestEmail(),
     onSuccess: () => setSuccess('Test email sent successfully'),
-    onError: (error: any) => setError(error.message),
+    onError: (error: any) => {
+      const message = error?.response?.data?.detail || error.message;
+      if (message && /application\-specific|authentication/i.test(message)) {
+        setAppPasswordFailed(true);
+      }
+      setError(message);
+    },
   });
 
   const { data: credentials } = useQuery({
@@ -387,6 +395,11 @@ const Settings: React.FC = () => {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+      {appPasswordFailed && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setAppPasswordFailed(false)}>
+          Gmail authentication failed. Your application password didn't work. Please enter your credentials again.
         </Alert>
       )}
       {success && (

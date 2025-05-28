@@ -1,6 +1,8 @@
 import os
 import json
 import datetime
+import base64
+import hashlib
 from contextlib import contextmanager
 import psycopg
 from pgvector.psycopg import register_vector
@@ -672,6 +674,35 @@ class PaperDatabase:
         with self.get_cursor() as cursor:
             cursor.execute('SELECT key, value FROM settings')
             return dict(cursor.fetchall())
+
+    # Simple XOR-based encryption helpers using a secret from APP_SECRET_KEY
+    def _encrypt(self, plaintext: str) -> str:
+        secret = os.getenv("APP_SECRET_KEY", "default_secret").encode()
+        key = hashlib.sha256(secret).digest()
+        data = plaintext.encode()
+        enc = bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
+        return base64.b64encode(enc).decode()
+
+    def _decrypt(self, ciphertext: str) -> str:
+        secret = os.getenv("APP_SECRET_KEY", "default_secret").encode()
+        key = hashlib.sha256(secret).digest()
+        data = base64.b64decode(ciphertext.encode())
+        dec = bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
+        return dec.decode()
+
+    def set_secret_setting(self, key: str, value: str):
+        """Encrypt and store a sensitive setting value."""
+        self.set_setting(key, self._encrypt(value))
+
+    def get_secret_setting(self, key: str) -> str | None:
+        """Retrieve and decrypt a sensitive setting value."""
+        enc = self.get_setting(key)
+        if enc:
+            try:
+                return self._decrypt(enc)
+            except Exception:
+                return None
+        return None
 
     # MODEL PROVIDERS CRUD
     def add_model_provider(self, id: int, name: str):

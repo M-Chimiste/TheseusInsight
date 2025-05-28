@@ -67,6 +67,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
+- **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers.
 
 ---
@@ -125,7 +126,10 @@ Create a `.env` file in the project root containing keys and settings:
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
 | `RUNNING_IN_DOCKER` | Set to `true` in Docker images for correct static file paths |
-| `APP_SECRET_KEY` | Set to a preferred secret key for secure credential storage in the postgres database|
+| `APP_SECRET_KEY` | Secret used to encrypt API credentials stored in the database |
+
+The application loads these credentials from the database at startup, falling back to `.env` values if necessary. You can view and update them from the **Settings → API Credentials** section in the UI.
+More details are available in [docs/credential_management_README.md](docs/credential_management_README.md).
 
 Note: The `APP_SECRET_KEY` is used to encrypt sensitive data in the database, such as OAuth tokens and API keys. It should be a long, random string that is kept secret from anyone who might access it. This value will default to an insecure password that is not recommended for production use.
 ---

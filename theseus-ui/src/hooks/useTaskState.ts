@@ -116,7 +116,8 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
         taskId: taskState.taskId,
         overallStatus: lastMessage.overallStatus,
         hasResult: !!lastMessage.result,
-        result: lastMessage.result
+        result: lastMessage.result,
+        fullMessage: lastMessage  // Log the complete message structure
       });
       
       const mainNode = lastMessage.nodes && lastMessage.nodes.length > 0 ? lastMessage.nodes[0] : null;
@@ -136,7 +137,7 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
           'Processing...'
         ),
         error: lastMessage.error || null,
-        result: lastMessage.result || prev.result,
+        result: lastMessage.result || (lastMessage.overallStatus === 'completed' ? { completed: true } : prev.result),
       }));
 
       // Don't automatically clear task when completed - let user manually dismiss or restart
@@ -153,6 +154,59 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
       }
     }
   }, [lastMessage, taskState.taskId, taskType]);
+
+  // Fallback: Periodically check task status if it seems stuck
+  useEffect(() => {
+    if (!taskState.taskId || !taskState.isRunning) return;
+
+    const checkTaskStatus = async () => {
+      try {
+        if (!taskState.taskId) return; // Extra safety check
+        
+        console.log(`[useTaskState] Checking fallback status for stuck task: ${taskState.taskId}`);
+        const response = await taskApi.getTaskStatus(taskState.taskId);
+        const task = response.data;
+        
+        console.log(`[useTaskState] Fallback status check result:`, {
+          taskId: taskState.taskId,
+          status: task.status,
+          progress: task.progress,
+          currentIsRunning: taskState.isRunning
+        });
+
+        // If the task is actually completed but we're still showing as running
+        if (task.status === 'completed' && taskState.isRunning) {
+          console.warn(`[useTaskState] ⚠️  STUCK TASK DETECTED! Task ${taskState.taskId} is completed but UI still shows running. Fixing now...`);
+          setTaskState(prev => ({
+            ...prev,
+            isRunning: false,
+            stage: 'completed',
+            progress: 100,
+            message: 'Completed successfully',
+            error: null,
+            result: task.result || { completed: true },
+          }));
+        } else if (task.status === 'failed' && taskState.isRunning) {
+          console.warn(`[useTaskState] ⚠️  STUCK TASK DETECTED! Task ${taskState.taskId} is failed but UI still shows running. Fixing now...`);
+          setTaskState(prev => ({
+            ...prev,
+            isRunning: false,
+            stage: 'failed',
+            progress: 0,
+            message: 'Task failed',
+            error: task.error || 'Task failed',
+          }));
+        }
+      } catch (error) {
+        console.error(`[useTaskState] Fallback status check failed:`, error);
+      }
+    };
+
+    // Check every 5 seconds if task is running (faster detection for debugging)
+    const intervalId = setInterval(checkTaskStatus, 5000);
+    
+    return () => clearInterval(intervalId);
+  }, [taskState.taskId, taskState.isRunning, taskType]);
 
   const setTaskId = useCallback((taskId: string | null) => {
     if (taskId) {

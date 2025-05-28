@@ -119,10 +119,21 @@ export const useWebSocket = (
       // console.log('useWebSocket: Message received:', event.data);
       try {
         const parsedData = JSON.parse(event.data as string);
+        console.log(`[useWebSocket] ${type.toUpperCase()} MESSAGE RECEIVED:`, {
+          taskId,
+          rawData: event.data,
+          parsedData,
+          overallStatus: parsedData?.overallStatus,
+          status: parsedData?.status, // Sometimes it might be 'status' instead of 'overallStatus'
+          messageType: typeof parsedData,
+          hasNodes: !!(parsedData?.nodes),
+          nodeCount: parsedData?.nodes?.length || 0
+        });
         setLastMessage(parsedData as RunStatusPayload); // Assume it's RunStatusPayload
         if (options?.onMessage) options.onMessage(event);
       } catch (e) {
         console.error('useWebSocket: Failed to parse message data:', e);
+        console.error('useWebSocket: Raw message data:', event.data);
         // Optionally set an error state or a specific lastMessage format for parse errors
       }
     };

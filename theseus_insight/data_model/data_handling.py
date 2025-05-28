@@ -388,6 +388,12 @@ class PaperDatabase:
         with self.get_cursor() as cursor:
             cursor.execute("DELETE FROM podcasts WHERE title = %s", (title,))
 
+    def delete_podcast_by_id(self, podcast_id: int):
+        """Delete a podcast from the database by its ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM podcasts WHERE id = %s", (podcast_id,))
+            return cursor.rowcount > 0  # Return True if a row was actually deleted
+
     def fetch_all_newsletters(self):
         with self.get_cursor() as cursor:
             cursor.execute("SELECT id, content, start_date, end_date, date_sent FROM newsletters ORDER BY id DESC")

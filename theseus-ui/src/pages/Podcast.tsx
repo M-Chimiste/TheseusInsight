@@ -203,25 +203,45 @@ const Podcast: React.FC = () => {
   }, [taskState.message, taskState.stage, taskState.taskId]);
 
   // Download button state and logic
-  const [downloadInfo, setDownloadInfo] = useState<{ url: string | null, filename: string, type: 'audio' | 'video' | null }>({ url: null, filename: 'podcast', type: null });
+  const [downloadInfo, setDownloadInfo] = useState<{ url: string | null, filename: string, type: 'audio' | 'video' | null, isLoading: boolean }>({ 
+    url: null, 
+    filename: 'podcast', 
+    type: null, 
+    isLoading: false 
+  });
+
+  // Check if task is completed (not running and has taskId, with or without explicit result)
+  const isTaskCompleted = taskState.taskId && !taskState.isRunning && !taskState.error;
 
   useEffect(() => {
-    if (taskState.taskId && taskState.result && !taskState.isRunning) {
+    // Try to download artifact when task completes, regardless of result field
+    if (isTaskCompleted && taskState.taskId) {
         const artifactType = createVisualization ? 'video' : 'audio';
         const filename = artifactType === 'video' ? 'podcast_visualization.mp4' : 'podcast_audio.mp3';
         const blobType = artifactType === 'video' ? 'video/mp4' : 'audio/mpeg';
 
+        // Set loading state
+        setDownloadInfo({ url: null, filename, type: null, isLoading: true });
+
         taskApi.downloadTaskArtifact(taskState.taskId, artifactType)
             .then(downloadRes => {
                 const blob = new Blob([downloadRes.data], { type: blobType });
-                setDownloadInfo({ url: URL.createObjectURL(blob), filename, type: artifactType });
+                setDownloadInfo({ url: URL.createObjectURL(blob), filename, type: artifactType, isLoading: false });
             })
             .catch(err => {
                 console.error("Failed to download artifact:", err);
+                setDownloadInfo({ url: null, filename, type: null, isLoading: false });
                 setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Failed to prepare download link for the artifact.`]);
             });
     }
-  }, [taskState.taskId, taskState.result, taskState.isRunning, createVisualization]);
+  }, [isTaskCompleted, taskState.taskId, createVisualization]);
+
+  // Function to reset task state and allow new generation
+  const handleResetTask = () => {
+    setTaskId(null);
+    setDownloadInfo({ url: null, filename: 'podcast', type: null, isLoading: false });
+    setStatusMessages([]);
+  };
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -502,24 +522,74 @@ const Podcast: React.FC = () => {
         <Card sx={{ width: '100%' }}>
           <CardContent>
             <Typography variant="h5" gutterBottom>Generate</Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              fullWidth
-              disabled={pdfFiles.length === 0 && urls.length === 0 || taskState.isRunning || isCheckingForActiveTasks}
-              onClick={handleGeneratePodcast}
-              sx={{ py: 1.5, fontSize: '1.1rem' }}
-            >
-              {isCheckingForActiveTasks ? 'Checking for active tasks...' :
-               taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
-               'Generate Podcast'}
-            </Button>
+            
+            {/* Show different buttons based on task state */}
+            {isTaskCompleted ? (
+              <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
+                <Button
+                  variant="outlined"
+                  color="secondary"
+                  fullWidth
+                  onClick={handleResetTask}
+                  sx={{ py: 1.5, fontSize: '1.1rem' }}
+                >
+                  Generate New Podcast
+                </Button>
+                {downloadInfo.isLoading ? (
+                  <Button 
+                    variant="contained" 
+                    fullWidth 
+                    disabled
+                    sx={{ py: 1.5, fontSize: '1.1rem' }}
+                  >
+                    <CircularProgress size={20} sx={{ mr: 1 }} />
+                    Preparing Download...
+                  </Button>
+                ) : downloadInfo.url ? (
+                  <Button 
+                    component="a" 
+                    href={downloadInfo.url} 
+                    download={downloadInfo.filename} 
+                    variant="contained" 
+                    fullWidth 
+                    sx={{ py: 1.5, fontSize: '1.1rem' }}
+                  >
+                    Download {downloadInfo.type === 'video' ? 'Podcast Video' : 'Podcast Audio'}
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="contained" 
+                    fullWidth 
+                    disabled
+                    sx={{ py: 1.5, fontSize: '1.1rem' }}
+                  >
+                    Download Failed - Check Logs
+                  </Button>
+                )}
+              </Box>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
+                disabled={pdfFiles.length === 0 && urls.length === 0 || taskState.isRunning || isCheckingForActiveTasks}
+                onClick={handleGeneratePodcast}
+                sx={{ py: 1.5, fontSize: '1.1rem' }}
+              >
+                {isCheckingForActiveTasks ? 'Checking for active tasks...' :
+                 taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
+                 'Generate Podcast'}
+              </Button>
+            )}
+            
             {taskState.isRunning && <CircularProgress sx={{ mt: 2, display: 'block', marginLeft: 'auto', marginRight: 'auto' }} />}
+            
             {taskState.error && (
               <Typography color="error" sx={{ mt: 2, textAlign: 'center' }}>
                 {taskState.error}
               </Typography>
             )}
+            
             {taskState.taskId && taskState.isRunning && (
               <Typography sx={{ mt: 2, textAlign: 'center' }}>
                 Podcast generation in progress. Task ID: {taskState.taskId}
@@ -527,15 +597,11 @@ const Podcast: React.FC = () => {
                 Status: {taskState.message} ({taskState.progress.toFixed(0)}%)
               </Typography>
             )}
-            {taskState.taskId && !taskState.isRunning && !taskState.error && (
+            
+            {isTaskCompleted && (
                <Typography sx={{ mt: 2, textAlign: 'center' }} color="success.main">
                  Podcast Ready! Task ID: {taskState.taskId}
                </Typography>
-            )}
-            {downloadInfo.url && (
-              <Button component="a" href={downloadInfo.url} download={downloadInfo.filename} variant="contained" fullWidth sx={{ mt: 2 }}>
-                Download {downloadInfo.type === 'video' ? 'Podcast Video' : 'Podcast Audio'}
-              </Button>
             )}
 
             {/* Live Log Display */}

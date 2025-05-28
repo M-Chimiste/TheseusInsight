@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -12,6 +12,7 @@ import {
   Toolbar,
   Typography,
   IconButton,
+  Alert,
   Tooltip,
 } from '@mui/material';
 import {
@@ -31,6 +32,16 @@ import {
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
 import { useLayout } from '../contexts/LayoutContext';
+import { settingsApi } from '../services/api';
+
+const REQUIRED_KEYS = [
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GMAIL_SENDER_ADDRESS',
+  'CLIENT_SECRET',
+  'PROJECT_ID',
+  'GMAIL_APP_PASSWORD',
+];
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -42,6 +53,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { isDarkMode, toggleTheme } = useCustomTheme();
   const { isDrawerOpen, currentDrawerWidth, toggleDrawer } = useLayout();
   const theme = useTheme();
+
+  const [missingKeys, setMissingKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    settingsApi
+      .getCredentials()
+      .then((res) => {
+        const creds = res.data as Record<string, string>;
+        const missing = REQUIRED_KEYS.filter((key) => !creds[key]);
+        setMissingKeys(missing);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch credentials:', err);
+      });
+  }, []);
 
   const drawerGradient = isDarkMode
     ? 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)'
@@ -162,6 +188,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         }}
       >
         <Toolbar />
+        {missingKeys.length > 0 && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Some credentials are missing or invalid. Please review your API keys in the Settings page.
+          </Alert>
+        )}
         {children}
       </Box>
     </Box>

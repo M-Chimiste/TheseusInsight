@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 
 
-class ProcessData:
+class PapersWithCode:
 
     def __init__(self, start_date=None, end_date=None):
         self.paper_dump_url = "https://production-media.paperswithcode.com/about/papers-with-abstracts.json.gz"  #This URL is static and updated daily per https://github.com/paperswithcode/paperswithcode-data

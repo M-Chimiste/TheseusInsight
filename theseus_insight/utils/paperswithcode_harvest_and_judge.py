@@ -921,8 +921,8 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Harvest PapersWithCode data, rank and store papers"
     )
-    parser.add_argument("--date-from", help="Start date YYYY-MM-DD", default=None)
-    parser.add_argument("--date-to", help="End date YYYY-MM-DD", default=None)
+    parser.add_argument("--date-from", help="Start date YYYY-MM-DD", default='2024-01-01')
+    parser.add_argument("--date-to", help="End date YYYY-MM-DD", default='2025-05-22')
     parser.add_argument(
         "--db-url",
         default=os.getenv(
@@ -931,7 +931,7 @@ def parse_args():
         help="Database connection URL",
     )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")
-    parser.add_argument("--cosine-threshold", type=float, default=0.5)
+    parser.add_argument("--cosine-threshold", type=float, default=0.65)
     parser.add_argument("--batch-size", type=int, default=32,
                        help="Embedding batch size (1 = no batching, higher = more efficient)")
     parser.add_argument("--max-workers", type=int, default=4,

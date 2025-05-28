@@ -208,8 +208,18 @@ class GeminiInference(InferenceModel):
 class SentenceTransformerInference(InferenceModel):
     def __init__(self,
                  model_name: str = "Alibaba-NLP/gte-large-en-v1.5",
-                 remote_code: bool = True):
+                 remote_code: bool = True,
+                 device: Optional[str] = None):
+        import torch
         self.remote_code = remote_code
+        if not device:
+            if torch.backends.mps.is_available():
+                device = "mps"
+            elif torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+        self.device = device
         super().__init__(model_name)
 
     def _get_provider(self) -> str:
@@ -217,16 +227,59 @@ class SentenceTransformerInference(InferenceModel):
 
     def _load_model(self):
         from sentence_transformers import SentenceTransformer
-        return SentenceTransformer(self.model_name, trust_remote_code=self.remote_code)
+        return SentenceTransformer(self.model_name, trust_remote_code=self.remote_code, device=self.device)
     
-    def invoke(self, text: Union[str, List[str]], to_list: bool = False, 
-               normalize: bool = False, **kwargs) -> Union[List, object]:
-        if isinstance(text, str):
+    def invoke(self, 
+               text: Union[str, List[str]], 
+               to_list: bool = False, 
+               normalize: bool = False,
+               batch_size: Optional[int] = None,
+               show_progress_bar: Optional[bool] = None,
+               convert_to_numpy: bool = True,
+               convert_to_tensor: bool = False,
+               **kwargs) -> Union[List, object]:
+        """
+        Generate embeddings for text(s) using SentenceTransformer.
+        
+        Args:
+            text: String or list of strings to embed
+            to_list: Whether to convert embeddings to Python lists
+            normalize: Whether to normalize the embeddings  
+            batch_size: Batch size for processing. If None, uses model default
+            show_progress_bar: Whether to show progress bar for large batches
+            convert_to_numpy: Whether to convert to numpy arrays (default: True)
+            convert_to_tensor: Whether to convert to PyTorch tensors
+            **kwargs: Additional arguments passed to SentenceTransformer.encode()
+            
+        Returns:
+            Embeddings as numpy array(s), tensor(s), or list(s) depending on parameters
+        """
+        is_string_input = isinstance(text, str)
+        if is_string_input:
             text = [text]
-        embeddings = self.client.encode(text, normalize_embeddings=normalize)
-        if to_list:
+        
+        # Build encode parameters
+        encode_params = {
+            'sentences': text,
+            'normalize_embeddings': normalize,
+            'convert_to_numpy': convert_to_numpy,
+            'convert_to_tensor': convert_to_tensor,
+            **kwargs
+        }
+        
+        # Add optional parameters if provided
+        if batch_size is not None:
+            encode_params['batch_size'] = batch_size
+        if show_progress_bar is not None:
+            encode_params['show_progress_bar'] = show_progress_bar
+            
+        embeddings = self.client.encode(**encode_params)
+        
+        if to_list and convert_to_numpy:
             embeddings = [embedding.tolist() for embedding in embeddings]
-        if len(embeddings) == 1:
+        
+        # Only return single embedding if input was a single string, not a list
+        if is_string_input and len(embeddings) == 1:
             return embeddings[0]
         return embeddings
 

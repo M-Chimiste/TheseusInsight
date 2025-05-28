@@ -105,6 +105,7 @@ If you prefer running locally without Docker:
    npm run build
    ```
 3. Configure environment variables as shown below.
+4. Run `scripts/setup_database.sh` to create the default PostgreSQL database and role.
 
 ---
 
@@ -130,6 +131,7 @@ Create a `.env` file in the project root containing keys and settings:
 The application loads these credentials from the database at startup, falling back to `.env` values if necessary. You can view and update them from the **Settings → API Credentials** section in the UI.
 More details are available in [docs/credential_management_README.md](docs/credential_management_README.md).
 
+Note: The `APP_SECRET_KEY` is used to encrypt sensitive data in the database, such as OAuth tokens and API keys. It should be a long, random string that is kept secret from anyone who might access it. This value will default to an insecure password that is not recommended for production use.
 ---
 
 ## Running the API

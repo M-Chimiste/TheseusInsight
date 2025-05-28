@@ -13,6 +13,7 @@ import {
   FormControlLabel,
   Button,
   Alert,
+  Snackbar,
   CircularProgress,
   Container,
   Tabs,
@@ -392,8 +393,13 @@ const Settings: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+      <Snackbar
+        open={Boolean(error)}
+        autoHideDuration={4000}
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
           {error}
         </Alert>
       )}
@@ -406,7 +412,7 @@ const Settings: React.FC = () => {
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
           {success}
         </Alert>
-      )}
+      </Snackbar>
 
         <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
           <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> Settings

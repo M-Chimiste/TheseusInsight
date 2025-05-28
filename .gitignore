@@ -328,10 +328,6 @@ music/
 *.ogg
 
 
-# Scripts
-*.sh
-!examples/*.sh
-
 #checkpoints
 checkpoints/
 

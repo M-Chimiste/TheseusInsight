@@ -125,8 +125,9 @@ Create a `.env` file in the project root containing keys and settings:
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
 | `RUNNING_IN_DOCKER` | Set to `true` in Docker images for correct static file paths |
-| `APP_SECRET_KEY` | Set to a preferred secret key for secure credential storage in the postgres database |
+| `APP_SECRET_KEY` | Set to a preferred secret key for secure credential storage in the postgres database|
 
+Note: The `APP_SECRET_KEY` is used to encrypt sensitive data in the database, such as OAuth tokens and API keys. It should be a long, random string that is kept secret from anyone who might access it. This value will default to an insecure password that is not recommended for production use.
 ---
 
 ## Running the API

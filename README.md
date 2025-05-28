@@ -34,7 +34,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 
 ## Overview
 
-Theseus Insight fetches and ranks papers from [rXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
+Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
 
 ---
 
@@ -60,9 +60,11 @@ npm run dev
 ```
 This starts Vite on <http://localhost:5173> which proxies API requests to the backend.
 
+
 ---
 
 ## Features
+
 
 - **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
 - **React** frontend built with Vite and Material UI, served from the backend in production.
@@ -99,7 +101,9 @@ Configuration files live in `config/` and the React app is located in `theseus-u
 If you prefer running locally without Docker:
 1. Install Python dependencies
    ```bash
+
    pip install -r requirements.txt
+
    ```
 2. (Optional) install Node.js 18+ and build the frontend
    ```bash

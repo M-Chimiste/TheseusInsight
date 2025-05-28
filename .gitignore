@@ -328,11 +328,6 @@ music/
 *.ogg
 
 
-# Scripts
-*.sh
-!examples/*.sh
-!scripts/setup_database.sh
-
 #checkpoints
 checkpoints/
 

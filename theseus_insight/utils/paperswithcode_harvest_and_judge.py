@@ -49,7 +49,7 @@ def _checkpoint_path(checkpoint_dir: str, stage: str) -> Path:
     return Path(checkpoint_dir) / f"{stage}.pkl"
 
 
-def save_checkpoint(checkpoint_dir: str, stage: str, data: Any) -> None:
+def save_checkpoint(checkpoint_dir: str, stage: str, data: Any, verbose: bool = True) -> None:
     """
     Saves checkpoint data to a file.
 
@@ -64,9 +64,11 @@ def save_checkpoint(checkpoint_dir: str, stage: str, data: Any) -> None:
     }
     with open(_checkpoint_path(checkpoint_dir, stage), "wb") as f:
         pickle.dump(cp, f)
+    if verbose:
+        print(f"✅ Checkpoint saved: {stage}")
 
 
-def load_checkpoint(checkpoint_dir: str, stage: str):
+def load_checkpoint(checkpoint_dir: str, stage: str, verbose: bool = True):
     """
     Loads checkpoint data from a file.
 
@@ -77,7 +79,8 @@ def load_checkpoint(checkpoint_dir: str, stage: str):
     if path.exists():
         with open(path, "rb") as f:
             cp = pickle.load(f)
-        print(f"Loaded checkpoint '{stage}' from {time.ctime(cp['timestamp'])}")
+        if verbose:
+            print(f"📂 Loaded checkpoint '{stage}' from {time.ctime(cp['timestamp'])}")
         return cp["data"]
     return None
 
@@ -86,7 +89,7 @@ def load_checkpoint(checkpoint_dir: str, stage: str):
 # Model loader helper
 # ---------------------------------------------------------------
 
-def load_inference_model(cfg: Dict[str, Any]):
+def load_inference_model(cfg: Dict[str, Any], verbose: bool = True):
     """
     Loads an inference model based on the configuration.
 
@@ -97,6 +100,10 @@ def load_inference_model(cfg: Dict[str, Any]):
     max_new_tokens = cfg.get("max_new_tokens", 4096)
     temperature = cfg.get("temperature", 0.1)
     num_ctx = cfg.get("num_ctx")
+    
+    if verbose:
+        print(f"🤖 Loading {model_type} model: {model_name}")
+    
     if model_type == "ollama":
         kwargs = {
             "model_name": model_name,
@@ -116,7 +123,7 @@ def load_inference_model(cfg: Dict[str, Any]):
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
-def clear_judge_cache(inference, model_name: str):
+def clear_judge_cache(inference, model_name: str, verbose: bool = True):
     """
     Clears the cache for a judge model.
 
@@ -124,9 +131,12 @@ def clear_judge_cache(inference, model_name: str):
     """
     try:
         if hasattr(inference, "provider") and inference.provider == "ollama":
+            if verbose:
+                print(f"🧹 Clearing Ollama cache for {model_name}")
             purge_ollama_cache(OLLAMA_URL, model_name)
     except Exception as e:
-        print(f"Failed to purge cache for {model_name}: {e}")
+        if verbose:
+            print(f"⚠️ Failed to purge cache for {model_name}: {e}")
 
 
 # ---------------------------------------------------------------
@@ -138,6 +148,7 @@ def download_papers(
     date_to: Optional[str],
     checkpoint_dir: str,
     retries: int = 3,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Downloads papers from PapersWithCode.
@@ -147,32 +158,59 @@ def download_papers(
         date_to (Optional[str]): The end date for the time period selected (MM-DD-YYYY). Defaults to None.
         checkpoint_dir (str): The directory to save the checkpoint.
         retries (int, optional): The number of retries if the download fails. Defaults to 3.
+        verbose (bool, optional): If True, prints progress messages. Defaults to True.
 
     Returns:
         pd.DataFrame: A DataFrame containing the downloaded papers.
     """
-    data_df = load_checkpoint(checkpoint_dir, "download")
+    if verbose:
+        print("\n" + "="*60)
+        print("📥 STAGE 1: DOWNLOADING PAPERS FROM PAPERSWITHCODE")
+        print("="*60)
+    
+    data_df = load_checkpoint(checkpoint_dir, "download", verbose)
     if data_df is not None:
+        if verbose:
+            print(f"📊 Found {len(data_df)} papers in checkpoint")
         return data_df
+    
+    if verbose:
+        date_range = f"from {date_from} to {date_to}" if date_from and date_to else "all available data"
+        print(f"🌐 Downloading papers: {date_range}")
+    
     attempt = 0
     while attempt < retries:
         attempt += 1
         try:
+            if verbose and attempt > 1:
+                print(f"🔄 Download attempt {attempt}/{retries}")
+            
             pwc = PapersWithCode(start_date=date_from, end_date=date_to)
+            
             if date_from is None and date_to is None:
+                if verbose:
+                    print("📂 Fetching complete dataset...")
                 json_data = pwc._fetch_data()
                 pwc.json_data = json_data
                 data_df = pd.DataFrame.from_dict(json_data)
                 if "date" in data_df.columns:
                     data_df["date"] = pd.to_datetime(data_df["date"])
             else:
+                if verbose:
+                    print(f"📅 Downloading papers for date range: {date_from} to {date_to}")
                 data_df = pwc.download_and_process_data(
                     start_date=date_from, end_date=date_to
                 )
-            save_checkpoint(checkpoint_dir, "download", data_df)
+            
+            if verbose:
+                print(f"✅ Successfully downloaded {len(data_df)} papers")
+            
+            save_checkpoint(checkpoint_dir, "download", data_df, verbose)
             return data_df
+            
         except Exception as e:
-            print(f"Download attempt {attempt} failed: {e}")
+            if verbose:
+                print(f"❌ Download attempt {attempt} failed: {e}")
             if attempt >= retries:
                 raise
             time.sleep(2)
@@ -186,6 +224,7 @@ def embed_papers(
     threshold: float,
     db: PaperDatabase,
     checkpoint_dir: str,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Embeds papers with abstract embeddings and filters based on cosine similarity.
@@ -199,41 +238,85 @@ def embed_papers(
         threshold (float): The minimum cosine similarity required for a paper to be considered relevant.
         db (PaperDatabase): The database used to check if a paper already exists.
         checkpoint_dir (str): The directory where the checkpoint is saved.
+        verbose (bool, optional): If True, prints progress messages. Defaults to True.
 
     Returns:
         pd.DataFrame: A DataFrame containing the papers that have been embedded and filtered.
     """
-    embedded_df = load_checkpoint(checkpoint_dir, "embed")
+    if verbose:
+        print("\n" + "="*60)
+        print("🧠 STAGE 2: EMBEDDING AND FILTERING PAPERS")
+        print("="*60)
+    
+    embedded_df = load_checkpoint(checkpoint_dir, "embed", verbose)
     if embedded_df is not None:
+        if verbose:
+            print(f"📊 Found {len(embedded_df)} embedded papers in checkpoint")
         return embedded_df
 
     if df.empty:
-        save_checkpoint(checkpoint_dir, "embed", df)
+        if verbose:
+            print("⚠️ No papers to embed (empty dataset)")
+        save_checkpoint(checkpoint_dir, "embed", df, verbose)
         return df
 
+    if verbose:
+        print(f"🔍 Checking for existing papers in database...")
+    
     new_mask = []
-    for _, row in df.iterrows():
-        exists = db.paper_exists_by_url(row.get("pdf_url") or row.get("url_pdf"))
-        new_mask.append(not exists)
+    with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
+        for _, row in pbar:
+            exists = db.paper_exists_by_url(row.get("pdf_url") or row.get("url_pdf"))
+            new_mask.append(not exists)
+    
     new_df = df[new_mask].reset_index(drop=True)
+    
+    if verbose:
+        existing_count = len(df) - len(new_df)
+        print(f"📝 Found {existing_count} existing papers, {len(new_df)} new papers to process")
+    
     if new_df.empty:
         embedded_df = new_df.copy()
         embedded_df["cosine_similarity"] = []
         embedded_df["abstract_embedding"] = []
-        save_checkpoint(checkpoint_dir, "embed", embedded_df)
+        save_checkpoint(checkpoint_dir, "embed", embedded_df, verbose)
+        if verbose:
+            print("✅ No new papers to embed")
         return embedded_df
 
+    if verbose:
+        print(f"🎯 Embedding research interests...")
     research_emb = embedding_model.invoke(research_interests)
+    
+    if verbose:
+        print(f"📄 Embedding {len(new_df)} paper abstracts...")
+    
     embeddings = []
     sims = []
-    for abstract in tqdm(new_df["abstract"], desc="Embedding", leave=False):
-        emb = embedding_model.invoke(abstract)
-        embeddings.append(emb)
-        sims.append(cosine_similarity(emb, research_emb))
+    
+    with tqdm(new_df["abstract"], desc="Embedding abstracts", disable=not verbose) as pbar:
+        for abstract in pbar:
+            emb = embedding_model.invoke(abstract)
+            embeddings.append(emb)
+            sim = cosine_similarity(emb, research_emb)
+            sims.append(sim)
+            pbar.set_postfix({"last_similarity": f"{sim:.3f}"})
+    
     new_df["abstract_embedding"] = embeddings
     new_df["cosine_similarity"] = sims
+    
     filtered_df = new_df[new_df["cosine_similarity"] >= threshold].reset_index(drop=True)
-    save_checkpoint(checkpoint_dir, "embed", filtered_df)
+    
+    if verbose:
+        filtered_count = len(filtered_df)
+        total_count = len(new_df)
+        print(f"🎯 Filtered to {filtered_count}/{total_count} papers above threshold {threshold}")
+        if filtered_count > 0:
+            avg_sim = filtered_df["cosine_similarity"].mean()
+            max_sim = filtered_df["cosine_similarity"].max()
+            print(f"📊 Similarity stats - Average: {avg_sim:.3f}, Max: {max_sim:.3f}")
+    
+    save_checkpoint(checkpoint_dir, "embed", filtered_df, verbose)
     return filtered_df
 
 
@@ -259,13 +342,22 @@ def rank_papers(
     Returns:
         pd.DataFrame: A DataFrame containing the ranked papers.
     """
-    ranked_df = load_checkpoint(checkpoint_dir, "rank")
+    if verbose:
+        print("\n" + "="*60)
+        print("⚖️ STAGE 3: RANKING PAPERS WITH JUDGE MODEL")
+        print("="*60)
+    
+    ranked_df = load_checkpoint(checkpoint_dir, "rank", verbose)
     if ranked_df is not None:
+        if verbose:
+            print(f"📊 Found {len(ranked_df)} ranked papers in checkpoint")
         return ranked_df
 
     if df.empty:
+        if verbose:
+            print("⚠️ No papers to rank (empty dataset)")
         ranked_df = df.copy()
-        save_checkpoint(checkpoint_dir, "rank", ranked_df)
+        save_checkpoint(checkpoint_dir, "rank", ranked_df, verbose)
         return ranked_df
 
     abstracts = list(df["abstract"])
@@ -274,7 +366,8 @@ def rank_papers(
     rationale: List[str] = []
     failed = []
     consecutive_failures = 0
-    partial = load_checkpoint(checkpoint_dir, "rank_partial")
+    
+    partial = load_checkpoint(checkpoint_dir, "rank_partial", verbose=False)
     start_idx = 0
     if partial:
         scores = partial.get("scores", [])
@@ -283,75 +376,112 @@ def rank_papers(
         failed = partial.get("failed_papers", [])
         start_idx = len(scores)
         if verbose:
-            print(f"Resuming ranking from {start_idx + 1}/{len(abstracts)}")
+            print(f"🔄 Resuming ranking from paper {start_idx + 1}/{len(abstracts)}")
 
-    for i, abstract in enumerate(tqdm(abstracts[start_idx:], desc="Ranking", leave=False)):
-        idx = start_idx + i
-        success = False
-        attempts = 0
-        while not success and attempts < 3:
-            attempts += 1
-            try:
-                if attempts == 2 and consecutive_failures > 2:
-                    clear_judge_cache(judge_model, judge_model.model_name)
-                messages = [{"role": "user", "content": research_prompt(research_interests, abstract)}]
-                if getattr(judge_model, "provider", "") == "ollama":
-                    resp = judge_model.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=None)
-                else:
-                    resp = judge_model.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
+    if verbose:
+        print(f"🎯 Ranking {len(abstracts) - start_idx} papers using {judge_model.model_name}")
+
+    with tqdm(abstracts[start_idx:], desc="Ranking papers", initial=start_idx, total=len(abstracts), disable=not verbose) as pbar:
+        for i, abstract in enumerate(pbar):
+            idx = start_idx + i
+            success = False
+            attempts = 0
+            
+            while not success and attempts < 3:
+                attempts += 1
                 try:
-                    resp_json = json_repair.loads(resp)
-                except Exception:
-                    if attempts >= 3:
-                        raise
-                    continue
-                try:
-                    s_val = int(resp_json["score"])
-                    r_val = bool(resp_json["related"])
-                    rat = str(resp_json["rationale"])
-                    if not (1 <= s_val <= 10):
+                    if attempts == 2 and consecutive_failures > 2:
+                        if verbose:
+                            pbar.write(f"🧹 Clearing cache due to consecutive failures")
+                        clear_judge_cache(judge_model, judge_model.model_name, verbose=False)
+                    
+                    messages = [{"role": "user", "content": research_prompt(research_interests, abstract)}]
+                    if getattr(judge_model, "provider", "") == "ollama":
+                        resp = judge_model.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT, schema=None)
+                    else:
+                        resp = judge_model.invoke(messages=messages, system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT)
+                    
+                    try:
+                        resp_json = json_repair.loads(resp)
+                    except Exception:
                         if attempts >= 3:
-                            s_val = max(1, min(10, s_val))
-                        else:
-                            continue
-                    scores.append(s_val)
-                    related.append(r_val)
-                    rationale.append(rat)
-                    success = True
-                    consecutive_failures = 0
-                except Exception:
+                            raise
+                        continue
+                    
+                    try:
+                        s_val = int(resp_json["score"])
+                        r_val = bool(resp_json["related"])
+                        rat = str(resp_json["rationale"])
+                        
+                        if not (1 <= s_val <= 10):
+                            if attempts >= 3:
+                                s_val = max(1, min(10, s_val))
+                            else:
+                                continue
+                        
+                        scores.append(s_val)
+                        related.append(r_val)
+                        rationale.append(rat)
+                        success = True
+                        consecutive_failures = 0
+                        
+                        pbar.set_postfix({
+                            "score": s_val,
+                            "related": r_val,
+                            "failures": len(failed)
+                        })
+                        
+                    except Exception:
+                        if attempts >= 3:
+                            raise
+                        
+                except Exception as e:
                     if attempts >= 3:
-                        raise
-            except Exception as e:
-                if attempts >= 3:
-                    scores.append(1)
-                    related.append(False)
-                    rationale.append(f"Failed: {str(e)[:50]}")
-                    failed.append(idx)
-                    consecutive_failures += 1
-                    success = True
-                else:
-                    time.sleep(1)
-        if (idx + 1) % 50 == 0:
-            partial_data = {
-                "scores": scores,
-                "related": related,
-                "rationale": rationale,
-                "failed_papers": failed,
-            }
-            save_checkpoint(checkpoint_dir, "rank_partial", partial_data)
+                        scores.append(1)
+                        related.append(False)
+                        rationale.append(f"Failed: {str(e)[:50]}")
+                        failed.append(idx)
+                        consecutive_failures += 1
+                        success = True
+                        if verbose:
+                            pbar.write(f"❌ Failed to rank paper {idx + 1}: {str(e)[:50]}")
+                    else:
+                        time.sleep(1)
+                        
+            # Save partial progress every 50 papers
+            if (idx + 1) % 50 == 0:
+                partial_data = {
+                    "scores": scores,
+                    "related": related,
+                    "rationale": rationale,
+                    "failed_papers": failed,
+                }
+                save_checkpoint(checkpoint_dir, "rank_partial", partial_data, verbose=False)
 
     if failed and verbose:
-        print(f"Warning: {len(failed)} papers failed scoring")
+        print(f"⚠️ Warning: {len(failed)} papers failed scoring")
 
     df["score"] = scores
     df["related"] = related
     df["rationale"] = rationale
     df = df.sort_values(by="score", ascending=False)
-    save_checkpoint(checkpoint_dir, "rank", df)
+    
+    if verbose:
+        related_count = sum(related)
+        avg_score = sum(scores) / len(scores) if scores else 0
+        max_score = max(scores) if scores else 0
+        print(f"📊 Ranking complete:")
+        print(f"   - {related_count}/{len(scores)} papers marked as related")
+        print(f"   - Average score: {avg_score:.1f}")
+        print(f"   - Highest score: {max_score}")
+    
+    save_checkpoint(checkpoint_dir, "rank", df, verbose)
+    
+    # Clean up partial checkpoint
     cp = _checkpoint_path(checkpoint_dir, "rank_partial")
     if cp.exists():
         cp.unlink()
+    
     return df
 
 
@@ -377,36 +507,55 @@ def insert_papers(
     Returns:
         list: A list of duplicate paper URLs.
     """
+    if verbose:
+        print("\n" + "="*60)
+        print("💾 STAGE 4: INSERTING PAPERS INTO DATABASE")
+        print("="*60)
+        print(f"📝 Inserting {len(all_df)} papers into database...")
+    
     saved = 0
     dup = 0
     dup_urls = []
-    for _, row in all_df.iterrows():
-        emb = row["abstract_embedding"]
-        if hasattr(emb, "tolist"):
-            emb = emb.tolist()
-        elif not isinstance(emb, list):
-            emb = list(emb)
-        pdf_url = row.get("pdf_url") or row.get("url_pdf")
-        paper = Paper(
-            title=row["title"],
-            abstract=row["abstract"],
-            url=pdf_url,
-            date_run=str(pd.Timestamp.now().date()),
-            date=row["date"].strftime("%Y-%m-%d"),
-            score=row["score"],
-            related=row["related"],
-            rationale=row["rationale"],
-            cosine_similarity=row["cosine_similarity"],
-            embedding_model=embedding_model_name,
-            embedding=emb,
-        )
-        if db.insert_paper(paper, skip_duplicates=True):
-            saved += 1
-        else:
-            dup += 1
-            dup_urls.append(pdf_url)
+    
+    with tqdm(all_df.iterrows(), total=len(all_df), desc="Inserting papers", disable=not verbose) as pbar:
+        for _, row in pbar:
+            emb = row["abstract_embedding"]
+            if hasattr(emb, "tolist"):
+                emb = emb.tolist()
+            elif not isinstance(emb, list):
+                emb = list(emb)
+                
+            pdf_url = row.get("pdf_url") or row.get("url_pdf")
+            paper = Paper(
+                title=row["title"],
+                abstract=row["abstract"],
+                url=pdf_url,
+                date_run=str(pd.Timestamp.now().date()),
+                date=row["date"].strftime("%Y-%m-%d"),
+                score=row["score"],
+                related=row["related"],
+                rationale=row["rationale"],
+                cosine_similarity=row["cosine_similarity"],
+                embedding_model=embedding_model_name,
+                embedding=emb,
+            )
+            
+            if db.insert_paper(paper, skip_duplicates=True):
+                saved += 1
+            else:
+                dup += 1
+                dup_urls.append(pdf_url)
+            
+            pbar.set_postfix({
+                "saved": saved,
+                "duplicates": dup
+            })
+    
     if verbose:
-        print(f"DB save complete: {saved} new papers, {dup} duplicates skipped")
+        print(f"✅ Database insertion complete:")
+        print(f"   - {saved} new papers saved")
+        print(f"   - {dup} duplicates skipped")
+    
     return dup_urls
 
 
@@ -420,6 +569,7 @@ def harvest_and_judge(
     checkpoint_dir: str,
     db_url: str,
     cosine_threshold: float = 0.5,
+    verbose: bool = True,
 ):
     """
     Orchestrates the harvesting and judging of papers based on specified dates and settings.
@@ -433,16 +583,32 @@ def harvest_and_judge(
         checkpoint_dir (str): The directory where intermediate results are saved for checkpointing.
         db_url (str): The URL of the database where the papers are stored.
         cosine_threshold (float, optional): The minimum cosine similarity required for a paper to be considered relevant. Defaults to 0.5.
+        verbose (bool, optional): If True, prints detailed progress messages. Defaults to True.
     """
+    if verbose:
+        print("🚀 THESEUS INSIGHT - PAPERSWITHCODE HARVEST & JUDGE")
+        print("="*60)
+        print(f"📅 Date range: {date_from or 'All'} to {date_to or 'All'}")
+        print(f"🎯 Cosine threshold: {cosine_threshold}")
+        print(f"📁 Checkpoint directory: {checkpoint_dir}")
+        print(f"🗄️ Database: {db_url}")
+    
     db = PaperDatabase(db_url)
 
+    if verbose:
+        print(f"\n🔧 Loading configuration...")
+    
     orch_json = db.get_setting("orchestration")
     if orch_json:
         orch_cfg = json.loads(orch_json)
+        if verbose:
+            print("📝 Using orchestration config from database")
     else:
         cfg_path = PROJECT_ROOT / "config" / "orchestration.json"
         with open(cfg_path) as f:
             orch_cfg = json.load(f)
+        if verbose:
+            print("📝 Using orchestration config from file")
 
     research_interests = db.get_setting("research_interests")
     if research_interests is None:
@@ -451,23 +617,33 @@ def harvest_and_judge(
             research_interests = path.read_text().strip()
         else:
             research_interests = ""
+    
+    if verbose:
+        print(f"🎯 Research interests loaded ({len(research_interests)} characters)")
 
     embedding_cfg = orch_cfg["embedding_model"]
     judge_cfg = orch_cfg["judge_model"]
 
+    if verbose:
+        print(f"🧠 Loading embedding model: {embedding_cfg['model_name']}")
     embedding_model = SentenceTransformerInference(
         embedding_cfg["model_name"],
         remote_code=embedding_cfg.get("trust_remote_code", True),
     )
-    judge_model = load_inference_model(judge_cfg)
+    
+    judge_model = load_inference_model(judge_cfg, verbose)
 
+    # Execute pipeline stages
     data_df = download_papers(
         date_from,
         date_to,
         checkpoint_dir=checkpoint_dir,
+        verbose=verbose,
     )
+    
     if data_df.empty:
-        print("No papers found for the given date range")
+        if verbose:
+            print("❌ No papers found for the given date range")
         return
 
     embedded_df = embed_papers(
@@ -477,6 +653,7 @@ def harvest_and_judge(
         cosine_threshold,
         db,
         checkpoint_dir,
+        verbose,
     )
 
     ranked_df = rank_papers(
@@ -484,10 +661,15 @@ def harvest_and_judge(
         judge_model,
         research_interests,
         checkpoint_dir,
+        verbose,
     )
 
-    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], db)
-    print("Harvest and judging complete")
+    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], db, verbose)
+    
+    if verbose:
+        print("\n" + "="*60)
+        print("🎉 HARVEST AND JUDGING COMPLETE!")
+        print("="*60)
 
 
 def parse_args():
@@ -511,15 +693,23 @@ def parse_args():
     )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")
     parser.add_argument("--cosine-threshold", type=float, default=0.5)
+    parser.add_argument("--verbose", "-v", action="store_true", default=True, 
+                       help="Enable verbose output (default: True)")
+    parser.add_argument("--quiet", "-q", action="store_true", 
+                       help="Disable verbose output")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    # Handle verbose/quiet flags
+    verbose = args.verbose and not args.quiet
+    
     harvest_and_judge(
         date_from=args.date_from,
         date_to=args.date_to,
         checkpoint_dir=args.checkpoint_dir,
         db_url=args.db_url,
         cosine_threshold=args.cosine_threshold,
+        verbose=verbose,
     )

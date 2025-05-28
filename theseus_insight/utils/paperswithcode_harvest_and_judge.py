@@ -50,6 +50,12 @@ def _checkpoint_path(checkpoint_dir: str, stage: str) -> Path:
 
 
 def save_checkpoint(checkpoint_dir: str, stage: str, data: Any) -> None:
+    """
+    Saves checkpoint data to a file.
+
+    This function creates a checkpoint directory if it doesn't exist, and saves the checkpoint data to a file.
+    The checkpoint data includes the data itself, the timestamp of the checkpoint, and the stage name.
+    """
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     cp = {
         "data": data,
@@ -61,6 +67,12 @@ def save_checkpoint(checkpoint_dir: str, stage: str, data: Any) -> None:
 
 
 def load_checkpoint(checkpoint_dir: str, stage: str):
+    """
+    Loads checkpoint data from a file.
+
+    This function checks if a checkpoint file exists for the specified stage, and if it does, it loads the checkpoint data from the file.
+    The checkpoint data includes the data itself, the timestamp of the checkpoint, and the stage name.
+    """
     path = _checkpoint_path(checkpoint_dir, stage)
     if path.exists():
         with open(path, "rb") as f:
@@ -75,6 +87,11 @@ def load_checkpoint(checkpoint_dir: str, stage: str):
 # ---------------------------------------------------------------
 
 def load_inference_model(cfg: Dict[str, Any]):
+    """
+    Loads an inference model based on the configuration.
+
+    This function loads an inference model based on the configuration provided. It supports Ollama, OpenAI, Anthropic, and Gemini models.
+    """
     model_type = cfg.get("model_type")
     model_name = cfg.get("model_name")
     max_new_tokens = cfg.get("max_new_tokens", 4096)
@@ -100,6 +117,11 @@ def load_inference_model(cfg: Dict[str, Any]):
 
 
 def clear_judge_cache(inference, model_name: str):
+    """
+    Clears the cache for a judge model.
+
+    This function checks if the judge model is an Ollama model and purges its cache if it is.
+    """
     try:
         if hasattr(inference, "provider") and inference.provider == "ollama":
             purge_ollama_cache(OLLAMA_URL, model_name)
@@ -117,6 +139,18 @@ def download_papers(
     checkpoint_dir: str,
     retries: int = 3,
 ) -> pd.DataFrame:
+    """
+    Downloads papers from PapersWithCode.
+
+    Args:
+        date_from (Optional[str]): The start date for the time period selected (MM-DD-YYYY). Defaults to None.
+        date_to (Optional[str]): The end date for the time period selected (MM-DD-YYYY). Defaults to None.
+        checkpoint_dir (str): The directory to save the checkpoint.
+        retries (int, optional): The number of retries if the download fails. Defaults to 3.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the downloaded papers.
+    """
     data_df = load_checkpoint(checkpoint_dir, "download")
     if data_df is not None:
         return data_df
@@ -153,6 +187,22 @@ def embed_papers(
     db: PaperDatabase,
     checkpoint_dir: str,
 ) -> pd.DataFrame:
+    """
+    Embeds papers with abstract embeddings and filters based on cosine similarity.
+
+    This function takes a DataFrame of papers, embeds their abstracts using a SentenceTransformer model, and filters them based on their cosine similarity to a given research interest. The filtered papers are then saved to a checkpoint directory.
+
+    Args:
+        df (pd.DataFrame): A DataFrame containing the papers to be embedded and filtered.
+        embedding_model (SentenceTransformerInference): The model used to embed the abstracts of the papers.
+        research_interests (str): The research interest against which the papers are filtered.
+        threshold (float): The minimum cosine similarity required for a paper to be considered relevant.
+        db (PaperDatabase): The database used to check if a paper already exists.
+        checkpoint_dir (str): The directory where the checkpoint is saved.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the papers that have been embedded and filtered.
+    """
     embedded_df = load_checkpoint(checkpoint_dir, "embed")
     if embedded_df is not None:
         return embedded_df
@@ -194,6 +244,21 @@ def rank_papers(
     checkpoint_dir: str,
     verbose: bool = True,
 ) -> pd.DataFrame:
+    """
+    Ranks papers based on their relevance to the research interests using a judge model.
+
+    This function takes a DataFrame of papers, a judge model, research interests, a checkpoint directory, and a verbosity flag. It loads the papers, embeds their abstracts, and ranks them based on their cosine similarity to the research interests. The ranking process involves sending the abstracts to the judge model, which returns a score indicating the paper's relevance. The function saves the ranked papers to a checkpoint file.
+
+    Args:
+        df (pd.DataFrame): A DataFrame containing the papers to be ranked.
+        judge_model: The model used to judge the relevance of the papers.
+        research_interests (str): The research interests against which the papers are ranked.
+        checkpoint_dir (str): The directory where the checkpoint is saved.
+        verbose (bool, optional): If True, prints progress messages. Defaults to True.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the ranked papers.
+    """
     ranked_df = load_checkpoint(checkpoint_dir, "rank")
     if ranked_df is not None:
         return ranked_df
@@ -297,6 +362,21 @@ def insert_papers(
     db: PaperDatabase,
     verbose: bool = True,
 ):
+    """
+    Inserts papers into the database.
+
+    This function takes a DataFrame of papers, an embedding model name, a database, and a verbosity flag. It iterates through the papers, creates Paper objects, and inserts them into the database. The function saves the number of new papers and duplicate papers to a checkpoint file.
+
+    Args:
+        df (pd.DataFrame): A DataFrame containing the papers to be inserted.
+        all_df (pd.DataFrame): A DataFrame containing all the papers.
+        embedding_model_name (str): The name of the embedding model.
+        db (PaperDatabase): The database used to insert the papers.
+        verbose (bool, optional): If True, prints progress messages. Defaults to True.
+
+    Returns:
+        list: A list of duplicate paper URLs.
+    """
     saved = 0
     dup = 0
     dup_urls = []
@@ -341,6 +421,19 @@ def harvest_and_judge(
     db_url: str,
     cosine_threshold: float = 0.5,
 ):
+    """
+    Orchestrates the harvesting and judging of papers based on specified dates and settings.
+
+    This function coordinates the entire pipeline of downloading papers from PapersWithCode, embedding their abstracts, filtering based on cosine similarity, 
+    ranking based on relevance, and saving the results to a database. It utilizes various utility functions to perform these tasks.
+
+    Args:
+        date_from (Optional[str]): The start date for the time period selected (MM-DD-YYYY). Defaults to None.
+        date_to (Optional[str]): The end date for the time period selected (MM-DD-YYYY). Defaults to None.
+        checkpoint_dir (str): The directory where intermediate results are saved for checkpointing.
+        db_url (str): The URL of the database where the papers are stored.
+        cosine_threshold (float, optional): The minimum cosine similarity required for a paper to be considered relevant. Defaults to 0.5.
+    """
     db = PaperDatabase(db_url)
 
     orch_json = db.get_setting("orchestration")
@@ -398,6 +491,12 @@ def harvest_and_judge(
 
 
 def parse_args():
+    """
+    Parses command line arguments for the harvest_and_judge function.
+
+    This function creates an argument parser for the harvest_and_judge function, allowing users to specify the date range, database URL, and cosine threshold.
+    It also sets default values for these parameters if not provided.
+    """
     parser = argparse.ArgumentParser(
         description="Harvest PapersWithCode data, rank and store papers"
     )

@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 
+
 let pythonProcess = null;
 let postgresProcess = null;
 

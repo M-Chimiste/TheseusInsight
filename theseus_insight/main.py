@@ -1275,7 +1275,7 @@ async def run_visualizer_pipeline_endpoint(
             config=task_config
         )
         
-        await task_manager.enqueue_task(task_manager.run_visualizer_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_visualizer_task, task_id, visualizer=True)
         
         return {"task_id": task_id, "message": "Visualizer generation process initiated."}
     except json.JSONDecodeError:

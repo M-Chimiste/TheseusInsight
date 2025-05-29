@@ -174,6 +174,8 @@ async def lifespan(app_instance: FastAPI):
             
     except Exception as e:
         print(f"Error during startup: {e}")
+    # Start background worker for queued tasks
+    await task_manager.start_worker()
     print("INFO:     Theseus Insight API startup complete.")
     yield
     # Shutdown logic
@@ -1131,7 +1133,7 @@ async def run_newsletter(
             task_type="newsletter",
             config=newsletter_config.dict()
         )
-        background_tasks.add_task(task_manager.run_newsletter_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_newsletter_task, task_id)
         
         return {"taskId": task_id}
     except ValueError as e:
@@ -1222,7 +1224,7 @@ async def generate_podcast_pipeline(
         # 3. Handle URL fetching and conversion to PDF if input_type is 'urls' (this is complex).
         #    For now, this implementation primarily supports 'pdfs' directly for PodcastGenerator.
         #    If 'urls' are passed, 'run_podcast_task' needs to manage downloading/converting them to PDF paths.
-        background_tasks.add_task(task_manager.run_podcast_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_podcast_task, task_id)
         
         return {"task_id": task_id, "message": "Podcast generation process initiated."}
     
@@ -1273,7 +1275,7 @@ async def run_visualizer_pipeline_endpoint(
             config=task_config
         )
         
-        background_tasks.add_task(task_manager.run_visualizer_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_visualizer_task, task_id)
         
         return {"task_id": task_id, "message": "Visualizer generation process initiated."}
     except json.JSONDecodeError:
@@ -1639,7 +1641,7 @@ async def run_newsletter_pipeline_endpoint(
                 )
             print(error_message) # Log to server console as well
 
-    background_tasks.add_task(background_pipeline_run)
+    await task_manager.enqueue_task(lambda _tid: background_pipeline_run(), task_id)
     return {"task_id": task_id, "message": "Newsletter generation process has been initiated."}
 
 # --- Serve React Frontend --- #

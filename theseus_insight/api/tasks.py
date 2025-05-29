@@ -18,15 +18,51 @@ class TaskManager:
     def __init__(self):
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
         self.db = PaperDatabase(os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"))
-        
+
+        # Queue for incoming tasks and worker management
+        self.task_queue: asyncio.Queue = asyncio.Queue()
+        self.worker_task: Optional[asyncio.Task] = None
+
         # Mark any interrupted tasks as failed on startup
-        interrupted_count = self.db.mark_interrupted_tasks_as_failed()
-        
+        self.db.mark_interrupted_tasks_as_failed()
+
         # Clean up old tasks on startup
         self.db.cleanup_old_tasks(days_old=7)
+
+    async def start_worker(self) -> None:
+        """Start the background worker that processes queued tasks."""
+        if self.worker_task is None or self.worker_task.done():
+            self.worker_task = asyncio.create_task(self._worker())
+
+    async def stop_worker(self) -> None:
+        """Stop the background worker gracefully."""
+        if self.worker_task:
+            await self.task_queue.put(None)
+            await self.worker_task
+            self.worker_task = None
+
+    async def _worker(self) -> None:
+        """Continuously process tasks from the queue."""
+        while True:
+            item = await self.task_queue.get()
+            if item is None:
+                self.task_queue.task_done()
+                break
+            func, task_id = item
+            try:
+                await func(task_id)
+            finally:
+                self.task_queue.task_done()
+
+    async def enqueue_task(self, func, task_id: str) -> None:
+        """Add a new task to the processing queue."""
+        await self.task_queue.put((func, task_id))
         
     async def cleanup(self):
         """Clean up all asyncio resources."""
+        # Stop worker processing
+        await self.stop_worker()
+
         # First, notify all waiting consumers to exit
         for task_id, queues in self.status_updates.items():
             for queue in queues:

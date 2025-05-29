@@ -347,6 +347,50 @@ class PaperDatabase:
                 })
             return result
 
+    def get_recent_task_history(self, limit: int = 100, from_date: str = None, to_date: str = None):
+        """Get recent task history with complete information including task type."""
+        query = '''SELECT task_id, task_type, status, start_time, end_time, 
+                          progress, current_step, message, error
+                   FROM tasks'''
+        params = []
+        conditions = []
+
+        if from_date:
+            conditions.append("start_time >= %s")
+            params.append(f"{from_date} 00:00:00")
+        
+        if to_date:
+            conditions.append("start_time <= %s")
+            params.append(f"{to_date} 23:59:59")
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY start_time DESC LIMIT %s"
+        params.append(limit)
+
+        with self.get_cursor() as cursor:
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                # Convert datetime objects to strings if they're not already strings
+                start_time_str = row[3].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row[3], 'strftime') else str(row[3])
+                end_time_str = row[4].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row[4], 'strftime') and row[4] else None
+                
+                result.append({
+                    'task_id': row[0],
+                    'task_type': row[1],
+                    'status': row[2],
+                    'start_time': start_time_str,
+                    'end_time': end_time_str,
+                    'progress': row[5],
+                    'current_step': row[6],
+                    'message': row[7],
+                    'error': row[8]
+                })
+            return result
+
     def fetch_all_podcasts(self):
         with self.get_cursor() as cursor:
             cursor.execute("SELECT id, title, date, script, description FROM podcasts ORDER BY id DESC")

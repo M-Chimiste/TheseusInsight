@@ -18,6 +18,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [External Database Access](#external-database-access)
 - [External Database Access](#external-database-access)
 - [Custom Data Storage Location](#custom-data-storage-location)
+- [Desktop Build](#desktop-build)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)
@@ -105,7 +106,7 @@ If you prefer running locally without Docker:
    pip install -r requirements.txt
 
    ```
-2. (Optional) install Node.js 18+ and build the frontend
+2. (Optional) install Node.js 20+ and build the frontend
    ```bash
    cd theseus-ui
    npm install
@@ -524,6 +525,25 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 - **Flexible import options** - Support for selective imports and batch processing
 
 For detailed documentation and advanced usage examples, see [`theseus_insight/docs/db_migration_README.md`](theseus_insight/docs/db_migration_README.md).
+
+---
+
+## Desktop Build
+
+An Electron wrapper is provided in the `electron-app` directory. It bundles the
+Python backend and a PostgreSQL database using `pgvector`. PostgreSQL runs on
+port **55432** to avoid conflicts with existing installations.
+
+### Building
+
+```
+cd electron-app
+npm install
+npm run build
+```
+
+See [`electron-app/README.md`](electron-app/README.md) for platform specific
+instructions.
 
 ---
 

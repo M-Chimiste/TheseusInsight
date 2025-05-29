@@ -1,6 +1,8 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+
 
 let pythonProcess = null;
 let postgresProcess = null;
@@ -21,8 +23,15 @@ function createWindow () {
 function startPostgres() {
   const platform = process.platform;
   // expected postgres binaries under electron-app/postgres/<platform>/bin
-  const pgPath = path.join(__dirname, 'postgres', platform, 'bin', 'postgres');
+  const binDir = path.join(__dirname, 'postgres', platform, 'bin');
+  const pgPath = path.join(binDir, platform === 'win32' ? 'postgres.exe' : 'postgres');
+  const initdbPath = path.join(binDir, platform === 'win32' ? 'initdb.exe' : 'initdb');
   const dataDir = path.join(app.getPath('userData'), 'postgres-data');
+
+  if (!fs.existsSync(path.join(dataDir, 'PG_VERSION'))) {
+    spawnSync(initdbPath, ['-D', dataDir]);
+  }
+
   postgresProcess = spawn(pgPath, ['-D', dataDir, '-p', '55432']);
 
   postgresProcess.stdout.on('data', (data) => {

@@ -4,9 +4,9 @@ This directory provides an Electron wrapper that bundles the Python backend and 
 
 ## Local Setup
 
-1. Install Node.js 20 or newer.
-2. From this folder run `npm install` to install Electron dependencies.
-3. Ensure the `postgres` binaries are available under `electron-app/postgres/<platform>/bin`. These are not included in the repository – copy prebuilt binaries for your OS.
+1. Install **Node.js 20** or newer.
+2. Run `npm install` to install Electron dependencies.
+3. Build or download PostgreSQL (with the `pgvector` extension) by running either `npm run build-pg` to compile from source or `npm run download-pg` to fetch prebuilt binaries.
 
 4. Run `npm start` to launch the desktop application.
 
@@ -14,7 +14,8 @@ The application starts PostgreSQL on port **55432** to avoid conflicts with any 
 
 ## Building Distributables
 
-`electron-builder` is used for packaging. Use the commands below for different platforms.
+`electron-builder` is used for packaging. Run `npm run build-pg` (or `npm run download-pg`) once before packaging. Use the commands below for different platforms.
+
 
 ### macOS
 

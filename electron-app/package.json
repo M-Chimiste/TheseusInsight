@@ -5,7 +5,9 @@
   "description": "Electron wrapper for Theseus Insight",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "download-pg": "bash ./download_postgres.sh",
+    "build-pg": "bash ./build_postgres.sh"
 
   },
   "build": {
@@ -21,6 +23,9 @@
         "filter": ["theseus_insight/**", "theseus-ui/dist/**", "run_theseus_insight.py", "requirements.txt", "postgres/**"]
       }
     ]
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "electron": "^31.0.0",

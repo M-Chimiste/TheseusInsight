@@ -539,6 +539,7 @@ port **55432** to avoid conflicts with existing installations.
 ```
 cd electron-app
 npm install
+npm run build-pg   # or npm run download-pg
 npm run build
 ```
 

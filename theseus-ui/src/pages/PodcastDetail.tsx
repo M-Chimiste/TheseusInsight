@@ -1,6 +1,6 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { podcastHistoryApi } from '../services/api';
 import type { PodcastDetailResponse, PodcastScriptItem } from '../services/api';
 import {
@@ -13,7 +13,15 @@ import {
   Box,
   Paper,
   Chip,
+  TextField,
+  IconButton,
+  Snackbar,
+  Button,
 } from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
+import SaveIcon from '@mui/icons-material/Save';
+import CancelIcon from '@mui/icons-material/Cancel';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { format } from 'date-fns';
 
 // Define speaker colors - easily extendable
@@ -32,12 +40,70 @@ const getSpeakerStyle = (speaker: string) => {
 
 const PodcastDetail: React.FC = () => {
   const { podcastId } = useParams<{ podcastId: string }>();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  
+  // State for editing title
+  const [isEditingTitle, setIsEditingTitle] = React.useState(false);
+  const [editedTitle, setEditedTitle] = React.useState('');
+  const [snackbarMessage, setSnackbarMessage] = React.useState<string | null>(null);
 
   const { data: podcast, isLoading, error } = useQuery<PodcastDetailResponse, Error>({
     queryKey: ['podcastDetail', podcastId],
     queryFn: () => podcastHistoryApi.getPodcastDetail(podcastId!),
     enabled: !!podcastId, // Only run query if podcastId is available
   });
+
+  // Update edited title when podcast data changes
+  React.useEffect(() => {
+    if (podcast) {
+      setEditedTitle(podcast.title);
+    }
+  }, [podcast]);
+
+  const updateTitleMutation = useMutation({
+    mutationFn: (newTitle: string) => podcastHistoryApi.updatePodcastTitle(Number(podcastId), newTitle),
+    onSuccess: () => {
+      setSnackbarMessage('Podcast title updated successfully');
+      setIsEditingTitle(false);
+      // Invalidate queries to refresh the data
+      queryClient.invalidateQueries({ queryKey: ['podcastDetail', podcastId] });
+      queryClient.invalidateQueries({ queryKey: ['podcastHistoryList'] });
+    },
+    onError: () => {
+      setSnackbarMessage('Error updating podcast title');
+      setEditedTitle(podcast?.title || ''); // Reset to original title on error
+    },
+  });
+
+  const handleStartEdit = () => {
+    setIsEditingTitle(true);
+  };
+
+  const handleSaveTitle = () => {
+    if (editedTitle.trim() && editedTitle !== podcast?.title) {
+      updateTitleMutation.mutate(editedTitle.trim());
+    } else {
+      setIsEditingTitle(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditedTitle(podcast?.title || '');
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyPress = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      handleSaveTitle();
+    } else if (event.key === 'Escape') {
+      handleCancelEdit();
+    }
+  };
+
+  const handleBackToHistory = () => {
+    navigate('/podcast-history');
+  };
 
   if (isLoading) {
     return (
@@ -65,15 +131,73 @@ const PodcastDetail: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      {/* Back Button */}
+      <Box sx={{ mb: 2 }}>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={handleBackToHistory}
+          variant="outlined"
+          sx={{ mb: 2 }}
+        >
+          Back to Podcast History
+        </Button>
+      </Box>
+
       <Card>
         <CardContent>
-          <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
-            {podcast.title}
-          </Typography>
-          <Typography variant="subtitle1" color="text.secondary" gutterBottom>
+          {/* Editable Title Section */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+            {isEditingTitle ? (
+              <>
+                <TextField
+                  value={editedTitle}
+                  onChange={(e) => setEditedTitle(e.target.value)}
+                  onKeyDown={handleTitleKeyPress}
+                  variant="outlined"
+                  size="medium"
+                  fullWidth
+                  autoFocus
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      fontSize: '2.125rem', // h4 font size
+                      fontWeight: 400,
+                    }
+                  }}
+                />
+                <IconButton 
+                  onClick={handleSaveTitle} 
+                  color="primary"
+                  disabled={updateTitleMutation.isPending}
+                >
+                  <SaveIcon />
+                </IconButton>
+                <IconButton 
+                  onClick={handleCancelEdit} 
+                  color="secondary"
+                  disabled={updateTitleMutation.isPending}
+                >
+                  <CancelIcon />
+                </IconButton>
+              </>
+            ) : (
+              <>
+                <Typography variant="h4" component="div" sx={{ flexGrow: 1 }}>
+                  {podcast.title}
+                </Typography>
+                <IconButton onClick={handleStartEdit} color="primary">
+                  <EditIcon />
+                </IconButton>
+              </>
+            )}
+          </Box>
+
+          {/* Date - now displayed above description */}
+          <Typography variant="subtitle1" color="text.secondary" gutterBottom sx={{ mb: 2 }}>
             Date: {format(new Date(podcast.date), 'MMMM d, yyyy')}
           </Typography>
-          <Typography variant="body1" paragraph sx={{ mt: 2, mb: 3, whiteSpace: 'pre-line' }}>
+
+          {/* Description */}
+          <Typography variant="body1" paragraph sx={{ mb: 3, whiteSpace: 'pre-line' }}>
             {podcast.description}
           </Typography>
 
@@ -114,6 +238,13 @@ const PodcastDetail: React.FC = () => {
           </Box>
         </CardContent>
       </Card>
+
+      <Snackbar
+        open={snackbarMessage !== null}
+        autoHideDuration={6000}
+        onClose={() => setSnackbarMessage(null)}
+        message={snackbarMessage}
+      />
     </Container>
   );
 };

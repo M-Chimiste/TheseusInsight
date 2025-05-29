@@ -1359,6 +1359,35 @@ async def delete_podcast(podcast_id: int):
         print(f"Error deleting podcast (ID: {podcast_id}): {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred while deleting podcast ID {podcast_id}.")
 
+@app.put("/api/podcasts/history/{podcast_id}/title")
+async def update_podcast_title(podcast_id: int, title_data: dict):
+    """Update the title of a podcast by its ID."""
+    try:
+        # Validate request body
+        if "title" not in title_data:
+            raise HTTPException(status_code=400, detail="Title field is required.")
+        
+        new_title = title_data["title"].strip()
+        if not new_title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty.")
+        
+        # Check if podcast exists first
+        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        if not podcast_data:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        # Update the podcast title
+        was_updated = db.update_podcast_title(podcast_id, new_title)
+        if not was_updated:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        return {"status": "success", "message": f"Podcast title updated successfully.", "title": new_title}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating podcast title (ID: {podcast_id}): {e}")
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred while updating podcast title for ID {podcast_id}.")
+
 # Enhance the WebSocket connection manager
 class ConnectionManager:
     def __init__(self):

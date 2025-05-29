@@ -218,6 +218,11 @@ export const podcastHistoryApi = {
         const response: AxiosResponse<{ status: string; message: string }> = await api.delete(`/podcasts/history/${podcastId}`);
         return response.data;
     },
+
+    updatePodcastTitle: async (podcastId: number, title: string): Promise<{ status: string; message: string; title: string }> => {
+        const response: AxiosResponse<{ status: string; message: string; title: string }> = await api.put(`/podcasts/history/${podcastId}/title`, { title });
+        return response.data;
+    },
 };
 
 // Papers API functions

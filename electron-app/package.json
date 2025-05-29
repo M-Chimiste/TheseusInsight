@@ -5,9 +5,8 @@
   "description": "Electron wrapper for Theseus Insight",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
-    "download-pg": "bash scripts/download_postgres.sh",
-    "build-pg": "bash scripts/build_postgres.sh"
+    "build": "electron-builder"
+
   },
   "build": {
     "appId": "com.theseusinsight.desktop",
@@ -24,7 +23,8 @@
     ]
   },
   "devDependencies": {
-    "electron": "^28.2.0",
-    "electron-builder": "^24.6.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.11.0"
+
   }
 }

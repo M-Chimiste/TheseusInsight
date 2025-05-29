@@ -106,7 +106,7 @@ If you prefer running locally without Docker:
    pip install -r requirements.txt
 
    ```
-2. (Optional) install Node.js 18+ and build the frontend
+2. (Optional) install Node.js 20+ and build the frontend
    ```bash
    cd theseus-ui
    npm install
@@ -539,7 +539,6 @@ port **55432** to avoid conflicts with existing installations.
 ```
 cd electron-app
 npm install
-npm run download-pg   # or npm run build-pg to compile
 npm run build
 ```
 

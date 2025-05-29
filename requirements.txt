@@ -46,9 +46,10 @@ pygame  # Visualization
 google-api-python-client
 google-auth-oauthlib
 
-# Electron
+# WebAPI / DB
 fastapi
-uvicorn
+uvicorn[standard]
+websockets
 python-multipart
 psycopg2-binary
 pgvector

@@ -1,0 +1,3 @@
+# ignore compiled postgres binaries
+*
+!.gitignore

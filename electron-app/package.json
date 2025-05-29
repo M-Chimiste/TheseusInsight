@@ -1,0 +1,33 @@
+{
+  "name": "theseus-desktop",
+  "version": "0.1.0",
+  "main": "main.js",
+  "description": "Electron wrapper for Theseus Insight",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "download-pg": "bash ./download_postgres.sh",
+    "build-pg": "bash ./build_postgres.sh"
+  },
+  "build": {
+    "appId": "com.theseusinsight.desktop",
+    "files": [
+      "**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "app",
+        "filter": ["theseus_insight/**", "theseus-ui/dist/**", "run_theseus_insight.py", "requirements.txt", "postgres/**"]
+      }
+    ]
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.11.0"
+  }
+}

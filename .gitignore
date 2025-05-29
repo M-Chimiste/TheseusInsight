@@ -422,3 +422,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Electron PostgreSQL binaries
+/electron-app/postgres/
+

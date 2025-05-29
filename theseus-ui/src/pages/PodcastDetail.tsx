@@ -24,6 +24,13 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { format } from 'date-fns';
 
+// Helper function to parse date strings correctly without timezone issues
+const parseDate = (dateString: string): Date => {
+  // Parse YYYY-MM-DD format manually to avoid timezone issues
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(year, month - 1, day); // month is 0-indexed in JavaScript
+};
+
 // Define speaker colors - easily extendable
 const speakerColors: Record<string, { paper: string, chip: string, text: string }> = {
   'speaker-1': { paper: '#e3f2fd', chip: 'info', text: '#0d47a1' }, // Light Blue
@@ -193,7 +200,7 @@ const PodcastDetail: React.FC = () => {
 
           {/* Date - now displayed above description */}
           <Typography variant="subtitle1" color="text.secondary" gutterBottom sx={{ mb: 2 }}>
-            Date: {format(new Date(podcast.date), 'MMMM d, yyyy')}
+            Date: {format(parseDate(podcast.date), 'MMMM d, yyyy')}
           </Typography>
 
           {/* Description */}

@@ -33,6 +33,13 @@ import { format } from 'date-fns';
 
 type ViewMode = 'grid' | 'list';
 
+// Helper function to parse date strings correctly without timezone issues
+const parseDate = (dateString: string): Date => {
+  // Parse YYYY-MM-DD format manually to avoid timezone issues
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(year, month - 1, day); // month is 0-indexed in JavaScript
+};
+
 const PodcastHistory: React.FC = () => {
   const [viewMode, setViewMode] = React.useState<ViewMode>('grid');
   const [openDeleteDialog, setOpenDeleteDialog] = React.useState(false);
@@ -155,7 +162,7 @@ const PodcastHistory: React.FC = () => {
                       {podcast.title}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Date: {format(new Date(podcast.date), 'MMMM d, yyyy')}
+                      Date: {format(parseDate(podcast.date), 'MMMM d, yyyy')}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ 
                       overflow: 'hidden',
@@ -184,7 +191,7 @@ const PodcastHistory: React.FC = () => {
                         {podcast.title}
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                        Date: {format(new Date(podcast.date), 'MMMM d, yyyy')}
+                        Date: {format(parseDate(podcast.date), 'MMMM d, yyyy')}
                       </Typography>
                       <Typography variant="body2">
                         {podcast.description_snippet}

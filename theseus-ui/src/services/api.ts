@@ -109,6 +109,18 @@ export interface LogEntry {
   datetime_run: string;
 }
 
+export interface TaskHistoryEntry {
+  task_id: string;
+  task_type: string;
+  status: string;
+  start_time: string;
+  end_time: string | null;
+  progress: number | null;
+  current_step: string | null;
+  message: string | null;
+  error: string | null;
+}
+
 export const getLogs = async (limit: number = 100, fromDate?: string, toDate?: string): Promise<LogEntry[]> => {
   const params: Record<string, string | number> = { limit };
   if (fromDate) {
@@ -118,6 +130,18 @@ export const getLogs = async (limit: number = 100, fromDate?: string, toDate?: s
     params.to_date = toDate;
   }
   const response: AxiosResponse<LogEntry[]> = await api.get<LogEntry[]>("/logs", { params });
+  return response.data;
+};
+
+export const getTaskHistory = async (limit: number = 100, fromDate?: string, toDate?: string): Promise<TaskHistoryEntry[]> => {
+  const params: Record<string, string | number> = { limit };
+  if (fromDate) {
+    params.from_date = fromDate;
+  }
+  if (toDate) {
+    params.to_date = toDate;
+  }
+  const response: AxiosResponse<TaskHistoryEntry[]> = await api.get<TaskHistoryEntry[]>("/task-history", { params });
   return response.data;
 };
 

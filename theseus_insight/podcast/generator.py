@@ -857,25 +857,29 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                     speech_before_fade = speech[:crossfade_start_pos] if crossfade_start_pos > 0 else AudioSegment.silent(0)
                     speech_crossfade = speech[crossfade_start_pos:crossfade_start_pos + crossfade_duration]
                     
-                    # Apply slower, more gradual fade out to speech
-                    speech_faded = speech_crossfade.fade_out(crossfade_duration)
+                    # Keep speech at full volume (no fade out)
+                    speech_full_volume = speech_crossfade
                     
-                    # Apply slower, more gradual fade in to music (with exponential curve for smoother fade)
+                    # Apply gradual fade in to music, but limit max volume to ~50% (-6dB)
                     music_crossfade = music[:crossfade_duration]
+                    # First fade in the music from 0 to full volume
                     music_faded = music_crossfade.fade_in(crossfade_duration)
+                    # Then reduce overall volume to 50% (-6dB reduction)
+                    music_at_50_percent = music_faded - 6  # -6dB is approximately 50% volume
                     
-                    # Overlay the faded music on the faded speech
-                    overlay_section = speech_faded.overlay(music_faded)
+                    # Overlay the 50% volume music on the full-volume speech
+                    overlay_section = speech_full_volume.overlay(music_at_50_percent)
                     
                     # Reconstruct the speech with crossfade
                     speech = speech_before_fade + overlay_section
                     
-                    # Continue with the rest of the music after the crossfade
-                    remaining_music = music[crossfade_duration:]
+                    # Continue with the rest of the music after the crossfade at 50% volume
+                    remaining_music = music[crossfade_duration:] - 6  # Keep music at 50% volume
                     speech += remaining_music
                 else:
-                    # If crossfade duration is 0 or negative, just append music after speech
-                    speech += music
+                    # If crossfade duration is 0 or negative, just append music after speech at 50% volume
+                    music_at_50_percent = music - 6  # Reduce to 50% volume
+                    speech += music_at_50_percent
                     
             combined += speech
 

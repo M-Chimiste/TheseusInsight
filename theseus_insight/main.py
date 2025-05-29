@@ -174,6 +174,8 @@ async def lifespan(app_instance: FastAPI):
             
     except Exception as e:
         print(f"Error during startup: {e}")
+    # Start background worker for queued tasks
+    await task_manager.start_worker()
     print("INFO:     Theseus Insight API startup complete.")
     yield
     # Shutdown logic
@@ -1131,7 +1133,7 @@ async def run_newsletter(
             task_type="newsletter",
             config=newsletter_config.dict()
         )
-        background_tasks.add_task(task_manager.run_newsletter_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_newsletter_task, task_id)
         
         return {"taskId": task_id}
     except ValueError as e:
@@ -1222,7 +1224,7 @@ async def generate_podcast_pipeline(
         # 3. Handle URL fetching and conversion to PDF if input_type is 'urls' (this is complex).
         #    For now, this implementation primarily supports 'pdfs' directly for PodcastGenerator.
         #    If 'urls' are passed, 'run_podcast_task' needs to manage downloading/converting them to PDF paths.
-        background_tasks.add_task(task_manager.run_podcast_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_podcast_task, task_id)
         
         return {"task_id": task_id, "message": "Podcast generation process initiated."}
     
@@ -1273,7 +1275,7 @@ async def run_visualizer_pipeline_endpoint(
             config=task_config
         )
         
-        background_tasks.add_task(task_manager.run_visualizer_task, task_id)
+        await task_manager.enqueue_task(task_manager.run_visualizer_task, task_id, visualizer=True)
         
         return {"task_id": task_id, "message": "Visualizer generation process initiated."}
     except json.JSONDecodeError:
@@ -1356,6 +1358,35 @@ async def delete_podcast(podcast_id: int):
     except Exception as e:
         print(f"Error deleting podcast (ID: {podcast_id}): {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred while deleting podcast ID {podcast_id}.")
+
+@app.put("/api/podcasts/history/{podcast_id}/title")
+async def update_podcast_title(podcast_id: int, title_data: dict):
+    """Update the title of a podcast by its ID."""
+    try:
+        # Validate request body
+        if "title" not in title_data:
+            raise HTTPException(status_code=400, detail="Title field is required.")
+        
+        new_title = title_data["title"].strip()
+        if not new_title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty.")
+        
+        # Check if podcast exists first
+        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        if not podcast_data:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        # Update the podcast title
+        was_updated = db.update_podcast_title(podcast_id, new_title)
+        if not was_updated:
+            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        
+        return {"status": "success", "message": f"Podcast title updated successfully.", "title": new_title}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating podcast title (ID: {podcast_id}): {e}")
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred while updating podcast title for ID {podcast_id}.")
 
 # Enhance the WebSocket connection manager
 class ConnectionManager:
@@ -1639,7 +1670,7 @@ async def run_newsletter_pipeline_endpoint(
                 )
             print(error_message) # Log to server console as well
 
-    background_tasks.add_task(background_pipeline_run)
+    await task_manager.enqueue_task(lambda _tid: background_pipeline_run(), task_id)
     return {"task_id": task_id, "message": "Newsletter generation process has been initiated."}
 
 # --- Serve React Frontend --- #

@@ -394,6 +394,12 @@ class PaperDatabase:
             cursor.execute("DELETE FROM podcasts WHERE id = %s", (podcast_id,))
             return cursor.rowcount > 0  # Return True if a row was actually deleted
 
+    def update_podcast_title(self, podcast_id: int, new_title: str):
+        """Update the title of a podcast by its ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute("UPDATE podcasts SET title = %s WHERE id = %s", (new_title, podcast_id))
+            return cursor.rowcount > 0  # Return True if a row was actually updated
+
     def fetch_all_newsletters(self):
         with self.get_cursor() as cursor:
             cursor.execute("SELECT id, content, start_date, end_date, date_sent FROM newsletters ORDER BY id DESC")

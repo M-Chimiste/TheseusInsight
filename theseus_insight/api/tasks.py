@@ -18,15 +18,62 @@ class TaskManager:
     def __init__(self):
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
         self.db = PaperDatabase(os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"))
-        
+
+        # Queues and workers for task processing
+        # general_task_queue handles newsletter/podcast/etc.
+        # visualizer_queue allows a visualizer task to run concurrently
+        self.general_task_queue: asyncio.Queue = asyncio.Queue()
+        self.visualizer_queue: asyncio.Queue = asyncio.Queue()
+        self.general_worker_task: Optional[asyncio.Task] = None
+        self.visualizer_worker_task: Optional[asyncio.Task] = None
+
         # Mark any interrupted tasks as failed on startup
-        interrupted_count = self.db.mark_interrupted_tasks_as_failed()
-        
+        self.db.mark_interrupted_tasks_as_failed()
+
         # Clean up old tasks on startup
         self.db.cleanup_old_tasks(days_old=7)
+
+    async def start_worker(self) -> None:
+        """Start the background workers that process queued tasks."""
+        if self.general_worker_task is None or self.general_worker_task.done():
+            self.general_worker_task = asyncio.create_task(self._worker(self.general_task_queue))
+        if self.visualizer_worker_task is None or self.visualizer_worker_task.done():
+            self.visualizer_worker_task = asyncio.create_task(self._worker(self.visualizer_queue))
+
+    async def stop_worker(self) -> None:
+        """Stop the background workers gracefully."""
+        if self.general_worker_task:
+            await self.general_task_queue.put(None)
+            await self.general_worker_task
+            self.general_worker_task = None
+        if self.visualizer_worker_task:
+            await self.visualizer_queue.put(None)
+            await self.visualizer_worker_task
+            self.visualizer_worker_task = None
+
+    async def _worker(self, queue: asyncio.Queue) -> None:
+        """Continuously process tasks from the given queue."""
+        while True:
+            item = await queue.get()
+            if item is None:
+                queue.task_done()
+                break
+            func, task_id = item
+            try:
+                await func(task_id)
+            finally:
+                queue.task_done()
+
+    async def enqueue_task(self, func, task_id: str, visualizer: bool = False) -> None:
+        """Add a new task to the appropriate processing queue."""
+        queue = self.visualizer_queue if visualizer or func == self.run_visualizer_task else self.general_task_queue
+        await queue.put((func, task_id))
         
     async def cleanup(self):
         """Clean up all asyncio resources."""
+        # Stop worker processing
+        await self.stop_worker()
+
         # First, notify all waiting consumers to exit
         for task_id, queues in self.status_updates.items():
             for queue in queues:

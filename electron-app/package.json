@@ -28,6 +28,10 @@
     ],
     "extraResources": [
       {
+        "from": "postgres",
+        "to": "app/postgres"
+      },
+      {
         "from": "../",
         "to": "app",
         "filter": [

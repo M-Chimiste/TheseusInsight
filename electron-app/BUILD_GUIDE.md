@@ -77,6 +77,12 @@ You were experiencing issues where:
 - Enhanced `main.js` with proper environment detection
 - Created `start_backend.py` wrapper for packaged apps
 - Added comprehensive debugging output
+- Implemented intelligent shared memory health checks:
+  - **Process Detection**: Checks for active PostgreSQL processes using the data directory
+  - **Attachment Analysis**: Verifies if shared memory segments have active attachments
+  - **Key Pattern Validation**: Ensures segments match PostgreSQL memory patterns
+  - **Lock File Correlation**: Cross-references with PostgreSQL lock files
+  - **Safe Cleanup**: Only removes confirmed orphaned segments
 
 ## How to Build Your App
 
@@ -210,6 +216,18 @@ The built app automatically:
 
 4. **Distribute** the built installer from the `dist/` directory
 
+## Shared Memory Health Checks
+
+The enhanced shared memory cleanup system performs multiple safety checks:
+
+1. **Active Process Detection**: Scans for PostgreSQL processes using the same data directory
+2. **Attachment Count Analysis**: Checks if segments have active memory attachments
+3. **Key Pattern Validation**: Verifies shared memory keys match PostgreSQL patterns
+4. **Lock File Correlation**: Ensures cleanup doesn't interfere with running instances
+5. **Conservative Approach**: When in doubt, preserves segments to avoid system disruption
+
+This prevents interference with system PostgreSQL installations and other applications.
+
 ## Files Modified/Created
 
 ### New Files:
@@ -221,8 +239,8 @@ The built app automatically:
 
 ### Modified Files:
 - `electron-app/package.json` - Enhanced build configuration
-- `electron-app/main.js` - Environment detection and debugging
+- `electron-app/main.js` - Environment detection, debugging, and intelligent cleanup
 - `electron-app/DEVELOPMENT.md` - Updated with build instructions
 - `theseus_insight/main.py` - Updated to use path resolver
 
-The settings page should now load correctly in your built Electron app! 🎉 
+The settings page should now load correctly in your built Electron app! 🎉

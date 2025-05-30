@@ -387,10 +387,13 @@ class DatabaseImporter:
         else:
             raise ValueError(f"Input path must be a directory or .tar.gz archive: {input_path}")
 
-    def clear_all_data(self) -> Dict[str, int]:
+    def clear_all_data(self, progress_callback=None) -> Dict[str, int]:
         """
         Clear all data from the main tables (papers, podcasts, newsletters, logs, tasks).
         WARNING: This is destructive and cannot be undone.
+        
+        Args:
+            progress_callback: Optional callback function(current, total, message)
         
         Returns:
             Dictionary with counts of deleted records for each table
@@ -400,9 +403,13 @@ class DatabaseImporter:
         # Tables to clear in order (respecting potential foreign key constraints)
         tables_to_clear = ['logs', 'tasks', 'newsletters', 'podcasts', 'papers']
         deletion_counts = {}
+        total_tables = len(tables_to_clear)
         
         with self.db.get_cursor() as cursor:
-            for table in tables_to_clear:
+            for i, table in enumerate(tables_to_clear):
+                if progress_callback:
+                    progress_callback(i, total_tables, f"Clearing {table} table...")
+                
                 try:
                     # Get count before deletion
                     cursor.execute(f"SELECT COUNT(*) FROM {table}")
@@ -417,9 +424,15 @@ class DatabaseImporter:
                 except Exception as e:
                     print(f"Error clearing table {table}: {e}")
                     deletion_counts[table] = 0
+                
+                if progress_callback:
+                    progress_callback(i + 1, total_tables, f"Cleared {table} table")
         
         total_deleted = sum(deletion_counts.values())
         print(f"Total records cleared: {total_deleted}")
+        
+        if progress_callback:
+            progress_callback(total_tables, total_tables, f"Database clearing complete. {total_deleted} records deleted.")
         
         return deletion_counts
 

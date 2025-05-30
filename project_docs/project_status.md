@@ -2,7 +2,60 @@
 
 ## Implemented
 
-### Latest Update: Visualizer Task Recovery Implementation
+### Latest Update: Database Import Progress Bar Fix for Complete Overwrite Mode
+
+**Critical Bug Fix**: Fixed missing progress bar updates during "Complete Overwrite" mode database imports.
+
+**Problem Identified**: 
+- Database import progress bar worked correctly for "Merge" mode
+- Progress bar remained at 0% during "Complete Overwrite" mode, even though the operation was working
+- Users couldn't track progress during the destructive clearing phase before import
+
+**Root Cause Analysis**:
+- The `clear_all_data()` method in `DatabaseImporter` didn't accept or use a progress callback
+- Task manager only provided progress tracking for the import phase, not the clearing phase
+- In overwrite mode, clearing phase had no progress reporting, causing UI to appear stuck
+
+**Changes Made**:
+
+1. **Backend (`theseus_insight/utils/db_migration/db_import.py`)**:
+   - Modified `clear_all_data()` method to accept `progress_callback` parameter
+   - Added progress reporting as it clears each table (logs, tasks, newsletters, podcasts, papers)
+   - Progress reports table-by-table completion: 0/5, 1/5, 2/5, etc.
+   - Enhanced final status message with total records deleted count
+
+2. **Backend (`theseus_insight/api/tasks.py`)**:
+   - Completely restructured `run_database_import_task()` progress tracking
+   - **Progress Mapping for Overwrite Mode**:
+     - Clearing phase: 0-20% of overall progress
+     - Import phase: 20-100% of overall progress
+   - **Progress Mapping for Merge Mode**: 
+     - Import phase: 0-100% (no clearing phase)
+   - Created separate `clearing_progress_callback()` and `import_progress_callback()` functions
+   - Added intermediate status update at 20% when clearing completes and import begins
+   - Enhanced debugging logs for better troubleshooting
+
+**Implementation Details**:
+- **Phase Separation**: Clear separation between clearing (0-20%) and import (20-100%) phases in overwrite mode
+- **Real-time Progress**: Both phases now report granular progress via WebSocket to frontend
+- **Robust Mapping**: Mathematical progress mapping ensures smooth 0-100% progression across both phases
+- **Error Handling**: Progress callbacks include proper error handling for edge cases
+- **Backwards Compatibility**: Changes are fully backwards compatible with existing merge mode behavior
+
+**User Experience Benefits**:
+- ✅ **Visual Progress**: Users now see continuous progress updates during complete overwrite operations
+- ✅ **Phase Awareness**: Clear messaging about which phase is running (clearing vs importing)
+- ✅ **Time Estimation**: Better understanding of operation progress and remaining time
+- ✅ **Confidence**: No more "stuck at 0%" that made users think the operation failed
+- ✅ **Consistent UX**: Both merge and overwrite modes now have equally responsive progress tracking
+
+**Technical Verification**:
+- ✅ Python syntax validation passed for all modified files
+- ✅ Progress mapping logic tested and verified with sample data
+- ✅ Overwrite mode: Clearing 0→20%, Import 20→100%  
+- ✅ Merge mode: Import 0→100% (unchanged behavior)
+
+### Previous Update: Visualizer Task Recovery Implementation
 
 **Feature Added**: Task recovery functionality for the Visualizer page to persist running tasks across navigation.
 

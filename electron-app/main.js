@@ -265,32 +265,156 @@ function startPostgres() {
     }
   }
 
-  // Clean up stale shared memory segments
-  try {
-    const { execSync } = require('child_process');
-    // List shared memory segments owned by current user
-    const ipcsOutput = execSync('ipcs -m', { encoding: 'utf8' });
-    const lines = ipcsOutput.split('\n');
-    const username = require('os').userInfo().username;
-    
-    for (const line of lines) {
-      if (line.includes(username) && line.includes('--rw-------')) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length >= 2) {
-          const shmid = parts[1];
-          try {
-            console.log(`Cleaning up shared memory segment: ${shmid}`);
-            execSync(`ipcrm -m ${shmid}`, { stdio: 'ignore' });
-          } catch (e) {
-            // Ignore errors - segment might be in use legitimately
+  // Clean up stale shared memory segments with health checks
+  function cleanupOrphanedSharedMemory(dataDir) {
+    try {
+      const { execSync } = require('child_process');
+      const username = require('os').userInfo().username;
+      
+      console.log('Running shared memory health checks...');
+      
+      // Get list of all shared memory segments
+      const ipcsOutput = execSync('ipcs -m', { encoding: 'utf8' });
+      const lines = ipcsOutput.split('\n');
+      
+      // Look for segments that might belong to PostgreSQL
+      const potentialPgSegments = [];
+      
+      for (const line of lines) {
+        if (line.includes(username) && line.includes('--rw-------')) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 3) {
+            const shmid = parts[1];
+            const key = parts[2];
+            potentialPgSegments.push({ shmid, key, line });
           }
         }
       }
+      
+      if (potentialPgSegments.length === 0) {
+        console.log('No shared memory segments found for cleanup');
+        return;
+      }
+      
+      console.log(`Found ${potentialPgSegments.length} potential shared memory segments to check`);
+      
+      // Health check each segment
+      for (const segment of potentialPgSegments) {
+        const isOrphaned = checkIfSharedMemoryOrphaned(segment, dataDir);
+        if (isOrphaned) {
+          try {
+            console.log(`Cleaning up orphaned shared memory segment: ${segment.shmid} (key: ${segment.key})`);
+            execSync(`ipcrm -m ${segment.shmid}`, { stdio: 'ignore' });
+            console.log(`Successfully removed shared memory segment ${segment.shmid}`);
+          } catch (e) {
+            console.warn(`Failed to remove shared memory segment ${segment.shmid}: ${e.message}`);
+          }
+        } else {
+          console.log(`Shared memory segment ${segment.shmid} appears to be in use, skipping`);
+        }
+      }
+      
+    } catch (error) {
+      console.log('Shared memory health check failed, skipping cleanup:', error.message);
     }
-  } catch (error) {
-    // Ignore shared memory cleanup errors - not critical
-    console.log('Shared memory cleanup skipped:', error.message);
   }
+  
+  function checkIfSharedMemoryOrphaned(segment, dataDir) {
+    try {
+      const { execSync } = require('child_process');
+      
+      // Check 1: Look for any PostgreSQL processes that might be using this segment
+      try {
+        const pgProcesses = execSync('pgrep -f postgres', { encoding: 'utf8' }).trim();
+        if (pgProcesses) {
+          const pids = pgProcesses.split('\n');
+          
+          // Check if any PostgreSQL process is using our data directory
+          for (const pid of pids) {
+            try {
+              const cmdline = execSync(`ps -p ${pid} -o args=`, { encoding: 'utf8' }).trim();
+              if (cmdline.includes(dataDir)) {
+                console.log(`Found active PostgreSQL process using our data directory: PID ${pid}`);
+                return false; // Not orphaned, process is using our data dir
+              }
+            } catch (e) {
+              // Process might have disappeared, continue checking
+            }
+          }
+        }
+      } catch (e) {
+        // No PostgreSQL processes found, continue with other checks
+      }
+      
+      // Check 2: Verify if shared memory segment is actually accessible
+      try {
+        // macOS doesn't support ipcs -i, use alternative approach
+        const platform = require('os').platform();
+        let attachCount = 0;
+        
+        if (platform === 'darwin') {
+          // On macOS, use ipcs -m and parse the nattch column
+          const shmInfo = execSync('ipcs -m', { encoding: 'utf8' });
+          const lines = shmInfo.split('\n');
+          
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length >= 6 && parts[1] === segment.shmid) {
+              // Column layout: T ID KEY MODE OWNER GROUP [NATTCH]
+              attachCount = parseInt(parts[6] || '0');
+              break;
+            }
+          }
+        } else {
+          // On Linux, use ipcs -i
+          const shmInfo = execSync(`ipcs -m -i ${segment.shmid}`, { encoding: 'utf8' });
+          const lines = shmInfo.split('\n');
+          for (const line of lines) {
+            if (line.includes('nattch')) {
+              attachCount = parseInt(line.split('=')[1]?.trim() || '0');
+              break;
+            }
+          }
+        }
+        
+        if (attachCount > 0) {
+          console.log(`Shared memory segment ${segment.shmid} has ${attachCount} attachments, not orphaned`);
+          return false;
+        }
+      } catch (e) {
+        // If we can't get info about the segment, it might already be cleaned up
+        console.log(`Cannot get attachment info for shared memory segment ${segment.shmid}: ${e.message}`);
+        return false;
+      }
+      
+      // Check 3: Look for specific PostgreSQL shared memory key patterns
+      // PostgreSQL typically uses keys in specific ranges for different purposes
+      const key = parseInt(segment.key, 16);
+      
+      // PostgreSQL main shared memory usually has predictable key patterns
+      // If this doesn't look like a PostgreSQL key, be cautious
+      if (key < 0x1000000 || key > 0xFFFFFFFF) {
+        console.log(`Shared memory key ${segment.key} doesn't match PostgreSQL patterns, skipping`);
+        return false;
+      }
+      
+      // Check 4: Final safety check - look for lock file association
+      if (fs.existsSync(path.join(dataDir, 'postmaster.pid'))) {
+        console.log('PostgreSQL lock file exists, shared memory might still be needed');
+        return false;
+      }
+      
+      console.log(`Shared memory segment ${segment.shmid} appears to be orphaned`);
+      return true;
+      
+    } catch (error) {
+      console.warn(`Error during health check for segment ${segment.shmid}: ${error.message}`);
+      return false; // When in doubt, don't clean up
+    }
+  }
+  
+  // Run the health-checked cleanup
+  cleanupOrphanedSharedMemory(dataDir);
 
   if (!fs.existsSync(path.join(dataDir, 'PG_VERSION'))) {
     spawnSync(initdbPath, ['-D', dataDir]);

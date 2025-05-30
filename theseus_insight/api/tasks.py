@@ -584,13 +584,41 @@ class TaskManager:
             # Capture the event loop from the main thread before going to thread pool
             main_loop = asyncio.get_event_loop()
             
-            def progress_callback(current: int, total: int, message: str):
-                print(f"DEBUG: Progress callback - {current}/{total}: {message}")
-                # Convert to async and update task status
+            # Determine progress mapping based on import mode
+            # For overwrite: clearing takes 0-20%, import takes 20-100%
+            # For merge: import takes 0-100%
+            clearing_progress_range = (0, 20) if import_mode == "overwrite" else None
+            import_progress_range = (20, 100) if import_mode == "overwrite" else (0, 100)
+            
+            def clearing_progress_callback(current: int, total: int, message: str):
+                """Progress callback for the clearing phase (overwrite mode only)."""
+                print(f"DEBUG: Clearing progress callback - {current}/{total}: {message}")
+                if main_loop.is_running() and clearing_progress_range:
+                    # Map clearing progress to 0-20%
+                    raw_progress = (current / total) if total > 0 else 0
+                    progress_percentage = clearing_progress_range[0] + (raw_progress * (clearing_progress_range[1] - clearing_progress_range[0]))
+                    print(f"DEBUG: Calculated clearing progress: {progress_percentage}%")
+                    asyncio.run_coroutine_threadsafe(
+                        self.update_task_status(
+                            task_id,
+                            TaskStatus.PROCESSING,
+                            message,
+                            progress=progress_percentage,
+                            current_step="clearing_data",
+                        ),
+                        main_loop
+                    )
+                else:
+                    print("DEBUG: Main event loop not running or no clearing progress range, cannot send progress update")
+            
+            def import_progress_callback(current: int, total: int, message: str):
+                """Progress callback for the import phase."""
+                print(f"DEBUG: Import progress callback - {current}/{total}: {message}")
                 if main_loop.is_running():
-                    # Calculate percentage from current/total
-                    progress_percentage = (current / total) * 100 if total > 0 else 0
-                    print(f"DEBUG: Calculated progress: {progress_percentage}%")
+                    # Map import progress to appropriate range
+                    raw_progress = (current / total) if total > 0 else 0
+                    progress_percentage = import_progress_range[0] + (raw_progress * (import_progress_range[1] - import_progress_range[0]))
+                    print(f"DEBUG: Calculated import progress: {progress_percentage}%")
                     asyncio.run_coroutine_threadsafe(
                         self.update_task_status(
                             task_id,
@@ -612,14 +640,25 @@ class TaskManager:
                     task_id,
                     TaskStatus.PROCESSING,
                     "Clearing existing database (overwrite mode)",
+                    progress=0,
                     current_step="clearing_data",
                 )
                 
-                # Clear existing data (destructive)
+                # Clear existing data (destructive) with progress tracking
                 deletion_results = await asyncio.to_thread(
-                    importer.clear_all_data
+                    importer.clear_all_data,
+                    clearing_progress_callback
                 )
                 print(f"Database cleared. Deleted records: {deletion_results}")
+                
+                # Update to import phase start
+                await self.update_task_status(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    "Database cleared. Starting import...",
+                    progress=20,
+                    current_step="starting_import",
+                )
             
             # Import the data
             print(f"DEBUG: Starting import from archive, skip_duplicates: {skip_duplicates}")
@@ -627,7 +666,7 @@ class TaskManager:
                 importer.import_from_archive,
                 archive_path,
                 skip_duplicates,
-                progress_callback
+                import_progress_callback
             )
             
             print(f"DEBUG: Import completed with results: {results}")

@@ -120,19 +120,50 @@ function createWindow () {
 
 function startPostgres() {
   const platform = process.platform;
-  const isPackaged = app.isPackaged;
-  // expected postgres binaries under electron-app/postgres/<platform>/bin
-  const baseDir = isPackaged ? path.join(process.resourcesPath, 'app') : __dirname;
-  const binDir = path.join(baseDir, 'postgres', platform, 'bin');
+  const searchDirs = [];
+
+  if (app.isPackaged) {
+    // In packaged apps the postgres folder is bundled as an extraResource
+    searchDirs.push(path.join(process.resourcesPath, 'app', 'postgres', platform, 'bin'));
+    searchDirs.push(path.join(process.resourcesPath, 'postgres', platform, 'bin'));
+  }
+
+  // Development fallback
+  searchDirs.push(path.join(__dirname, 'postgres', platform, 'bin'));
+
+  let binDir = null;
+  for (const dir of searchDirs) {
+    if (fs.existsSync(dir)) {
+      binDir = dir;
+      break;
+    }
+  }
+
+  if (!binDir) {
+    console.error('PostgreSQL binaries not found in any of:', searchDirs);
+    return null;
+  }
+
+
   const pgPath = path.join(binDir, platform === 'win32' ? 'postgres.exe' : 'postgres');
   const initdbPath = path.join(binDir, platform === 'win32' ? 'initdb.exe' : 'initdb');
   const dataDir = path.join(app.getPath('userData'), 'postgres-data');
+
+  if (!fs.existsSync(pgPath)) {
+    console.error('postgres executable not found:', pgPath);
+    return null;
+  }
 
   if (!fs.existsSync(path.join(dataDir, 'PG_VERSION'))) {
     spawnSync(initdbPath, ['-D', dataDir]);
   }
 
-  postgresProcess = spawn(pgPath, ['-D', dataDir, '-p', '55432']);
+  try {
+    postgresProcess = spawn(pgPath, ['-D', dataDir, '-p', '55432']);
+  } catch (err) {
+    console.error('Failed to spawn postgres:', err);
+    return null;
+  }
 
   postgresProcess.stdout.on('data', (data) => {
     console.log(`postgres: ${data}`);
@@ -140,6 +171,10 @@ function startPostgres() {
 
   postgresProcess.stderr.on('data', (data) => {
     console.error(`postgres err: ${data}`);
+  });
+
+  postgresProcess.on('error', (err) => {
+    console.error('postgres process error:', err);
   });
 
   return postgresProcess;

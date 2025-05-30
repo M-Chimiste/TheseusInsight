@@ -120,8 +120,10 @@ function createWindow () {
 
 function startPostgres() {
   const platform = process.platform;
+  const isPackaged = app.isPackaged;
   // expected postgres binaries under electron-app/postgres/<platform>/bin
-  const binDir = path.join(__dirname, 'postgres', platform, 'bin');
+  const baseDir = isPackaged ? path.join(process.resourcesPath, 'app') : __dirname;
+  const binDir = path.join(baseDir, 'postgres', platform, 'bin');
   const pgPath = path.join(binDir, platform === 'win32' ? 'postgres.exe' : 'postgres');
   const initdbPath = path.join(binDir, platform === 'win32' ? 'initdb.exe' : 'initdb');
   const dataDir = path.join(app.getPath('userData'), 'postgres-data');

@@ -7,9 +7,29 @@ let pythonProcess = null;
 let postgresProcess = null;
 
 function createWindow () {
+  // Get platform-specific icon
+  function getAppIcon() {
+    const platform = process.platform;
+    switch (platform) {
+      case 'win32':
+        return path.join(__dirname, 'icons', 'win', 'icon.ico');
+      case 'darwin':
+        return path.join(__dirname, 'icons', 'mac', 'icon.icns');
+      case 'linux':
+        return path.join(__dirname, 'icons', 'png', '512x512.png');
+      default:
+        return path.join(__dirname, 'icons', 'png', '512x512.png');
+    }
+  }
+
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    icon: getAppIcon(),
+    title: 'Theseus Insight',
+    show: false, // Don't show until ready
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true
@@ -29,11 +49,25 @@ function createWindow () {
     console.log('DOM ready');
   });
 
-  // Open DevTools for debugging
-  win.webContents.openDevTools();
+  // Show window when ready to prevent flash
+  win.once('ready-to-show', () => {
+    win.show();
+    
+    // Focus the window on macOS
+    if (process.platform === 'darwin') {
+      win.focus();
+    }
+  });
+
+  // Open DevTools for debugging (remove this in production)
+  if (process.env.NODE_ENV === 'development') {
+    win.webContents.openDevTools();
+  }
 
   console.log('Loading URL: http://localhost:8000');
   win.loadURL('http://localhost:8000');
+  
+  return win;
 }
 
 function startPostgres() {
@@ -226,12 +260,23 @@ async function startServices() {
 }
 
 app.whenReady().then(() => {
+  // Set app name for better OS integration
+  app.setName('Theseus Insight');
+  
   startServices();
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('activate', () => {
+  // On macOS it's common to re-create a window in the app when the
+  // dock icon is clicked and there are no other windows open.
+  if (BrowserWindow.getAllWindows().length === 0) {
+    startServices();
   }
 });
 

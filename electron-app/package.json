@@ -39,8 +39,13 @@
           "theseus-ui/dist/**",
           "config/**",
           "run_theseus_insight.py",
+
           "requirements.txt"
         ]
+      },
+      {
+        "from": "postgres",
+        "to": "app/postgres"
       },
       {
         "from": "env.template",

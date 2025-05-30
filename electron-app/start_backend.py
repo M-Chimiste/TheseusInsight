@@ -40,6 +40,16 @@ def setup_packaged_environment():
     
     print(f"DEBUG: App root: {app_root}")
     print(f"DEBUG: App root exists: {os.path.exists(app_root)}")
+
+    # Add bundled Python dependencies to Python path
+    python_deps_path = os.path.join(app_root, 'python_deps')
+    if os.path.exists(python_deps_path):
+        print(f"DEBUG: Found bundled Python dependencies: {python_deps_path}")
+        if python_deps_path not in sys.path:
+            sys.path.insert(0, python_deps_path)
+        print(f"DEBUG: Added to sys.path: {python_deps_path}")
+    else:
+        print(f"DEBUG: Bundled Python dependencies not found: {python_deps_path}")
     
     # Set environment variables for config file locations
     config_dir = os.path.join(app_root, 'config')

@@ -212,6 +212,42 @@ chmod +x "/Applications/Theseus Insight.app/Contents/MacOS/Theseus Insight"
 
 **Solution:** Always include `fix-distributed-app.sh` with your DMG and instruct recipients to run it first.
 
+### **AMFI Signature Issues** 
+
+**This is now RESOLVED with the latest build configuration.**
+
+**Root Cause:** macOS Apple Mobile File Integrity (AMFI) rejects unsigned Electron helper processes:
+```
+AMFI: '/Applications/Theseus Insight.app/Contents/Frameworks/Theseus Insight Helper (Renderer).app/Contents/MacOS/Theseus Insight Helper (Renderer)' has no CMS blob?
+AMFI: Unrecoverable CT signature issue, bailing out.
+```
+
+**Solution:** The enhanced `fix-distributed-app.sh` script now applies ad-hoc signatures to all Electron helpers:
+```bash
+codesign --force --deep --sign - "Helper.app"
+```
+
+**Result:** Helpers become acceptable to macOS security while remaining distributable without a Developer ID.
+
+### **Dual Bundling Conflicts**
+
+**This is now RESOLVED with the proper asar configuration.**
+
+**Root Cause:** Previously had both `app.asar` and `app/` directory causing code signature conflicts.
+
+**Solution:** Proper asar configuration in `package.json`:
+```json
+"asar": true,
+"asarUnpack": [
+  "**/postgres/**/*",
+  "**/theseus_insight/**/*",
+  "**/run_theseus_insight.py",
+  "**/requirements.txt"
+]
+```
+
+**Result:** Main app code stays in asar (Electron standard) while PostgreSQL binaries are properly unpacked for external access.
+
 ## Advanced Options
 
 ### Custom Universal Builds

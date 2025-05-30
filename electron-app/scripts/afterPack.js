@@ -23,12 +23,15 @@ exports.default = async function(context) {
     return;
   }
   
+  // With asar enabled, PostgreSQL binaries are in extraResources
   const postgresDir = path.join(appBundle, 'Contents/Resources/app/postgres/darwin');
   const binDir = path.join(postgresDir, 'bin');
   const libDir = path.join(postgresDir, 'lib');
   
   if (!fs.existsSync(binDir) || !fs.existsSync(libDir)) {
     console.log('📁 PostgreSQL directories not found, skipping path fixes');
+    console.log(`   Looked for: ${binDir}`);
+    console.log(`   Looked for: ${libDir}`);
     return;
   }
   

@@ -26,6 +26,13 @@
     "directories": {
       "output": "dist"
     },
+    "asar": true,
+    "asarUnpack": [
+      "**/postgres/**/*",
+      "**/theseus_insight/**/*",
+      "**/run_theseus_insight.py",
+      "**/requirements.txt"
+    ],
     "files": [
       "**/*",
       "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}",

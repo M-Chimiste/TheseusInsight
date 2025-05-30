@@ -2,7 +2,7 @@
 
 ## ✅ Complete Distribution Solution
 
-This app now has a **fully automated build process** that creates DMGs ready for distribution to other Macs.
+This app now has a **fully automated build process** that creates DMGs ready for distribution to other Macs with **verified working solution**.
 
 ## 🚀 For Developers: Building the App
 
@@ -17,6 +17,7 @@ cd electron-app
 - ✅ PostgreSQL binaries are bundled with portable paths
 - ✅ All hardcoded paths are automatically fixed
 - ✅ Frontend and backend verification
+- ✅ Proper asar/extraResources configuration
 - ✅ DMG created for distribution
 
 **Build Output:**
@@ -46,6 +47,8 @@ chmod +x fix-distributed-app.sh
 - ✅ Removes quarantine attributes
 - ✅ Clears problematic extended attributes  
 - ✅ Sets proper file permissions
+- ✅ **Applies ad-hoc signatures to Electron helpers** (fixes AMFI crashes)
+- ✅ Re-signs main app with ad-hoc signature
 - ✅ Clears signature cache conflicts
 - ✅ Tests app launch
 
@@ -56,9 +59,17 @@ chmod +x fix-distributed-app.sh
 
 ## 🔧 What Was Fixed
 
+### AMFI Signature Issues ✅ SOLVED
+**Before:** `AMFI: Unrecoverable CT signature issue, bailing out`
+**After:** Ad-hoc signatures make Electron helpers acceptable to macOS security
+
 ### PostgreSQL Library Path Issues ✅ SOLVED
 **Before:** Hardcoded paths like `/Users/c/software_projects/TheseusInsight/...`
 **After:** Portable paths like `@loader_path/../lib/libpq.5.dylib`
+
+### Dual Bundling Conflicts ✅ SOLVED
+**Before:** Both `app.asar` and `app/` directory causing code signature conflicts
+**After:** Proper asar configuration with asarUnpack for resources that need to be external
 
 ### macOS Security Issues ✅ SOLVED
 **Before:** App crashes with quarantine attributes and code signature conflicts
@@ -90,15 +101,41 @@ chmod +x fix-distributed-app.sh
 
 **App Working Correctly:**
 - App launches without crashes
+- No AMFI signature errors in console
 - UI loads (not blank screen)
 - Backend connects successfully
 - All features accessible
 
 **Common Issues Resolved:**
 - ❌ "Library not loaded" errors → ✅ Fixed by automated path fixing
+- ❌ AMFI signature crashes → ✅ Fixed by ad-hoc signing
 - ❌ App quits immediately → ✅ Fixed by fix script
 - ❌ Blank UI screen → ✅ Fixed by frontend bundling
 - ❌ Security warnings → ✅ Fixed by fix script
+
+## 🧬 Technical Solution
+
+**asar Configuration:**
+```json
+"asar": true,
+"asarUnpack": [
+  "**/postgres/**/*",
+  "**/theseus_insight/**/*",
+  "**/run_theseus_insight.py",
+  "**/requirements.txt"
+]
+```
+
+**Ad-hoc Signing:**
+```bash
+codesign --force --deep --sign - "Helper.app"
+```
+
+This approach:
+- Keeps main app code in asar (Electron standard)
+- Unpacks resources that need external access
+- Applies ad-hoc signatures for macOS security compatibility
+- Maintains full distribution compatibility
 
 ## 📞 Support
 

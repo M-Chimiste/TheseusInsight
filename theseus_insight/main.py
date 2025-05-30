@@ -44,12 +44,49 @@ import asyncio
 
 # Determine base path for static files
 IS_RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
+IS_ELECTRON_PACKAGED = os.getenv("ELECTRON_IS_PACKAGED", "false").lower() == "true"
 
 if IS_RUNNING_IN_DOCKER:
     STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend")
+elif IS_ELECTRON_PACKAGED:
+    # In packaged Electron app, frontend is in the app resources
+    resources_path = os.getenv("ELECTRON_RESOURCES_PATH", "")
+    if resources_path:
+        STATIC_FILES_BASE_DIR = pathlib.Path(resources_path) / "app" / "theseus-ui" / "dist"
+    else:
+        # Fallback for packaged apps without ELECTRON_RESOURCES_PATH
+        # Try to find the frontend relative to current location
+        current_dir = pathlib.Path(__file__).resolve().parent
+        possible_paths = [
+            current_dir.parent / "theseus-ui" / "dist",  # ../theseus-ui/dist (standard dev layout)
+            current_dir / ".." / ".." / "theseus-ui" / "dist",  # ../../theseus-ui/dist (potential alt)
+            pathlib.Path.cwd() / "theseus-ui" / "dist",  # cwd/theseus-ui/dist
+        ]
+        
+        STATIC_FILES_BASE_DIR = None
+        for path in possible_paths:
+            if path.exists() and (path / "index.html").exists():
+                STATIC_FILES_BASE_DIR = path
+                break
+        
+        if STATIC_FILES_BASE_DIR is None:
+            # Final fallback - create a dummy path and log the issue
+            STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend_missing")
+            print(f"ERROR: Could not locate frontend static files in packaged Electron app.")
+            print(f"       Searched in: {[str(p) for p in possible_paths]}")
+            print(f"       ELECTRON_RESOURCES_PATH: {resources_path}")
+            print(f"       Current working directory: {pathlib.Path.cwd()}")
+            print(f"       Script location: {pathlib.Path(__file__).resolve().parent}")
 else:
+    # Development mode - look for theseus-ui/dist relative to project root
     PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
     STATIC_FILES_BASE_DIR = PROJECT_ROOT / "theseus-ui" / "dist"
+
+print(f"INFO:     Static files directory: {STATIC_FILES_BASE_DIR}")
+print(f"INFO:     Static files exist: {STATIC_FILES_BASE_DIR.exists() if STATIC_FILES_BASE_DIR else False}")
+if STATIC_FILES_BASE_DIR and STATIC_FILES_BASE_DIR.exists():
+    print(f"INFO:     Frontend index.html exists: {(STATIC_FILES_BASE_DIR / 'index.html').exists()}")
+    print(f"INFO:     Frontend assets directory exists: {(STATIC_FILES_BASE_DIR / 'assets').exists()}")
 
 STATIC_ASSETS_DIR = STATIC_FILES_BASE_DIR / "assets"
 STATIC_INDEX_HTML = STATIC_FILES_BASE_DIR / "index.html"
@@ -1888,15 +1925,21 @@ async def import_database(
 
 # --- Serve React Frontend --- #
 # This block MUST come AFTER all other API routes have been defined.
-if STATIC_ASSETS_DIR.exists():
+print(f"INFO:     Setting up static file serving...")
+print(f"INFO:     Assets directory: {STATIC_ASSETS_DIR} (exists: {STATIC_ASSETS_DIR.exists() if STATIC_ASSETS_DIR else False})")
+print(f"INFO:     Base directory: {STATIC_FILES_BASE_DIR} (exists: {STATIC_FILES_BASE_DIR.exists() if STATIC_FILES_BASE_DIR else False})")
+
+if STATIC_ASSETS_DIR and STATIC_ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_ASSETS_DIR), name="assets")
+    print(f"INFO:     Mounted /assets from {STATIC_ASSETS_DIR}")
 else:
-    print(f"WARNING: Static assets directory not found at {STATIC_ASSETS_DIR}. Frontend may not be served correctly if running locally without a build.")
+    print(f"WARNING: Static assets directory not found at {STATIC_ASSETS_DIR}. Frontend assets will not be served.")
 
 # Mount the entire static frontend directory to serve public assets like logo.png
-if STATIC_FILES_BASE_DIR.exists():
+if STATIC_FILES_BASE_DIR and STATIC_FILES_BASE_DIR.exists():
     # Mount with a specific route pattern to avoid conflicts
     app.mount("/static", StaticFiles(directory=STATIC_FILES_BASE_DIR), name="static")
+    print(f"INFO:     Mounted /static from {STATIC_FILES_BASE_DIR}")
     
     # Also serve specific public assets directly at root level
     @app.get("/logo.png")
@@ -1912,16 +1955,48 @@ if STATIC_FILES_BASE_DIR.exists():
         if favicon_path.exists():
             return FileResponse(favicon_path, media_type="image/x-icon")
         raise HTTPException(status_code=404, detail="Favicon not found")
+else:
+    print(f"WARNING: Static files base directory not found at {STATIC_FILES_BASE_DIR}. Frontend will not be served.")
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):
     """Serves the index.html for any path not caught by API routes or specific static files."""
-    if STATIC_INDEX_HTML.exists():
+    
+    # Skip API routes and specific files
+    if full_path.startswith("api/") or full_path.startswith("ws/") or full_path.startswith("docs") or full_path.startswith("openapi"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+    
+    if STATIC_INDEX_HTML and STATIC_INDEX_HTML.exists():
+        print(f"INFO:     Serving React app from {STATIC_INDEX_HTML} for path: /{full_path}")
         return FileResponse(STATIC_INDEX_HTML)
     else:
+        # Enhanced error message with debugging information
+        error_details = {
+            "message": "Frontend not available",
+            "static_files_dir": str(STATIC_FILES_BASE_DIR) if STATIC_FILES_BASE_DIR else "Not set",
+            "static_files_exists": STATIC_FILES_BASE_DIR.exists() if STATIC_FILES_BASE_DIR else False,
+            "index_html_path": str(STATIC_INDEX_HTML) if STATIC_INDEX_HTML else "Not set", 
+            "index_html_exists": STATIC_INDEX_HTML.exists() if STATIC_INDEX_HTML else False,
+            "is_docker": IS_RUNNING_IN_DOCKER,
+            "is_electron_packaged": IS_ELECTRON_PACKAGED,
+            "electron_resources_path": os.getenv("ELECTRON_RESOURCES_PATH", "Not set"),
+            "current_working_dir": str(pathlib.Path.cwd()),
+            "requested_path": full_path
+        }
+        
         detail_message = f"Frontend index.html not found at {STATIC_INDEX_HTML}."
-        if not IS_RUNNING_IN_DOCKER:
+        
+        if IS_ELECTRON_PACKAGED:
+            detail_message += f"\n\nElectron app debugging info:"
+            detail_message += f"\n- ELECTRON_RESOURCES_PATH: {os.getenv('ELECTRON_RESOURCES_PATH', 'Not set')}"
+            detail_message += f"\n- Current working directory: {pathlib.Path.cwd()}"
+            detail_message += f"\n- Static files directory: {STATIC_FILES_BASE_DIR}"
+            detail_message += f"\n- Expected index.html at: {STATIC_INDEX_HTML}"
+            detail_message += f"\n\nThis usually means the frontend was not properly bundled in the Electron app."
+        elif not IS_RUNNING_IN_DOCKER:
             detail_message += " Ensure the frontend has been built (e.g., `npm run build` in `theseus-ui` directory)."
+        
+        print(f"ERROR: Frontend serving failed. Details: {error_details}")
         raise HTTPException(status_code=404, detail=detail_message)
 
 def cleanup_old_media_files(max_age_days: int = 30):

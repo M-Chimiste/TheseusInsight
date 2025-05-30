@@ -120,22 +120,46 @@ if [ $? -eq 0 ]; then
     
     # Verification step
     echo "🔍 Verifying PostgreSQL path fixes..."
-    BUILT_APP=$(ls -1d dist/*/Theseus\ Insight.app dist/Theseus\ Insight.app 2>/dev/null | head -n1)
-    if [ -n "$BUILT_APP" ]; then
-        BUILT_BINARY="$BUILT_APP/Contents/Resources/app/postgres/darwin/bin/initdb"
-        if [ -f "$BUILT_BINARY" ]; then
-            BAD_PATHS=$(otool -L "$BUILT_BINARY" 2>/dev/null | grep "/Users/" || true)
-            if [ -z "$BAD_PATHS" ]; then
-                echo "✅ Verification passed: No hard‑coded paths in built app"
+    BUILT_APPS=(dist/*.app)
+    if [ -f "${BUILT_APPS[0]}/Contents/Resources/app/postgres/darwin/bin/initdb" ]; then
+        BUILT_BINARY="${BUILT_APPS[0]}/Contents/Resources/app/postgres/darwin/bin/initdb"
+        BAD_PATHS=$(otool -L "$BUILT_BINARY" 2>/dev/null | grep "/Users/c/software_projects" || true)
+        if [ -z "$BAD_PATHS" ]; then
+            echo "✅ Verification passed: No hardcoded paths in built app"
+        else
+            echo "❌ Warning: Built app still contains hardcoded paths:"
+            echo "$BAD_PATHS"
+        fi
+        
+        # Verify frontend files are bundled
+        echo "🔍 Verifying frontend files are bundled..."
+        FRONTEND_PATH="${BUILT_APPS[0]}/Contents/Resources/app/theseus-ui/dist"
+        if [ -d "$FRONTEND_PATH" ]; then
+            if [ -f "$FRONTEND_PATH/index.html" ]; then
+                echo "✅ Frontend verification passed: index.html found in built app"
             else
-                echo "❌ Warning: Built app still contains hard‑coded paths:"
-                echo "$BAD_PATHS"
+                echo "❌ Warning: Frontend index.html not found in built app"
+                echo "   Expected at: $FRONTEND_PATH/index.html"
+            fi
+            
+            if [ -d "$FRONTEND_PATH/assets" ]; then
+                ASSET_COUNT=$(find "$FRONTEND_PATH/assets" -type f | wc -l)
+                echo "✅ Frontend assets found: $ASSET_COUNT files in assets directory"
+            else
+                echo "❌ Warning: Frontend assets directory not found"
+                echo "   Expected at: $FRONTEND_PATH/assets"
             fi
         else
-            echo "⚠️  Could not verify paths (initdb not found in built app)"
+            echo "❌ Warning: Frontend directory not found in built app"
+            echo "   Expected at: $FRONTEND_PATH"
+            echo "   This means the UI won't load on other systems"
+            
+            # List what's actually in the app bundle
+            echo "📁 Contents of app bundle:"
+            find "${BUILT_APPS[0]}/Contents/Resources/app" -maxdepth 2 -type d 2>/dev/null | head -20
         fi
     else
-        echo "⚠️  Could not locate built .app bundle for verification"
+        echo "⚠️  Could not verify paths (binary not found in expected location)"
     fi
 
     if [ -d "dist" ]; then

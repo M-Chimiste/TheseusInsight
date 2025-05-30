@@ -129,14 +129,56 @@ npm install
 The build scripts include verification. Look for this message:
 ```
 ✅ Verification passed: No hardcoded paths in built app
+✅ Frontend verification passed: index.html found in built app
 ```
 
-If you see this warning instead:
+If you see warnings about missing frontend files:
 ```
-❌ Warning: Built app still contains hardcoded paths
+❌ Warning: Frontend directory not found in built app
 ```
 
-Try rebuilding - the path fixing occasionally needs a second pass.
+This means the UI wasn't properly bundled. Try:
+1. Ensure the UI builds successfully: `cd ../theseus-ui && npm run build`
+2. Check that `theseus-ui/dist/` contains `index.html` and `assets/` directory
+3. Rebuild the Electron app
+
+**Check Frontend Bundling:**
+The build verification shows exactly what's bundled. Look for:
+```
+✅ Frontend verification passed: index.html found in built app
+✅ Frontend assets found: X files in assets directory
+```
+
+### UI Shows Blank Screen
+
+**This is usually caused by missing frontend files in the packaged app:**
+
+1. **Verify Frontend Build:**
+   ```bash
+   cd theseus-ui
+   ls -la dist/
+   # Should show index.html and assets/ directory
+   ```
+
+2. **Check Build Verification Output:**
+   The build scripts now verify that frontend files are included. Look for warnings like:
+   ```
+   ❌ Warning: Frontend directory not found in built app
+   ```
+
+3. **Manual Verification:**
+   You can manually check if the frontend is bundled:
+   ```bash
+   # After building, check the app bundle
+   find "dist/Theseus Insight.app/Contents/Resources/app" -name "index.html"
+   # Should find: .../app/theseus-ui/dist/index.html
+   ```
+
+4. **Backend Path Issues:**
+   The FastAPI backend includes detailed error messages for frontend serving issues. Check the logs for:
+   ```
+   ERROR: Frontend serving failed. Details: {...}
+   ```
 
 **Use Debug Script:**
 Give recipients the `debug-app.sh` script to diagnose issues:

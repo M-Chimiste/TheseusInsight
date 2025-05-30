@@ -130,7 +130,7 @@ Create a `.env` file in the project root containing keys and settings:
 | `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
 | `ALLOW_DB_CONNECTION` | When `true`, enables external access to PostgreSQL database on port 5433 (default `false` for security) |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
-| `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication |
+| `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
 | `DATABASE_URL` | Connection string for the PostgreSQL database (default `postgresql://theseus:theseus@localhost:5432/theseusdb`) |
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |

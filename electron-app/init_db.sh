@@ -13,8 +13,39 @@ THESEUS_PASSWORD=theseus
 THESEUS_DB=theseusdb
 
 # Get the path to the PostgreSQL binaries
+# Handle both development and packaged app scenarios
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PG_BIN_DIR="$SCRIPT_DIR/postgres/$(uname -s | tr '[:upper:]' '[:lower:]')/bin"
+
+# Try to detect if we're running in a packaged Electron app
+if [[ -n "$ELECTRON_RESOURCES_PATH" ]]; then
+    # Running in packaged app - use the app bundle resources
+    APP_DIR="$ELECTRON_RESOURCES_PATH/app"
+    PG_BIN_DIR="$APP_DIR/postgres/$(uname -s | tr '[:upper:]' '[:lower:]')/bin"
+    echo "Detected packaged app environment, using: $PG_BIN_DIR"
+elif [[ "$SCRIPT_DIR" == */tmp/* ]] || [[ "$SCRIPT_DIR" == */var/folders/* ]]; then
+    # Script is in temp directory, likely extracted from asar
+    # Try to find the app bundle resources
+    if [[ -n "$ELECTRON_IS_PACKAGED" && "$ELECTRON_IS_PACKAGED" == "true" ]]; then
+        # Use environment variable set by main.js
+        APP_DIR="$ELECTRON_RESOURCES_PATH/app"
+        PG_BIN_DIR="$APP_DIR/postgres/$(uname -s | tr '[:upper:]' '[:lower:]')/bin"
+        echo "Using packaged app PostgreSQL: $PG_BIN_DIR"
+    else
+        echo "Error: Cannot locate PostgreSQL binaries from temp directory"
+        exit 1
+    fi
+else
+    # Running in development mode
+    PG_BIN_DIR="$SCRIPT_DIR/postgres/$(uname -s | tr '[:upper:]' '[:lower:]')/bin"
+    echo "Using development PostgreSQL: $PG_BIN_DIR"
+fi
+
+# Verify PostgreSQL binaries exist
+if [[ ! -x "$PG_BIN_DIR/pg_isready" ]]; then
+    echo "Error: PostgreSQL binaries not found at $PG_BIN_DIR"
+    echo "pg_isready executable not found or not executable"
+    exit 1
+fi
 
 # Check if PostgreSQL is running
 if ! "$PG_BIN_DIR/pg_isready" -h "$PGHOST" -p "$PGPORT" -U "$POSTGRES_USER" > /dev/null 2>&1; then

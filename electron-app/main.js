@@ -2,6 +2,7 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 
 // Load environment variables from bundled .env file in production
 function loadEnvironmentFile() {
@@ -41,8 +42,23 @@ function loadEnvironmentFile() {
 // Load environment before anything else
 loadEnvironmentFile();
 
+// Add global exception handlers
+process.on('uncaughtException', (error) => {
+  if (error.code === 'EPIPE') {
+    console.warn('Ignoring EPIPE error (broken pipe):', error.message);
+    return;
+  }
+  console.error('Uncaught Exception:', error);
+  // Don't exit on EPIPE errors, but log others
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 let pythonProcess = null;
 let postgresProcess = null;
+let tempFiles = []; // Track temp files for cleanup
 
 function createWindow () {
   // Get platform-specific icon
@@ -189,8 +205,21 @@ function initializeDatabase() {
     let initScript;
     
     if (isPackaged) {
-      // In packaged app, the script should be in the app bundle
-      initScript = path.join(__dirname, 'init_db.sh');
+      // In packaged app, extract script from asar to temp location
+      const originalScript = path.join(__dirname, 'init_db.sh');
+      const tempScript = path.join(os.tmpdir(), 'theseus_init_db.sh');
+      
+      try {
+        // Copy script from asar to temp location
+        const scriptContent = fs.readFileSync(originalScript, 'utf8');
+        fs.writeFileSync(tempScript, scriptContent, { mode: 0o755 });
+        initScript = tempScript;
+        tempFiles.push(tempScript); // Track for cleanup
+        console.log(`Extracted init script to: ${initScript}`);
+      } catch (error) {
+        console.error('Failed to extract init script:', error);
+        return reject(error);
+      }
     } else {
       // In development
       initScript = path.join(__dirname, 'init_db.sh');
@@ -199,10 +228,24 @@ function initializeDatabase() {
     console.log(`Using init script: ${initScript}`);
     
     const initProcess = spawn('bash', [initScript], {
-      stdio: 'inherit'
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ELECTRON_IS_PACKAGED: isPackaged ? 'true' : 'false',
+        ELECTRON_RESOURCES_PATH: isPackaged ? process.resourcesPath : ''
+      }
     });
 
     initProcess.on('close', (code) => {
+      // Clean up temp file if created
+      if (isPackaged && fs.existsSync(initScript)) {
+        try {
+          fs.unlinkSync(initScript);
+        } catch (e) {
+          console.warn('Could not clean up temp init script:', e.message);
+        }
+      }
+      
       if (code === 0) {
         console.log('Database initialization completed successfully');
         resolve();
@@ -267,8 +310,21 @@ function startBackend() {
   // Choose the startup method based on packaging
   let startupArgs;
   if (isPackaged) {
-    // Use the wrapper script for packaged apps
-    startupArgs = [path.join(__dirname, 'start_backend.py')];
+    // Extract the start_backend.py script from asar to temp location
+    const originalScript = path.join(__dirname, 'start_backend.py');
+    const tempScript = path.join(os.tmpdir(), 'theseus_start_backend.py');
+    
+    try {
+      const scriptContent = fs.readFileSync(originalScript, 'utf8');
+      fs.writeFileSync(tempScript, scriptContent, { mode: 0o755 });
+      console.log(`Extracted backend script to: ${tempScript}`);
+      startupArgs = [tempScript];
+      tempFiles.push(tempScript); // Track for cleanup
+    } catch (error) {
+      console.error('Failed to extract backend script:', error);
+      // Fallback to trying the asar path
+      startupArgs = [path.join(__dirname, 'start_backend.py')];
+    }
   } else {
     // Use uvicorn directly for development
     startupArgs = ['-m', 'uvicorn', 'theseus_insight.main:app', '--host', '0.0.0.0', '--port', '8000'];
@@ -292,12 +348,50 @@ function startBackend() {
     }
   });
 
+  // Add error handling for the python process
+  pythonProcess.on('error', (error) => {
+    console.error('Python process error:', error);
+  });
+
+  pythonProcess.on('exit', (code, signal) => {
+    console.log(`Python process exited with code ${code} and signal ${signal}`);
+    if (code !== 0 && code !== null) {
+      console.error('Python process crashed! Code:', code);
+    }
+  });
+
   pythonProcess.stdout.on('data', (data) => {
-    console.log(`backend: ${data}`);
+    try {
+      console.log(`backend: ${data}`);
+    } catch (error) {
+      // Ignore EPIPE errors when logging
+      if (error.code !== 'EPIPE') {
+        console.error('Error logging backend stdout:', error);
+      }
+    }
   });
 
   pythonProcess.stderr.on('data', (data) => {
-    console.error(`backend err: ${data}`);
+    try {
+      console.error(`backend err: ${data}`);
+    } catch (error) {
+      // Ignore EPIPE errors when logging
+      if (error.code !== 'EPIPE') {
+        console.error('Error logging backend stderr:', error);
+      }
+    }
+  });
+
+  pythonProcess.stdout.on('error', (error) => {
+    if (error.code !== 'EPIPE') {
+      console.error('Python process stdout error:', error);
+    }
+  });
+
+  pythonProcess.stderr.on('error', (error) => {
+    if (error.code !== 'EPIPE') {
+      console.error('Python process stderr error:', error);
+    }
   });
 }
 
@@ -378,9 +472,23 @@ async function startServices() {
     createWindow();
   } catch (error) {
     console.error('Failed to start services:', error);
-    // Create window anyway to show error
-    createWindow();
+    app.quit();
   }
+}
+
+function cleanupTempFiles() {
+  console.log('Cleaning up temporary files...');
+  tempFiles.forEach(tempFile => {
+    try {
+      if (fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+        console.log(`Cleaned up: ${tempFile}`);
+      }
+    } catch (error) {
+      console.warn(`Failed to cleanup ${tempFile}:`, error.message);
+    }
+  });
+  tempFiles = [];
 }
 
 app.whenReady().then(() => {
@@ -407,4 +515,5 @@ app.on('activate', () => {
 app.on('will-quit', () => {
   if (pythonProcess) pythonProcess.kill();
   if (postgresProcess) postgresProcess.kill();
+  cleanupTempFiles();
 });

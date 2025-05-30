@@ -28,6 +28,10 @@
     ],
     "extraResources": [
       {
+        "from": "postgres",
+        "to": "app/postgres"
+      },
+      {
         "from": "../",
         "to": "app",
         "filter": [
@@ -35,9 +39,12 @@
           "theseus-ui/dist/**", 
           "config/**", 
           "run_theseus_insight.py", 
-          "requirements.txt", 
-          "postgres/**"
+          "requirements.txt"
         ]
+      },
+      {
+        "from": "../postgres",
+        "to": "app/postgres"
       },
       {
         "from": "env.template",

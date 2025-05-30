@@ -144,6 +144,7 @@ function startPostgres() {
     return null;
   }
 
+
   const pgPath = path.join(binDir, platform === 'win32' ? 'postgres.exe' : 'postgres');
   const initdbPath = path.join(binDir, platform === 'win32' ? 'initdb.exe' : 'initdb');
   const dataDir = path.join(app.getPath('userData'), 'postgres-data');

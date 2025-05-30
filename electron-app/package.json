@@ -35,11 +35,10 @@
         "from": "../",
         "to": "app",
         "filter": [
-          "theseus_insight/**",
-          "theseus-ui/dist/**",
-          "config/**",
+          "theseus_insight/**", 
+          "theseus-ui/dist/**", 
+          "config/**", 
           "run_theseus_insight.py",
-
           "requirements.txt"
         ]
       },

@@ -95,7 +95,6 @@ const Settings: React.FC = () => {
   const [importProgress, setImportProgress] = useState<number>(0);
   const [importStatus, setImportStatus] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
-  const [importTaskId, setImportTaskId] = useState<string | null>(null);
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -249,7 +248,6 @@ const Settings: React.FC = () => {
       settingsApi.importDatabase(file, mode),
     onSuccess: (response) => {
       const taskId = response.data.task_id;
-      setImportTaskId(taskId);
       setIsImporting(true);
       setImportProgress(0);
       setImportStatus('Starting import...');
@@ -266,20 +264,17 @@ const Settings: React.FC = () => {
           setSuccess('Database imported successfully. Please restart the application.');
           setIsImporting(false);
           setSelectedImportFile(null);
-          setImportTaskId(null);
           // Refresh all queries since database data has changed
           queryClient.invalidateQueries();
         } else if (status.overallStatus === 'failed') {
           setError(status.error || 'Database import failed');
           setIsImporting(false);
-          setImportTaskId(null);
         }
       };
       
       ws.onerror = () => {
         setError('Connection error during import');
         setIsImporting(false);
-        setImportTaskId(null);
       };
       
       ws.onclose = () => {
@@ -287,7 +282,6 @@ const Settings: React.FC = () => {
           // Connection closed but import might still be running
           setTimeout(() => {
             setIsImporting(false);
-            setImportTaskId(null);
           }, 5000);
         }
       };

@@ -6,6 +6,9 @@
   "author": "Theseus Insight Team",
   "scripts": {
     "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "dev-full": "bash ./dev-start.sh",
+    "build-app": "bash ./build-app.sh",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
@@ -27,7 +30,18 @@
       {
         "from": "../",
         "to": "app",
-        "filter": ["theseus_insight/**", "theseus-ui/dist/**", "config/**", "run_theseus_insight.py", "requirements.txt", "postgres/**"]
+        "filter": [
+          "theseus_insight/**", 
+          "theseus-ui/dist/**", 
+          "config/**", 
+          "run_theseus_insight.py", 
+          "requirements.txt", 
+          "postgres/**"
+        ]
+      },
+      {
+        "from": "env.template",
+        "to": ".env"
       }
     ],
     "mac": {

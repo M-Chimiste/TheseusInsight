@@ -26,6 +26,7 @@ from .api.models import (
 from .api.tasks import task_manager, TaskStatus
 from .theseus_insight import TheseusInsight
 from . import theseus_insight as ti_module
+from .utils.path_resolver import get_config_path, config_file_exists
 
 # List of credential environment variable names
 CREDENTIAL_KEYS = [
@@ -129,8 +130,8 @@ async def lifespan(app_instance: FastAPI):
 
         if db.get_setting("orchestration") is None:
             print("INFO:     Orchestration settings not found in DB. Populating from JSON file...")
-            orchestration_json_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
-            if os.path.exists(orchestration_json_path):
+            orchestration_json_path = get_config_path('orchestration.json')
+            if config_file_exists('orchestration.json'):
                 try:
                     with open(orchestration_json_path, 'r') as f:
                         default_orchestration_data = json.load(f)
@@ -160,8 +161,8 @@ async def lifespan(app_instance: FastAPI):
             print("INFO:     Orchestration settings found in DB. Skipping pre-population.")
         if db.get_setting("research_interests") is None:
             print("INFO:     Research interests not found in DB. Populating from TXT file...")
-            research_txt_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
-            if os.path.exists(research_txt_path):
+            research_txt_path = get_config_path('research_interests.txt')
+            if config_file_exists('research_interests.txt'):
                 try:
                     with open(research_txt_path, 'r') as f:
                         default_interests = f.read().strip()
@@ -559,8 +560,8 @@ async def get_orchestration_config_api():
             loaded_config_data = json.loads(db_config_json)
         else:
             # Fallback to orchestration.json if DB is empty
-            config_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
-            if os.path.exists(config_path):
+            config_path = get_config_path('orchestration.json')
+            if config_file_exists('orchestration.json'):
                 with open(config_path, 'r') as f:
                     loaded_config_data = json.load(f)
         
@@ -597,7 +598,7 @@ async def update_orchestration_config_api(config: OrchestrationConfig):
     try:
         db.set_setting("orchestration", config.json())
         # Also update orchestration.json for legacy/fallback
-        config_path = os.path.join(os.path.dirname(__file__), '../config/orchestration.json')
+        config_path = get_config_path('orchestration.json')
         with open(config_path, 'w') as f:
             json.dump(json.loads(config.json()), f, indent=2)
         return {"status": "success", "message": "Orchestration configuration updated successfully."}
@@ -646,8 +647,8 @@ async def get_research_interests_api():
             return ResearchInterests(interests=interests)
         else:
             # Fallback to research_interests.txt
-            config_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
-            if os.path.exists(config_path):
+            config_path = get_config_path('research_interests.txt')
+            if config_file_exists('research_interests.txt'):
                 with open(config_path, 'r') as f:
                     interests_from_file = f.read().strip()
                 return ResearchInterests(interests=interests_from_file)
@@ -665,7 +666,7 @@ async def update_research_interests_api(data: ResearchInterests):
         db.set_setting("research_interests", data.interests)
         
         # Save to research_interests.txt
-        config_path = os.path.join(os.path.dirname(__file__), '../config/research_interests.txt')
+        config_path = get_config_path('research_interests.txt')
         try:
             with open(config_path, 'w') as f:
                 f.write(data.interests)

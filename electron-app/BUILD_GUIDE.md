@@ -125,66 +125,68 @@ npm install
 
 ### App Won't Start on Other Macs
 
-**Check Path Fixing:**
-The build scripts include verification. Look for this message:
-```
-✅ Verification passed: No hardcoded paths in built app
-✅ Frontend verification passed: index.html found in built app
-```
+**🔧 SOLUTION: Use the Fix Script**
 
-If you see warnings about missing frontend files:
-```
-❌ Warning: Frontend directory not found in built app
-```
+The most common issues (quarantine attributes, permissions, code signature conflicts) are resolved with the included fix script.
 
-This means the UI wasn't properly bundled. Try:
-1. Ensure the UI builds successfully: `cd ../theseus-ui && npm run build`
-2. Check that `theseus-ui/dist/` contains `index.html` and `assets/` directory
-3. Rebuild the Electron app
+**For Recipients of the DMG:**
+1. Install the app: Drag to /Applications
+2. Run the fix script:
+   ```bash
+   curl -O https://raw.githubusercontent.com/your-repo/fix-distributed-app.sh
+   chmod +x fix-distributed-app.sh
+   ./fix-distributed-app.sh
+   ```
+3. Launch the app normally
 
-**Check Frontend Bundling:**
-The build verification shows exactly what's bundled. Look for:
-```
-✅ Frontend verification passed: index.html found in built app
-✅ Frontend assets found: X files in assets directory
+**What the Fix Script Does:**
+- ✅ Removes quarantine attributes
+- ✅ Clears problematic extended attributes  
+- ✅ Sets proper file permissions
+- ✅ Clears signature cache conflicts
+- ✅ Tests app launch
+
+**Manual Fix (if script unavailable):**
+```bash
+# Remove quarantine
+xattr -r -d com.apple.quarantine "/Applications/Theseus Insight.app"
+
+# Clear all extended attributes
+xattr -cr "/Applications/Theseus Insight.app"
+
+# Set permissions
+chmod -R 755 "/Applications/Theseus Insight.app"
+chmod +x "/Applications/Theseus Insight.app/Contents/MacOS/Theseus Insight"
 ```
 
 ### UI Shows Blank Screen
 
-**This is usually caused by missing frontend files in the packaged app:**
+**This is usually caused by missing frontend files or backend startup issues:**
 
-1. **Verify Frontend Build:**
+1. **Wait for Backend Startup:**
+   - First launch takes 30-60 seconds
+   - Backend must initialize PostgreSQL and load Python dependencies
+   - Watch for "Ready" message in Console.app
+
+2. **Check Build Verification:**
+   The build scripts verify frontend bundling. Look for:
+   ```
+   ✅ Frontend bundled successfully (123 assets)
+   ```
+
+3. **Backend Path Issues:**
+   Check Console.app for backend errors like:
+   ```
+   ERROR: Frontend serving failed
+   Static assets directory not found
+   ```
+
+4. **Manual Verification:**
    ```bash
-   cd theseus-ui
-   ls -la dist/
-   # Should show index.html and assets/ directory
-   ```
-
-2. **Check Build Verification Output:**
-   The build scripts now verify that frontend files are included. Look for warnings like:
-   ```
-   ❌ Warning: Frontend directory not found in built app
-   ```
-
-3. **Manual Verification:**
-   You can manually check if the frontend is bundled:
-   ```bash
-   # After building, check the app bundle
-   find "dist/Theseus Insight.app/Contents/Resources/app" -name "index.html"
+   # Check if frontend is bundled
+   find "/Applications/Theseus Insight.app/Contents/Resources/app" -name "index.html"
    # Should find: .../app/theseus-ui/dist/index.html
    ```
-
-4. **Backend Path Issues:**
-   The FastAPI backend includes detailed error messages for frontend serving issues. Check the logs for:
-   ```
-   ERROR: Frontend serving failed. Details: {...}
-   ```
-
-**Use Debug Script:**
-Give recipients the `debug-app.sh` script to diagnose issues:
-```bash
-./debug-app.sh
-```
 
 ### Performance Issues
 
@@ -196,6 +198,19 @@ Give recipients the `debug-app.sh` script to diagnose issues:
 **Memory Usage:**
 - Normal: 200-400MB
 - High usage: Check for runaway Python processes
+
+### **Crash on Startup** 
+
+**This is the most common issue and is solved by the fix script above.**
+
+**Root Cause:** macOS security features (quarantine attributes, Gatekeeper, code signature conflicts) prevent the app from running.
+
+**Symptoms:**
+- App quits immediately after double-click
+- No error dialog shown
+- Crash reports in Console.app mentioning "library not loaded"
+
+**Solution:** Always include `fix-distributed-app.sh` with your DMG and instruct recipients to run it first.
 
 ## Advanced Options
 

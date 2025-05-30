@@ -2,8 +2,9 @@
 
 # Debug build script for Theseus Insight Electron App
 # This builds without code signing/notarization for testing
-# Now includes automatic PostgreSQL path fixing for portability
-set -eo pipefail
+# PostgreSQL path fixing is now handled automatically by afterPack hook
+
+set -e
 
 echo "🔧 Starting Debug Build (No Code Signing)..."
 
@@ -26,111 +27,128 @@ else
     echo "❓ Unknown architecture ($ARCH) - defaulting to x64"
 fi
 
-echo "🔧 Skipping manual Postgres patch – handled by electron-builder afterPack"
+# Clean previous builds
+echo "🧹 Cleaning previous builds..."
+rm -rf dist/
 
-# Step 1: Build the UI
-echo "🎨 Building React UI..."
+# Install dependencies if needed
+if [ ! -d "node_modules" ]; then
+    echo "📦 Installing dependencies..."
+    npm install
+fi
+
+# Build the React frontend
+echo "🏗️  Building React UI..."
 cd ../theseus-ui
 
 if [ ! -d "node_modules" ]; then
-    echo "📦 Installing UI dependencies..."
+    echo "📦 Installing frontend dependencies..."
     npm install
 fi
 
-echo "🔨 Building UI for production..."
+echo "⚡ Building optimized frontend..."
 npm run build
 
-if [ ! -d "dist" ]; then
-    echo "❌ Error: UI build failed"
+# Verify frontend build
+if [ ! -f "dist/index.html" ]; then
+    echo "❌ Frontend build failed - index.html not found"
     exit 1
 fi
 
-echo "✅ UI build completed"
+if [ ! -d "dist/assets" ]; then
+    echo "❌ Frontend build failed - assets directory not found"
+    exit 1
+fi
 
-# Step 2: Build Electron app
-echo "⚡ Building Electron application (Debug Mode for $BUILD_ARCH)..."
+ASSET_COUNT=$(find dist/assets -type f | wc -l | tr -d ' ')
+echo "✅ Frontend build successful ($ASSET_COUNT assets)"
+
 cd ../electron-app
 
-if [ ! -d "node_modules" ]; then
-    echo "📦 Installing Electron dependencies..."
-    npm install
+# Build the Electron app with automatic PostgreSQL path fixing
+echo "📱 Building Electron app for $BUILD_ARCH..."
+echo "🔧 Note: PostgreSQL path fixing will run automatically via afterPack hook"
+npm run build:mac-$BUILD_ARCH
+
+if [ $? -ne 0 ]; then
+    echo "❌ Electron build failed"
+    exit 1
 fi
 
-# Temporarily disable code signing for debug build
-export CSC_IDENTITY_AUTO_DISCOVERY=false
-export SKIP_NOTARIZATION=true
-
-# Build for current architecture only
-if [ "$BUILD_ARCH" = "arm64" ]; then
-    npm run build:mac-arm64
-else
-    npm run build:mac-x64
-fi
-
-echo "🎉 Debug build completed for $BUILD_ARCH!"
+echo "✅ Build completed successfully!"
 echo "📁 Output files are in the 'dist' directory"
 echo ""
-echo "✅ This build includes:"
-echo "   • Fixed PostgreSQL paths for portability"
-echo "   • No code signing (for easy testing)"
-echo "   • Built for $BUILD_ARCH architecture"
-echo "   • Should work on other Macs without path issues"
-echo ""
 
-# Verification step
-echo "🔍 Verifying PostgreSQL path fixes..."
-BUILT_APP=$(ls -1d dist/*/Theseus\ Insight.app dist/Theseus\ Insight.app 2>/dev/null | head -n1)
-if [ -n "$BUILT_APP" ]; then
-    BUILT_BINARY="$BUILT_APP/Contents/Resources/app/postgres/darwin/bin/initdb"
-    if [ -f "$BUILT_BINARY" ]; then
-        BAD_PATHS=$(otool -L "$BUILT_BINARY" 2>/dev/null | grep "/Users/" || true)
+# Enhanced verification
+echo "🔍 Verifying build output..."
+BUILT_APP=$(find dist -name "*.app" -type d | head -1)
+
+if [ -z "$BUILT_APP" ]; then
+    echo "❌ No .app file found in dist directory"
+    exit 1
+fi
+
+echo "✅ Found built app: $(basename "$BUILT_APP")"
+
+# Verify PostgreSQL was bundled
+POSTGRES_PATH="$BUILT_APP/Contents/Resources/app/postgres/darwin"
+if [ -d "$POSTGRES_PATH" ]; then
+    echo "✅ PostgreSQL bundled successfully"
+    
+    # Enhanced verification - check multiple binaries
+    echo "🔍 Detailed PostgreSQL path verification..."
+    INITDB_PATH="$POSTGRES_PATH/bin/initdb"
+    POSTGRES_BIN_PATH="$POSTGRES_PATH/bin/postgres"
+    
+    if [ -f "$INITDB_PATH" ]; then
+        echo "🔍 Checking initdb dependencies:"
+        otool -L "$INITDB_PATH" | while read -r line; do
+            line=$(echo "$line" | xargs)  # trim whitespace
+            if [[ "$line" == *"/Users/"* ]] || [[ "$line" == *"TheseusInsight"* ]]; then
+                echo "  ❌ HARDCODED: $line"
+            elif [[ "$line" == *"postgres"* ]] && [[ "$line" == "/"* ]] && [[ "$line" != "/@"* ]]; then
+                echo "  ❌ ABSOLUTE: $line"
+            elif [[ "$line" == *".dylib"* ]]; then
+                echo "  ✅ OK: $line"
+            fi
+        done
+        
+        # Quick check for any remaining bad paths
+        BAD_PATHS=$(otool -L "$INITDB_PATH" 2>/dev/null | grep -E "(/Users/|TheseusInsight)" || true)
         if [ -z "$BAD_PATHS" ]; then
-            echo "✅ Verification passed: No hard‑coded paths in built app"
+            echo "✅ initdb: No hardcoded paths found"
         else
-            echo "❌ Warning: Built app still contains hard‑coded paths:"
-            echo "$BAD_PATHS"
+            echo "❌ initdb: Some hardcoded paths remain:"
+            echo "$BAD_PATHS" | sed 's/^/    /'
         fi
-    else
-        echo "⚠️  Could not verify paths (initdb not found in built app)"
     fi
     
-    # Verify frontend files are bundled
-    echo "🔍 Verifying frontend files are bundled..."
-    FRONTEND_PATH="$BUILT_APP/Contents/Resources/app/theseus-ui/dist"
-    if [ -d "$FRONTEND_PATH" ]; then
-        if [ -f "$FRONTEND_PATH/index.html" ]; then
-            echo "✅ Frontend verification passed: index.html found in built app"
+    if [ -f "$POSTGRES_BIN_PATH" ]; then
+        BAD_PATHS=$(otool -L "$POSTGRES_BIN_PATH" 2>/dev/null | grep -E "(/Users/|TheseusInsight)" || true)
+        if [ -z "$BAD_PATHS" ]; then
+            echo "✅ postgres: No hardcoded paths found"
         else
-            echo "❌ Warning: Frontend index.html not found in built app"
-            echo "   Expected at: $FRONTEND_PATH/index.html"
+            echo "❌ postgres: Some hardcoded paths remain:"
+            echo "$BAD_PATHS" | sed 's/^/    /'
         fi
-        
-        if [ -d "$FRONTEND_PATH/assets" ]; then
-            ASSET_COUNT=$(find "$FRONTEND_PATH/assets" -type f | wc -l)
-            echo "✅ Frontend assets found: $ASSET_COUNT files in assets directory"
-        else
-            echo "❌ Warning: Frontend assets directory not found"
-            echo "   Expected at: $FRONTEND_PATH/assets"
-        fi
-    else
-        echo "❌ Warning: Frontend directory not found in built app"
-        echo "   Expected at: $FRONTEND_PATH"
-        echo "   This means the UI won't load on other systems"
-        
-        # List what's actually in the app bundle
-        echo "📁 Contents of app bundle:"
-        find "$BUILT_APP/Contents/Resources/app" -maxdepth 2 -type d 2>/dev/null | head -20
     fi
 else
-    echo "⚠️  Could not locate built .app bundle for verification"
+    echo "⚠️  PostgreSQL not found in bundle"
 fi
 
-if [ -d "dist" ]; then
-    echo ""
-    echo "📋 Built files:"
-    ls -la dist/ | grep -E "\.(dmg|app)$"
+# Verify frontend was bundled
+FRONTEND_PATH="$BUILT_APP/Contents/Resources/app/theseus-ui/dist"
+if [ -d "$FRONTEND_PATH" ] && [ -f "$FRONTEND_PATH/index.html" ]; then
+    BUNDLED_ASSETS=$(find "$FRONTEND_PATH/assets" -type f 2>/dev/null | wc -l | tr -d ' ')
+    echo "✅ Frontend bundled successfully ($BUNDLED_ASSETS assets)"
+else
+    echo "❌ Warning: Frontend not properly bundled"
+    echo "   This will cause blank screen issues"
 fi
 
 echo ""
-echo "🚀 Ready for distribution!"
-echo "   The DMG should now work on other Macs without additional steps." 
+echo "🎉 Debug build complete!"
+echo "📋 Next steps:"
+echo "1. Test the app locally: open \"$BUILT_APP\""
+echo "2. If distributing: Include fix-distributed-app.sh with the DMG"
+echo "3. Recipients should run the fix script before first launch" 

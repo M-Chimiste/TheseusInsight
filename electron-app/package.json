@@ -26,10 +26,10 @@
     "directories": {
       "output": "dist"
     },
-    "afterSign": "scripts/notarize.js",
     "files": [
       "**/*",
-      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}"
+      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}",
+      "!postgres/**/*"
     ],
     "extraResources": [
       {
@@ -48,20 +48,16 @@
         ]
       },
       {
-        "from": "../postgres",
-        "to": "app/postgres"
-      },
-      {
         "from": "env.template",
         "to": ".env"
       }
     ],
     "mac": {
       "icon": "icons/mac/icon.icns",
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
+      "entitlements": false,
+      "entitlementsInherit": false,
       "category": "public.app-category.productivity",
       "target": [
         {
@@ -96,7 +92,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "afterPack": "./scripts/afterPack.js"
   },
   "engines": {
     "node": ">=20"

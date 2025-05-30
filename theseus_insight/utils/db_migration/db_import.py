@@ -91,13 +91,14 @@ class DatabaseImporter:
             print(f"Error validating metadata: {e}")
             return False
     
-    def import_papers(self, papers_file: str, skip_duplicates: bool = True) -> Dict[str, int]:
+    def import_papers(self, papers_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
         Import papers from JSON file.
         
         Args:
             papers_file: Path to papers.json file
             skip_duplicates: Whether to skip papers that already exist (by URL)
+            progress_callback: Optional callback function(current, total, message)
             
         Returns:
             Dictionary with import statistics
@@ -109,7 +110,7 @@ class DatabaseImporter:
         
         stats = {"total": len(papers_data), "imported": 0, "skipped": 0, "errors": 0}
         
-        for paper_data in papers_data:
+        for i, paper_data in enumerate(papers_data):
             try:
                 # Create Paper object
                 paper = Paper(
@@ -137,17 +138,22 @@ class DatabaseImporter:
             except Exception as e:
                 print(f"Error importing paper '{paper_data.get('title', 'Unknown')}': {e}")
                 stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback and (i + 1) % 10 == 0 or i == len(papers_data) - 1:  # Update every 10 items or at end
+                progress_callback(i + 1, len(papers_data), f"Importing papers: {i + 1}/{len(papers_data)}")
         
         print(f"Papers import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
     
-    def import_podcasts(self, podcasts_file: str, skip_duplicates: bool = True) -> Dict[str, int]:
+    def import_podcasts(self, podcasts_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
         Import podcasts from JSON file.
         
         Args:
             podcasts_file: Path to podcasts.json file
             skip_duplicates: Whether to skip podcasts that already exist (by title)
+            progress_callback: Optional callback function(current, total, message)
             
         Returns:
             Dictionary with import statistics
@@ -159,7 +165,7 @@ class DatabaseImporter:
         
         stats = {"total": len(podcasts_data), "imported": 0, "skipped": 0, "errors": 0}
         
-        for podcast_data in podcasts_data:
+        for i, podcast_data in enumerate(podcasts_data):
             try:
                 # Check for duplicates by title if requested
                 if skip_duplicates:
@@ -184,17 +190,22 @@ class DatabaseImporter:
             except Exception as e:
                 print(f"Error importing podcast '{podcast_data.get('title', 'Unknown')}': {e}")
                 stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(podcasts_data), f"Importing podcasts: {i + 1}/{len(podcasts_data)}")
         
         print(f"Podcasts import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
     
-    def import_newsletters(self, newsletters_file: str, skip_duplicates: bool = True) -> Dict[str, int]:
+    def import_newsletters(self, newsletters_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
         Import newsletters from JSON file.
         
         Args:
             newsletters_file: Path to newsletters.json file
             skip_duplicates: Whether to skip newsletters that already exist (by date range)
+            progress_callback: Optional callback function(current, total, message)
             
         Returns:
             Dictionary with import statistics
@@ -206,7 +217,7 @@ class DatabaseImporter:
         
         stats = {"total": len(newsletters_data), "imported": 0, "skipped": 0, "errors": 0}
         
-        for newsletter_data in newsletters_data:
+        for i, newsletter_data in enumerate(newsletters_data):
             try:
                 # Check for duplicates by date range if requested
                 if skip_duplicates:
@@ -231,17 +242,22 @@ class DatabaseImporter:
             except Exception as e:
                 print(f"Error importing newsletter from {newsletter_data.get('start_date', 'Unknown')} to {newsletter_data.get('end_date', 'Unknown')}: {e}")
                 stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(newsletters_data), f"Importing newsletters: {i + 1}/{len(newsletters_data)}")
         
         print(f"Newsletters import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
     
-    def import_from_directory(self, input_dir: str, skip_duplicates: bool = True) -> Dict[str, Any]:
+    def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
         
         Args:
             input_dir: Directory containing the JSON files
             skip_duplicates: Whether to skip duplicate entries
+            progress_callback: Optional callback function(current, total, message)
             
         Returns:
             Dictionary with import results
@@ -255,47 +271,99 @@ class DatabaseImporter:
                 print("Warning: Metadata validation failed, continuing anyway...")
         
         results = {}
+        current_step = 0
+        total_steps = 3  # papers, podcasts, newsletters
         
         # Import papers
         papers_file = input_path / "papers.json"
         if papers_file.exists():
-            results["papers"] = self.import_papers(str(papers_file), skip_duplicates)
+            if progress_callback:
+                progress_callback(0, 100, "Starting papers import...")
+            results["papers"] = self.import_papers(
+                str(papers_file), 
+                skip_duplicates, 
+                lambda c, t, m: progress_callback(
+                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
+                    100, 
+                    m
+                ) if progress_callback else None
+            )
+            current_step += 1
         else:
             print("Warning: papers.json not found")
             results["papers"] = {"error": "File not found"}
+            current_step += 1
         
         # Import podcasts
         podcasts_file = input_path / "podcasts.json"
         if podcasts_file.exists():
-            results["podcasts"] = self.import_podcasts(str(podcasts_file), skip_duplicates)
+            if progress_callback:
+                progress_callback(int((current_step / total_steps) * 100), 100, "Starting podcasts import...")
+            results["podcasts"] = self.import_podcasts(
+                str(podcasts_file), 
+                skip_duplicates,
+                lambda c, t, m: progress_callback(
+                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
+                    100, 
+                    m
+                ) if progress_callback else None
+            )
+            current_step += 1
         else:
             print("Warning: podcasts.json not found")
             results["podcasts"] = {"error": "File not found"}
+            current_step += 1
         
         # Import newsletters
         newsletters_file = input_path / "newsletters.json"
         if newsletters_file.exists():
-            results["newsletters"] = self.import_newsletters(str(newsletters_file), skip_duplicates)
+            if progress_callback:
+                progress_callback(int((current_step / total_steps) * 100), 100, "Starting newsletters import...")
+            results["newsletters"] = self.import_newsletters(
+                str(newsletters_file), 
+                skip_duplicates,
+                lambda c, t, m: progress_callback(
+                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
+                    100, 
+                    m
+                ) if progress_callback else None
+            )
         else:
             print("Warning: newsletters.json not found")
             results["newsletters"] = {"error": "File not found"}
         
+        if progress_callback:
+            progress_callback(100, 100, "Import completed!")
+        
         return results
     
-    def import_from_archive(self, archive_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
+    def import_from_archive(self, archive_path: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a tar.gz archive.
         
         Args:
             archive_path: Path to the tar.gz archive
             skip_duplicates: Whether to skip duplicate entries
+            progress_callback: Optional callback function(current, total, message)
             
         Returns:
             Dictionary with import results
         """
         with tempfile.TemporaryDirectory() as temp_dir:
+            if progress_callback:
+                progress_callback(0, 100, "Extracting archive...")
             extract_dir = self.extract_archive(archive_path, temp_dir)
-            return self.import_from_directory(extract_dir, skip_duplicates)
+            if progress_callback:
+                progress_callback(10, 100, "Archive extracted, starting import...")
+            
+            # Adjust progress callback to account for extraction taking 10%
+            def adjusted_progress_callback(current, total, message):
+                if progress_callback:
+                    # Map 0-100% import progress to 10-100% overall progress
+                    adjusted_progress = 10 + int((current / total) * 90)
+                    progress_callback(adjusted_progress, 100, message)
+            
+            return self.import_from_directory(extract_dir, skip_duplicates, adjusted_progress_callback)
     
     def import_all(self, input_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
         """

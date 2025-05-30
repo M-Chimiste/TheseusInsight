@@ -549,5 +549,150 @@ class TaskManager:
             print(error_details) # Log to server console
             raise
 
+    async def run_database_import_task(self, task_id: str):
+        """Run the database import task with progress tracking."""
+        try:
+            print(f"DEBUG: Starting database import task {task_id}")
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            config = task["config"]
+            
+            from ..utils.db_migration.db_import import DatabaseImporter
+            
+            archive_path = config.get("archive_path")
+            import_mode = config.get("import_mode", "merge")
+            filename = config.get("filename", "unknown")
+            
+            print(f"DEBUG: Archive path: {archive_path}, Mode: {import_mode}, Filename: {filename}")
+            
+            if not archive_path or not os.path.exists(archive_path):
+                raise ValueError(f"Archive file not found: {archive_path}")
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Starting database import of {filename}",
+                current_step="import_init",
+            )
+            
+            # Initialize importer
+            print(f"DEBUG: Initializing DatabaseImporter with db_path: {self.db.db_path}")
+            importer = DatabaseImporter(self.db.db_path)
+            
+            # Create progress callback that updates task status
+            # Capture the event loop from the main thread before going to thread pool
+            main_loop = asyncio.get_event_loop()
+            
+            def progress_callback(current: int, total: int, message: str):
+                print(f"DEBUG: Progress callback - {current}/{total}: {message}")
+                # Convert to async and update task status
+                if main_loop.is_running():
+                    # Calculate percentage from current/total
+                    progress_percentage = (current / total) * 100 if total > 0 else 0
+                    print(f"DEBUG: Calculated progress: {progress_percentage}%")
+                    asyncio.run_coroutine_threadsafe(
+                        self.update_task_status(
+                            task_id,
+                            TaskStatus.PROCESSING,
+                            message,
+                            progress=progress_percentage,
+                            current_step="importing",
+                        ),
+                        main_loop
+                    )
+                else:
+                    print("DEBUG: Main event loop not running, cannot send progress update")
+            
+            skip_duplicates = import_mode == "merge"
+            
+            if import_mode == "overwrite":
+                print("DEBUG: Running in overwrite mode, clearing database")
+                await self.update_task_status(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    "Clearing existing database (overwrite mode)",
+                    current_step="clearing_data",
+                )
+                
+                # Clear existing data (destructive)
+                deletion_results = await asyncio.to_thread(
+                    importer.clear_all_data
+                )
+                print(f"Database cleared. Deleted records: {deletion_results}")
+            
+            # Import the data
+            print(f"DEBUG: Starting import from archive, skip_duplicates: {skip_duplicates}")
+            results = await asyncio.to_thread(
+                importer.import_from_archive,
+                archive_path,
+                skip_duplicates,
+                progress_callback
+            )
+            
+            print(f"DEBUG: Import completed with results: {results}")
+            
+            # Prepare result summary
+            total_imported = sum(r.get("imported", 0) for r in results.values() if isinstance(r, dict))
+            total_skipped = sum(r.get("skipped", 0) for r in results.values() if isinstance(r, dict))
+            total_errors = sum(r.get("errors", 0) for r in results.values() if isinstance(r, dict))
+            
+            mode_text = "merged" if import_mode == "merge" else "imported"
+            message = f"Database {mode_text} successfully. "
+            message += f"Imported: {total_imported}, Skipped: {total_skipped}, Errors: {total_errors}"
+            
+            if import_mode == "merge":
+                message += ". Existing records were preserved."
+            
+            print(f"DEBUG: Final message: {message}")
+            
+            # Clean up temporary file
+            try:
+                os.remove(archive_path)
+                print(f"DEBUG: Cleaned up temporary file: {archive_path}")
+            except Exception as e:
+                print(f"DEBUG: Could not clean up temporary file: {e}")
+                pass  # Don't fail the task if cleanup fails
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                message,
+                progress=100,
+                current_step="import_complete",
+                result={
+                    "import_stats": results,
+                    "total_imported": total_imported,
+                    "total_skipped": total_skipped,
+                    "total_errors": total_errors,
+                    "import_mode": import_mode
+                },
+            )
+            
+            print(f"DEBUG: Database import task {task_id} completed successfully")
+            
+        except Exception as e:
+            print(f"DEBUG: Error in database import task {task_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Clean up temporary file on error
+            try:
+                config = task.get("config", {}) if 'task' in locals() else {}
+                archive_path = config.get("archive_path")
+                if archive_path and os.path.exists(archive_path):
+                    os.remove(archive_path)
+            except Exception:
+                pass
+                
+            await self.update_task_status(
+                task_id,
+                TaskStatus.FAILED,
+                "Database import failed",
+                error=str(e),
+                current_step="import_failed",
+            )
+            raise
+
 # Create global task manager instance
 task_manager = TaskManager() 

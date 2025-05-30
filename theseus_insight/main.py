@@ -1610,6 +1610,47 @@ async def visualizer_status(websocket: WebSocket, task_id: str):
             await task_manager.unsubscribe_from_updates(task_id, status_queue)
         manager.disconnect(task_id, websocket)
 
+@app.websocket("/ws/database-import/{task_id}")
+async def database_import_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for database import status updates."""
+    status_queue = None
+    try:
+        await manager.connect(task_id, websocket)
+        
+        # Subscribe to task updates
+        status_queue = await task_manager.subscribe_to_updates(task_id)
+        
+        while True:
+            # Wait for status updates
+            status = await status_queue.get()
+            
+            # Check for cleanup sentinel
+            if status is None:
+                break
+                
+            await websocket.send_json(status.dict())
+            
+            # If task is completed or failed, close connection
+            if status.overallStatus in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                break
+                
+    except WebSocketDisconnect:
+        pass
+    except ValueError as e:
+        try:
+            await websocket.close(code=4004, reason=str(e))
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            await websocket.close(code=4000, reason=str(e))
+        except Exception:
+            pass
+    finally:
+        if status_queue:
+            await task_manager.unsubscribe_from_updates(task_id, status_queue)
+        manager.disconnect(task_id, websocket)
+
 # --- Endpoint for Running TheseusInsight Newsletter Pipeline ---
 @app.post("/api/actions/run-newsletter-pipeline", response_model=Dict[str, str])
 async def run_newsletter_pipeline_endpoint(
@@ -1706,51 +1747,95 @@ async def run_newsletter_pipeline_endpoint(
 
 # --- Database Management --- #
 @app.get("/api/settings/database/export")
-async def export_database():
+async def export_database(background_tasks: BackgroundTasks):
     """Export the database as a compressed tar.gz file using the existing JSON export system."""
     try:
         import tempfile
         from datetime import datetime
         from .utils.db_migration.db_export import DatabaseExporter
         
-        # Create a temporary directory for the export
+        print("INFO:     Starting database export...")
+        
+        # Create timestamp for filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create a temporary directory for the export files
         with tempfile.TemporaryDirectory() as temp_dir:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             export_dir = os.path.join(temp_dir, "export")
-            archive_file = os.path.join(temp_dir, f"theseus_backup_{timestamp}.tar.gz")
             
             # Use the existing DatabaseExporter
             exporter = DatabaseExporter(DB_URL, export_dir)
             
+            print("INFO:     Exporting database tables...")
             # Export all data to JSON files
             papers_file = exporter.export_papers()
             podcasts_file = exporter.export_podcasts()
             newsletters_file = exporter.export_newsletters()
             metadata_file = exporter.create_metadata()
             
+            # Create archive file outside temp directory to persist after context exit
+            # Create data/temp directory if it doesn't exist
+            os.makedirs("data/temp", exist_ok=True)
+            archive_file = os.path.join("data/temp", f"theseus_backup_{timestamp}.tar.gz")
+            
+            print(f"INFO:     Creating archive at {archive_file}...")
             # Create compressed archive
             import tarfile
             with tarfile.open(archive_file, "w:gz") as tar:
                 tar.add(export_dir, arcname=".")
-            
-            return FileResponse(
-                archive_file,
-                media_type="application/gzip",
-                filename=f"theseus_backup_{timestamp}.tar.gz"
-            )
+        
+        # Verify archive was created successfully
+        if not os.path.exists(archive_file):
+            raise HTTPException(status_code=500, detail="Archive file was not created successfully")
+        
+        archive_size = os.path.getsize(archive_file)
+        if archive_size == 0:
+            raise HTTPException(status_code=500, detail="Archive file is empty")
+        
+        print(f"INFO:     Export complete. Archive size: {archive_size / 1024 / 1024:.1f} MB")
+        
+        # Add a background task to clean up the file after 10 minutes (enough time for download)
+        def cleanup_export_file(file_path: str):
+            try:
+                import time
+                time.sleep(600)  # Wait 10 minutes
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"INFO:     Cleaned up export file: {file_path}")
+            except Exception as e:
+                print(f"Warning: Could not clean up export file {file_path}: {e}")
+        
+        background_tasks.add_task(cleanup_export_file, archive_file)
+        
+        # Return the archive file (temp directory is now cleaned up but archive persists)
+        return FileResponse(
+            archive_file,
+            media_type="application/gzip",
+            filename=f"theseus_backup_{timestamp}.tar.gz",
+            headers={
+                "Content-Disposition": f"attachment; filename=theseus_backup_{timestamp}.tar.gz",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
             
     except Exception as e:
+        print(f"ERROR: Database export failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Database export failed: {str(e)}")
 
 @app.post("/api/settings/database/import")
 async def import_database(
+    background_tasks: BackgroundTasks,
     backup_file: UploadFile = File(...),
     import_mode: str = Form("merge", description="Import mode: 'merge' (default) or 'overwrite'")
 ):
-    """Import a database from a compressed backup file using the existing JSON import system."""
+    """Import a database from a compressed backup file using background task with progress updates."""
     try:
         import tempfile
-        from .utils.db_migration.db_import import DatabaseImporter
+        import uuid
         
         if not backup_file.filename or not backup_file.filename.endswith(('.tar.gz', '.tgz')):
             raise HTTPException(
@@ -1764,97 +1849,40 @@ async def import_database(
                 detail="Invalid import mode. Must be 'merge' or 'overwrite'."
             )
         
-        print(f"DEBUG: Received file: {backup_file.filename}")
-        print(f"DEBUG: Import mode: {import_mode}")
-        print(f"DEBUG: File content type: {backup_file.content_type}")
+        # Create a task ID for tracking
+        task_id = str(uuid.uuid4())
         
-        # Create a temporary directory for the import
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Save uploaded file
-            archive_path = os.path.join(temp_dir, backup_file.filename)
-            
-            with open(archive_path, "wb") as f:
-                content = await backup_file.read()
-                f.write(content)
-            
-            # Extract the archive using the existing importer
-            importer = DatabaseImporter(DB_URL)
-            extract_dir = os.path.join(temp_dir, "extracted")
-            extracted_path = importer.extract_archive(archive_path, extract_dir)
-            
-            # Look for required JSON files
-            all_files = os.listdir(extracted_path)
-            
-            # Check for required files
-            required_files = ["papers.json", "podcasts.json", "newsletters.json", "metadata.json"]
-            missing_files = [f for f in required_files if f not in all_files]
-            
-            if missing_files:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Archive is missing required files: {', '.join(missing_files)}"
-                )
-            
-            # Validate metadata
-            metadata_path = os.path.join(extracted_path, "metadata.json")
-            if not importer.validate_metadata(metadata_path):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid or incompatible backup file metadata"
-                )
-            
-            if import_mode == "overwrite":
-                print("INFO: Performing complete database overwrite...")
-                
-                # Clear existing data (destructive)
-                try:
-                    deletion_results = importer.clear_all_data()
-                    print(f"Database cleared. Deleted records: {deletion_results}")
-                    skip_duplicates = False  # Import all records since database is now empty
-                except Exception as e:
-                    print(f"Warning: Could not clear database: {e}")
-                    # Still proceed with import but use skip_duplicates=False to force overwrites
-                    skip_duplicates = False
-            else:
-                print("INFO: Performing database merge...")
-                skip_duplicates = True  # Skip duplicates in merge mode
-            
-            # Import the data using existing importer
-            results = {}
-            
-            papers_file = os.path.join(extracted_path, "papers.json")
-            results["papers"] = importer.import_papers(papers_file, skip_duplicates=skip_duplicates)
-            
-            podcasts_file = os.path.join(extracted_path, "podcasts.json")
-            results["podcasts"] = importer.import_podcasts(podcasts_file, skip_duplicates=skip_duplicates)
-            
-            newsletters_file = os.path.join(extracted_path, "newsletters.json")
-            results["newsletters"] = importer.import_newsletters(newsletters_file, skip_duplicates=skip_duplicates)
-            
-            # Prepare success message
-            total_imported = sum(r["imported"] for r in results.values())
-            total_skipped = sum(r["skipped"] for r in results.values())
-            total_errors = sum(r["errors"] for r in results.values())
-            
-            mode_text = "merged" if import_mode == "merge" else "imported"
-            message = f"Database {mode_text} successfully. "
-            message += f"Imported: {total_imported}, Skipped: {total_skipped}, Errors: {total_errors}. "
-            
-            if import_mode == "merge":
-                message += "Existing records were preserved."
-            
-            return {
-                "status": "success", 
-                "message": message,
-                "results": results
-            }
+        # Save the uploaded file to a temporary location
+        temp_file_path = f"data/temp/{task_id}_import.tar.gz"
+        os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
+        
+        with open(temp_file_path, "wb") as f:
+            content = await backup_file.read()
+            f.write(content)
+        
+        # Create the background task
+        task_config = {
+            "archive_path": temp_file_path,
+            "import_mode": import_mode,
+            "filename": backup_file.filename
+        }
+        
+        await task_manager.create_task(
+            task_id=task_id,
+            task_type="database_import",
+            config=task_config
+        )
+        
+        await task_manager.enqueue_task(task_manager.run_database_import_task, task_id)
+        
+        return {
+            "task_id": task_id,
+            "message": f"Database import started. Use WebSocket /ws/database-import/{task_id} for progress updates."
+        }
             
     except HTTPException:
         raise
     except Exception as e:
-        print(f"DEBUG: Unexpected error during import: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
 
 # --- Serve React Frontend --- #

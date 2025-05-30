@@ -25,6 +25,7 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  LinearProgress,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../services/api';
@@ -91,6 +92,10 @@ const Settings: React.FC = () => {
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
+  const [importProgress, setImportProgress] = useState<number>(0);
+  const [importStatus, setImportStatus] = useState<string>('');
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importTaskId, setImportTaskId] = useState<string | null>(null);
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -185,31 +190,109 @@ const Settings: React.FC = () => {
   const exportDatabaseMutation = useMutation({
     mutationFn: () => settingsApi.exportDatabase(),
     onSuccess: (response) => {
-      // Trigger download
-      const blob = new Blob([response.data], { type: 'application/gzip' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `theseus_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      setSuccess('Database exported successfully');
+      try {
+        // Validate response data
+        if (!response.data || response.data.size === 0) {
+          throw new Error('Export file is empty or corrupt');
+        }
+        
+        // Create blob with proper MIME type
+        const blob = new Blob([response.data], { 
+          type: response.headers['content-type'] || 'application/gzip' 
+        });
+        
+        // Create download URL
+        const url = window.URL.createObjectURL(blob);
+        
+        // Get filename from Content-Disposition header if available
+        const contentDisposition = response.headers['content-disposition'];
+        let filename = `theseus_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
+        
+        if (contentDisposition) {
+          const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+          if (filenameMatch && filenameMatch[1]) {
+            filename = filenameMatch[1].replace(/['"]/g, '');
+          }
+        }
+        
+        // Create and trigger download
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        
+        // Add to DOM temporarily
+        document.body.appendChild(link);
+        link.click();
+        
+        // Cleanup
+        setTimeout(() => {
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+        }, 100);
+        
+        setSuccess(`Database exported successfully (${(blob.size / 1024 / 1024).toFixed(1)} MB)`);
+      } catch (err) {
+        console.error('Export download error:', err);
+        setError(`Failed to download export file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
     },
-    onError: (error: any) => setError(error.message || 'Failed to export database'),
+    onError: (error: any) => {
+      console.error('Export error:', error);
+      const message = error?.response?.data?.detail || error?.message || 'Failed to export database';
+      setError(message);
+    },
   });
 
   const importDatabaseMutation = useMutation({
     mutationFn: ({ file, mode }: { file: File; mode: 'merge' | 'overwrite' }) => 
       settingsApi.importDatabase(file, mode),
-    onSuccess: () => {
-      setSuccess('Database imported successfully. Please restart the application.');
-      setSelectedImportFile(null);
-      // Refresh all queries since database data has changed
-      queryClient.invalidateQueries();
+    onSuccess: (response) => {
+      const taskId = response.data.task_id;
+      setImportTaskId(taskId);
+      setIsImporting(true);
+      setImportProgress(0);
+      setImportStatus('Starting import...');
+      
+      // Connect to WebSocket for progress updates
+      const ws = new WebSocket(`ws://localhost:8000/ws/database-import/${taskId}`);
+      
+      ws.onmessage = (event) => {
+        const status = JSON.parse(event.data);
+        setImportProgress(status.progress || 0);
+        setImportStatus(status.message || 'Importing...');
+        
+        if (status.overallStatus === 'completed') {
+          setSuccess('Database imported successfully. Please restart the application.');
+          setIsImporting(false);
+          setSelectedImportFile(null);
+          setImportTaskId(null);
+          // Refresh all queries since database data has changed
+          queryClient.invalidateQueries();
+        } else if (status.overallStatus === 'failed') {
+          setError(status.error || 'Database import failed');
+          setIsImporting(false);
+          setImportTaskId(null);
+        }
+      };
+      
+      ws.onerror = () => {
+        setError('Connection error during import');
+        setIsImporting(false);
+        setImportTaskId(null);
+      };
+      
+      ws.onclose = () => {
+        if (isImporting) {
+          // Connection closed but import might still be running
+          setTimeout(() => {
+            setIsImporting(false);
+            setImportTaskId(null);
+          }, 5000);
+        }
+      };
     },
-    onError: (error: any) => setError(error.message || 'Failed to import database'),
+    onError: (error: any) => setError(error.message || 'Failed to start database import'),
   });
 
   const [showCreds, setShowCreds] = useState<Record<string, boolean>>({});
@@ -760,10 +843,16 @@ const Settings: React.FC = () => {
                 color="primary"
                 onClick={() => exportDatabaseMutation.mutate()}
                 disabled={exportDatabaseMutation.isPending}
+                startIcon={exportDatabaseMutation.isPending ? <CircularProgress size={20} /> : undefined}
                 sx={{ mr: 2 }}
               >
                 {exportDatabaseMutation.isPending ? 'Exporting...' : 'Export Database'}
               </Button>
+              {exportDatabaseMutation.isPending && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                  This may take a few minutes for large databases...
+                </Typography>
+              )}
             </Box>
 
             {/* Import Section */}
@@ -837,17 +926,40 @@ const Settings: React.FC = () => {
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                     Import mode: <strong>{importMode === 'merge' ? 'Merge (Safe)' : 'Complete Overwrite (Destructive)'}</strong>
                   </Typography>
-                  <Button
-                    variant="contained"
-                    color={importMode === 'overwrite' ? 'error' : 'primary'}
-                    onClick={handleDatabaseImport}
-                    disabled={importDatabaseMutation.isPending}
-                  >
-                    {importDatabaseMutation.isPending 
-                      ? 'Importing...' 
-                      : `${importMode === 'merge' ? 'Merge' : 'Overwrite'} Database`
-                    }
-                  </Button>
+                  {!isImporting ? (
+                    <Button
+                      variant="contained"
+                      color={importMode === 'overwrite' ? 'error' : 'primary'}
+                      onClick={handleDatabaseImport}
+                      disabled={importDatabaseMutation.isPending}
+                    >
+                      {importDatabaseMutation.isPending 
+                        ? 'Starting...' 
+                        : `${importMode === 'merge' ? 'Merge' : 'Overwrite'} Database`
+                      }
+                    </Button>
+                  ) : (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        {importStatus}
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ width: '100%' }}>
+                          <LinearProgress 
+                            variant="determinate" 
+                            value={importProgress} 
+                            sx={{ height: 8, borderRadius: 4 }}
+                          />
+                        </Box>
+                        <Typography variant="body2" color="text.secondary">
+                          {Math.round(importProgress)}%
+                        </Typography>
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        Please don't close this page while importing...
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
               )}
             </Box>

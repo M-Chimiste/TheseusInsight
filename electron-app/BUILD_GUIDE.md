@@ -1,246 +1,215 @@
 # Theseus Insight Electron App Build Guide
 
-## Problem Summary
+## Overview
 
-You were experiencing issues where:
-1. **Settings page showed a blank grey box** in the built Electron app
-2. **Config folder wasn't being bundled** properly
-3. **No default .env file** was provided for initial setup
+This guide covers building the Theseus Insight desktop application for macOS. The build process has been streamlined with automatic PostgreSQL path fixing integrated directly into the build scripts.
 
-## Solution Implemented
+## Quick Start
 
-### 1. Fixed Path Resolution
+### Prerequisites
 
-**Problem**: The FastAPI backend was using hardcoded relative paths that broke in the packaged Electron app.
+1. **Node.js & npm** (version 16 or later)
+2. **Xcode Command Line Tools** (for macOS builds)
+   ```bash
+   xcode-select --install
+   ```
 
-**Solution**: Created a comprehensive path resolution system:
-- `theseus_insight/utils/path_resolver.py` - Handles development vs packaged paths
-- Environment variables (`THESEUS_CONFIG_DIR`, `THESEUS_APP_ROOT`) for path detection
-- Updated all config file loading to use the new path resolver
+### Simple Build Process
 
-### 2. Enhanced Build Configuration
-
-**Problem**: Config files and environment templates weren't being bundled correctly.
-
-**Solution**: Updated `package.json` build configuration:
-```json
-"extraResources": [
-  {
-    "from": "../",
-    "to": "app",
-    "filter": [
-      "theseus_insight/**", 
-      "theseus-ui/dist/**", 
-      "config/**", 
-      "run_theseus_insight.py", 
-      "requirements.txt", 
-      "postgres/**"
-    ]
-  },
-  {
-    "from": "env.template",
-    "to": ".env"
-  }
-]
-```
-
-### 3. Created Default Environment Template
-
-**Problem**: No default .env file for users to configure the app.
-
-**Solution**: Created `electron-app/env.template` with all necessary environment variables:
-- API credentials (OpenAI, Anthropic, Google)
-- Email configuration (Gmail)
-- Database settings
-- Security settings
-- Development options
-
-### 4. Automatic Security Key Generation
-
-**Problem**: APP_SECRET_KEY was hardcoded to an insecure default value.
-
-**Solution**: Implemented automatic generation of secure APP_SECRET_KEY:
-- Generates a cryptographically secure 256-bit (64 character) hex key on first startup
-- Stores it persistently in user data directory:
-  - **macOS**: `~/Library/Application Support/theseus-desktop/app_secret.key`
-  - **Windows**: `%APPDATA%/theseus-desktop/app_secret.key`  
-  - **Linux**: `~/.config/theseus-desktop/app_secret.key`
-- File is created with restrictive permissions (readable only by owner)
-- Reuses the same key on subsequent startups for data consistency
-- Falls back to session-only key if file access fails
-
-### 5. Enhanced Startup Scripts
-
-**Problem**: Backend startup didn't handle packaged vs development environments.
-
-**Solution**: 
-- Enhanced `main.js` with proper environment detection
-- Created `start_backend.py` wrapper for packaged apps
-- Added comprehensive debugging output
-- Implemented intelligent shared memory health checks:
-  - **Process Detection**: Checks for active PostgreSQL processes using the data directory
-  - **Attachment Analysis**: Verifies if shared memory segments have active attachments
-  - **Key Pattern Validation**: Ensures segments match PostgreSQL memory patterns
-  - **Lock File Correlation**: Cross-references with PostgreSQL lock files
-  - **Safe Cleanup**: Only removes confirmed orphaned segments
-
-## How to Build Your App
-
-### Quick Build (Recommended)
+The easiest way to build the app:
 
 ```bash
 cd electron-app
-npm run build-app
+./build-app-debug.sh    # For testing/development
+# OR
+./build-app.sh          # For production distribution
 ```
 
-This automated script:
-1. ✅ Builds the React UI
-2. ✅ Verifies config files exist
-3. ✅ Builds the Electron app
-4. ✅ Shows detailed output
+That's it! The scripts handle everything automatically.
 
-### Manual Build Process
+## Build Scripts
 
-1. **Build the UI first**:
-   ```bash
-   cd theseus-ui
-   npm run build
-   ```
+### 🔧 `build-app-debug.sh` (Recommended for Development)
 
-2. **Build Electron app**:
-   ```bash
-   cd electron-app
-   npm run build        # Current platform
-   npm run build:mac    # macOS
-   npm run build:win    # Windows
-   npm run build:linux  # Linux
-   ```
+**Use for:** Local testing, development, sharing with other developers
 
-### Platform-Specific Builds
+**Features:**
+- ✅ **Automatic PostgreSQL path fixing** - Makes DMGs work on other Macs
+- ✅ **No code signing** - Easy to test and distribute 
+- ✅ **Architecture detection** - Builds for current Mac (Intel or Apple Silicon)
+- ✅ **Build verification** - Confirms paths were fixed correctly
+- ✅ **Fast iteration** - Optimized for development workflow
 
+**What it does:**
+1. **Step 1:** Fixes PostgreSQL library paths for portability
+2. **Step 2:** Builds React UI from `theseus-ui/`
+3. **Step 3:** Builds Electron app for current architecture
+4. **Step 4:** Verifies no hardcoded paths remain
+
+### 🚀 `build-app.sh` (For Production)
+
+**Use for:** Final distribution, production releases
+
+**Features:**
+- ✅ **Automatic PostgreSQL path fixing** 
+- ✅ **Cross-platform builds** - Can build for specific architectures
+- ✅ **Prerequisites checking** - Validates build environment
+- ✅ **Production optimized** - Ready for code signing and notarization
+
+**Usage:**
 ```bash
-# Build for specific platforms
-./build-app.sh mac     # macOS
-./build-app.sh win     # Windows
-./build-app.sh linux   # Linux
+./build-app.sh          # Current platform
+./build-app.sh mac      # macOS specific
+./build-app.sh win      # Windows (future)
+./build-app.sh linux    # Linux (future)
 ```
 
-## What Gets Bundled
+## What Gets Built
 
-Your built Electron app now includes:
+Your built Electron app includes:
 
-1. **✅ React UI** - Built from `theseus-ui/dist`
-2. **✅ Python Backend** - Complete FastAPI application
-3. **✅ Config Files** - All files from `config/` directory
-4. **✅ Default .env** - Pre-populated environment template
-5. **✅ PostgreSQL** - Embedded database binaries
-6. **✅ Path Resolution** - Automatic development/production detection
+- **✅ React UI** - Complete frontend from `theseus-ui/dist`
+- **✅ Python Backend** - FastAPI application with all dependencies
+- **✅ PostgreSQL** - Self-contained database with **portable paths**
+- **✅ Configuration** - All config files and environment templates
+- **✅ Assets** - Icons, resources, and static files
 
-## Environment Configuration
+## Distribution
 
-The built app automatically:
+### The Path Fixing Solution
 
-1. **Loads .env file** from the correct location (packaged vs development)
-2. **Detects environment** using `ELECTRON_IS_PACKAGED`
-3. **Resolves config paths** using environment variables
-4. **Provides defaults** for all required settings
+**Problem Solved:** Previously, built apps would crash on other Macs with "Library not loaded" errors due to hardcoded PostgreSQL library paths.
+
+**Automatic Solution:** Both build scripts now automatically:
+1. Scan PostgreSQL binaries for hardcoded paths like `/Users/c/software_projects/...`
+2. Convert them to relative paths using `@loader_path/../lib/`
+3. Update both binary dependencies and library IDs
+4. Verify the fixes worked correctly
+
+**Result:** DMGs now work immediately on any Mac (after security approval).
+
+### Security & Installation
+
+**For Recipients:**
+1. Download and install the DMG
+2. First launch: Right-click app → "Open" → "Open" (bypasses Gatekeeper)
+3. Or: System Preferences → Security & Privacy → "Open Anyway"
+
+**No Additional Steps Required** - the app is fully self-contained with portable PostgreSQL.
 
 ## Troubleshooting
 
-### Settings Page Still Blank?
+### Build Fails
 
-1. **Check the console output** when running the built app:
-   ```bash
-   # On macOS, run the app from terminal to see logs
-   ./dist/mac/Theseus\ Insight.app/Contents/MacOS/Theseus\ Insight
-   ```
+**Check Prerequisites:**
+```bash
+node --version    # Should be 16+
+npm --version     # Should be 8+
+which git         # Should exist
+```
 
-2. **Verify UI was built**:
-   ```bash
-   ls -la theseus-ui/dist/
-   # Should contain index.html and assets/
-   ```
+**UI Build Issues:**
+```bash
+cd ../theseus-ui
+rm -rf node_modules package-lock.json
+npm install
+npm run build
+```
 
-3. **Check config files**:
-   ```bash
-   ls -la config/
-   # Should contain orchestration.json, research_interests.txt, etc.
-   ```
+**Electron Build Issues:**
+```bash
+cd electron-app
+rm -rf node_modules package-lock.json
+npm install
+```
 
-### Backend Not Starting?
+### App Won't Start on Other Macs
 
-1. **Check Python environment** - Ensure all dependencies are installed
-2. **Verify paths** - Look for DEBUG output in console
-3. **Check permissions** - Ensure `start_backend.py` is executable
+**Check Path Fixing:**
+The build scripts include verification. Look for this message:
+```
+✅ Verification passed: No hardcoded paths in built app
+```
 
-### API Calls Failing?
+If you see this warning instead:
+```
+❌ Warning: Built app still contains hardcoded paths
+```
 
-1. **Backend not ready** - Wait for "Server is ready!" message
-2. **Port conflicts** - Ensure ports 8000 and 55432 are available
-3. **Config loading** - Check for config file loading errors
+Try rebuilding - the path fixing occasionally needs a second pass.
 
-### APP_SECRET_KEY Issues?
+**Use Debug Script:**
+Give recipients the `debug-app.sh` script to diagnose issues:
+```bash
+./debug-app.sh
+```
 
-1. **Key not generating** - Check console for "Generated new APP_SECRET_KEY" message
-2. **Permission errors** - Ensure app can write to user data directory
-3. **Encryption/decryption failures** - Check that the key file hasn't been corrupted
-4. **Development override** - Uncomment `APP_SECRET_KEY=` in .env if needed
+### Performance Issues
 
-**Security Note**: The APP_SECRET_KEY is used to encrypt sensitive data like API keys in the database. If this key is lost or changed, previously encrypted data cannot be recovered. The key file should be backed up with your user data if migrating between machines.
+**PostgreSQL Startup:**
+- First launch takes longer (database initialization)
+- Subsequent launches are much faster
+- Check Console.app for startup logs
 
-## Development vs Production
+**Memory Usage:**
+- Normal: 200-400MB
+- High usage: Check for runaway Python processes
 
-### Development Mode
-- Uses Vite dev server (`localhost:5173`)
-- Hot reload for UI changes
-- Direct uvicorn startup
-- Relative config paths
+## Advanced Options
 
-### Production Mode (Built App)
-- Uses FastAPI static serving (`localhost:8000`)
-- Bundled UI from `dist/`
-- Python wrapper script startup
-- Environment-based config paths
+### Custom Universal Builds
+
+For single DMG supporting both Intel and Apple Silicon:
+```bash
+npm run build:mac-universal-custom
+```
+
+Uses the custom `build-universal.js` script with proper PostgreSQL handling.
+
+### Code Signing & Notarization
+
+For App Store distribution:
+1. Get Apple Developer account
+2. Configure signing certificate in `package.json`
+3. Set up notarization credentials
+4. Use production build script
+
+## File Structure
+
+```
+electron-app/
+├── build-app.sh           # Main production build
+├── build-app-debug.sh     # Development build  
+├── package.json           # Electron configuration
+├── main.js               # Electron main process
+├── icons/                # App icons
+├── postgres/             # PostgreSQL binaries (auto-fixed)
+├── dist/                 # Build output
+└── BUILD_GUIDE.md        # This guide
+```
+
+## Recent Improvements
+
+### ✅ Integrated PostgreSQL Path Fixing
+- **Before:** Required separate `fix-postgres-paths.sh` script
+- **Now:** Automatic in both build scripts
+- **Benefit:** One-step build process, impossible to forget
+
+### ✅ Architecture Detection
+- **Auto-detects:** Intel vs Apple Silicon
+- **Builds appropriately:** Avoids universal binary conflicts
+- **User-friendly:** Clear messaging about what's being built
+
+### ✅ Build Verification
+- **Automatic checking:** Confirms path fixes worked
+- **Clear feedback:** Success/failure reporting
+- **Debug info:** Helps troubleshoot issues
 
 ## Next Steps
 
-1. **Test the build**:
-   ```bash
-   cd electron-app
-   npm run build-app
-   ```
+1. **Build your app:** Start with `./build-app-debug.sh`
+2. **Test locally:** Run the built app on your Mac
+3. **Test distribution:** Send DMG to another Mac and verify it works
+4. **Production build:** Use `./build-app.sh` for final distribution
 
-2. **Run the built app** and check if settings page loads correctly
-
-3. **Configure environment** by editing the `.env` file in the built app
-
-4. **Distribute** the built installer from the `dist/` directory
-
-## Shared Memory Health Checks
-
-The enhanced shared memory cleanup system performs multiple safety checks:
-
-1. **Active Process Detection**: Scans for PostgreSQL processes using the same data directory
-2. **Attachment Count Analysis**: Checks if segments have active memory attachments
-3. **Key Pattern Validation**: Verifies shared memory keys match PostgreSQL patterns
-4. **Lock File Correlation**: Ensures cleanup doesn't interfere with running instances
-5. **Conservative Approach**: When in doubt, preserves segments to avoid system disruption
-
-This prevents interference with system PostgreSQL installations and other applications.
-
-## Files Modified/Created
-
-### New Files:
-- `electron-app/env.template` - Environment configuration template
-- `electron-app/start_backend.py` - Python backend wrapper
-- `electron-app/build-app.sh` - Automated build script
-- `electron-app/BUILD_GUIDE.md` - This guide
-- `theseus_insight/utils/path_resolver.py` - Path resolution utilities
-
-### Modified Files:
-- `electron-app/package.json` - Enhanced build configuration
-- `electron-app/main.js` - Environment detection, debugging, and intelligent cleanup
-- `electron-app/DEVELOPMENT.md` - Updated with build instructions
-- `theseus_insight/main.py` - Updated to use path resolver
-
-The settings page should now load correctly in your built Electron app! 🎉
+The build process is now fully automated and reliable! 🚀

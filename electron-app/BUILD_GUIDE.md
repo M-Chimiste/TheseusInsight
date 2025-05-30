@@ -55,7 +55,21 @@ You were experiencing issues where:
 - Security settings
 - Development options
 
-### 4. Enhanced Startup Scripts
+### 4. Automatic Security Key Generation
+
+**Problem**: APP_SECRET_KEY was hardcoded to an insecure default value.
+
+**Solution**: Implemented automatic generation of secure APP_SECRET_KEY:
+- Generates a cryptographically secure 256-bit (64 character) hex key on first startup
+- Stores it persistently in user data directory:
+  - **macOS**: `~/Library/Application Support/theseus-desktop/app_secret.key`
+  - **Windows**: `%APPDATA%/theseus-desktop/app_secret.key`  
+  - **Linux**: `~/.config/theseus-desktop/app_secret.key`
+- File is created with restrictive permissions (readable only by owner)
+- Reuses the same key on subsequent startups for data consistency
+- Falls back to session-only key if file access fails
+
+### 5. Enhanced Startup Scripts
 
 **Problem**: Backend startup didn't handle packaged vs development environments.
 
@@ -158,6 +172,15 @@ The built app automatically:
 1. **Backend not ready** - Wait for "Server is ready!" message
 2. **Port conflicts** - Ensure ports 8000 and 55432 are available
 3. **Config loading** - Check for config file loading errors
+
+### APP_SECRET_KEY Issues?
+
+1. **Key not generating** - Check console for "Generated new APP_SECRET_KEY" message
+2. **Permission errors** - Ensure app can write to user data directory
+3. **Encryption/decryption failures** - Check that the key file hasn't been corrupted
+4. **Development override** - Uncomment `APP_SECRET_KEY=` in .env if needed
+
+**Security Note**: The APP_SECRET_KEY is used to encrypt sensitive data like API keys in the database. If this key is lost or changed, previously encrypted data cannot be recovered. The key file should be backed up with your user data if migrating between machines.
 
 ## Development vs Production
 

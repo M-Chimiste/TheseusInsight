@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 
 // Load environment variables from bundled .env file in production
 function loadEnvironmentFile() {
@@ -39,8 +40,52 @@ function loadEnvironmentFile() {
   }
 }
 
+// Generate or load APP_SECRET_KEY
+function ensureAppSecretKey() {
+  const secretKeyPath = path.join(app.getPath('userData'), 'app_secret.key');
+  
+  try {
+    // Check if secret key file already exists
+    if (fs.existsSync(secretKeyPath)) {
+      const existingKey = fs.readFileSync(secretKeyPath, 'utf8').trim();
+      if (existingKey && existingKey.length > 0) {
+        console.log('Using existing APP_SECRET_KEY from user data');
+        process.env.APP_SECRET_KEY = existingKey;
+        return existingKey;
+      }
+    }
+    
+    // Generate new secure random key
+    const newSecretKey = crypto.randomBytes(32).toString('hex');
+    
+    // Ensure userData directory exists
+    const userDataDir = app.getPath('userData');
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true });
+    }
+    
+    // Save the new key
+    fs.writeFileSync(secretKeyPath, newSecretKey, { mode: 0o600 }); // Readable only by owner
+    process.env.APP_SECRET_KEY = newSecretKey;
+    
+    console.log(`Generated new APP_SECRET_KEY and saved to: ${secretKeyPath}`);
+    return newSecretKey;
+    
+  } catch (error) {
+    console.error('Error managing APP_SECRET_KEY:', error);
+    // Fallback to a session-only key if file operations fail
+    const fallbackKey = crypto.randomBytes(32).toString('hex');
+    process.env.APP_SECRET_KEY = fallbackKey;
+    console.warn('Using session-only APP_SECRET_KEY due to file access error');
+    return fallbackKey;
+  }
+}
+
 // Load environment before anything else
 loadEnvironmentFile();
+
+// Ensure APP_SECRET_KEY is set before starting any services
+ensureAppSecretKey();
 
 // Add global exception handlers
 process.on('uncaughtException', (error) => {
@@ -160,14 +205,91 @@ function startPostgres() {
     return null;
   }
 
-
   const pgPath = path.join(binDir, platform === 'win32' ? 'postgres.exe' : 'postgres');
   const initdbPath = path.join(binDir, platform === 'win32' ? 'initdb.exe' : 'initdb');
   const dataDir = path.join(app.getPath('userData'), 'postgres-data');
+  const lockFile = path.join(dataDir, 'postmaster.pid');
 
   if (!fs.existsSync(pgPath)) {
     console.error('postgres executable not found:', pgPath);
     return null;
+  }
+
+  // Clean up stale lock file if it exists but no process is actually running
+  if (fs.existsSync(lockFile)) {
+    try {
+      const lockContent = fs.readFileSync(lockFile, 'utf8');
+      const pid = parseInt(lockContent.split('\n')[0]);
+      
+      if (pid) {
+        // Check if the process is actually running
+        try {
+          process.kill(pid, 0); // Signal 0 just checks if process exists
+          console.log(`PostgreSQL is already running with PID ${pid}. Stopping it first...`);
+          try {
+            process.kill(pid, 'SIGTERM');
+            // Wait a moment for graceful shutdown
+            setTimeout(() => {
+              try {
+                process.kill(pid, 0);
+                // If still running, force kill
+                console.log('Force killing PostgreSQL...');
+                process.kill(pid, 'SIGKILL');
+              } catch (e) {
+                // Process already stopped, good
+              }
+              // Remove the lock file
+              if (fs.existsSync(lockFile)) {
+                fs.unlinkSync(lockFile);
+                console.log('Removed stale PostgreSQL lock file');
+              }
+            }, 2000);
+          } catch (e) {
+            console.log('Failed to stop existing PostgreSQL process:', e.message);
+          }
+        } catch (e) {
+          // Process doesn't exist, remove stale lock file
+          fs.unlinkSync(lockFile);
+          console.log('Removed stale PostgreSQL lock file (process not running)');
+        }
+      }
+    } catch (error) {
+      console.warn('Error checking PostgreSQL lock file:', error.message);
+      // Try to remove it anyway
+      try {
+        fs.unlinkSync(lockFile);
+        console.log('Removed problematic lock file');
+      } catch (e) {
+        console.error('Could not remove lock file:', e.message);
+      }
+    }
+  }
+
+  // Clean up stale shared memory segments
+  try {
+    const { execSync } = require('child_process');
+    // List shared memory segments owned by current user
+    const ipcsOutput = execSync('ipcs -m', { encoding: 'utf8' });
+    const lines = ipcsOutput.split('\n');
+    const username = require('os').userInfo().username;
+    
+    for (const line of lines) {
+      if (line.includes(username) && line.includes('--rw-------')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          const shmid = parts[1];
+          try {
+            console.log(`Cleaning up shared memory segment: ${shmid}`);
+            execSync(`ipcrm -m ${shmid}`, { stdio: 'ignore' });
+          } catch (e) {
+            // Ignore errors - segment might be in use legitimately
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore shared memory cleanup errors - not critical
+    console.log('Shared memory cleanup skipped:', error.message);
   }
 
   if (!fs.existsSync(path.join(dataDir, 'PG_VERSION'))) {
@@ -191,6 +313,11 @@ function startPostgres() {
 
   postgresProcess.on('error', (err) => {
     console.error('postgres process error:', err);
+  });
+
+  postgresProcess.on('exit', (code, signal) => {
+    console.log(`PostgreSQL process exited with code ${code} and signal ${signal}`);
+    postgresProcess = null;
   });
 
   return postgresProcess;
@@ -491,6 +618,32 @@ function cleanupTempFiles() {
   tempFiles = [];
 }
 
+function cleanupProcesses() {
+  console.log('Cleaning up processes...');
+  
+  if (pythonProcess) {
+    console.log('Shutting down Python backend...');
+    pythonProcess.kill('SIGTERM');
+    pythonProcess = null;
+  }
+  
+  if (postgresProcess) {
+    console.log('Shutting down PostgreSQL...');
+    postgresProcess.kill('SIGTERM');
+    
+    // Give it a moment to shut down gracefully
+    setTimeout(() => {
+      if (postgresProcess && !postgresProcess.killed) {
+        console.log('Force killing PostgreSQL...');
+        postgresProcess.kill('SIGKILL');
+      }
+      postgresProcess = null;
+    }, 3000);
+  }
+  
+  cleanupTempFiles();
+}
+
 app.whenReady().then(() => {
   // Set app name for better OS integration
   app.setName('Theseus Insight');
@@ -513,7 +666,5 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
-  if (pythonProcess) pythonProcess.kill();
-  if (postgresProcess) postgresProcess.kill();
-  cleanupTempFiles();
+  cleanupProcesses();
 });

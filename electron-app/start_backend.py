@@ -18,6 +18,13 @@ def setup_packaged_environment():
     print(f"DEBUG: Is packaged: {is_packaged}")
     print(f"DEBUG: ELECTRON_RESOURCES_PATH: {os.getenv('ELECTRON_RESOURCES_PATH', 'Not set')}")
     
+    # Show APP_SECRET_KEY status for debugging
+    app_secret_key = os.getenv('APP_SECRET_KEY')
+    if app_secret_key:
+        print(f"DEBUG: APP_SECRET_KEY is set (length: {len(app_secret_key)} characters)")
+    else:
+        print("DEBUG: APP_SECRET_KEY is not set")
+    
     if is_packaged:
         # In packaged app, adjust paths relative to the app bundle
         resources_path = os.getenv('ELECTRON_RESOURCES_PATH', '')

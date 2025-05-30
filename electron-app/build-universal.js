@@ -9,6 +9,8 @@ async function buildUniversal() {
     directories: {
       output: 'dist'
     },
+    // Unpack native PostgreSQL binaries so they are real files on disk
+    asarUnpack: ["**/postgres/**/*"],
     files: [
       '**/*',
       '!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}'
@@ -30,10 +32,6 @@ async function buildUniversal() {
         ]
       },
       {
-        from: '../postgres',
-        to: 'app/postgres'
-      },
-      {
         from: 'env.template',
         to: '.env'
       }
@@ -46,14 +44,15 @@ async function buildUniversal() {
       entitlementsInherit: 'build/entitlements.mac.plist',
       category: 'public.app-category.productivity',
       // Configure x64ArchFiles to handle postgres binaries that are the same across architectures
-      x64ArchFiles: '**/postgres/**/*',
       target: [
         {
           target: 'dmg',
           arch: ['universal']
         }
       ]
-    }
+    },
+    // Patch postgres binaries after they're copied but before signing
+    afterPack: './scripts/fix-postgres.js',
   };
 
   try {
@@ -73,4 +72,4 @@ if (require.main === module) {
   buildUniversal();
 }
 
-module.exports = { buildUniversal }; 
+module.exports = { buildUniversal };

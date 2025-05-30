@@ -186,7 +186,6 @@ function startPostgres() {
   if (app.isPackaged) {
     // In packaged apps the postgres folder is bundled as an extraResource
     searchDirs.push(path.join(process.resourcesPath, 'app', 'postgres', platform, 'bin'));
-    searchDirs.push(path.join(process.resourcesPath, 'postgres', platform, 'bin'));
   }
 
   // Development fallback

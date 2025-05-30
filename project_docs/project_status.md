@@ -2,7 +2,58 @@
 
 ## Implemented
 
-### Latest Update: PostgreSQL Path Integration - Automated Build Process Fix
+### Latest Update: UI Loading Issue Fix - Frontend Path Resolution & Verification
+
+**Critical Issue Resolved**: Fixed blank screen/UI loading issues when distributing Electron app to other systems.
+
+**Problem**: After fixing PostgreSQL path issues, users reported that the UI wouldn't load on other systems, showing blank screens. The FastAPI backend couldn't locate the React frontend static files due to incorrect path resolution in packaged Electron apps.
+
+**Root Cause**: The static file directory detection in `theseus_insight/main.py` wasn't properly handling packaged Electron apps. It was looking for frontend files in the wrong location and falling back to development paths.
+
+**Solution**: Enhanced static file serving with proper Electron app detection and comprehensive debugging.
+
+**Changes Made**:
+
+1. **Enhanced Static File Detection** (`theseus_insight/main.py`):
+   - Added `ELECTRON_IS_PACKAGED` environment variable detection
+   - Implemented multi-path fallback logic for finding frontend files
+   - Added comprehensive logging and debugging information
+   - Enhanced error messages with detailed path information
+
+2. **Improved Error Handling** (`main.js`):
+   - Added loading screen with progress tracking
+   - Implemented retry mechanism with visual feedback
+   - Enhanced error pages with troubleshooting information
+   - Better debugging output for connection issues
+
+3. **Build Verification** (build scripts):
+   - Added frontend file verification to both build scripts
+   - Checks for presence of `index.html` and `assets/` directory
+   - Provides detailed feedback about bundling status
+   - Lists actual bundle contents when verification fails
+
+4. **Enhanced Documentation** (`BUILD_GUIDE.md`):
+   - Added troubleshooting section for UI loading issues
+   - Step-by-step verification procedures
+   - Manual checking instructions
+   - Debug output interpretation guide
+
+5. **Cleanup**:
+   - Removed `main-robust.js` (functionality integrated into main.js)
+   - Deleted redundant build scripts
+
+**How it Works**:
+- FastAPI backend now properly detects when running in packaged Electron app
+- Searches multiple possible locations for frontend files with fallback logic
+- Provides detailed error messages when files aren't found
+- Build scripts verify frontend bundling during build process
+- Main.js shows loading screens and retry logic for better UX
+
+**Testing**: Build scripts now include verification that confirms both PostgreSQL path fixes AND frontend file bundling are working correctly.
+
+**Result**: DMGs should now work immediately on any Mac with both backend functionality and frontend UI loading properly.
+
+### Previous Update: PostgreSQL Path Integration - Automated Build Process Fix
 
 **Critical Distribution Enhancement**: Integrated PostgreSQL library path fixing directly into build scripts, eliminating need for separate manual steps.
 
@@ -909,256 +960,4 @@ This quality-of-life improvement prevents duplicate papers from cluttering the d
 
 **Root Cause**: Even with Ollama schema enforcement, the model could sometimes return:
 - Malformed JSON that couldn't be parsed
-- Valid JSON missing required keys (`score`, `related`, `rationale`)
-- Invalid data types or values outside expected ranges
-
-**Solution Implemented**: Comprehensive error handling and retry mechanism in `theseus_insight/theseus_insight.py`:
-
-1. **Retry Logic**: 
-   - Up to 3 attempts per paper before fallback
-   - 1-second delay between retry attempts
-   - Graceful degradation with default values for failed papers
-
-2. **JSON Validation**:
-   - Robust JSON parsing with `json_repair.loads()`
-   - Validation of required keys existence
-   - Type conversion validation and error handling
-   - Score range validation (1-10) with clamping
-
-3. **Partial Checkpointing**:
-   - Progress saved every 50 papers to `ranking_partial` checkpoint
-   - Resume capability from last successful checkpoint
-   - Automatic cleanup of partial checkpoints on completion
-
-4. **Cache Management**:
-   - Added `_clear_judge_model_cache()` method
-   - Automatic Ollama cache clearing after consecutive failures
-   - Helps resolve potential model context corruption
-
-5. **Enhanced Logging**:
-   - Detailed error messages with paper indices and attempt numbers
-   - Raw response logging for debugging
-   - Failure tracking and reporting
-
-**Files Modified**:
-- `theseus_insight/theseus_insight.py`: Added robust error handling, retry logic, and partial checkpointing
-- Added time import for retry delays
-- Enhanced rank_papers method with comprehensive validation
-
-**Impact**: 
-- Eliminates pipeline failures due to intermittent JSON issues
-- Provides detailed debugging information for troubleshooting
-- Maintains data integrity with fallback values
-- Enables recovery from partial failures
-
-### Added: Similarity Search Feature in Papers Page
-**Date**: December 2024  
-**Feature**: Interactive similarity search functionality for papers with vector embeddings.
-
-**Implementation Details**:
-
-1. **API Integration**:
-   - Added `findSimilarPapers` function to `theseus-ui/src/services/api.ts`
-   - Utilizes existing `/api/papers/{paper_id}/similar` endpoint
-   - Added `SimilarPapersResponse` interface for type safety
-
-2. **UI Components Enhanced**:
-   - **PaperCard.tsx**: Added "Find Similar" button in expanded view with `onFindSimilar` prop
-   - **PaperRowCard.tsx**: Added "Find Similar" button in expanded view with `onFindSimilar` prop
-   - **SimilarityView.tsx**: New component for similarity search results display
-
-3. **SimilarityView Component Features**:
-   - Split-screen layout: Reference paper (40% left) and similar papers (60% right)
-   - Infinite scroll for similar papers with pagination
-   - Similarity score display as percentage for each result
-   - Back/Close buttons to return to original view
-   - Scroll position preservation when returning to main view
-
-4. **Papers.tsx Integration**:
-   - Added `similarity` view mode to existing `grid`/`list` modes
-   - State management for selected paper and scroll position
-   - Conditional rendering to hide filters/headers in similarity view
-   - `handleFindSimilar` function to transition to similarity view
-   - `handleCloseSimilarity` function to return to previous view with scroll restoration
-
-5. **User Experience**:
-   - Click "Find Similar" on any expanded paper card
-   - View transforms to show reference paper on left, similar papers on right
-   - Similar papers displayed as row cards with similarity percentages
-   - Infinite scroll loads more similar papers automatically
-   - Back arrow or X button returns to original papers view
-   - Original scroll position is restored when returning
-
-**Files Modified**:
-- `theseus-ui/src/services/api.ts`: Added similarity search API function and interfaces
-- `theseus-ui/src/pages/PaperCard.tsx`: Added Find Similar button and onFindSimilar prop
-- `theseus-ui/src/pages/PaperRowCard.tsx`: Added Find Similar button and onFindSimilar prop
-- `theseus-ui/src/pages/SimilarityView.tsx`: New component for similarity search results
-- `theseus-ui/src/pages/Papers.tsx`: Integrated similarity view mode and state management
-
-**Technical Features**:
-- Leverages existing vector embedding infrastructure
-- Configurable similarity threshold (default 0.6 for more results)
-- Responsive layout with proper overflow handling
-- Error handling for failed similarity searches
-- Loading states and empty state handling
-
-### Enhanced: Similarity Search with Configurable Limits
-**Date**: December 2024  
-**Enhancement**: Added dropdown to allow users to select the number of similar papers to display.
-
-**Implementation Details**:
-
-1. **Dynamic Limit Selection**:
-   - Added dropdown with options: 10, 30, 50, 100 papers
-   - Replaces previous hardcoded limit of 10 papers
-   - Automatic re-fetch when limit changes
-
-2. **UI Improvements**:
-   - **SimilarityView.tsx**: Added FormControl with Select dropdown in header
-   - Shows "X of Y found" to indicate total available similar papers
-   - Loading indicator during fetch operations
-   - Removed infinite scroll in favor of explicit limit selection
-
-3. **User Experience**:
-   - Immediate feedback when changing limits
-   - Clear indication of how many papers are shown vs. available
-   - Simplified interface without complex pagination
-
-**Files Modified**:
-- `theseus-ui/src/pages/SimilarityView.tsx`: Added limit dropdown and updated state management
-
-**Technical Implementation**:
-- Removed infinite scroll complexity
-- Simplified state management with single `limit` state
-- Direct API calls with selected limit parameter
-- Type-safe SelectChangeEvent handling
-
-## Latest Update: 2024-12-19
-**Session Focus:** Database Migration & Podcast Generator PostgreSQL Update
-
-### What Has Been Implemented
-
-#### ✅ Podcast Generator PostgreSQL Integration (CRITICAL FIX)
-- **Database Migration Completion**: Updated PodcastGenerator to use PostgreSQL instead of SQLite
-- **Parameter Rename**: Changed `db_path` to `db_url` to reflect PostgreSQL connection strings
-- **Improved Error Handling**: Enhanced database insertion with better error messages and debugging
-- **Script Serialization Fix**: Fixed podcast script storage to properly handle Pydantic dialogue objects
-- **Integration Updates**: Updated all instantiation points (TheseusInsight, TaskManager) to pass database URLs
-- **Backward Compatibility**: Maintained all existing functionality while switching to PostgreSQL
-
-#### ✅ BM25-Enhanced Hybrid Search (MAJOR UPGRADE)
-- **Database Schema Enhancement**: Added `search_vector`, `title_vector`, and `abstract_vector` columns to papers table
-- **PostgreSQL Full-Text Search Integration**: Replaced simple LIKE queries with sophisticated `ts_rank_cd()` BM25-style ranking
-- **Advanced Keyword Scoring**: 
-  - Term frequency and inverse document frequency weighting
-  - Document length normalization
-  - English language stemming and stopword filtering
-  - 2x weight boost for title matches vs abstract matches
-- **Performance Optimization**: Added GIN indexes for fast full-text search
-- **Automatic Migration**: Created `update_search_vectors.py` utility for seamless upgrades
-- **Backward Compatibility**: All existing API endpoints work unchanged with improved scoring
-
-#### ✅ UI Improvements (Filter Panel Optimization)  
-- **Compact Layout**: Reduced filter panel vertical space by ~50%
-- **Slider Optimization**: Fixed overlapping labels, made sliders smaller with proper spacing
-- **Responsive Design**: Hybrid search weight sliders in horizontal layout with visual grouping
-- **Enhanced UX**: All form elements now use `size="small"` for better space utilization
-
-#### ✅ Previously Implemented Features
-- **Collapsible Sidebar**: Responsive layout with 240px/64px states and smooth transitions
-- **Sticky Header System**: Fixed positioning with dynamic sidebar width adjustment  
-- **Infinite Scroll**: Optimized loading with scroll detection and throttling
-- **Hybrid Search Foundation**: Original semantic + keyword combination with adjustable weights
-- **Advanced Filtering**: Date range, score range, and search query filters
-- **Multiple View Modes**: Grid, list, and similarity view with paper recommendations
-
-### What Needs To Be Implemented Next
-
-#### 🔄 Immediate Priorities
-1. **Vector Index Optimization**: Resolve dimension issues to create optimized vector indexes for semantic search performance
-2. **Query Performance Testing**: Benchmark large dataset performance with new BM25 implementation
-3. **Frontend Polish**: Minor UI refinements based on user feedback
-
-#### 📋 Medium-Term Features  
-1. **Advanced Search Features**:
-   - Multi-language support for non-English papers
-   - Configurable BM25 parameters (k1, b values)
-   - Query expansion with synonyms
-   - Search result highlighting
-
-2. **Performance Enhancements**:
-   - Materialized views for common queries
-   - Connection pooling optimization
-   - Caching layer for frequent searches
-
-3. **User Experience Improvements**:
-   - Search history and saved queries
-   - Relevance feedback learning
-   - Export functionality for search results
-
-#### 🎯 Long-Term Roadmap
-1. **Analytics Dashboard**: Search usage patterns and performance metrics
-2. **API Rate Limiting**: Production-ready API throttling and authentication
-3. **Multi-tenant Support**: User accounts and personalized search preferences
-
-### Technical Architecture Status
-
-#### ✅ Current Architecture
-- **Database**: PostgreSQL with pgvector + full-text search (GIN indexes)
-- **Backend**: FastAPI with comprehensive error handling and WebSocket support
-- **Frontend**: React with Material-UI, responsive design, real-time updates
-- **Search**: Hybrid semantic + BM25 keyword ranking with user-adjustable weights
-
-#### 🔧 Infrastructure Status  
-- **Development**: Local Docker setup working perfectly
-- **Database**: Auto-migration system ensures seamless upgrades
-- **API**: RESTful design with WebSocket streaming for long-running tasks
-- **Documentation**: Comprehensive README and implementation docs
-
-### Debug Log
-
-#### Latest Session (2024-12-19)
-```
-✅ FIXED: Podcast Generator PostgreSQL integration issues
-✅ UPDATED: PodcastGenerator constructor to use db_url instead of db_path
-✅ IMPROVED: Database record insertion with proper script serialization
-✅ UPDATED: TheseusInsight class to pass database URL to PodcastGenerator
-✅ UPDATED: TaskManager to pass database URL to PodcastGenerator  
-✅ ENHANCED: Error handling and debugging in podcast database operations
-
-Issues Resolved:
-- Podcast generator was still expecting SQLite file paths instead of PostgreSQL URLs
-- Script serialization was not properly handling Pydantic dialogue objects
-- Database connections were failing due to incorrect parameter passing
-- Error handling was too basic and didn't provide useful debugging information
-
-Database Migration Completion:
-- All components now consistently use PostgreSQL connection strings
-- Podcast generation now properly saves to PostgreSQL database
-- Maintains full backward compatibility with existing podcast functionality
-- Enhanced error messages for easier debugging of database issues
-```
-
-#### Previous Sessions Summary
-```
-✅ Sticky header with dynamic sidebar width
-✅ Infinite scroll with performance optimizations  
-✅ Hybrid search foundation with weight adjustment
-✅ Collapsible sidebar with tooltips and transitions
-✅ Filter system with date/score ranges and search
-✅ Multiple view modes (grid/list/similarity)
-```
-
-### Code Quality Status
-- **Error Handling**: Comprehensive try-catch blocks with graceful fallbacks
-- **Type Safety**: Full TypeScript frontend with proper API type definitions  
-- **Testing**: Manual API testing confirmed, automated tests needed
-- **Documentation**: Up-to-date README, implementation guides, and inline comments
-- **Performance**: Database queries optimized, frontend responsive, real-time updates working
-
-### Next Session Goals
-1. **Performance Testing**: Benchmark BM25 search with large datasets
-2. **Vector Index**: Resolve pgvector index creation for optimal semantic search speed
-3. **UI Polish**: Any remaining frontend refinements
-4. **User Testing**: Gather feedback on new search capabilities
+- Valid JSON missing required keys (`

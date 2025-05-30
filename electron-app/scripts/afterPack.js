@@ -3,6 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 exports.default = async function(context) {
+  console.log('--- Starting afterPack script for PostgreSQL macOS dylib fixing ---');
   console.log('🔧 Running afterPack hook...');
   
   const { electronPlatformName, appOutDir } = context;
@@ -80,6 +81,7 @@ exports.default = async function(context) {
             console.log(`    New: ${newPath}`);
             
             try {
+              console.log(`    Executing: install_name_tool -change "${libraryPath}" "${newPath}" "${binaryPath}"`);
               execSync(`install_name_tool -change "${libraryPath}" "${newPath}" "${binaryPath}"`, { stdio: 'pipe' });
               hasChanges = true;
             } catch (error) {
@@ -105,6 +107,7 @@ exports.default = async function(context) {
     
     try {
       console.log(`  🔄 Setting library ID for ${libName}`);
+      console.log(`    Executing: install_name_tool -id "${newId}" "${libPath}"`);
       execSync(`install_name_tool -id "${newId}" "${libPath}"`, { stdio: 'pipe' });
       console.log(`  ✅ ${libName}: Library ID updated`);
     } catch (error) {
@@ -150,50 +153,59 @@ exports.default = async function(context) {
   }
   
   // Enhanced verification with more detailed output
-  console.log('🔍 Verifying fixes...');
-  try {
-    const testBinary = path.join(binDir, 'initdb');
-    if (fs.existsSync(testBinary)) {
-      const verifyOutput = execSync(`otool -L "${testBinary}"`, { encoding: 'utf8' });
-      const allLines = verifyOutput.split('\n').filter(line => line.trim());
-      
-      console.log(`🔍 Checking ${path.basename(testBinary)} dependencies:`);
-      allLines.forEach(line => {
-        const trimmed = line.trim();
-        // Skip the binary itself (first line) and empty lines
-        if (trimmed && !trimmed.startsWith(testBinary) && !trimmed.endsWith(':')) {
-          const isProblematic = (trimmed.includes('/Users/') || 
-                                trimmed.includes('TheseusInsight') || 
-                                (trimmed.includes('postgres') && trimmed.startsWith('/') && !trimmed.startsWith('/@')));
-          console.log(`  ${isProblematic ? '❌' : '✅'} ${trimmed}`);
-        }
-      });
-      
-      // Only check dependency lines, not the binary header line
-      const dependencyLines = allLines.filter(line => {
-        const trimmed = line.trim();
-        return trimmed && 
-               !trimmed.startsWith(testBinary) && 
-               !trimmed.endsWith(':') &&
-               trimmed.includes('.dylib');
-      });
-      
-      const badPaths = dependencyLines.filter(line => {
-        return line.includes('/Users/') || 
-               line.includes('TheseusInsight') || 
-               (line.includes('postgres') && line.trim().startsWith('/') && !line.includes('@'));
-      });
-      
-      if (badPaths.length === 0) {
-        console.log('✅ Verification passed: No hardcoded paths found');
-      } else {
-        console.log('❌ Warning: Some hardcoded paths remain:');
-        badPaths.forEach(badPath => console.log(`  ${badPath.trim()}`));
-      }
+  console.log('🔍 Verifying fixes for key binaries...');
+  const keyBinaries = ['initdb', 'postgres', 'psql', 'pg_ctl'];
+  let totalProblematicPaths = 0;
+
+  for (const binaryName of keyBinaries) {
+    const binaryPath = path.join(binDir, binaryName);
+    if (!fs.existsSync(binaryPath)) {
+      console.log(`  ⚠️  Skipping verification for ${binaryName}: File not found at ${binaryPath}`);
+      continue;
     }
-  } catch (error) {
-    console.log(`⚠️  Could not verify fixes: ${error.message}`);
+
+    console.log(`🔍 Verifying library paths for: ${binaryName}`);
+    try {
+      const otoolOutput = execSync(`otool -L "${binaryPath}"`, { encoding: 'utf8' });
+      const lines = otoolOutput.split('\n');
+      
+      // First line is the binary itself, skip it.
+      // Subsequent lines are dependencies.
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === '' || line.includes('(compatibility version')) {
+          continue;
+        }
+
+        const dependencyPath = line.split(' ')[0]; // Get the path part
+        let status = '❓'; // Default to potentially problematic
+
+        if (dependencyPath.startsWith('/usr/lib/') || dependencyPath.startsWith('/System/')) {
+          status = '✅'; // System path
+        } else if (dependencyPath.startsWith('@loader_path/')) {
+          status = '✅'; // Loader relative
+        } else if (dependencyPath.startsWith('@rpath/')) {
+          status = '✅'; // Rpath based
+        } else if (dependencyPath.includes('/Users/') ||
+                   (dependencyPath.startsWith('/') && dependencyPath.includes('postgres/darwin/lib')) ||
+                   (dependencyPath.startsWith('/') && dependencyPath.includes('postgres/darwin/bin'))) {
+          status = '❌'; // Clearly problematic (build machine path or absolute bundled path)
+          totalProblematicPaths++;
+        }
+        console.log(`  ${status} ${dependencyPath}`);
+      }
+    } catch (error) {
+      console.log(`  ⚠️  Error verifying ${binaryName}: ${error.message}`);
+      totalProblematicPaths++; // Count error in verification as problematic
+    }
+  }
+
+  if (totalProblematicPaths === 0) {
+    console.log('✅ Overall Verification Passed: No problematic paths found in key binaries.');
+  } else {
+    console.log(`❌ Overall Verification Warning: Found ${totalProblematicPaths} problematic path(s) across key binaries.`);
   }
   
   console.log('🎉 PostgreSQL path fixing completed');
+  console.log('--- Finished afterPack script for PostgreSQL macOS dylib fixing ---');
 }; 

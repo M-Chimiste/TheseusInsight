@@ -2,9 +2,10 @@
 # Build PostgreSQL and pgvector from source for the current platform.
 set -euo pipefail
 
-VERSION="16.2"
+VERSION="14.18"
 PLATFORM="$(uname | tr 'A-Z' 'a-z')"
-PREFIX="$(dirname "$0")/postgres/${PLATFORM}"
+ # --prefix must be an absolute path
+PREFIX="$(cd "$(dirname "$0")" && pwd)/postgres/${PLATFORM}"
 mkdir -p "$PREFIX"
 
 SRC_DIR="$(mktemp -d)"
@@ -16,7 +17,12 @@ curl -L "https://ftp.postgresql.org/pub/source/v${VERSION}/postgresql-${VERSION}
 tar -xzf pg.tar.gz
 cd postgresql-${VERSION}
 ./configure --prefix="$PREFIX"
-make -j$(nproc)
+if command -v nproc >/dev/null 2>&1; then
+  JOBS=$(nproc)
+else
+  JOBS=$(sysctl -n hw.ncpu)
+fi
+make -j${JOBS}
 make install
 cd ..
 
@@ -29,3 +35,4 @@ cd ..
 rm -rf pg.tar.gz postgresql-${VERSION} pgvector
 
 echo "PostgreSQL built and installed to $PREFIX"
+echo "pgvector extension compiled and installed as well"

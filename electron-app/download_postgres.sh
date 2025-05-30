@@ -24,7 +24,15 @@ case "$PLATFORM" in
 esac
 
 echo "Downloading PostgreSQL ${VERSION} for $PLATFORM..."
-TMP_FILE="/tmp/postgresql-${VERSION}.tar.gz"
+
+# Determine archive type (zip vs tar.gz) from URL so we extract correctly
+if [[ "$URL" == *.zip ]]; then
+  EXT="zip"
+else
+  EXT="tar.gz"
+fi
+TMP_FILE="/tmp/postgresql-${VERSION}.${EXT}"
+
 curl -L "$URL" -o "$TMP_FILE"
 
 if [[ "$TMP_FILE" == *.zip ]]; then
@@ -34,3 +42,24 @@ else
 fi
 
 echo "PostgreSQL binaries extracted to $TARGET_DIR"
+
+#
+# ---- Build and install pgvector extension ----
+#
+# pgvector provides the required VECTOR data type for similarity search.
+# It is compiled against the just‑downloaded PostgreSQL using its pg_config.
+#
+if [[ "$PLATFORM" != msys* && "$PLATFORM" != mingw* && "$PLATFORM" != cygwin* && "$PLATFORM" != win32 ]]; then
+  echo "Building pgvector for $PLATFORM ..."
+  export PATH="$TARGET_DIR/bin:$PATH"          # ensure our pg_config is first
+  PGVECTOR_SRC="$(mktemp -d)"
+  git clone --depth 1 https://github.com/pgvector/pgvector.git "$PGVECTOR_SRC"
+  cd "$PGVECTOR_SRC"
+  make PG_CONFIG="$TARGET_DIR/bin/pg_config"
+  make PG_CONFIG="$TARGET_DIR/bin/pg_config" install
+  cd - >/dev/null
+  rm -rf "$PGVECTOR_SRC"
+  echo "pgvector installed into $TARGET_DIR"
+else
+  echo "Skipping pgvector build on Windows platforms – please install pgvector manually."
+fi

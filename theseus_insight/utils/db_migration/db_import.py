@@ -319,6 +319,42 @@ class DatabaseImporter:
         else:
             raise ValueError(f"Input path must be a directory or .tar.gz archive: {input_path}")
 
+    def clear_all_data(self) -> Dict[str, int]:
+        """
+        Clear all data from the main tables (papers, podcasts, newsletters, logs, tasks).
+        WARNING: This is destructive and cannot be undone.
+        
+        Returns:
+            Dictionary with counts of deleted records for each table
+        """
+        print("WARNING: Clearing all data from database tables...")
+        
+        # Tables to clear in order (respecting potential foreign key constraints)
+        tables_to_clear = ['logs', 'tasks', 'newsletters', 'podcasts', 'papers']
+        deletion_counts = {}
+        
+        with self.db.get_cursor() as cursor:
+            for table in tables_to_clear:
+                try:
+                    # Get count before deletion
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    count_before = cursor.fetchone()[0]
+                    
+                    # Truncate the table (faster than DELETE and resets auto-increment)
+                    cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
+                    deletion_counts[table] = count_before
+                    
+                    print(f"Cleared {count_before} records from {table} table")
+                    
+                except Exception as e:
+                    print(f"Error clearing table {table}: {e}")
+                    deletion_counts[table] = 0
+        
+        total_deleted = sum(deletion_counts.values())
+        print(f"Total records cleared: {total_deleted}")
+        
+        return deletion_counts
+
 
 def main():
     """Main function for command-line usage."""

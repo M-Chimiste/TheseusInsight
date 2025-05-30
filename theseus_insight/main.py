@@ -1704,6 +1704,159 @@ async def run_newsletter_pipeline_endpoint(
     await task_manager.enqueue_task(lambda _tid: background_pipeline_run(), task_id)
     return {"task_id": task_id, "message": "Newsletter generation process has been initiated."}
 
+# --- Database Management --- #
+@app.get("/api/settings/database/export")
+async def export_database():
+    """Export the database as a compressed tar.gz file using the existing JSON export system."""
+    try:
+        import tempfile
+        from datetime import datetime
+        from .utils.db_migration.db_export import DatabaseExporter
+        
+        # Create a temporary directory for the export
+        with tempfile.TemporaryDirectory() as temp_dir:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            export_dir = os.path.join(temp_dir, "export")
+            archive_file = os.path.join(temp_dir, f"theseus_backup_{timestamp}.tar.gz")
+            
+            # Use the existing DatabaseExporter
+            exporter = DatabaseExporter(DB_URL, export_dir)
+            
+            # Export all data to JSON files
+            papers_file = exporter.export_papers()
+            podcasts_file = exporter.export_podcasts()
+            newsletters_file = exporter.export_newsletters()
+            metadata_file = exporter.create_metadata()
+            
+            # Create compressed archive
+            import tarfile
+            with tarfile.open(archive_file, "w:gz") as tar:
+                tar.add(export_dir, arcname=".")
+            
+            return FileResponse(
+                archive_file,
+                media_type="application/gzip",
+                filename=f"theseus_backup_{timestamp}.tar.gz"
+            )
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database export failed: {str(e)}")
+
+@app.post("/api/settings/database/import")
+async def import_database(
+    backup_file: UploadFile = File(...),
+    import_mode: str = Form("merge", description="Import mode: 'merge' (default) or 'overwrite'")
+):
+    """Import a database from a compressed backup file using the existing JSON import system."""
+    try:
+        import tempfile
+        from .utils.db_migration.db_import import DatabaseImporter
+        
+        if not backup_file.filename or not backup_file.filename.endswith(('.tar.gz', '.tgz')):
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid file format. Please upload a .tar.gz or .tgz file."
+            )
+        
+        if import_mode not in ["merge", "overwrite"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid import mode. Must be 'merge' or 'overwrite'."
+            )
+        
+        print(f"DEBUG: Received file: {backup_file.filename}")
+        print(f"DEBUG: Import mode: {import_mode}")
+        print(f"DEBUG: File content type: {backup_file.content_type}")
+        
+        # Create a temporary directory for the import
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Save uploaded file
+            archive_path = os.path.join(temp_dir, backup_file.filename)
+            
+            with open(archive_path, "wb") as f:
+                content = await backup_file.read()
+                f.write(content)
+            
+            # Extract the archive using the existing importer
+            importer = DatabaseImporter(DB_URL)
+            extract_dir = os.path.join(temp_dir, "extracted")
+            extracted_path = importer.extract_archive(archive_path, extract_dir)
+            
+            # Look for required JSON files
+            all_files = os.listdir(extracted_path)
+            
+            # Check for required files
+            required_files = ["papers.json", "podcasts.json", "newsletters.json", "metadata.json"]
+            missing_files = [f for f in required_files if f not in all_files]
+            
+            if missing_files:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Archive is missing required files: {', '.join(missing_files)}"
+                )
+            
+            # Validate metadata
+            metadata_path = os.path.join(extracted_path, "metadata.json")
+            if not importer.validate_metadata(metadata_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid or incompatible backup file metadata"
+                )
+            
+            if import_mode == "overwrite":
+                print("INFO: Performing complete database overwrite...")
+                
+                # Clear existing data (destructive)
+                try:
+                    deletion_results = importer.clear_all_data()
+                    print(f"Database cleared. Deleted records: {deletion_results}")
+                    skip_duplicates = False  # Import all records since database is now empty
+                except Exception as e:
+                    print(f"Warning: Could not clear database: {e}")
+                    # Still proceed with import but use skip_duplicates=False to force overwrites
+                    skip_duplicates = False
+            else:
+                print("INFO: Performing database merge...")
+                skip_duplicates = True  # Skip duplicates in merge mode
+            
+            # Import the data using existing importer
+            results = {}
+            
+            papers_file = os.path.join(extracted_path, "papers.json")
+            results["papers"] = importer.import_papers(papers_file, skip_duplicates=skip_duplicates)
+            
+            podcasts_file = os.path.join(extracted_path, "podcasts.json")
+            results["podcasts"] = importer.import_podcasts(podcasts_file, skip_duplicates=skip_duplicates)
+            
+            newsletters_file = os.path.join(extracted_path, "newsletters.json")
+            results["newsletters"] = importer.import_newsletters(newsletters_file, skip_duplicates=skip_duplicates)
+            
+            # Prepare success message
+            total_imported = sum(r["imported"] for r in results.values())
+            total_skipped = sum(r["skipped"] for r in results.values())
+            total_errors = sum(r["errors"] for r in results.values())
+            
+            mode_text = "merged" if import_mode == "merge" else "imported"
+            message = f"Database {mode_text} successfully. "
+            message += f"Imported: {total_imported}, Skipped: {total_skipped}, Errors: {total_errors}. "
+            
+            if import_mode == "merge":
+                message += "Existing records were preserved."
+            
+            return {
+                "status": "success", 
+                "message": message,
+                "results": results
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Unexpected error during import: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
+
 # --- Serve React Frontend --- #
 # This block MUST come AFTER all other API routes have been defined.
 if STATIC_ASSETS_DIR.exists():
@@ -1820,3 +1973,4 @@ def cleanup_old_media_files(max_age_days: int = 30):
     except Exception as e:
         print(f"ERROR: Failed to run media file cleanup: {e}")
         # Don't raise the error - we don't want cleanup failure to prevent API startup 
+

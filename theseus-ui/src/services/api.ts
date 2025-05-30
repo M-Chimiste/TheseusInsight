@@ -28,6 +28,17 @@ export const settingsApi = {
   getModels: () => api.get('/models'),
   runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
   abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
+  exportDatabase: () => api.get('/settings/database/export', { responseType: 'blob' }),
+  importDatabase: (file: File, importMode: 'merge' | 'overwrite' = 'merge') => {
+    const formData = new FormData();
+    formData.append('backup_file', file);
+    formData.append('import_mode', importMode);
+    return api.post('/settings/database/import', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  },
 };
 
 // Newsletter API

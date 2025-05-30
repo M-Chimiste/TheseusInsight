@@ -89,6 +89,8 @@ const Settings: React.FC = () => {
   const [selectedArxivSubs, setSelectedArxivSubs] = useState<string[]>([]);
   const [researchInterestsInput, setResearchInterestsInput] = useState<string>('');
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
+  const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
+  const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -180,6 +182,36 @@ const Settings: React.FC = () => {
     onError: (error: any) => setError(error.message),
   });
 
+  const exportDatabaseMutation = useMutation({
+    mutationFn: () => settingsApi.exportDatabase(),
+    onSuccess: (response) => {
+      // Trigger download
+      const blob = new Blob([response.data], { type: 'application/gzip' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `theseus_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      setSuccess('Database exported successfully');
+    },
+    onError: (error: any) => setError(error.message || 'Failed to export database'),
+  });
+
+  const importDatabaseMutation = useMutation({
+    mutationFn: ({ file, mode }: { file: File; mode: 'merge' | 'overwrite' }) => 
+      settingsApi.importDatabase(file, mode),
+    onSuccess: () => {
+      setSuccess('Database imported successfully. Please restart the application.');
+      setSelectedImportFile(null);
+      // Refresh all queries since database data has changed
+      queryClient.invalidateQueries();
+    },
+    onError: (error: any) => setError(error.message || 'Failed to import database'),
+  });
+
   const [showCreds, setShowCreds] = useState<Record<string, boolean>>({});
   const [credValues, setCredValues] = useState<Record<string, string>>({});
 
@@ -236,6 +268,19 @@ const Settings: React.FC = () => {
       setEmailRecipientsInput(emailRecipients.recipients?.join('\n') || '');
     }
   }, [emailRecipients]);
+
+  const handleDatabaseImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedImportFile(file);
+    }
+  };
+
+  const handleDatabaseImport = () => {
+    if (selectedImportFile) {
+      importDatabaseMutation.mutate({ file: selectedImportFile, mode: importMode });
+    }
+  };
 
   if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders) {
     return (
@@ -685,6 +730,130 @@ const Settings: React.FC = () => {
           </Box>
         </AccordionDetails>
       </Accordion>
+
+      {/* Database Management Section */}
+      <Card sx={{ mb: 4 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
+              Database Management
+            </Typography>
+            <Tooltip title="Import and export your Theseus Insight database for backup and migration purposes.">
+              <InfoOutlinedIcon color="action" />
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" sx={{ mb: 3 }}>
+            Backup and restore your database, including papers, settings, and all application data.
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, maxWidth: 700 }}>
+            {/* Export Section */}
+            <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                Export Database
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Create a backup of your entire database as a compressed archive.
+              </Typography>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() => exportDatabaseMutation.mutate()}
+                disabled={exportDatabaseMutation.isPending}
+                sx={{ mr: 2 }}
+              >
+                {exportDatabaseMutation.isPending ? 'Exporting...' : 'Export Database'}
+              </Button>
+            </Box>
+
+            {/* Import Section */}
+            <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                Import Database
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Restore a database from a previously exported backup file (.tar.gz).
+              </Typography>
+              
+              {/* Import Mode Selection */}
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={importMode === 'overwrite'}
+                    onChange={(e) => setImportMode(e.target.checked ? 'overwrite' : 'merge')}
+                    color="warning"
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight={500}>
+                      Complete Overwrite Mode
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {importMode === 'merge' 
+                        ? 'Default: Merge mode - adds new records, preserves existing data'
+                        : 'Destructive: Replaces ALL existing data with backup content'
+                      }
+                    </Typography>
+                  </Box>
+                }
+                sx={{ mb: 2, display: 'block' }}
+              />
+              
+              {importMode === 'overwrite' && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  <strong>Warning:</strong> Complete overwrite will permanently delete all current data and replace it with the backup. This action cannot be undone.
+                </Alert>
+              )}
+              
+              {importMode === 'merge' && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <strong>Merge Mode:</strong> New records will be added to your database. Existing records will be preserved. Any conflicts will be skipped.
+                </Alert>
+              )}
+              
+              <input
+                accept=".tar.gz,.tgz,application/gzip,application/x-gzip,application/x-tar"
+                style={{ display: 'none' }}
+                id="database-import-file"
+                type="file"
+                onChange={handleDatabaseImportFile}
+              />
+              <label htmlFor="database-import-file">
+                <Button
+                  variant="outlined"
+                  component="span"
+                  disabled={importDatabaseMutation.isPending}
+                  sx={{ mr: 2 }}
+                >
+                  Select Backup File
+                </Button>
+              </label>
+              {selectedImportFile && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    Selected file: {selectedImportFile.name}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Import mode: <strong>{importMode === 'merge' ? 'Merge (Safe)' : 'Complete Overwrite (Destructive)'}</strong>
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    color={importMode === 'overwrite' ? 'error' : 'primary'}
+                    onClick={handleDatabaseImport}
+                    disabled={importDatabaseMutation.isPending}
+                  >
+                    {importDatabaseMutation.isPending 
+                      ? 'Importing...' 
+                      : `${importMode === 'merge' ? 'Merge' : 'Overwrite'} Database`
+                    }
+                  </Button>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
 
     </Container>
   );

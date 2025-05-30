@@ -30,6 +30,7 @@
     "asarUnpack": [
       "**/postgres/**/*",
       "**/theseus_insight/**/*",
+      "**/python_deps/**/*",
       "**/run_theseus_insight.py",
       "**/requirements.txt"
     ],
@@ -53,6 +54,10 @@
           "run_theseus_insight.py",
           "requirements.txt"
         ]
+      },
+      {
+        "from": "python_deps",
+        "to": "app/python_deps"
       },
       {
         "from": "env.template",

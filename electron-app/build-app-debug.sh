@@ -30,11 +30,27 @@ fi
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
 rm -rf dist/
+rm -rf node_modules/.cache/
 
 # Install dependencies if needed
 if [ ! -d "node_modules" ]; then
     echo "📦 Installing dependencies..."
     npm install
+fi
+
+# Bundle Python dependencies
+echo "🐍 Bundling Python dependencies..."
+if [ -f "./bundle-python-deps.sh" ]; then
+    if ./bundle-python-deps.sh; then
+        echo "✅ Python dependencies bundled successfully"
+    else
+        echo "❌ Failed to bundle Python dependencies"
+        echo "   The app may not work on systems without Python packages"
+        echo "   Continuing with build anyway..."
+    fi
+else
+    echo "⚠️  bundle-python-deps.sh not found, skipping dependency bundling"
+    echo "   Recipients will need to install Python packages manually"
 fi
 
 # Build the React frontend

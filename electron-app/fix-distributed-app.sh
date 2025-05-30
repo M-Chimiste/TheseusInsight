@@ -180,7 +180,23 @@ if open "$APP_PATH" 2>&1; then
     
     if pgrep -f "Theseus Insight" >/dev/null; then
         echo "✅ App appears to be running!"
-        echo "   Check if the app window opened correctly"
+        
+        # Check backend specifically
+        if lsof -i :8000 >/dev/null 2>&1; then
+            echo "✅ Backend detected on port 8000"
+            echo "   Check if the app window opened correctly"
+        else
+            echo "❌ Backend not detected on port 8000"
+            echo "   This suggests a Python/FastAPI startup issue"
+            echo ""
+            echo "🔍 Backend diagnostic suggestions:"
+            echo "   1. Check if Python packages are installed:"
+            echo "      python3 -c 'import fastapi, uvicorn; print(\"Dependencies OK\")'"
+            echo "   2. Test manual backend start:"
+            echo "      cd '$APP_PATH/Contents/Resources/app'"
+            echo "      python3 start_backend_robust.py"
+            echo "   3. Check Console.app for Python errors"
+        fi
     else
         echo "❌ App process not found - it may have crashed"
         echo "   Check Console.app for crash logs"
@@ -189,6 +205,39 @@ if open "$APP_PATH" 2>&1; then
 else
     echo "❌ App failed to launch"
     echo "   Check Console.app for crash logs"
+fi
+
+echo ""
+echo "🔧 Backend Dependencies Test:"
+echo "   Testing if required Python packages are available..."
+
+# Test Python dependencies
+if command -v python3 >/dev/null 2>&1; then
+    echo "   ✅ Python3 available: $(which python3)"
+    
+    # Test each required package
+    packages=("fastapi" "uvicorn" "psycopg2" "sqlalchemy" "pydantic")
+    missing_packages=()
+    
+    for package in "${packages[@]}"; do
+        if python3 -c "import $package" 2>/dev/null; then
+            echo "   ✅ $package available"
+        else
+            echo "   ❌ $package missing"
+            missing_packages+=("$package")
+        fi
+    done
+    
+    if [ ${#missing_packages[@]} -eq 0 ]; then
+        echo "   ✅ All Python dependencies available"
+    else
+        echo "   ❌ Missing packages: ${missing_packages[*]}"
+        echo "   📋 To fix, run:"
+        echo "      python3 -m pip install --user ${missing_packages[*]}"
+    fi
+else
+    echo "   ❌ Python3 not found in PATH"
+    echo "   📋 Install Python 3 or ensure it's in your PATH"
 fi
 
 echo ""

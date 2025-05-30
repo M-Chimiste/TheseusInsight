@@ -694,12 +694,21 @@ function startBackend() {
   // Choose the startup method based on packaging
   let startupArgs;
   if (isPackaged) {
-    // Extract the start_backend.py script from asar to temp location
-    const originalScript = path.join(__dirname, 'start_backend.py');
+    // Try the robust backend script first
+    const robustScript = path.join(__dirname, 'start_backend_robust.py');
+    const fallbackScript = path.join(__dirname, 'start_backend.py');
+    
+    let scriptToUse = robustScript;
+    if (!fs.existsSync(robustScript)) {
+      console.log('Robust backend script not found, using fallback');
+      scriptToUse = fallbackScript;
+    }
+    
+    // Extract the script from asar to temp location
     const tempScript = path.join(os.tmpdir(), 'theseus_start_backend.py');
     
     try {
-      const scriptContent = fs.readFileSync(originalScript, 'utf8');
+      const scriptContent = fs.readFileSync(scriptToUse, 'utf8');
       fs.writeFileSync(tempScript, scriptContent, { mode: 0o755 });
       console.log(`Extracted backend script to: ${tempScript}`);
       startupArgs = [tempScript];
@@ -707,7 +716,7 @@ function startBackend() {
     } catch (error) {
       console.error('Failed to extract backend script:', error);
       // Fallback to trying the asar path
-      startupArgs = [path.join(__dirname, 'start_backend.py')];
+      startupArgs = [scriptToUse];
     }
   } else {
     // Use uvicorn directly for development

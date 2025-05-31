@@ -12,8 +12,10 @@ failed on others when PostgreSQL was accessed.
 
 ## Fix
 The script now resolves the path to `libpq.5.dylib` relative to the packaged
-`.app` directory instead of using a fixed absolute path. Each PostgreSQL binary
-in the bundle is updated to reference `@rpath/libpq.5.dylib` and an rpath of
+`.app` directory instead of using a fixed absolute path. During the patching
+process each PostgreSQL binary is scanned for any reference to
+`libpq.5.dylib`.  Regardless of what absolute path the build process embedded,
+those references are rewritten to `@rpath/libpq.5.dylib` and an rpath of
 `@loader_path/../lib` is added if required.
 
 This ensures that the packaged application uses only relative paths to its own

@@ -81,11 +81,14 @@ function ensureAppSecretKey() {
   }
 }
 
-// Load environment before anything else
-loadEnvironmentFile();
+// Only perform initialization when running under Electron
+if (process.versions.electron) {
+  // Load environment before anything else
+  loadEnvironmentFile();
 
-// Ensure APP_SECRET_KEY is set before starting any services
-ensureAppSecretKey();
+  // Ensure APP_SECRET_KEY is set before starting any services
+  ensureAppSecretKey();
+}
 
 // Add global exception handlers
 process.on('uncaughtException', (error) => {
@@ -575,27 +578,29 @@ function cleanupProcesses() {
   cleanupTempFiles();
 }
 
-app.whenReady().then(() => {
-  // Set app name for better OS integration
-  app.setName('Theseus Insight');
-  
-  startServices();
-});
+if (process.versions.electron) {
+  app.whenReady().then(() => {
+    // Set app name for better OS integration
+    app.setName('Theseus Insight');
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-app.on('activate', () => {
-  // On macOS it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  if (BrowserWindow.getAllWindows().length === 0) {
     startServices();
-  }
-});
+  });
 
-app.on('will-quit', () => {
-  cleanupProcesses();
-});
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+
+  app.on('activate', () => {
+    // On macOS it's common to re-create a window in the app when the
+    // dock icon is clicked and there are no other windows open.
+    if (BrowserWindow.getAllWindows().length === 0) {
+      startServices();
+    }
+  });
+
+  app.on('will-quit', () => {
+    cleanupProcesses();
+  });
+}

@@ -22,12 +22,9 @@ services:
       # though .env file is generally preferred for sensitive or numerous variables.
       # Example: 
       # - OPENAI_API_KEY=${OPENAI_API_KEY_FROM_HOST_ENV} # If you want to pass from host env differently
-      - DATABASE_URL=postgresql://theseus:theseus@db:5432/theseusdb
+      - DATABASE_URL=sqlite:////app/data/theseus.db
       - PYTHONUNBUFFERED=1 # Already set in Dockerfile, but good to be explicit if needed
       - OLLAMA_PASSTHROUGH=${OLLAMA_PASSTHROUGH:-true}
-    depends_on:
-      db:
-        condition: service_healthy
     # healthcheck: # Optional: Add a healthcheck for your FastAPI app
     #   test: ["CMD", "curl", "--fail", "http://localhost:8000/api/settings/model-providers"] # Example endpoint
     #   interval: 30s
@@ -38,25 +35,14 @@ services:
 # Optional: Define named volumes if you prefer over host-mounted volumes
 # volumes:
 #   theseus_data: 
-# PostgreSQL database with pgvector
-  db:
-    image: ankane/pgvector
-    container_name: theseusinsight-db
-    environment:
-      POSTGRES_USER: theseus
-      POSTGRES_PASSWORD: theseus
-      POSTGRES_DB: theseusdb
-    volumes:
-      - theseus_db_data:/var/lib/postgresql/data
-      - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
-    # Database port is NOT exposed by default for security
-    # Use docker-compose.db-external.yml override to enable external access
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U theseus -d theseusdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-volumes:
-  postgres-data:
-  theseus_db_data:
+# The 'volumes' section at the root level is for named volumes.
+# Since the database data is now part of the app's ./data volume mount,
+# specific named volumes for PostgreSQL are no longer needed.
+# If 'theseus_data' was meant for other app data, it could remain,
+# but typically it's for the database. Assuming it's not needed now.
+volumes: {}
+# Ensure any other named volumes not related to postgres are preserved if they exist.
+# For this example, assuming only postgres-related named volumes were present.
+# If postgres-data was a typo and meant to be something else, it should be kept.
+# Based on the original, 'postgres-data' and 'theseus_db_data' are clearly for pg.

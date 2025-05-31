@@ -39,13 +39,10 @@ echo ""
 packages=(
     "fastapi>=0.100.0"
     "uvicorn[standard]>=0.20.0"
-    "psycopg2-binary>=2.9.0"
-    "sqlalchemy>=2.0.0"
+    "sqlite-vec"
     "pydantic>=2.0.0"
     "python-multipart>=0.0.6"
     "jinja2>=3.1.0"
-    "asyncpg>=0.28.0"
-    "alembic>=1.12.0"
 )
 
 # Install all packages together to let pip resolve dependencies properly
@@ -92,7 +89,7 @@ echo "🧪 Testing bundled installation..."
 DEPS_ABS_PATH="$(pwd)/$DEPS_DIR"
 
 # Test each critical package
-critical_packages=("fastapi" "uvicorn" "psycopg2" "sqlalchemy" "pydantic")
+critical_packages=("fastapi" "uvicorn" "pydantic")
 test_failed=false
 
 for package in "${critical_packages[@]}"; do

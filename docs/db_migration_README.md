@@ -31,19 +31,19 @@ python -m theseus_insight.utils.db_migration.db_migrate export \
 ### 2. Import Archive to New Database
 
 ```bash
-# Import to production database (skips duplicates by default)
+# Import to production database (SQLite) (skips duplicates by default)
 python -m theseus_insight.utils.db_migration.db_migrate import \
-    --target-db "postgresql://user:pass@prod-server:5432/theseus_prod" \
+    --target-db "sqlite:///./data/theseus_prod.db" \
     --input ./my_backup.tar.gz
 ```
 
 ### 3. Direct Database Migration
 
 ```bash
-# Migrate directly between databases with verification
+# Migrate directly (e.g., from PostgreSQL to SQLite) with verification
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@localhost:5432/theseus_dev" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --source-db "postgresql://user:pass@localhost:5432/theseus_pg_dev" \
+    --target-db "sqlite:///./data/theseus_sqlite_prod.db" \
     --verify
 ```
 
@@ -79,58 +79,58 @@ python -m theseus_insight.utils.db_migration.db_export \
 #### Import from Archive
 ```bash
 python -m theseus_insight.utils.db_migration.db_import \
-    --db-path "postgresql://user:pass@localhost:5432/theseus_new" \
+    --db-path "sqlite:///./data/theseus_new.db" \
     --input-path ./backup.tar.gz
 ```
 
 #### Import from Directory
 ```bash
 python -m theseus_insight.utils.db_migration.db_import \
-    --db-path "postgresql://user:pass@localhost:5432/theseus_new" \
+    --db-path "sqlite:///./data/theseus_new.db" \
     --input-path ./export_data/
 ```
 
 #### Allow Duplicate Entries
 ```bash
 python -m theseus_insight.utils.db_migration.db_import \
-    --db-path "postgresql://user:pass@localhost:5432/theseus_new" \
+    --db-path "sqlite:///./data/theseus_new.db" \
     --input-path ./backup.tar.gz \
     --allow-duplicates
 ```
 
 ### Migration Operations
 
-#### Basic Migration
+#### Basic Migration (e.g., PostgreSQL to SQLite)
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_db" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_db"
+    --source-db "postgresql://user:pass@old-pg-server:5432/theseus_pg_db" \
+    --target-db "sqlite:///./data/theseus_sqlite.db"
 ```
 
 #### Migration with Archive Preservation
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_db" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_db" \
+    --source-db "postgresql://user:pass@old-pg-server:5432/theseus_pg_db" \
+    --target-db "sqlite:///./data/theseus_sqlite.db" \
     --keep-archive \
-    --archive-path ./migration_backup.tar.gz
+    --archive-path ./migration_pg_to_sqlite_backup.tar.gz
 ```
 
 #### Migration with Verification
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_db" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_db" \
+    --source-db "postgresql://user:pass@old-pg-server:5432/theseus_pg_db" \
+    --target-db "sqlite:///./data/theseus_sqlite.db" \
     --verify
 ```
 
 ### Verification
 
-#### Verify Migration Success
+#### Verify Migration Success (e.g., PostgreSQL source vs SQLite target)
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate verify \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_db" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_db"
+    --source-db "postgresql://user:pass@old-pg-server:5432/theseus_pg_db" \
+    --target-db "sqlite:///./data/theseus_sqlite.db"
 ```
 
 ## Duplicate Handling
@@ -167,17 +167,19 @@ backup.tar.gz
 
 ## Database Connection Strings
 
-The tools support standard PostgreSQL connection strings:
-
-```bash
-# Basic format
-postgresql://username:password@hostname:port/database
-
-# Examples
-postgresql://theseus:secret@localhost:5432/theseus_dev
-postgresql://user@localhost/theseus_db
-postgresql://user:pass@prod-server.com:5432/theseus_production
-```
+The tools use SQLAlchemy-compatible connection strings.
+- **PostgreSQL (for source DBs in migration scenarios)**:
+  ```
+  postgresql://username:password@hostname:port/database
+  # Example: postgresql://theseus:secret@localhost:5432/theseus_pg_db
+  ```
+- **SQLite (for target DBs)**:
+  ```
+  sqlite:///path/to/database_file.db
+  # Example for a file in a 'data' subdirectory: sqlite:///./data/theseus.db
+  # Example for an absolute path: sqlite:////mnt/data/theseus.db
+  # For an in-memory database (testing only): sqlite:///:memory:
+  ```
 
 ## Error Handling
 
@@ -214,17 +216,20 @@ All operations return appropriate exit codes:
 ### Common Issues
 
 #### Connection Errors
+For PostgreSQL source:
 ```bash
 # Test database connectivity first
 psql "postgresql://user:pass@host:port/db" -c "SELECT 1;"
 ```
+For SQLite target: Ensure the directory for the database file exists and is writable.
 
 #### Permission Errors
+For PostgreSQL source:
 ```bash
 # Ensure user has necessary permissions
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO migration_user;
-GRANT INSERT ON ALL TABLES IN SCHEMA public TO migration_user;
 ```
+For SQLite target: Ensure file system permissions allow creating/writing the database file.
 
 #### Archive Corruption
 ```bash
@@ -283,9 +288,12 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 ## Version Compatibility
 
 - Export format version: 1.0
-- Compatible with PostgreSQL 12+
+- Source database compatibility (if PostgreSQL): PostgreSQL 12+
+- Target database: SQLite 3.35+ (recommended for features like `ROW_NUMBER()` if used, FTS5, etc.)
 - Requires Python 3.8+
-- Dependencies: psycopg, pgvector, pydantic
+- Core Dependencies: `sqlalchemy`, `pydantic`
+- For PostgreSQL source: `psycopg2-binary`, `pgvector`
+- For SQLite target: `sqlite-vec` (Python bindings for `sqlite3` should be able to load `sqlite-vec` C extensions)
 
 ## Support
 

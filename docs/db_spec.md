@@ -1,6 +1,6 @@
-# Theseus Insight - Database Specification v1.0
+# Theseus Insight - Database Specification v1.1 (SQLite Migration)
 
-> PostgreSQL schema (with pgvector) created automatically by `PaperDatabase._initialize_db()` during application start-up
+> SQLite schema (with sqlite-vec and FTS5) created automatically by `PaperDatabase._initialize_db()` during application start-up
 
 ---
 
@@ -22,11 +22,11 @@ Database access is configured via the `DATABASE_URL` environment variable.
 
 | Property             | Default value                                                                                                                                                    | Notes                                                  |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| **Engine**           | PostgreSQL + pgvector |
-|                          | Requires running Postgres server |
-| **Connection string**| `postgresql://theseus:theseus@localhost:5432/theseusdb` |
-|                          | Provided via `DATABASE_URL` environment variable |
-| **Connection model** | One connection per CRUD call using `psycopg` |
+| **Engine**           | SQLite + sqlite-vec + FTS5 |
+|                          | Embedded database; no separate server required. |
+| **Connection string**| `sqlite:///./data/theseus.db` (example for local file) |
+|                          | Provided via `DATABASE_URL` environment variable. Path can vary (e.g., `/app/data/theseus.db` in Docker, user data directory in Electron). |
+| **Connection model** | One connection per CRUD call using Python's `sqlite3` module |
 ---
 
 ## 3. Entity-Relationship Overview
@@ -42,7 +42,7 @@ logs      (append-only)
 tasks     (async state)
 ```
 
-Only **one foreign-key** exists today: `models.provider_id → model_providers.id` (ON DELETE CASCADE recommended when ported to Postgres).
+Foreign key relationships are defined in the schema but SQLite's default behavior for foreign keys might differ from PostgreSQL (e.g. enforcement needs `PRAGMA foreign_keys = ON;`). The application logic currently does not heavily rely on cascading deletes enforced by database-level FKs for these specific relationships.
 
 ---
 
@@ -50,52 +50,73 @@ Only **one foreign-key** exists today: `models.provider_id → model_providers.i
 
 ### 4.1 `papers`
 
-| Column              | Type    | Constraints           | Description                |
-| ------------------- | ------- | --------------------- | -------------------------- |
-| `id`                | SERIAL   | **PK**                | Surrogate key |
-| `title`             | TEXT     | NOT NULL              | Paper title |
-| `abstract`          | TEXT     | NOT NULL              | Abstract text |
-| `date`              | DATE     | NOT NULL              | Publication date |
-| `date_run`          | DATE     | NOT NULL              | Processing date |
-| `score`             | REAL     | –                     | Relevance score |
-| `rationale`         | TEXT     | –                     | LLM explanation |
-| `related`           | BOOLEAN  | DEFAULT FALSE         | `TRUE` if on-topic |
-| `cosine_similarity` | REAL     | –                     | Embedding similarity |
-| `url`               | TEXT     | UNIQUE                | PDF/landing-page URL |
-| `embedding_model`   | TEXT     | –                     | Name/version of model used |
-| `embedding`         | VECTOR   | nullable              | pgvector embedding |
-| `search_vector`     | TSVECTOR | auto-generated        | Combined title + abstract |
-| `title_vector`      | TSVECTOR | auto-generated        | Title-only search vector |
-| `abstract_vector`   | TSVECTOR | auto-generated        | Abstract-only search vector |
+| Column              | Type    | Constraints                        | Description                                     |
+| ------------------- | ------- | ---------------------------------- | ----------------------------------------------- |
+| `id`                | INTEGER | **PK** AUTOINCREMENT             | Surrogate key                                   |
+| `title`             | TEXT    | NOT NULL                           | Paper title                                     |
+| `abstract`          | TEXT    | NOT NULL                           | Abstract text                                   |
+| `date`              | TEXT    | NOT NULL                           | Publication date (ISO8601 string e.g., YYYY-MM-DD) |
+| `date_run`          | TEXT    | NOT NULL                           | Processing date (ISO8601 string e.g., YYYY-MM-DD)  |
+| `score`             | REAL    | –                                  | Relevance score                                 |
+| `rationale`         | TEXT    | –                                  | LLM explanation                                 |
+| `related`           | INTEGER | DEFAULT 0                          | Boolean (0 for False, 1 for True)               |
+| `cosine_similarity` | REAL    | –                                  | Embedding similarity (if applicable)            |
+| `url`               | TEXT    | UNIQUE                             | PDF/landing-page URL                            |
+| `embedding_model`   | TEXT    | –                                  | Name/version of model used                      |
+| `embedding`         | BLOB    | nullable                           | Embedding vector (format for `sqlite-vec`)      |
 
-### 4.2 `logs`
+### 4.2 `papers_fts` (Virtual Table for Full-Text Search)
 
-| Column         | Type      | Constraints | Description |
-| -------------- | --------- | ----------- | ----------- |
-| `id`           | SERIAL    | **PK**      |             |
-| `task_id`      | TEXT      | NOT NULL    | Task identifier |
-| `status`       | TEXT      | NOT NULL    | Human-readable message |
-| `datetime_run` | TIMESTAMP | –           | Optional timestamp |
+This is an FTS5 virtual table. Data is synchronized from the `papers` table using triggers.
 
-### 4.3 `newsletters`
+| Column        | Type          | Description                                 |
+| ------------- | ------------- | ------------------------------------------- |
+| `rowid`       | INTEGER       | Mirrors `id` from `papers` table            |
+| `title`       | TEXT          | Content from `papers.title`                 |
+| `abstract`    | TEXT          | Content from `papers.abstract`              |
+| `papers_fts`  | (fts5 internal) | Special column for FTS5 queries (e.g., `MATCH`) |
 
-| Column       | Type    | Constraints          | Description               |
-| ------------ | ------- | -------------------- | ------------------------- |
-| `id`         | SERIAL | **PK**      | |
-| `content`    | TEXT   | NOT NULL    | Markdown newsletter body |
-| `start_date` | DATE   | NOT NULL    | First paper date included |
-| `end_date`   | DATE   | NOT NULL    | Last paper date included  |
-| `date_sent`  | DATE   | NOT NULL    | Email dispatch date |
+*   Triggers: `papers_ai` (after insert), `papers_ad` (after delete), `papers_au` (after update) keep this table synchronized with `papers`.
 
-### 4.4 `podcasts`
+### 4.3 `papers_vss` (Virtual Table for Vector Similarity Search)
 
-| Column        | Type    | Constraints          | Description                   |
-| ------------- | ------- | -------------------- | ----------------------------- |
-| `id`          | SERIAL | **PK**      | |
-| `title`       | TEXT   | NOT NULL    | Episode title |
-| `date`        | DATE   | NOT NULL    | Generation date |
-| `script`      | TEXT   | NOT NULL    | JSON string of dialogue items |
-| `description` | TEXT   | NOT NULL    | Show-notes |
+This is a `sqlite-vec` (vss0) virtual table for fast vector searches.
+
+| Column      | Type            | Description                                                                 |
+| ----------- | --------------- | --------------------------------------------------------------------------- |
+| `rowid`     | INTEGER         | Mirrors `id` from `papers` table                                            |
+| `embedding` | (vss0 internal) | Stores the vector embedding (dimension configured at table creation, e.g., 1536) |
+
+*   Data for this table (`rowid` and the embedding BLOB from `papers.embedding`) is inserted/updated by application logic when papers are inserted or their embeddings are updated.
+
+### 4.4 `logs`
+
+| Column         | Type    | Constraints                        | Description                |
+| -------------- | ------- | ---------------------------------- | -------------------------- |
+| `id`           | INTEGER | **PK** AUTOINCREMENT             | Surrogate key              |
+| `task_id`      | TEXT    | NOT NULL                           | Task identifier            |
+| `status`       | TEXT    | NOT NULL                           | Human-readable message     |
+| `datetime_run` | TEXT    | –                                  | Optional timestamp (ISO8601 string) |
+
+### 4.5 `newsletters`
+
+| Column       | Type    | Constraints                        | Description                                     |
+| ------------ | ------- | ---------------------------------- | ----------------------------------------------- |
+| `id`         | INTEGER | **PK** AUTOINCREMENT             | Surrogate key                                   |
+| `content`    | TEXT    | NOT NULL                           | Markdown newsletter body                        |
+| `start_date` | TEXT    | NOT NULL                           | First paper date included (ISO8601 YYYY-MM-DD)  |
+| `end_date`   | TEXT    | NOT NULL                           | Last paper date included (ISO8601 YYYY-MM-DD)   |
+| `date_sent`  | TEXT    | NOT NULL                           | Email dispatch date (ISO8601 YYYY-MM-DD)        |
+
+### 4.6 `podcasts`
+
+| Column        | Type    | Constraints                        | Description                                     |
+| ------------- | ------- | ---------------------------------- | ----------------------------------------------- |
+| `id`          | INTEGER | **PK** AUTOINCREMENT             | Surrogate key                                   |
+| `title`       | TEXT    | NOT NULL                           | Episode title                                   |
+| `date`        | TEXT    | NOT NULL                           | Generation date (ISO8601 YYYY-MM-DD)            |
+| `script`      | TEXT    | NOT NULL                           | JSON string of dialogue items                   |
+| `description` | TEXT    | NOT NULL                           | Show-notes                                      |
 
 ### 4.5 `settings`
 
@@ -112,34 +133,34 @@ Typical keys: `email_recipients`, `visualizer_defaults`, `api_keys`, etc.
 
 | Column | Type    | Constraints          | Description                                           |
 | ------ | ------- | -------------------- | ----------------------------------------------------- |
-| `id`   | INTEGER | **PK** |
-| `name` | TEXT    | NOT NULL UNIQUE      | Provider label - e.g. `openai`, `anthropic`, `ollama` |
+| `id`   | INTEGER | **PK**              | Defined by `INITIAL_PROVIDERS`, not auto-incrementing. |
+| `name` | TEXT    | NOT NULL UNIQUE     | Provider label - e.g. `openai`, `anthropic`, `ollama` |
 
-### 4.7 `models`
+### 4.8 `models` (Schema unchanged, but key type changes)
 
-| Column         | Type                    | Constraints                             | Description                           |
-| -------------- | ----------------------- | --------------------------------------- | ------------------------------------- |
-| `id`           | SERIAL  | **PK**       | |
-| `provider_id`  | INTEGER | NOT NULL, **FK** → `model_providers.id` | |
-| `name`         | TEXT    | NOT NULL    | Model identifier (e.g. `gpt-4o-mini`) |
-| `config_json`  | TEXT    | nullable    | Provider-specific JSON blob |
-| **Unique key** | (`provider_id`, `name`) | Prevents duplicates | |
+| Column         | Type    | Constraints                             | Description                           |
+| -------------- | ------- | --------------------------------------- | ------------------------------------- |
+| `id`           | INTEGER | **PK** AUTOINCREMENT                  | Surrogate key                         |
+| `provider_id`  | INTEGER | NOT NULL, **FK** → `model_providers.id` | (FK enforcement via `PRAGMA foreign_keys=ON`) |
+| `name`         | TEXT    | NOT NULL                                | Model identifier (e.g. `gpt-4o-mini`) |
+| `config_json`  | TEXT    | nullable                                | Provider-specific JSON blob           |
+| **Unique key** | (`provider_id`, `name`)                         | Prevents duplicates                   |
 
-### 4.8 `tasks`
+### 4.9 `tasks`
 
-| Column         | Type      | Constraints | Description |
-| -------------- | --------- | ----------- | ----------- |
-| `task_id`      | TEXT      | **PK**      | Unique task identifier |
-| `task_type`    | TEXT      | NOT NULL    | Task category (newsletter, podcast, etc.) |
-| `status`       | TEXT      | NOT NULL    | processing|completed|failed |
-| `config_json`  | TEXT      | NOT NULL    | Input parameters as JSON |
-| `start_time`   | TIMESTAMP | NOT NULL    | Start timestamp |
-| `end_time`     | TIMESTAMP | nullable    | End timestamp |
-| `error`        | TEXT      | nullable    | Error message if failed |
-| `result_json`  | TEXT      | nullable    | Result payload |
-| `progress`     | DOUBLE PRECISION | DEFAULT 0 | Percentage complete |
-| `current_step` | TEXT      | nullable    | Step name |
-| `message`      | TEXT      | nullable    | Human-readable info |
+| Column         | Type    | Constraints          | Description                                     |
+| -------------- | ------- | -------------------- | ----------------------------------------------- |
+| `task_id`      | TEXT    | **PK**               | Unique task identifier                          |
+| `task_type`    | TEXT    | NOT NULL             | Task category (newsletter, podcast, etc.)       |
+| `status`       | TEXT    | NOT NULL             | processing|completed|failed                       |
+| `config_json`  | TEXT    | NOT NULL             | Input parameters as JSON                        |
+| `start_time`   | TEXT    | NOT NULL             | Start timestamp (ISO8601 string)                |
+| `end_time`     | TEXT    | nullable             | End timestamp (ISO8601 string)                  |
+| `error`        | TEXT    | nullable             | Error message if failed                         |
+| `result_json`  | TEXT    | nullable             | Result payload                                  |
+| `progress`     | REAL    | DEFAULT 0            | Percentage complete (SQLite uses REAL for float)  |
+| `current_step` | TEXT    | nullable             | Step name                                       |
+| `message`      | TEXT    | nullable             | Human-readable info                             |
 
 ---
 
@@ -182,12 +203,14 @@ WHERE p.name = 'openai';
 
 ## 6. Performance & Indexing Notes
 
-* Primary keys automatically create B-tree indexes in PostgreSQL.
-* Full-text search vectors are indexed with `GIN`.
-* The composite `UNIQUE(provider_id, name)` on `models` also yields an index.
-* Add B-tree indexes on `date` or `score` if query latency grows:
+* In SQLite, `INTEGER PRIMARY KEY` columns are automatically indexed (essentially becoming an alias for the `rowid`).
+* The `UNIQUE` constraint on `papers.url` and `model_providers.name`, and the composite unique key on `models(provider_id, name)` also create implicit indexes.
+* **Full-Text Search**: The `papers_fts` FTS5 virtual table has its own specialized indexing optimized for text searches.
+* **Vector Similarity Search**: The `papers_vss` virtual table (from `sqlite-vec`) uses specialized indexing (e.g., IVF_PQ) for efficient nearest neighbor searches on embeddings.
+* Manual `CREATE INDEX` statements can be added for other frequently queried columns if performance analysis indicates a need, similar to PostgreSQL:
 
 ```sql
-CREATE INDEX idx_papers_date ON papers(date);
-CREATE INDEX idx_papers_score ON papers(score DESC);
+CREATE INDEX IF NOT EXISTS idx_papers_date ON papers(date);
+CREATE INDEX IF NOT EXISTS idx_papers_score ON papers(score DESC);
+-- etc.
 ```

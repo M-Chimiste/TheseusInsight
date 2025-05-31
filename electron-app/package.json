@@ -67,7 +67,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "category": "public.app-category.productivity",
-      "identity": "Developer ID Application: Christian Merrill (4H8Z97B24M)",
+      "identity": "Christian Merrill (4H8Z97B24M)",
       "target": [
         {
           "target": "dmg",

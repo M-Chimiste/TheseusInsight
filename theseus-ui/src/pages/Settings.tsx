@@ -35,6 +35,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import taxonomy from '../arxiv_taxonomy.json';
+import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -92,12 +93,20 @@ const Settings: React.FC = () => {
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
-  const [importProgress, setImportProgress] = useState<number>(0);
-  const [importStatus, setImportStatus] = useState<string>('');
-  const [isImporting, setIsImporting] = useState<boolean>(false);
-  const [exportProgress, setExportProgress] = useState<number>(0);
-  const [exportStatus, setExportStatus] = useState<string>('');
-  const [isExporting, setIsExporting] = useState<boolean>(false);
+  
+  // Use the database task state hook for persistent state management
+  const {
+    taskState: dbTaskState,
+    setExportTaskId,
+    setImportTaskId,
+    updateExportProgress,
+    updateImportProgress,
+    setExportError,
+    setImportError,
+    clearExportTask,
+    clearImportTask,
+    isCheckingForActiveTasks: isCheckingDbTasks
+  } = useDatabaseTaskState();
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -192,27 +201,33 @@ const Settings: React.FC = () => {
   const exportDatabaseMutation = useMutation({
     mutationFn: () => settingsApi.startExportDatabase(),
     onMutate: () => {
-      setIsExporting(true);
-      setExportProgress(0);
+      // Clear any previous errors
+      setExportError(null);
     },
     onSuccess: (response) => {
       const taskId = response.data.task_id;
-      setExportStatus('Starting export...');
+      setExportTaskId(taskId);
 
       const ws = new WebSocket(`ws://localhost:8000/ws/database-export/${taskId}`);
 
       ws.onmessage = (event) => {
         const status = JSON.parse(event.data);
-        setExportProgress(status.progress || 0);
-        setExportStatus(status.message || 'Exporting...');
+        // Ensure export task progress stays in 0-90% range to leave room for download progress
+        const taskProgress = Math.min(status.progress || 0, 90);
+        updateExportProgress(taskProgress, status.message || 'Creating export archive...');
 
         if (status.overallStatus === 'completed') {
           ws.close();
+          updateExportProgress(90, 'Downloading export file...');
           settingsApi
-            .downloadExportDatabase(taskId, (p) => setExportProgress(p))
+            .downloadExportDatabase(taskId, (downloadProgress) => {
+              // Map download progress to 90-100% range to show download progress
+              const mappedProgress = 90 + (downloadProgress * 0.1);
+              updateExportProgress(Math.min(mappedProgress, 100), 'Downloading export file...');
+            })
             .then((downloadResponse) => {
               try {
-                setExportProgress(100);
+                updateExportProgress(100, 'Export completed successfully');
                 const blob = new Blob([downloadResponse.data], {
                   type: downloadResponse.headers['content-type'] || 'application/gzip',
                 });
@@ -236,76 +251,75 @@ const Settings: React.FC = () => {
                   window.URL.revokeObjectURL(url);
                 }, 100);
                 setSuccess(`Database exported successfully (${(blob.size / 1024 / 1024).toFixed(1)} MB)`);
+                // Clear the export task after successful completion
+                setTimeout(() => clearExportTask(), 3000);
               } catch (err) {
                 console.error('Export download error:', err);
-                setError(`Failed to download export file: ${err instanceof Error ? err.message : 'Unknown error'}`);
-              } finally {
-                setIsExporting(false);
+                setExportError(`Failed to download export file: ${err instanceof Error ? err.message : 'Unknown error'}`);
               }
             })
             .catch((err) => {
-              setError(err.message || 'Failed to download export');
-              setIsExporting(false);
+              setExportError(err.message || 'Failed to download export');
             });
         } else if (status.overallStatus === 'failed') {
-          setError(status.error || 'Database export failed');
-          setIsExporting(false);
-
+          setExportError(status.error || 'Database export failed');
         }
       };
 
       ws.onerror = () => {
-        setError('Connection error during export');
-        setIsExporting(false);
+        setExportError('Connection error during export');
       };
     },
-    onError: (error: any) => setError(error.message || 'Failed to start database export'),
+    onError: (error: any) => setExportError(error.message || 'Failed to start database export'),
   });
 
   const importDatabaseMutation = useMutation({
     mutationFn: ({ file, mode }: { file: File; mode: 'merge' | 'overwrite' }) => 
       settingsApi.importDatabase(file, mode),
+    onMutate: () => {
+      // Clear any previous errors
+      setImportError(null);
+    },
     onSuccess: (response) => {
       const taskId = response.data.task_id;
-      setIsImporting(true);
-      setImportProgress(0);
-      setImportStatus('Starting import...');
+      setImportTaskId(taskId);
       
       // Connect to WebSocket for progress updates
       const ws = new WebSocket(`ws://localhost:8000/ws/database-import/${taskId}`);
       
       ws.onmessage = (event) => {
         const status = JSON.parse(event.data);
-        setImportProgress(status.progress || 0);
-        setImportStatus(status.message || 'Importing...');
+        updateImportProgress(status.progress || 0, status.message || 'Importing...');
         
         if (status.overallStatus === 'completed') {
           setSuccess('Database imported successfully. Please restart the application.');
-          setIsImporting(false);
           setSelectedImportFile(null);
           // Refresh all queries since database data has changed
           queryClient.invalidateQueries();
+          // Clear the import task after successful completion
+          setTimeout(() => clearImportTask(), 3000);
         } else if (status.overallStatus === 'failed') {
-          setError(status.error || 'Database import failed');
-          setIsImporting(false);
+          setImportError(status.error || 'Database import failed');
         }
       };
       
       ws.onerror = () => {
-        setError('Connection error during import');
-        setIsImporting(false);
+        setImportError('Connection error during import');
       };
       
       ws.onclose = () => {
-        if (isImporting) {
+        if (dbTaskState.isImporting) {
           // Connection closed but import might still be running
           setTimeout(() => {
-            setIsImporting(false);
+            // Only clear if still importing after 5 seconds
+            if (dbTaskState.isImporting) {
+              clearImportTask();
+            }
           }, 5000);
         }
       };
     },
-    onError: (error: any) => setError(error.message || 'Failed to start database import'),
+    onError: (error: any) => setImportError(error.message || 'Failed to start database import'),
   });
 
   const [showCreds, setShowCreds] = useState<Record<string, boolean>>({});
@@ -378,10 +392,15 @@ const Settings: React.FC = () => {
     }
   };
 
-  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders) {
+  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders || isCheckingDbTasks) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
+        {isCheckingDbTasks && (
+          <Typography variant="body2" sx={{ ml: 2 }}>
+            Checking for active database tasks...
+          </Typography>
+        )}
       </Box>
     );
   }
@@ -559,6 +578,18 @@ const Settings: React.FC = () => {
       {appPasswordFailed && (
         <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setAppPasswordFailed(false)}>
           Gmail authentication failed. Your application password didn't work. Please enter your credentials again.
+        </Alert>
+      )}
+
+      {dbTaskState.exportError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setExportError(null)}>
+          Export Error: {dbTaskState.exportError}
+        </Alert>
+      )}
+
+      {dbTaskState.importError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setImportError(null)}>
+          Import Error: {dbTaskState.importError}
         </Alert>
       )}
 
@@ -855,29 +886,39 @@ const Settings: React.FC = () => {
                 variant="contained"
                 color="primary"
                 onClick={() => exportDatabaseMutation.mutate()}
-                disabled={isExporting || exportDatabaseMutation.isPending}
-                startIcon={isExporting ? <CircularProgress size={20} /> : undefined}
+                disabled={dbTaskState.isExporting || exportDatabaseMutation.isPending}
+                startIcon={dbTaskState.isExporting ? <CircularProgress size={20} /> : undefined}
                 sx={{ mr: 2 }}
               >
-                {isExporting ? 'Exporting...' : 'Export Database'}
+                {dbTaskState.isExporting ? 'Exporting...' : 'Export Database'}
               </Button>
-              {isExporting && (
+              {dbTaskState.isExporting && (
+                <Button
+                  variant="outlined"
+                  color="secondary"
+                  onClick={() => clearExportTask()}
+                  sx={{ mr: 2 }}
+                >
+                  Clear Export Task
+                </Button>
+              )}
+              {dbTaskState.isExporting && (
 
                 <Box sx={{ mt: 2 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Box sx={{ width: '100%' }}>
                       <LinearProgress
                         variant="determinate"
-                        value={exportProgress}
+                        value={dbTaskState.exportProgress}
                         sx={{ height: 8, borderRadius: 4 }}
                       />
                     </Box>
                     <Typography variant="body2" color="text.secondary">
-                      {exportProgress}%
+                      {Math.round(dbTaskState.exportProgress)}%
                     </Typography>
                   </Box>
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    {exportStatus || 'This may take a few minutes for large databases...'}
+                    {dbTaskState.exportStatus || 'This may take a few minutes for large databases...'}
                   </Typography>
                 </Box>
               )}
@@ -954,7 +995,7 @@ const Settings: React.FC = () => {
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                     Import mode: <strong>{importMode === 'merge' ? 'Merge (Safe)' : 'Complete Overwrite (Destructive)'}</strong>
                   </Typography>
-                  {!isImporting ? (
+                  {!dbTaskState.isImporting ? (
                     <Button
                       variant="contained"
                       color={importMode === 'overwrite' ? 'error' : 'primary'}
@@ -967,20 +1008,32 @@ const Settings: React.FC = () => {
                       }
                     </Button>
                   ) : (
+                    <Box sx={{ mb: 2 }}>
+                      <Button
+                        variant="outlined"
+                        color="secondary"
+                        onClick={() => clearImportTask()}
+                        sx={{ mr: 2 }}
+                      >
+                        Clear Import Task
+                      </Button>
+                    </Box>
+                  )}
+                  {dbTaskState.isImporting && (
                     <Box sx={{ mt: 2 }}>
                       <Typography variant="body2" sx={{ mb: 1 }}>
-                        {importStatus}
+                        {dbTaskState.importStatus}
                       </Typography>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Box sx={{ width: '100%' }}>
                           <LinearProgress 
                             variant="determinate" 
-                            value={importProgress} 
+                            value={dbTaskState.importProgress} 
                             sx={{ height: 8, borderRadius: 4 }}
                           />
                         </Box>
                         <Typography variant="body2" color="text.secondary">
-                          {Math.round(importProgress)}%
+                          {Math.round(dbTaskState.importProgress)}%
                         </Typography>
                       </Box>
                       <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>

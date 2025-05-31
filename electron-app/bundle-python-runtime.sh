@@ -17,17 +17,8 @@ python3 -m venv "$RUNTIME_DIR"
 # Upgrade pip inside the venv
 "$RUNTIME_DIR/bin/pip" install --upgrade pip >/dev/null
 
-# Required packages
-packages=(
-    "fastapi>=0.100.0"
-    "uvicorn[standard]>=0.20.0"
-    "sqlite-vec"
-    "pydantic>=2.0.0"
-    "python-multipart>=0.0.6"
-    "jinja2>=3.1.0"
-)
-
-# Install packages into the venv
-"$RUNTIME_DIR/bin/pip" install "${packages[@]}" >/dev/null
+# Install all requirements from requirements.txt
+echo "Installing dependencies from requirements.txt..."
+"$RUNTIME_DIR/bin/pip" install -r ../requirements.txt >/dev/null
 
 echo "✅ Python runtime bundled in $RUNTIME_DIR"

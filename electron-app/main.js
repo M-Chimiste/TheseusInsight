@@ -167,7 +167,7 @@ function createWindow () {
               <strong>💡 Troubleshooting:</strong><br>
               1. Wait 30 seconds and try restarting the app<br>
               2. Check if all Python dependencies are installed<br>
-              3. Ensure PostgreSQL is accessible<br>
+              3. Ensure SQLite database is accessible<br>
               4. Contact support if the issue persists
             </p>
           </div>
@@ -283,7 +283,7 @@ function createWindow () {
                 <ol style="line-height: 1.6;">
                   <li><strong>Restart the application</strong> - Close and reopen Theseus Insight</li>
                   <li><strong>Check dependencies</strong> - Ensure Python and required packages are installed</li>
-                  <li><strong>Check PostgreSQL</strong> - Verify database is accessible</li>
+                  <li><strong>Check database</strong> - Verify SQLite database is accessible</li>
                   <li><strong>Run debug script</strong> - Use the debug-app.sh script for detailed diagnostics</li>
                 </ol>
                 
@@ -411,11 +411,42 @@ function startBackend() {
     pythonPathParts.push(process.env.PYTHONPATH);
   }
 
+  // Set database path - use user data directory for writable database
+  let databasePath;
+  if (isPackaged) {
+    // In packaged app, use user data directory for writable database
+    const userDataDir = app.getPath('userData');
+    const dbDir = path.join(userDataDir, 'data');
+    
+    // Ensure database directory exists
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    
+    databasePath = path.join(dbDir, 'theseus.db');
+    
+    // Copy initial database if it doesn't exist
+    const sourceDatabasePath = path.join(projectRoot, 'data', 'theseus.db');
+    if (!fs.existsSync(databasePath) && fs.existsSync(sourceDatabasePath)) {
+      try {
+        fs.copyFileSync(sourceDatabasePath, databasePath);
+        console.log(`Copied initial database from ${sourceDatabasePath} to ${databasePath}`);
+      } catch (error) {
+        console.warn(`Could not copy initial database: ${error.message}`);
+      }
+    }
+  } else {
+    // In development, use the project data directory
+    databasePath = path.join(projectRoot, 'data', 'theseus.db');
+  }
+  
+  console.log(`Database path: ${databasePath}`);
+
   pythonProcess = spawn(pythonCmd, startupArgs, {
     cwd: projectRoot,  // Set working directory to project root
     env: {
       ...process.env,
-      DATABASE_URL: path.join(projectRoot, 'data', 'theseus.db'),
+      DATABASE_URL: databasePath,
       ELECTRON_IS_PACKAGED: isPackaged ? 'true' : 'false',
       ELECTRON_RESOURCES_PATH: isPackaged ? process.resourcesPath : '',
       PATH: process.env.PATH,
@@ -438,7 +469,13 @@ function startBackend() {
 
   pythonProcess.stdout.on('data', (data) => {
     try {
-      console.log(`backend: ${data}`);
+      const output = data.toString();
+      console.log(`[BACKEND STDOUT]: ${output.trim()}`);
+      
+      // Check for database-related errors in stdout
+      if (output.toLowerCase().includes('database') || output.toLowerCase().includes('sqlite')) {
+        console.log(`[DATABASE LOG]: ${output.trim()}`);
+      }
     } catch (error) {
       // Ignore EPIPE errors when logging
       if (error.code !== 'EPIPE') {
@@ -449,7 +486,16 @@ function startBackend() {
 
   pythonProcess.stderr.on('data', (data) => {
     try {
-      console.error(`backend err: ${data}`);
+      const output = data.toString();
+      console.error(`[BACKEND STDERR]: ${output.trim()}`);
+      
+      // Check for critical database errors
+      if (output.toLowerCase().includes('database') || 
+          output.toLowerCase().includes('sqlite') || 
+          output.toLowerCase().includes('no such table') ||
+          output.toLowerCase().includes('permission denied')) {
+        console.error(`[DATABASE ERROR]: ${output.trim()}`);
+      }
     } catch (error) {
       // Ignore EPIPE errors when logging
       if (error.code !== 'EPIPE') {
@@ -528,12 +574,6 @@ function waitForServer(url, maxAttempts = 20, delay = 2000) {
 
 async function startServices() {
   try {
-    // Start PostgreSQL
-    startPostgres();
-    
-    // Wait a moment for PostgreSQL to fully start
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
     // Start the backend
     startBackend();
     

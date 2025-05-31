@@ -153,6 +153,13 @@ class PaperDatabase:
             count = cursor.fetchone()[0]
             return count > 0
 
+    def paper_exists_by_title(self, title: str) -> bool:
+        """Check if a paper with the given title already exists in the database."""
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) FROM papers WHERE title = ?', (title,))
+            count = cursor.fetchone()[0]
+            return count > 0
+
     def get_paper_by_url(self, url: str) -> dict | None:
         """Get paper details by URL if it exists."""
         with self.get_cursor() as cursor:

@@ -109,9 +109,23 @@ class DatabaseImporter:
             papers_data = json.load(f)
         
         stats = {"total": len(papers_data), "imported": 0, "skipped": 0, "errors": 0}
-        
+
+        seen_titles = set()
+        seen_urls = set()
+
         for i, paper_data in enumerate(papers_data):
             try:
+                # Skip if paper exists by title or URL in DB or has appeared earlier in this import
+                if skip_duplicates:
+                    if (
+                        self.db.paper_exists_by_url(paper_data["url"]) or
+                        self.db.paper_exists_by_title(paper_data["title"]) or
+                        paper_data["url"] in seen_urls or
+                        paper_data["title"] in seen_titles
+                    ):
+                        stats["skipped"] += 1
+                        continue
+
                 # Create Paper object
                 paper = Paper(
                     title=paper_data["title"],
@@ -127,6 +141,9 @@ class DatabaseImporter:
                     embedding=paper_data.get("embedding")
                 )
                 
+                seen_titles.add(paper_data["title"])
+                seen_urls.add(paper_data["url"])
+
                 # Insert paper (with duplicate handling)
                 was_inserted = self.db.insert_paper(paper, skip_duplicates=skip_duplicates)
                 

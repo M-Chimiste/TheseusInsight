@@ -23,7 +23,20 @@ INITIAL_PROVIDERS = [
 class PaperDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self.sqlite_vec_available = self._check_sqlite_vec()
         self._initialize_db()
+
+    def _check_sqlite_vec(self) -> bool:
+        """Return True if the sqlite_vec extension can be loaded."""
+        extension_path = os.getenv("SQLITE_VEC_PATH", "sqlite_vec")
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.enable_load_extension(True)
+            conn.load_extension(extension_path)
+            conn.close()
+            return True
+        except Exception:
+            return False
 
     @contextmanager
     def get_cursor(self, register_vectors=True):
@@ -31,12 +44,13 @@ class PaperDatabase:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            if register_vectors:
+            if register_vectors and self.sqlite_vec_available:
                 try:
                     conn.enable_load_extension(True)
                     conn.load_extension("sqlite_vec")
                 except Exception:
-                    pass
+                    # If loading fails mid-run, disable future attempts
+                    self.sqlite_vec_available = False
             cursor = conn.cursor()
             yield cursor
             conn.commit()
@@ -1326,59 +1340,89 @@ class PaperDatabase:
                                  similarity_threshold: float = 0.3):
         """Fallback to simple semantic search if hybrid search fails."""
         try:
-            with self.get_cursor() as cursor:
-                # Build the WHERE clause for filtering
-                where_conditions = ["embedding IS NOT NULL"]
-                params = []
+            # Build the WHERE clause for filtering
+            where_conditions = ["embedding IS NOT NULL"]
+            params = []
+
+            if min_score is not None:
+                where_conditions.append("score >= ?")
+                params.append(min_score)
+
+            if max_score is not None:
+                where_conditions.append("score <= ?")
+                params.append(max_score)
+
+            if from_date:
+                where_conditions.append("date >= ?")
+                params.append(from_date)
+
+            if to_date:
+                where_conditions.append("date <= ?")
+                params.append(to_date)
                 
-                if min_score is not None:
-                    where_conditions.append("score >= ?")
-                    params.append(min_score)
-                
-                if max_score is not None:
-                    where_conditions.append("score <= ?")
-                    params.append(max_score)
-                
-                if from_date:
-                    where_conditions.append("date >= ?")
-                    params.append(from_date)
-                
-                if to_date:
-                    where_conditions.append("date <= ?")
-                    params.append(to_date)
-                
-                where_conditions.append("(1 - (embedding <=> ?::vector)) >= ?")
-                params.extend([query_embedding, similarity_threshold])
-                
-                where_clause = " AND ".join(where_conditions)
-                
-                # Simple semantic search query
-                count_query = f"SELECT COUNT(*) FROM papers WHERE {where_clause}"
-                cursor.execute(count_query, params)
-                total_items = cursor.fetchone()[0]
-                
-                # Calculate pagination
+            if self.sqlite_vec_available:
+                with self.get_cursor() as cursor:
+                    where_conditions.append("(1 - (embedding <=> ?::vector)) >= ?")
+                    params.extend([query_embedding, similarity_threshold])
+
+                    where_clause = " AND ".join(where_conditions)
+
+                    count_query = f"SELECT COUNT(*) FROM papers WHERE {where_clause}"
+                    cursor.execute(count_query, params)
+                    total_items = cursor.fetchone()[0]
+
+                    total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 0
+                    offset = (page - 1) * page_size
+                    has_next_page = page < total_pages
+
+                    semantic_query = f"""
+                        SELECT
+                            id, title, abstract, date, date_run, score, rationale, related,
+                            cosine_similarity, url, embedding_model, embedding,
+                            (1 - (embedding <=> ?::vector)) as semantic_score,
+                            0.0 as keyword_score,
+                            (1 - (embedding <=> ?::vector)) as hybrid_score
+                        FROM papers
+                        WHERE {where_clause}
+                        ORDER BY hybrid_score DESC
+                        LIMIT ? OFFSET ?
+
+                    """
+
+                    cursor.execute(semantic_query, [query_embedding, query_embedding] + params + [page_size, offset])
+                    rows = cursor.fetchall()
+            else:
+                with self.get_cursor(register_vectors=False) as cursor:
+                    where_clause = " AND ".join(where_conditions)
+                    query = f"""
+                        SELECT id, title, abstract, date, date_run, score, rationale, related,
+                               cosine_similarity, url, embedding_model, embedding
+                        FROM papers
+                        WHERE {where_clause}
+                    """
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+
+                query_vec = np.array(query_embedding, dtype=float)
+                results = []
+                for row in rows:
+                    try:
+                        emb_list = json.loads(row[11]) if row[11] is not None else None
+                    except Exception:
+                        continue
+                    if emb_list is None:
+                        continue
+                    score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+                    if score >= similarity_threshold:
+                        results.append((score, row))
+
+                results.sort(key=lambda x: x[0], reverse=True)
+                total_items = len(results)
                 total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 0
                 offset = (page - 1) * page_size
                 has_next_page = page < total_pages
-                
-                semantic_query = f"""
-                    SELECT 
-                        id, title, abstract, date, date_run, score, rationale, related, 
-                        cosine_similarity, url, embedding_model, embedding,
-                        (1 - (embedding <=> ?::vector)) as semantic_score,
-                        0.0 as keyword_score,
-                        (1 - (embedding <=> ?::vector)) as hybrid_score
-                    FROM papers 
-                    WHERE {where_clause}
-                    ORDER BY hybrid_score DESC
-                    LIMIT ? OFFSET ?
+                rows = [r[1] for r in results[offset:offset + page_size]]
 
-                """
-                
-                cursor.execute(semantic_query, [query_embedding, query_embedding] + params + [page_size, offset])
-                rows = cursor.fetchall()
-                
                 # Convert results
                 items = []
                 for row in rows:

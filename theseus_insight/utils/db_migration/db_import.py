@@ -25,14 +25,20 @@ from ...data_model.papers import Paper, Podcast, Newsletter
 class DatabaseImporter:
     """Handles importing database contents from JSON files."""
     
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, embedding_dimension: Optional[int] = None):
         """
         Initialize the importer.
         
         Args:
-            db_path: Database connection string
+            db_path: Database connection string or file path
+            embedding_dimension: Optional embedding dimension for PaperDatabase.
+                                 If None, PaperDatabase default will be used.
         """
-        self.db = PaperDatabase(db_path)
+        if embedding_dimension is not None:
+            self.db = PaperDatabase(db_path, embedding_dimension=embedding_dimension)
+        else:
+            # Use default dimension from PaperDatabase (which will warn if it's the default 1536)
+            self.db = PaperDatabase(db_path)
         
     def extract_archive(self, archive_path: str, extract_dir: str) -> str:
         """
@@ -400,36 +406,79 @@ class DatabaseImporter:
         """
         print("WARNING: Clearing all data from database tables...")
         
-        # Tables to clear in order (respecting potential foreign key constraints)
-        tables_to_clear = ['logs', 'tasks', 'newsletters', 'podcasts', 'papers']
-        deletion_counts = {}
-        total_tables = len(tables_to_clear)
+        # Define tables and whether they have an auto-increment ID needing sqlite_sequence reset
+        # tasks table has task_id TEXT PRIMARY KEY, so no sqlite_sequence reset.
+        # papers_fts and papers_vss are virtual tables, no sqlite_sequence.
+        tables_info = {
+            'logs': {'autoincrement': True},
+            'tasks': {'autoincrement': False},
+            'newsletters': {'autoincrement': True},
+            'podcasts': {'autoincrement': True},
+            'papers_vss': {'autoincrement': False}, # Must be cleared before papers if there's a link
+            'papers': {'autoincrement': True},      # papers_fts is cleared by triggers on 'papers'
+        }
+        # Order matters for foreign keys, though with current schema, it's mostly about papers_vss then papers.
+        # Clearing papers_fts explicitly isn't strictly needed if triggers are robust for DELETE.
+        # For safety, we can add it. Virtual FTS tables don't respond to COUNT(*) the same way.
+        # We will clear papers_fts by deleting its content if possible or just rely on triggers.
+        # Standard tables will be listed first.
+
+        ordered_tables_to_clear = ['logs', 'tasks', 'newsletters', 'podcasts', 'papers_vss', 'papers']
+        # papers_fts will be handled by triggers on 'papers' table.
+
+        deletion_counts = {table: 0 for table in ordered_tables_to_clear}
+        total_tables_processed = len(ordered_tables_to_clear)
         
         with self.db.get_cursor() as cursor:
-            for i, table in enumerate(tables_to_clear):
+            for i, table_name in enumerate(ordered_tables_to_clear):
                 if progress_callback:
-                    progress_callback(i, total_tables, f"Clearing {table} table...")
+                    progress_callback(i, total_tables_processed, f"Clearing {table_name} table...")
                 
                 try:
-                    # Get count before deletion
-                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                    count_before = cursor.fetchone()[0]
+                    # For virtual tables like VSS, COUNT(*) might not be efficient or standard.
+                    # We'll just delete. For regular tables, we can count.
+                    count_before = 0
+                    if table_name not in ['papers_vss', 'papers_fts']: # Assuming papers_fts is not in this list
+                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                        row = cursor.fetchone()
+                        if row:
+                             count_before = row[0]
                     
-                    # Truncate the table (faster than DELETE and resets auto-increment)
-                    cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
-                    deletion_counts[table] = count_before
+                    cursor.execute(f"DELETE FROM {table_name};")
+                    deletion_counts[table_name] = count_before # This count is for regular tables
                     
-                    print(f"Cleared {count_before} records from {table} table")
-                    
+                    if table_name not in ['papers_vss', 'papers_fts'] and count_before > 0:
+                         print(f"Cleared {count_before} records from {table_name} table")
+                    elif table_name in ['papers_vss', 'papers_fts']:
+                         print(f"Cleared data from {table_name} table (record count not pre-calculated for virtual tables).")
+                    else: # No records or regular table
+                         print(f"No records to clear or already cleared for {table_name} table.")
+
+                    # Reset autoincrement counter if applicable
+                    if tables_info.get(table_name, {}).get('autoincrement'):
+                        # This check is important as sqlite_sequence might not exist if db is fresh
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sqlite_sequence';")
+                        if cursor.fetchone():
+                             cursor.execute(f"DELETE FROM sqlite_sequence WHERE name=?;", (table_name,))
+                             print(f"Reset autoincrement counter for {table_name}")
+                        else:
+                             print(f"Skipping sqlite_sequence reset for {table_name} (sqlite_sequence table does not exist).")
+
+                except sqlite3.OperationalError as e:
+                    # This can happen if a table doesn't exist (e.g., papers_vss if extension failed)
+                    # Or if sqlite_sequence doesn't exist yet on a very fresh DB.
+                    print(f"Warning: Could not clear table {table_name} or reset its sequence. Error: {e}")
+                    deletion_counts[table_name] = 0 # Error, so 0 deleted by this attempt.
                 except Exception as e:
-                    print(f"Error clearing table {table}: {e}")
-                    deletion_counts[table] = 0
+                    print(f"Error clearing table {table_name}: {e}")
+                    deletion_counts[table_name] = 0
                 
                 if progress_callback:
-                    progress_callback(i + 1, total_tables, f"Cleared {table} table")
+                    progress_callback(i + 1, total_tables_processed, f"Processed {table_name} table")
         
-        total_deleted = sum(deletion_counts.values())
-        print(f"Total records cleared: {total_deleted}")
+        # Calculate total from actual counts for regular tables
+        total_deleted_sum = sum(v for k, v in deletion_counts.items() if k not in ['papers_vss', 'papers_fts'])
+        print(f"Total records cleared from standard tables: {total_deleted_sum}")
         
         if progress_callback:
             progress_callback(total_tables, total_tables, f"Database clearing complete. {total_deleted} records deleted.")

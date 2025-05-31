@@ -39,7 +39,7 @@ echo ""
 packages=(
     "fastapi>=0.100.0"
     "uvicorn[standard]>=0.20.0"
-    "psycopg2-binary>=2.9.0"
+    "sqlite-vec"  # Added
     "sqlalchemy>=2.0.0"
     "pydantic>=2.0.0"
     "python-multipart>=0.0.6"
@@ -92,12 +92,21 @@ echo "🧪 Testing bundled installation..."
 DEPS_ABS_PATH="$(pwd)/$DEPS_DIR"
 
 # Test each critical package
-critical_packages=("fastapi" "uvicorn" "psycopg2" "sqlalchemy" "pydantic")
+critical_packages=("fastapi" "uvicorn" "sqlite3" "sqlite_vec" "sqlalchemy" "pydantic") # Modified
 test_failed=false
 
 for package in "${critical_packages[@]}"; do
     echo "   🔍 Testing $package..."
-    if env PYTHONPATH="$DEPS_ABS_PATH" python3 -c "import $package; print('Import successful')" >/dev/null 2>&1; then
+    # For sqlite3, it's a built-in module, so version check is different or not needed in the same way
+    if [ "$package" == "sqlite3" ]; then
+        if env PYTHONPATH="$DEPS_ABS_PATH" python3 -c "import sqlite3; print(sqlite3.sqlite_version)" >/dev/null 2>&1; then
+            version=$(env PYTHONPATH="$DEPS_ABS_PATH" python3 -c "import sqlite3; print(sqlite3.sqlite_version)")
+            echo "   ✅ sqlite3 (runtime v$version) working in bundle"
+        else
+            echo "   ❌ sqlite3 not working in bundle"
+            test_failed=true
+        fi
+    elif env PYTHONPATH="$DEPS_ABS_PATH" python3 -c "import $package; print('Import successful')" >/dev/null 2>&1; then
         # Get version info
         version=$(env PYTHONPATH="$DEPS_ABS_PATH" python3 -c "import $package; print(getattr($package, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
         echo "   ✅ $package v$version working in bundle"

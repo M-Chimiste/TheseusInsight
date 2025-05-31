@@ -96,8 +96,9 @@ def setup_environment():
     
     # Set environment variables
     os.environ['THESEUS_APP_ROOT'] = app_root
-    if not os.getenv('DATABASE_URL'):
-        os.environ['DATABASE_URL'] = 'postgresql://theseus:theseus@localhost:55432/theseusdb'
+    # DATABASE_URL is now expected to be set by the Electron main process (main.js)
+    # if not os.getenv('DATABASE_URL'):
+    #     os.environ['DATABASE_URL'] = 'postgresql://theseus:theseus@localhost:55432/theseusdb'
     
     return app_root
 
@@ -132,7 +133,8 @@ def install_required_packages():
     required_packages = [
         ('fastapi', 'fastapi'),
         ('uvicorn', 'uvicorn'),
-        ('psycopg2-binary', 'psycopg2'),
+        # ('psycopg2-binary', 'psycopg2'), # Removed
+        ('sqlite-vec', 'sqlite_vec'),   # Added, assuming 'sqlite_vec' is the import name
         ('sqlalchemy', 'sqlalchemy'),
         ('pydantic', 'pydantic'),
     ]

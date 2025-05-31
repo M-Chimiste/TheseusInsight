@@ -24,6 +24,7 @@ export interface UseDatabaseTaskStateReturn {
   setImportError: (error: string | null) => void;
   clearExportTask: () => void;
   clearImportTask: () => void;
+  clearAllTaskState: () => void;
   isCheckingForActiveTasks: boolean;
 }
 
@@ -337,6 +338,11 @@ export const useDatabaseTaskState = (): UseDatabaseTaskStateReturn => {
     }));
   }, []);
 
+  const clearAllTaskState = useCallback(() => {
+    clearTaskState();
+    setTaskState(DEFAULT_TASK_STATE);
+  }, []);
+
   return {
     taskState,
     setExportTaskId,
@@ -347,6 +353,7 @@ export const useDatabaseTaskState = (): UseDatabaseTaskStateReturn => {
     setImportError,
     clearExportTask,
     clearImportTask,
+    clearAllTaskState,
     isCheckingForActiveTasks,
   };
 }; 

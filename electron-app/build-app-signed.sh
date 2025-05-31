@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# Signed build script for Theseus Insight Electron App
-# Builds a macOS DMG with code signing for distribution.
+# Turnkey signed build script for Theseus Insight Electron App
+# Builds a macOS DMG with full Python runtime and code signing for distribution.
+# Creates a completely self-contained app that requires no Python installation.
 
 set -e
 
-echo "🔐 Starting Signed Build (Code Signing Enabled)..."
+echo "🔐 Starting Turnkey Signed Build (Full Python Runtime + Code Signing)..."
 
 # Check if we're in the correct directory
 if [ ! -f "package.json" ]; then
@@ -49,13 +50,19 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-# Bundle Python runtime with dependencies
-echo "🐍 Bundling Python runtime..."
+# Bundle complete Python runtime with dependencies
+echo "🐍 Bundling complete Python runtime..."
 if [ -f "./bundle-python-runtime.sh" ]; then
     ./bundle-python-runtime.sh
+    if [ ! -d "python_runtime" ]; then
+        echo "❌ Python runtime bundling failed"
+        exit 1
+    fi
+    echo "✅ Python runtime bundled successfully"
 else
-    echo "⚠️  bundle-python-runtime.sh not found, skipping runtime bundling"
-    echo "   The app will require a system Python installation"
+    echo "❌ bundle-python-runtime.sh not found"
+    echo "   This script is required for a turnkey DMG"
+    exit 1
 fi
 
 # Build the React frontend
@@ -91,7 +98,8 @@ npm run lint >/dev/null 2>&1 || true
 
 # Build the Electron app with signing
 echo "📱 Building and signing Electron app for $BUILD_ARCH..."
-CSC_IDENTITY_AUTO_DISCOVERY=false npm run build:mac-$BUILD_ARCH
+echo "⏱️  This may take 3-5 minutes due to Python runtime signing..."
+npm run build:mac-$BUILD_ARCH
 
 if [ $? -ne 0 ]; then
     echo "❌ Electron build/signing failed"
@@ -138,11 +146,21 @@ else
 fi
 
 # Check if we should notarize
+# Verify Python runtime was bundled
+PYTHON_RUNTIME_PATH="$BUILT_APP/Contents/Resources/app/python_runtime"
+if [ -d "$PYTHON_RUNTIME_PATH" ]; then
+    RUNTIME_SIZE=$(du -sh "$PYTHON_RUNTIME_PATH" | cut -f1)
+    echo "✅ Python runtime bundled ($RUNTIME_SIZE)"
+else
+    echo "❌ Warning: Python runtime not found in app bundle"
+fi
+
 echo ""
 echo "📋 Next steps for distribution:"
 echo "1. Test the signed app locally: open \"$BUILT_APP\""
-echo "2. For public distribution, consider notarization:"
+echo "2. 🎯 This is a TURNKEY DMG - no Python installation required"
+echo "3. For public distribution, consider notarization:"
 echo "   xcrun notarytool submit dist/*.dmg --keychain-profile \"AC_PASSWORD\""
-echo "3. After notarization: xcrun stapler staple dist/*.dmg"
+echo "4. After notarization: xcrun stapler staple dist/*.dmg"
 echo ""
-echo "🎉 Signed build complete!" 
+echo "🎉 Turnkey signed build complete!" 

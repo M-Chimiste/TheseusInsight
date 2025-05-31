@@ -22,8 +22,5 @@ echo "   psql: psql -h localhost -p 5433 -U theseus -d theseusdb"
 echo "   pgAdmin: Server: localhost:5433, User: theseus, DB: theseusdb"
 echo ""
 
-# Set environment variable to indicate external access is enabled
-export ALLOW_DB_CONNECTION=true
-
 # Start with both the main compose file and the external database override
 docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build "$@" 

@@ -110,7 +110,7 @@ class TaskHistoryEntry(BaseModel):
     error: str | None
 
 # Initialize database first
-DB_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
+DB_URL = os.getenv("DATABASE_URL", "data/theseus.db")
 db = PaperDatabase(DB_URL)
 
 # Lifespan context manager

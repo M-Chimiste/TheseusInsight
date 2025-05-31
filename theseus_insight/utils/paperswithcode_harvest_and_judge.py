@@ -926,7 +926,7 @@ def parse_args():
     parser.add_argument(
         "--db-url",
         default=os.getenv(
-            "DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"
+            "DATABASE_URL", "data/theseus.db"
         ),
         help="Database connection URL",
     )

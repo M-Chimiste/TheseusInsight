@@ -97,7 +97,7 @@ def setup_environment():
     # Set environment variables
     os.environ['THESEUS_APP_ROOT'] = app_root
     if not os.getenv('DATABASE_URL'):
-        os.environ['DATABASE_URL'] = 'postgresql://theseus:theseus@localhost:55432/theseusdb'
+        os.environ['DATABASE_URL'] = os.path.join(app_root, 'data', 'theseus.db')
     
     return app_root
 
@@ -132,9 +132,8 @@ def install_required_packages():
     required_packages = [
         ('fastapi', 'fastapi'),
         ('uvicorn', 'uvicorn'),
-        ('psycopg2-binary', 'psycopg2'),
-        ('sqlalchemy', 'sqlalchemy'),
         ('pydantic', 'pydantic'),
+        ('sqlite-vec', 'sqlite_vec'),
     ]
     
     failed_packages = []

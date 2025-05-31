@@ -46,7 +46,6 @@ echo "🔧 Starting with external storage configuration..."
 
 # Export the path for docker-compose
 export EXTERNAL_DATA_PATH
-export ALLOW_DB_CONNECTION=true
 
 # Start with both the main compose file and the external storage override
 docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up --build "${@:2}" 

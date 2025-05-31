@@ -24,7 +24,6 @@ ENV PYTHONUNBUFFERED 1
 ENV POETRY_NO_INTERACTION 1
 ENV RUNNING_IN_DOCKER true
 ENV OLLAMA_PASSTHROUGH true
-ENV ALLOW_DB_CONNECTION false
 
 # Install system dependencies
 # ffmpeg is optional, include if your backend directly processes audio/video with it

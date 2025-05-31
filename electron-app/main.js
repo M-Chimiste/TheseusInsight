@@ -661,36 +661,33 @@ function startBackend() {
   
   console.log(`Project root: ${projectRoot}`);
   console.log(`Is packaged: ${isPackaged}`);
-  
-  // Try to detect conda environment
-  let pythonCmd = 'python';
-  let condaEnvPath = null;
-  
-  // Common conda installation paths
-  const condaPaths = [
-    '/Users/c/miniforge3/envs/theseus/bin/python',
-    '/Users/c/anaconda3/envs/theseus/bin/python',
-    '/Users/c/miniconda3/envs/theseus/bin/python',
-    '/opt/homebrew/anaconda3/envs/theseus/bin/python'
-  ];
-  
-  // Check if CONDA_PREFIX is set (user has activated environment)
-  if (process.env.CONDA_PREFIX && fs.existsSync(path.join(process.env.CONDA_PREFIX, 'bin', 'python'))) {
-    condaEnvPath = path.join(process.env.CONDA_PREFIX, 'bin', 'python');
-    pythonCmd = condaEnvPath;
-  } else {
-    // Try common paths
-    for (const condaPath of condaPaths) {
-      if (fs.existsSync(condaPath)) {
-        condaEnvPath = condaPath;
-        pythonCmd = condaPath;
-        break;
+
+  function findPythonCommand() {
+    try {
+      spawnSync('python3', ['--version']);
+      return 'python3';
+    } catch (e) {
+      try {
+        spawnSync('python', ['--version']);
+        return 'python';
+      } catch (e2) {
+        console.error('Neither python3 nor python found in PATH.');
+        return null; // Or handle error appropriately
       }
     }
   }
-  
+
+  let pythonCmd = findPythonCommand();
+
+  if (!pythonCmd) {
+    console.error('No Python interpreter found. The backend cannot be started.');
+    // Optionally, you could show an error dialog to the user or quit the app
+    // For now, just log the error and the backend won't start.
+    return;
+  }
+
   console.log(`Using Python interpreter: ${pythonCmd}`);
-  
+
   // Choose the startup method based on packaging
   let startupArgs;
   if (isPackaged) {
@@ -725,6 +722,12 @@ function startBackend() {
   
   console.log(`Startup args: ${startupArgs.join(' ')}`);
   
+  const pythonDepsPath = path.join(projectRoot, 'python_deps');
+  const pythonPathParts = [projectRoot, pythonDepsPath];
+  if (process.env.PYTHONPATH) {
+    pythonPathParts.push(process.env.PYTHONPATH);
+  }
+
   pythonProcess = spawn(pythonCmd, startupArgs, {
     cwd: projectRoot,  // Set working directory to project root
     env: {
@@ -732,12 +735,9 @@ function startBackend() {
       DATABASE_URL: 'postgresql://theseus:theseus@localhost:55432/theseusdb',
       ELECTRON_IS_PACKAGED: isPackaged ? 'true' : 'false',
       ELECTRON_RESOURCES_PATH: isPackaged ? process.resourcesPath : '',
-      // Add conda environment paths if detected
-      PATH: condaEnvPath ? 
-        `${path.dirname(condaEnvPath)}:${process.env.PATH}` : 
-        process.env.PATH,
-      CONDA_DEFAULT_ENV: 'theseus',
-      PYTHONPATH: projectRoot
+      PATH: process.env.PATH,
+      CONDA_DEFAULT_ENV: 'theseus', // This might be irrelevant now but harmless
+      PYTHONPATH: pythonPathParts.join(path.delimiter)
     }
   });
 

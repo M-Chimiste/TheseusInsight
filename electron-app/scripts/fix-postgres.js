@@ -34,7 +34,6 @@ module.exports = async (ctx) => {
         // ignore if install_name_tool fails for a given path
       }
     });
-
     try {
       execSync(`install_name_tool -add_rpath @loader_path/../lib "${file}"`);
     } catch {

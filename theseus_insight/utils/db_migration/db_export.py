@@ -15,7 +15,7 @@ import tarfile
 import argparse
 import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Callable, Optional
 
 from ...data_model.data_handling import PaperDatabase
 
@@ -123,24 +123,40 @@ class DatabaseExporter:
         print(f"Archive created successfully: {archive_path}")
         return str(archive_path)
     
-    def export_all(self, create_archive: bool = True, archive_name: str = None) -> Dict[str, Any]:
+    def export_all(
+        self,
+        create_archive: bool = True,
+        archive_name: str = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> Dict[str, Any]:
         """
         Export all data and optionally create an archive.
-        
+
         Args:
             create_archive: Whether to create a tar.gz archive
             archive_name: Name for the archive file
-            
+            progress_callback: Optional callback reporting percentage and message
+
         Returns:
             Dictionary with export results
         """
         print("Starting database export...")
-        
+        if progress_callback:
+            progress_callback(0, "starting")
+
         # Export all tables
         papers_file = self.export_papers()
+        if progress_callback:
+            progress_callback(25, "papers_exported")
         podcasts_file = self.export_podcasts()
+        if progress_callback:
+            progress_callback(50, "podcasts_exported")
         newsletters_file = self.export_newsletters()
+        if progress_callback:
+            progress_callback(75, "newsletters_exported")
         metadata_file = self.create_metadata()
+        if progress_callback:
+            progress_callback(85, "metadata_created")
         
         result = {
             "files": {
@@ -155,7 +171,12 @@ class DatabaseExporter:
         if create_archive:
             archive_path = self.create_archive(archive_name)
             result["archive"] = archive_path
-        
+            if progress_callback:
+                progress_callback(100, "archive_created")
+        else:
+            if progress_callback:
+                progress_callback(100, "export_complete")
+
         print("Export completed successfully!")
         return result
 

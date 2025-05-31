@@ -38,6 +38,20 @@ export const settingsApi = {
         }
       },
     }),
+  startExportDatabase: () => api.post('/settings/database/export-task'),
+  downloadExportDatabase: (
+    taskId: string,
+    onProgress?: (percent: number) => void
+  ) =>
+    api.get(`/settings/database/export-task/${taskId}/download`, {
+      responseType: 'blob',
+      onDownloadProgress: (event: ProgressEvent) => {
+        if (onProgress && event.total) {
+          const percent = Math.round((event.loaded * 100) / event.total);
+          onProgress(percent);
+        }
+      },
+    }),
   importDatabase: (file: File, importMode: 'merge' | 'overwrite' = 'merge') => {
     const formData = new FormData();
     formData.append('backup_file', file);

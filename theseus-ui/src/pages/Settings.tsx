@@ -96,6 +96,8 @@ const Settings: React.FC = () => {
   const [importStatus, setImportStatus] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
+  const [exportStatus, setExportStatus] = useState<string>('');
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -188,64 +190,76 @@ const Settings: React.FC = () => {
   });
 
   const exportDatabaseMutation = useMutation({
-    mutationFn: () => settingsApi.exportDatabase((p) => setExportProgress(p)),
+    mutationFn: () => settingsApi.startExportDatabase(),
     onMutate: () => {
+      setIsExporting(true);
       setExportProgress(0);
     },
     onSuccess: (response) => {
-      try {
-        setExportProgress(100);
-        // Validate response data
-        if (!response.data || response.data.size === 0) {
-          throw new Error('Export file is empty or corrupt');
+      const taskId = response.data.task_id;
+      setExportStatus('Starting export...');
+
+      const ws = new WebSocket(`ws://localhost:8000/ws/database-export/${taskId}`);
+
+      ws.onmessage = (event) => {
+        const status = JSON.parse(event.data);
+        setExportProgress(status.progress || 0);
+        setExportStatus(status.message || 'Exporting...');
+
+        if (status.overallStatus === 'completed') {
+          ws.close();
+          settingsApi
+            .downloadExportDatabase(taskId, (p) => setExportProgress(p))
+            .then((downloadResponse) => {
+              try {
+                setExportProgress(100);
+                const blob = new Blob([downloadResponse.data], {
+                  type: downloadResponse.headers['content-type'] || 'application/gzip',
+                });
+                const url = window.URL.createObjectURL(blob);
+                const contentDisposition = downloadResponse.headers['content-disposition'];
+                let filename = `theseus_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
+                if (contentDisposition) {
+                  const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                  if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1].replace(/['"]/g, '');
+                  }
+                }
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                  document.body.removeChild(link);
+                  window.URL.revokeObjectURL(url);
+                }, 100);
+                setSuccess(`Database exported successfully (${(blob.size / 1024 / 1024).toFixed(1)} MB)`);
+              } catch (err) {
+                console.error('Export download error:', err);
+                setError(`Failed to download export file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+              } finally {
+                setIsExporting(false);
+              }
+            })
+            .catch((err) => {
+              setError(err.message || 'Failed to download export');
+              setIsExporting(false);
+            });
+        } else if (status.overallStatus === 'failed') {
+          setError(status.error || 'Database export failed');
+          setIsExporting(false);
+
         }
-        
-        // Create blob with proper MIME type
-        const blob = new Blob([response.data], { 
-          type: response.headers['content-type'] || 'application/gzip' 
-        });
-        
-        // Create download URL
-        const url = window.URL.createObjectURL(blob);
-        
-        // Get filename from Content-Disposition header if available
-        const contentDisposition = response.headers['content-disposition'];
-        let filename = `theseus_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
-        
-        if (contentDisposition) {
-          const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-          if (filenameMatch && filenameMatch[1]) {
-            filename = filenameMatch[1].replace(/['"]/g, '');
-          }
-        }
-        
-        // Create and trigger download
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        link.style.display = 'none';
-        
-        // Add to DOM temporarily
-        document.body.appendChild(link);
-        link.click();
-        
-        // Cleanup
-        setTimeout(() => {
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
-        }, 100);
-        
-        setSuccess(`Database exported successfully (${(blob.size / 1024 / 1024).toFixed(1)} MB)`);
-      } catch (err) {
-        console.error('Export download error:', err);
-        setError(`Failed to download export file: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      }
+      };
+
+      ws.onerror = () => {
+        setError('Connection error during export');
+        setIsExporting(false);
+      };
     },
-    onError: (error: any) => {
-      console.error('Export error:', error);
-      const message = error?.response?.data?.detail || error?.message || 'Failed to export database';
-      setError(message);
-    },
+    onError: (error: any) => setError(error.message || 'Failed to start database export'),
   });
 
   const importDatabaseMutation = useMutation({
@@ -841,13 +855,14 @@ const Settings: React.FC = () => {
                 variant="contained"
                 color="primary"
                 onClick={() => exportDatabaseMutation.mutate()}
-                disabled={exportDatabaseMutation.isPending}
-                startIcon={exportDatabaseMutation.isPending ? <CircularProgress size={20} /> : undefined}
+                disabled={isExporting || exportDatabaseMutation.isPending}
+                startIcon={isExporting ? <CircularProgress size={20} /> : undefined}
                 sx={{ mr: 2 }}
               >
-                {exportDatabaseMutation.isPending ? 'Exporting...' : 'Export Database'}
+                {isExporting ? 'Exporting...' : 'Export Database'}
               </Button>
-              {exportDatabaseMutation.isPending && (
+              {isExporting && (
+
                 <Box sx={{ mt: 2 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Box sx={{ width: '100%' }}>
@@ -862,7 +877,7 @@ const Settings: React.FC = () => {
                     </Typography>
                   </Box>
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    This may take a few minutes for large databases...
+                    {exportStatus || 'This may take a few minutes for large databases...'}
                   </Typography>
                 </Box>
               )}

@@ -46,6 +46,7 @@
           "theseus_insight/**",
           "theseus-ui/dist/**",
           "config/**",
+          "data/**",
           "run_theseus_insight.py",
           "requirements.txt"
         ]
@@ -61,11 +62,12 @@
     ],
     "mac": {
       "icon": "icons/mac/icon.icns",
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "entitlements": false,
-      "entitlementsInherit": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "category": "public.app-category.productivity",
+      "identity": "Developer ID Application: Christian Merrill (4H8Z97B24M)",
       "target": [
         {
           "target": "dmg",

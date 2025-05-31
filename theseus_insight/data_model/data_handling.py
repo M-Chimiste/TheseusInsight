@@ -1136,19 +1136,19 @@ class PaperDatabase:
                 where_params = []
                 
                 if min_score is not None:
-                where_conditions.append("score >= ?")
+                    where_conditions.append("score >= ?")
                     where_params.append(min_score)
                 
                 if max_score is not None:
-                where_conditions.append("score <= ?")
+                    where_conditions.append("score <= ?")
                     where_params.append(max_score)
                 
                 if from_date:
-                where_conditions.append("date >= ?")
+                    where_conditions.append("date >= ?")
                     where_params.append(from_date)
                 
                 if to_date:
-                where_conditions.append("date <= ?")
+                    where_conditions.append("date <= ?")
                     where_params.append(to_date)
                 
                 # Add similarity threshold
@@ -1230,8 +1230,8 @@ class PaperDatabase:
                 has_next_page = page < total_pages
                 
                 # Get paginated results
-                  paginated_query = semantic_query + f" LIMIT ? OFFSET ?"
-                  cursor.execute(paginated_query, query_params + [page_size, offset])
+                paginated_query = semantic_query + f" LIMIT ? OFFSET ?"
+                cursor.execute(paginated_query, query_params + [page_size, offset])
                 
                 rows = cursor.fetchall()
                 

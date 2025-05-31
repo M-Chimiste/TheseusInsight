@@ -17,7 +17,7 @@ class TaskStatus(str, Enum):
 class TaskManager:
     def __init__(self):
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
-        self.db = PaperDatabase(os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"))
+        self.db = PaperDatabase(os.getenv("DATABASE_URL", "data/theseus.db"))
 
         # Queues and workers for task processing
         # general_task_queue handles newsletter/podcast/etc.

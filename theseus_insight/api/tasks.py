@@ -549,6 +549,69 @@ class TaskManager:
             print(error_details) # Log to server console
             raise
 
+    async def run_database_export_task(self, task_id: str):
+        """Run the database export task with progress tracking."""
+        try:
+            from ..utils.db_migration.db_export import DatabaseExporter
+
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Starting database export",
+                progress=0,
+                current_step="export_init",
+            )
+
+            export_dir = f"data/temp/{task_id}_export"
+            os.makedirs(export_dir, exist_ok=True)
+
+            exporter = DatabaseExporter(self.db.db_path, export_dir)
+
+            loop = asyncio.get_event_loop()
+
+            def progress_cb(pct: float, msg: str):
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        self.update_task_status(
+                            task_id,
+                            TaskStatus.PROCESSING,
+                            msg,
+                            progress=pct,
+                            current_step="exporting",
+                        ),
+                        loop,
+                    )
+
+            result = await asyncio.to_thread(
+                exporter.export_all,
+                True,
+                f"theseus_backup_{task_id}",
+                progress_cb,
+            )
+
+            await self.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                "Database export completed",
+                progress=100,
+                current_step="export_complete",
+                result={"archive_path": result.get("archive")},
+            )
+
+        except Exception as e:
+            await self.update_task_status(
+                task_id,
+                TaskStatus.FAILED,
+                "Database export failed",
+                error=str(e),
+                current_step="export_failed",
+            )
+            raise
+
     async def run_database_import_task(self, task_id: str):
         """Run the database import task with progress tracking."""
         try:

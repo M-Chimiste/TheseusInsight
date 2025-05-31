@@ -5,20 +5,7 @@
   "description": "Electron wrapper for Theseus Insight",
   "author": "Theseus Insight Team",
   "scripts": {
-    "start": "electron .",
-    "dev": "NODE_ENV=development electron .",
-    "dev-full": "bash ./dev-start.sh",
-    "build-app": "bash ./build-app.sh",
-    "build": "electron-builder",
-    "build:mac": "electron-builder --mac",
-    "build:mac-x64": "electron-builder --mac --x64",
-    "build:mac-arm64": "electron-builder --mac --arm64",
-    "build:mac-universal": "electron-builder --mac --universal",
-    "build:mac-universal-custom": "node build-universal.js",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux",
-    "download-pg": "echo 'deprecated'",
-    "build-pg": "echo 'deprecated'"
+    "build:--help": "electron-builder ----help --arm64"
   },
   "build": {
     "appId": "com.theseusinsight.desktop",
@@ -26,17 +13,12 @@
     "directories": {
       "output": "dist"
     },
-    "asar": true,
-    "asarUnpack": [
-      "**/theseus_insight/**/*",
-      "**/python_runtime/**/*",
-      "**/run_theseus_insight.py",
-      "**/requirements.txt"
-    ],
+    "asar": false,
     "files": [
       "**/*",
       "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}",
-      "!unused"
+      "!unused",
+      "!python_runtime/**"
     ],
     "extraResources": [
       {
@@ -52,56 +34,10 @@
         ]
       },
       {
-        "from": "python_runtime",
-        "to": "app/python_runtime"
-      },
-      {
         "from": "env.template",
         "to": ".env"
       }
-    ],
-    "mac": {
-      "icon": "icons/mac/icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
-      "category": "public.app-category.productivity",
-      "identity": "Christian Merrill (4H8Z97B24M)",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["x64", "arm64"]
-        }
-      ]
-    },
-    "win": {
-      "icon": "icons/win/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        }
-      ]
-    },
-    "linux": {
-      "icon": "icons/png",
-      "category": "Office",
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": ["x64"]
-        },
-        {
-          "target": "deb",
-          "arch": ["x64"]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+    ]
   },
   "engines": {
     "node": ">=20"

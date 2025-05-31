@@ -70,7 +70,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
 - **React** frontend built with Vite and Material UI, served from the backend in production.
 - **Real‑time progress** streaming over WebSockets for long running tasks.
-- **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
+- **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
@@ -84,7 +84,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 theseus_insight/
   api/               # FastAPI models, tasks and routes
   communication/     # Gmail and YouTube helpers
-  data_model/        # PostgreSQL interactions and pydantic models
+  data_model/        # SQLite interactions and pydantic models
   data_processing/   # Arxiv harvesting utilities
   inference/         # LLM and TTS wrappers
   pdf/               # PDF parsing helpers
@@ -113,7 +113,7 @@ If you prefer running locally without Docker:
    npm run build
    ```
 3. Configure environment variables as shown below.
-4. Run `scripts/setup_database.sh` to create the default PostgreSQL database and role.
+4. The SQLite database will be created automatically on first run.
 
 ---
 
@@ -128,10 +128,10 @@ Create a `.env` file in the project root containing keys and settings:
 | `GOOGLE_API_KEY` | API key for Google Gemini models |
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
 | `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
-| `ALLOW_DB_CONNECTION` | When `true`, enables external access to PostgreSQL database on port 5433 (default `false` for security) |
+| `ALLOW_DB_CONNECTION` | Deprecated - no external database |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
-| `DATABASE_URL` | Connection string for the PostgreSQL database (default `postgresql://theseus:theseus@localhost:5432/theseusdb`) |
+| `DATABASE_URL` | Path to the SQLite database file (default `data/theseus.db`) |
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |

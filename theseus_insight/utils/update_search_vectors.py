@@ -16,7 +16,7 @@ from theseus_insight.data_model.data_handling import PaperDatabase
 
 def update_search_vectors():
     """Update all existing papers with full-text search vectors."""
-    db_url = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
+    db_url = os.getenv("DATABASE_URL", "data/theseus.db")
     db = PaperDatabase(db_url)
     
     print("Updating papers with full-text search vectors...")

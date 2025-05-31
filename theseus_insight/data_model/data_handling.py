@@ -4,8 +4,7 @@ import datetime
 import base64
 import hashlib
 from contextlib import contextmanager
-import psycopg2
-from pgvector.psycopg2 import register_vector
+import sqlite3
 
 from .papers import Newsletter, Paper, Logs, Podcast
 
@@ -26,14 +25,14 @@ class PaperDatabase:
     @contextmanager
     def get_cursor(self, register_vectors=True):
         """Context manager for database connections."""
-        conn = psycopg2.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         try:
-            # Try to register vector type, but don't fail if extension doesn't exist yet
             if register_vectors:
                 try:
-                    register_vector(conn)
-                except psycopg2.ProgrammingError:
-                    # Vector extension not yet created, that's okay for initialization
+                    conn.enable_load_extension(True)
+                    conn.load_extension("sqlite_vec")
+                except Exception:
                     pass
             cursor = conn.cursor()
             yield cursor
@@ -44,125 +43,91 @@ class PaperDatabase:
     def _initialize_db(self):
         """Initialize database tables and indices if they don't exist."""
         with self.get_cursor(register_vectors=False) as cursor:
-            # Create pgvector extension
-            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            
-            # Create papers table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS papers (
-                    id SERIAL PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    abstract TEXT NOT NULL,
-                    date DATE NOT NULL,
-                    date_run DATE NOT NULL,
-                    score REAL,
-                    rationale TEXT,
-                    related BOOLEAN DEFAULT FALSE,
-                    cosine_similarity REAL,
-                    url TEXT UNIQUE,
-                    embedding_model TEXT,
-                    embedding vector  -- Let PostgreSQL determine dimension automatically
-                )
-            """)
-            
-            # Add full-text search columns if they don't exist
-            cursor.execute("ALTER TABLE papers ADD COLUMN IF NOT EXISTS search_vector tsvector")
-            cursor.execute("ALTER TABLE papers ADD COLUMN IF NOT EXISTS title_vector tsvector")
-            cursor.execute("ALTER TABLE papers ADD COLUMN IF NOT EXISTS abstract_vector tsvector")
-            
-            # Create GIN indexes for full-text search
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS papers_search_vector_idx 
-                ON papers USING GIN(search_vector)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS papers_title_vector_idx 
-                ON papers USING GIN(title_vector)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS papers_abstract_vector_idx 
-                ON papers USING GIN(abstract_vector)
-            """)
-            
-            # Skip vector index creation for now - will be created manually if needed
-            # The hybrid search will work fine without the vector index, just slower on large datasets
-            
-            # Update existing papers with search vectors
-            cursor.execute("""
-                UPDATE papers 
-                SET 
-                    search_vector = to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, '')),
-                    title_vector = to_tsvector('english', COALESCE(title, '')),
-                    abstract_vector = to_tsvector('english', COALESCE(abstract, ''))
-                WHERE search_vector IS NULL
-            """)
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS papers ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "title TEXT NOT NULL,"
+                "abstract TEXT NOT NULL,"
+                "date TEXT NOT NULL,"
+                "date_run TEXT NOT NULL,"
+                "score REAL,"
+                "rationale TEXT,"
+                "related INTEGER DEFAULT 0,"
+                "cosine_similarity REAL,"
+                "url TEXT UNIQUE,"
+                "embedding_model TEXT,"
+                "embedding BLOB"
+                ")"
+            )
 
-            # Create logs table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS logs (
-                    id SERIAL PRIMARY KEY,
-                    task_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    datetime_run TIMESTAMP
-                )
-            ''')
+            cursor.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5("
+                "title, abstract, content='papers', content_rowid='id')"
+            )
 
-            # Create newsletters table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS newsletters (
-                    id SERIAL PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    start_date DATE NOT NULL,
-                    end_date DATE NOT NULL,
-                    date_sent DATE NOT NULL
-                )
-            ''')
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS logs ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "task_id TEXT NOT NULL,"
+                "status TEXT NOT NULL,"
+                "datetime_run TEXT"
+                ")"
+            )
 
-            # Create podcasts table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS podcasts (
-                    id SERIAL PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    date DATE NOT NULL,
-                    script TEXT NOT NULL,
-                    description TEXT NOT NULL
-                )
-            ''')
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS newsletters ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "content TEXT NOT NULL,"
+                "start_date TEXT NOT NULL,"
+                "end_date TEXT NOT NULL,"
+                "date_sent TEXT NOT NULL"
+                ")"
+            )
 
-            # Create settings table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-            ''')
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS podcasts ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "title TEXT NOT NULL,"
+                "date TEXT NOT NULL,"
+                "script TEXT NOT NULL,"
+                "description TEXT NOT NULL"
+                ")"
+            )
 
-            # Create model_providers table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS model_providers (
-                    id INTEGER PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE
-                )
-            ''')
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS settings ("
+                "key TEXT PRIMARY KEY,"
+                "value TEXT NOT NULL"
+                ")"
+            )
+
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS model_providers ("
+                "id INTEGER PRIMARY KEY,"
+                "name TEXT NOT NULL UNIQUE"
+                ")"
+            )
             for provider in INITIAL_PROVIDERS:
-                cursor.execute('INSERT INTO model_providers (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING', (provider['id'], provider['name']))
-
-            # Create tasks table for persistent task state management
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tasks (
-                    task_id TEXT PRIMARY KEY,
-                    task_type TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    config_json TEXT NOT NULL,
-                    start_time TIMESTAMP NOT NULL,
-                    end_time TIMESTAMP,
-                    error TEXT,
-                    result_json TEXT,
-                    progress DOUBLE PRECISION DEFAULT 0,
-                    current_step TEXT,
-                    message TEXT
+                cursor.execute(
+                    "INSERT OR IGNORE INTO model_providers (id, name) VALUES (?, ?)",
+                    (provider["id"], provider["name"],),
                 )
-            ''')
+
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS tasks ("
+                "task_id TEXT PRIMARY KEY,"
+                "task_type TEXT NOT NULL,"
+                "status TEXT NOT NULL,"
+                "config_json TEXT NOT NULL,"
+                "start_time TEXT NOT NULL,"
+                "end_time TEXT,"
+                "error TEXT,"
+                "result_json TEXT,"
+                "progress REAL DEFAULT 0,"
+                "current_step TEXT,"
+                "message TEXT"
+                ")"
+            )
 
     def insert_podcast(self, podcast: Podcast):
         # Validate date formats
@@ -171,25 +136,31 @@ class PaperDatabase:
         except ValueError:
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO podcasts (title, date, script, description)
-                              VALUES (%s, %s, %s, %s)''',
-                           (podcast.title, podcast.date, json.dumps(podcast.script), podcast.description))
+            cursor.execute(
+                "INSERT INTO podcasts (title, date, script, description) VALUES (?, ?, ?, ?)",
+                (
+                    podcast.title,
+                    podcast.date,
+                    json.dumps(podcast.script),
+                    podcast.description,
+                ),
+            )
             
     def paper_exists_by_url(self, url: str) -> bool:
         """Check if a paper with the given URL already exists in the database."""
         with self.get_cursor() as cursor:
-            cursor.execute('SELECT COUNT(*) FROM papers WHERE url = %s', (url,))
+            cursor.execute('SELECT COUNT(*) FROM papers WHERE url = ?', (url,))
             count = cursor.fetchone()[0]
             return count > 0
 
     def get_paper_by_url(self, url: str) -> dict | None:
         """Get paper details by URL if it exists."""
         with self.get_cursor() as cursor:
-            cursor.execute('''
-                SELECT id, title, abstract, date, date_run, score, rationale, related, 
-                       cosine_similarity, url, embedding_model, embedding
-                FROM papers WHERE url = %s
-            ''', (url,))
+            cursor.execute(
+                "SELECT id, title, abstract, date, date_run, score, rationale, related,"
+                " cosine_similarity, url, embedding_model, embedding FROM papers WHERE url = ?",
+                (url,),
+            )
             row = cursor.fetchone()
             if row:
                 # Convert date objects to strings if they're not already strings
@@ -250,19 +221,31 @@ class PaperDatabase:
             return False  # Paper already exists, skipping
 
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO papers
-                (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding,
-                 search_vector, title_vector, abstract_vector)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        to_tsvector('english', %s || ' ' || %s),
-                        to_tsvector('english', %s),
-                        to_tsvector('english', %s))''',
-                (paper.title, paper.abstract, paper.date, paper.date_run,
-                 paper.score, paper.rationale, paper.related, paper.cosine_similarity,
-                 paper.url, paper.embedding_model, paper.embedding,
-                 paper.title, paper.abstract,  # for search_vector
-                 paper.title,                  # for title_vector  
-                 paper.abstract))              # for abstract_vector
+            cursor.execute(
+                "INSERT INTO papers (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    paper.title,
+                    paper.abstract,
+                    paper.date,
+                    paper.date_run,
+                    paper.score,
+                    paper.rationale,
+                    int(paper.related),
+                    paper.cosine_similarity,
+                    paper.url,
+                    paper.embedding_model,
+                    json.dumps(paper.embedding) if paper.embedding is not None else None,
+                ),
+            )
+
+            cursor.execute(
+                "INSERT INTO papers_fts(rowid, title, abstract) VALUES (last_insert_rowid(), ?, ?)",
+                (
+                    paper.title,
+                    paper.abstract,
+                ),
+            )
         return True  # Paper was inserted
 
     def insert_newsletter(self, newsletter: Newsletter):
@@ -284,9 +267,15 @@ class PaperDatabase:
             raise ValueError("start_date cannot be after end_date")
 
         with self.get_cursor() as cursor:
-            cursor.execute('''INSERT INTO newsletters (content, start_date, end_date, date_sent)
-                              VALUES (%s, %s, %s, %s)''',
-                           (newsletter.content, newsletter.start_date, newsletter.end_date, newsletter.date_sent))
+            cursor.execute(
+                "INSERT INTO newsletters (content, start_date, end_date, date_sent) VALUES (?, ?, ?, ?)",
+                (
+                    newsletter.content,
+                    newsletter.start_date,
+                    newsletter.end_date,
+                    newsletter.date_sent,
+                ),
+            )
 
     def insert_log(self, log: Logs):
         required_fields = ['task_id', 'status']
@@ -297,20 +286,23 @@ class PaperDatabase:
         datetime_run = log.datetime_run or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         # check for log existence
         with self.get_cursor() as cursor:
-            cursor.execute('''SELECT status FROM logs WHERE task_id = %s''', (log.task_id,))
+            cursor.execute('SELECT status FROM logs WHERE task_id = ?', (log.task_id,))
             row = cursor.fetchone()
             row = row[0] if row else None
         # Insert a new log if it doesn't exist
         if not row:
             with self.get_cursor() as cursor:
-                cursor.execute('''INSERT INTO logs (task_id, status, datetime_run)
-                                VALUES (%s, %s, %s)''',
-                            (log.task_id, log.status, datetime_run))
+                cursor.execute(
+                    'INSERT INTO logs (task_id, status, datetime_run) VALUES (?, ?, ?)',
+                    (log.task_id, log.status, datetime_run),
+                )
         # Only update the status
         else:
             with self.get_cursor() as cursor:
-                cursor.execute('''UPDATE logs SET status = %s WHERE task_id = %s''',
-                          (log.status, log.task_id))
+                cursor.execute(
+                    'UPDATE logs SET status = ? WHERE task_id = ?',
+                    (log.status, log.task_id),
+                )
 
     def get_recent_logs(self, limit: int = 100, from_date: str = None, to_date: str = None):
         query = '''SELECT task_id, status, datetime_run
@@ -319,17 +311,17 @@ class PaperDatabase:
         conditions = []
 
         if from_date:
-            conditions.append("datetime_run >= %s")
+            conditions.append("datetime_run >= ?")
             params.append(f"{from_date} 00:00:00")
         
         if to_date:
-            conditions.append("datetime_run <= %s")
+            conditions.append("datetime_run <= ?")
             params.append(f"{to_date} 23:59:59")
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " ORDER BY datetime_run DESC LIMIT %s"
+        query += " ORDER BY datetime_run DESC LIMIT ?"
         params.append(limit)
 
         with self.get_cursor() as cursor:
@@ -356,17 +348,17 @@ class PaperDatabase:
         conditions = []
 
         if from_date:
-            conditions.append("start_time >= %s")
+            conditions.append("start_time >= ?")
             params.append(f"{from_date} 00:00:00")
         
         if to_date:
-            conditions.append("start_time <= %s")
+            conditions.append("start_time <= ?")
             params.append(f"{to_date} 23:59:59")
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " ORDER BY start_time DESC LIMIT %s"
+        query += " ORDER BY start_time DESC LIMIT ?"
         params.append(limit)
 
         with self.get_cursor() as cursor:

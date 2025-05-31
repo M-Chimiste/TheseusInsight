@@ -43,13 +43,10 @@ echo ""
 packages=(
     "fastapi>=0.100.0"
     "uvicorn[standard]>=0.20.0"
-    "psycopg2-binary>=2.9.0"
-    "sqlalchemy>=2.0.0"
+    "sqlite-vec"
     "pydantic>=2.0.0"
     "python-multipart>=0.0.6"
     "jinja2>=3.1.0"
-    "asyncpg>=0.28.0"
-    "alembic>=1.12.0"
 )
 
 failed_packages=()
@@ -88,7 +85,7 @@ echo ""
 echo "🧪 Testing installation..."
 
 # Test each critical package
-critical_packages=("fastapi" "uvicorn" "psycopg2" "sqlalchemy" "pydantic")
+critical_packages=("fastapi" "uvicorn" "pydantic")
 test_failed=false
 
 for package in "${critical_packages[@]}"; do
@@ -107,7 +104,7 @@ if [ "$test_failed" = true ]; then
     echo ""
     echo "📋 Next steps:"
     echo "   1. Review error messages above"
-    echo "   2. Try manual installation: python3 -m pip install fastapi uvicorn psycopg2-binary"
+    echo "   2. Try manual installation: python3 -m pip install fastapi uvicorn sqlite-vec"
     echo "   3. Consider using conda instead of pip"
     exit 1
 else

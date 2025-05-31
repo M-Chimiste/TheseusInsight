@@ -86,7 +86,7 @@ def main():
     
     # Set environment variables that would normally be set by Electron
     if not os.getenv('DATABASE_URL'):
-        os.environ['DATABASE_URL'] = 'postgresql://theseus:theseus@localhost:55432/theseusdb'
+        os.environ['DATABASE_URL'] = os.path.join(app_root, 'data', 'theseus.db')
     
     # Import and run the FastAPI app
     try:

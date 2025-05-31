@@ -837,7 +837,7 @@ def parse_args():
     parser.add_argument("--date-to", required=True, help="End date YYYY-MM-DD")
     parser.add_argument(
         "--db-url",
-        default=os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"),
+        default=os.getenv("DATABASE_URL", "data/theseus.db"),
         help="Database connection URL",
     )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")

@@ -732,7 +732,7 @@ function startBackend() {
     cwd: projectRoot,  // Set working directory to project root
     env: {
       ...process.env,
-      DATABASE_URL: 'postgresql://theseus:theseus@localhost:55432/theseusdb',
+      DATABASE_URL: path.join(projectRoot, 'data', 'theseus.db'),
       ELECTRON_IS_PACKAGED: isPackaged ? 'true' : 'false',
       ELECTRON_RESOURCES_PATH: isPackaged ? process.resourcesPath : '',
       PATH: process.env.PATH,

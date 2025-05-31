@@ -70,7 +70,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
 - **React** frontend built with Vite and Material UI, served from the backend in production.
 - **Real‑time progress** streaming over WebSockets for long running tasks.
-- **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
+- **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
@@ -84,7 +84,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 theseus_insight/
   api/               # FastAPI models, tasks and routes
   communication/     # Gmail and YouTube helpers
-  data_model/        # PostgreSQL interactions and pydantic models
+  data_model/        # SQLite interactions and pydantic models
   data_processing/   # Arxiv harvesting utilities
   inference/         # LLM and TTS wrappers
   pdf/               # PDF parsing helpers
@@ -113,7 +113,7 @@ If you prefer running locally without Docker:
    npm run build
    ```
 3. Configure environment variables as shown below.
-4. Run `scripts/setup_database.sh` to create the default PostgreSQL database and role.
+   (Note: `scripts/setup_database.sh` is no longer needed as SQLite databases are created on demand.)
 
 ---
 
@@ -128,10 +128,10 @@ Create a `.env` file in the project root containing keys and settings:
 | `GOOGLE_API_KEY` | API key for Google Gemini models |
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
 | `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
-| `ALLOW_DB_CONNECTION` | When `true`, enables external access to PostgreSQL database on port 5433 (default `false` for security) |
+# `ALLOW_DB_CONNECTION` related to PostgreSQL is removed. SQLite access is direct file access.
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
-| `DATABASE_URL` | Connection string for the PostgreSQL database (default `postgresql://theseus:theseus@localhost:5432/theseusdb`) |
+| `DATABASE_URL` | Connection string for the SQLite database (e.g., `sqlite:///./data/theseus.db` for a local file, or `sqlite:////app/data/theseus.db` in Docker). For the Electron app, this is set automatically to a path in the user's application data directory. |
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
@@ -176,134 +176,59 @@ During development use the Vite dev server as shown in the [Quickstart](#quickst
 
 ---
 
-## External Database Access
+## Database Access
 
-By default, the PostgreSQL database runs in an isolated Docker container and is not accessible from external tools. For development, debugging, data migration, or administrative tasks, you can enable external database access.
+Theseus Insight now uses an SQLite database.
+- **Local/Docker**: The database file (e.g., `theseus.db`) is typically stored in the `./data` directory (mounted into `/app/data` in Docker). You can access it using any SQLite browser or tool by opening this file.
+- **Electron App**: The SQLite database file is stored in the user's application data directory (e.g., `~/Library/Application Support/theseus-desktop/theseus.db` on macOS).
 
-### Enabling External Access
-
-**Option 1: Using the helper script (recommended)**
-```bash
-# Start with external database access enabled
-./scripts/start-with-db-access.sh
-
-# Or pass additional docker-compose arguments
-./scripts/start-with-db-access.sh -d  # Run in detached mode
-```
-
-**Option 2: Manual Docker Compose override**
-```bash
-# Start with both compose files
-docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
-```
-
-**Option 3: Environment variable in .env file**
-```bash
-# Add to your .env file
-ALLOW_DB_CONNECTION=true
-
-# Then start normally (this sets the variable but you still need the override file)
-docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
-```
-
-### Connection Details
-
-When external access is enabled, the database is accessible on:
-- **Host**: `localhost`
-- **Port**: `5433` (to avoid conflicts with local PostgreSQL)
-- **Database**: `theseusdb`
-- **Username**: `theseus`
-- **Password**: `theseus`
-
-### Example Connections
-
-**Using psql command line:**
-```bash
-psql -h localhost -p 5433 -U theseus -d theseusdb
-```
-
-**Using pgAdmin:**
-- Server: `localhost:5433`
-- Maintenance database: `theseusdb`
-- Username: `theseus`
-- Password: `theseus`
-
-**Using Python/SQLAlchemy:**
-```python
-from sqlalchemy import create_engine
-engine = create_engine("postgresql://theseus:theseus@localhost:5433/theseusdb")
-```
-
-### Security Considerations
-
-⚠️ **Important**: Only enable external database access in development environments or secure networks. When enabled:
-- The database accepts connections from any IP address on the host machine
-- Database credentials are transmitted over the network
-- The database port is exposed on the host machine
-
-For production deployments, use secure connection methods such as:
-- VPN tunnels
-- SSH port forwarding
-- Database connection pools with authentication
-- Network firewalls and access controls
+No special scripts or Docker overrides are needed for "external access" beyond accessing the SQLite file directly.
 
 ---
 
 ## Custom Data Storage Location
 
-By default, Theseus Insight stores data in the local `./data` directory and uses Docker named volumes for the PostgreSQL database. For installations with limited internal storage, you can redirect all data to an external drive or custom location.
+Theseus Insight stores application-generated files (podcasts, newsletters, visualizations, temporary files) and the SQLite database (`theseus.db`) in a data directory. By default, this is `./data` relative to the project root, which is mounted to `/app/data` in Docker.
 
-### Quick Setup for External Storage
+You can change this data storage location, for example, to use an external drive.
 
-**Option 1: Using the helper script (recommended)**
-```bash
-# Start with data stored on external drive
-./scripts/start-with-external-storage.sh
+### Configuration
 
-# Or specify a custom path
-./scripts/start-with-external-storage.sh /path/to/your/storage
+1.  **Set `DATA_DIR_PATH` Environment Variable**:
+    In your `.env` file (or directly in `docker-compose.yml` if preferred), set the `DATA_DIR_PATH` variable to your desired absolute path.
+    ```env
+    # Example for .env file
+    DATA_DIR_PATH=/path/to/your/external/storage/theseus_insight_data
+    ```
 
-# Run in detached mode
-./scripts/start-with-external-storage.sh /Volumes/nyx/theseus_insight_data -d
-```
-
-**Option 2: Manual Docker Compose override**
-```bash
-# Set the storage path
-export EXTERNAL_DATA_PATH=/Volumes/nyx/theseus_insight_data
-
-# Start with external storage configuration
-docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up --build
-```
-
-**Option 3: Environment variable in .env file**
-```bash
-# Add to your .env file
-EXTERNAL_DATA_PATH=/Volumes/nyx/theseus_insight_data
-
-# Then start with the external storage override
-docker-compose -f docker-compose.yml -f docker-compose.external-storage.yml up --build
-```
+2.  **Update Docker Compose Volume Mount (if using Docker)**:
+    Modify the `volumes` section for the `theseus-insight-app` service in your `docker-compose.yml` to map your custom host path to `/app/data` in the container:
+    ```yaml
+    services:
+      theseus-insight-app:
+        # ... other configurations ...
+        volumes:
+          - ${DATA_DIR_PATH:-./data}:/app/data
+        environment:
+          # Ensure Python backend also knows this if needed for absolute path access internally,
+          # though typically it should work relative to /app/data.
+          # The DATABASE_URL for SQLite will point to /app/data/theseus.db.
+    ```
+    The `${DATA_DIR_PATH:-./data}` syntax uses the environment variable `DATA_DIR_PATH` if set, otherwise defaults to `./data`.
 
 ### Storage Structure
 
-When using external storage, the following directory structure is created:
-
+Your custom data directory will contain:
 ```
-/Volumes/nyx/theseus_insight_data/
-├── app_data/                    # Application-generated files
-│   ├── newsletters/             # Generated newsletters
-│   ├── podcasts/               # Generated podcast audio/video
-│   ├── visualizations/         # Generated visualizations
-│   └── temp/                   # Temporary processing files
-└── postgres_data/              # PostgreSQL database files
-    ├── base/                   # Database tables and indexes
-    ├── global/                 # Cluster-wide data
-    ├── pg_wal/                 # Write-ahead log files
-    └── ...                     # Other PostgreSQL system files
+/path/to/your/external/storage/theseus_insight_data/
+├── theseus.db              # SQLite database file
+├── newsletters/            # Generated newsletters
+├── podcasts/               # Generated podcast audio/video
+├── visualizations/         # Generated visualizations
+└── temp/                   # Temporary processing files
 ```
 
-### Platform-Specific Paths
+### Platform-Specific Paths for `DATA_DIR_PATH`
 
 **macOS External Drive:**
 ```bash
@@ -347,14 +272,14 @@ docker-compose down
 # Create external storage directory
 mkdir -p /Volumes/nyx/theseus_insight_data/{app_data,postgres_data}
 
-# Copy existing application data
-cp -r ./data/* /Volumes/nyx/theseus_insight_data/app_data/
+# Copy existing application data (excluding old PostgreSQL data)
+# Ensure your new DATA_DIR_PATH is created, e.g.,
+# mkdir -p /path/to/your/external/storage/theseus_insight_data
+# cp -r ./data/* /path/to/your/external/storage/theseus_insight_data/
+# (Ensure you copy the new theseus.db if it exists in the old ./data, and other relevant app files)
 
-# Export existing database (if you have data)
-docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_insight_data/postgres_data:/backup alpine sh -c "cp -r /data/* /backup/"
-
-# Start with external storage
-./scripts/start-with-external-storage.sh
+# Start the application with the updated .env or docker-compose.yml
+docker compose up --build
 ```
 
 ### Benefits of External Storage
@@ -368,15 +293,14 @@ docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_
 ### Important Considerations
 
 ⚠️ **External Drive Requirements:**
-- Must be mounted and accessible before starting the application
-- Requires read/write permissions for the Docker daemon
-- Should use a reliable connection (avoid USB hubs for large data operations)
-- Consider using SSDs for better performance with database operations
+- Must be mounted and accessible before starting the application.
+- The user/process running Docker (or the application directly) needs read/write permissions to this path.
+- Use a reliable connection if it's a portable drive.
+- SSDs are recommended for better performance.
 
 ⚠️ **macOS Specific Notes:**
-- External drives are typically mounted under `/Volumes/`
-- NTFS drives may need third-party drivers for write access
-- Consider using APFS or exFAT for better macOS compatibility
+- External drives are typically mounted under `/Volumes/`.
+- Ensure file system compatibility (e.g., APFS, exFAT).
 
 ---
 
@@ -411,13 +335,12 @@ docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_
 Theseus Insight features advanced hybrid search capabilities that combine the precision of BM25-style keyword ranking with the contextual understanding of semantic similarity. This provides significantly enhanced search accuracy compared to traditional keyword-only or semantic-only approaches.
 
 **Key Features:**
-- **BM25-Enhanced Keyword Search**: Uses PostgreSQL's full-text search with `ts_rank_cd()` for sophisticated term frequency and document ranking (replaces simple substring matching)
-- **Dual-Mode Search**: Simultaneously performs semantic similarity using vector embeddings and advanced keyword ranking across paper titles and abstracts
-- **Weighted Title Boost**: Title matches receive 2x scoring weight compared to abstract matches for improved relevance
-- **Weighted Scoring**: User-adjustable weights for combining semantic and keyword scores (default: 60% semantic, 40% keyword)
-- **Real-Time Scoring**: Returns individual `semantic_score`, `keyword_score`, and combined `hybrid_score` for transparency
-- **Full Integration**: Works seamlessly with existing filters (date range, score threshold, pagination)
-- **Performance Optimized**: Database-level operations using PostgreSQL with pgvector and GIN indexes for scalable performance
+- **BM25-Enhanced Keyword Search**: Uses SQLite's FTS5 for sophisticated term frequency and document ranking.
+- **Dual-Mode Search**: Simultaneously performs semantic similarity using vector embeddings (via `sqlite-vec`) and advanced keyword ranking across paper titles and abstracts.
+- **Weighted Scoring**: User-adjustable weights for combining semantic and keyword scores (default: 60% semantic, 40% keyword).
+- **Real-Time Scoring**: Returns individual `semantic_score`, `keyword_score` (and normalized keyword score), and combined `hybrid_score` for transparency.
+- **Full Integration**: Works seamlessly with existing filters (date range, score threshold, pagination).
+- **Performance Optimized**: Database-level operations using SQLite with `sqlite-vec` for vector search and FTS5 for text search.
 
 **Example API Request:**
 ```json
@@ -459,12 +382,11 @@ POST /api/papers/hybrid-search
 The React interface provides an intuitive toggle for enabling hybrid search with interactive weight adjustment sliders. Users can fine-tune the balance between semantic understanding and BM25-style keyword ranking to optimize results for their specific research needs.
 
 **Technical Implementation:**
-- **PostgreSQL Full-Text Search**: Leverages native `tsvector` and `tsquery` types with English language stemming and stopword filtering
-- **Ranking Algorithm**: Uses `ts_rank_cd()` with normalization flags for document length and term frequency weighting
-- **Index Optimization**: GIN (Generalized Inverted Index) indexes on title, abstract, and combined search vectors for fast retrieval
-- **Automatic Migration**: Existing installations automatically gain BM25 capabilities through database schema updates
+- **SQLite Full-Text Search**: Leverages FTS5 virtual tables with triggers for automatic synchronization and BM25 ranking.
+- **Vector Search**: Uses `sqlite-vec` extension for efficient similarity search on embeddings.
+- **Index Optimization**: FTS5 and `sqlite-vec` (via its VSS component) provide efficient indexing for their respective search types.
 
-See [docs/embedding_functionality_README.md](docs/embedding_functionality_README.md) for more details.
+See [docs/embedding_functionality_README.md](docs/embedding_functionality_README.md) and [docs/hybrid_search_functionality_README.md](docs/hybrid_search_functionality_README.md) for more details.
 ### Theseus Insight Run Orchestration
 - **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
 
@@ -495,25 +417,26 @@ Theseus Insight includes comprehensive database migration tools for transferring
 
 ### Quick Migration Examples
 
-**Export database to archive:**
+**Export database to archive (example from an old PostgreSQL DB):**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate export \
-    --source-db "postgresql://user:pass@localhost:5432/theseus_dev" \
-    --output ./backup.tar.gz
+    --source-db "postgresql://user:pass@old-postgres-host:5432/theseus_pg_db" \
+    --output ./pg_backup.tar.gz
 ```
 
-**Import archive to new database:**
+**Import archive to new SQLite database:**
 ```bash
+# Ensure target directory for SQLite DB exists if not in current dir
 python -m theseus_insight.utils.db_migration.db_migrate import \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
-    --input ./backup.tar.gz
+    --target-db "sqlite:///./data/theseus_prod.db" \
+    --input ./pg_backup.tar.gz
 ```
 
-**Direct migration with verification:**
+**Direct migration (PostgreSQL to SQLite example):**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_dev" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --source-db "postgresql://user:pass@old-postgres-host:5432/theseus_pg_db" \
+    --target-db "sqlite:///./data/migrated_theseus.db" \
     --verify
 ```
 
@@ -531,15 +454,14 @@ For detailed documentation and advanced usage examples, see [`theseus_insight/do
 ## Desktop Build
 
 An Electron wrapper is provided in the `electron-app` directory. It bundles the
-Python backend and a PostgreSQL database using `pgvector`. PostgreSQL runs on
-port **55432** to avoid conflicts with existing installations.
+Python backend and uses an SQLite database with `sqlite-vec`. The SQLite database file is stored in the user's application data directory.
 
 ### Building
 
 ```
 cd electron-app
 npm install
-npm run build-pg   # or npm run download-pg
+# No separate database build/download step needed for SQLite
 npm run build
 ```
 
@@ -561,7 +483,7 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
 - [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
-- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for backend processing.
+- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [SQLite](https://www.sqlite.org/) with [sqlite-vec](https://github.com/asg017/sqlite-vec) for backend processing.
 
 Theseus Insight is maintained by [M. Chimiste](https://github.com/M-Chimiste) & contributors.
 

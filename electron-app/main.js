@@ -102,7 +102,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 let pythonProcess = null;
-let postgresProcess = null;
+// let postgresProcess = null; // PostgreSQL process no longer needed
 let tempFiles = []; // Track temp files for cleanup
 
 function createWindow () {
@@ -165,7 +165,7 @@ function createWindow () {
               <strong>💡 Troubleshooting:</strong><br>
               1. Wait 30 seconds and try restarting the app<br>
               2. Check if all Python dependencies are installed<br>
-              3. Ensure PostgreSQL is accessible<br>
+              3. Ensure the application data directory is accessible<br>
               4. Contact support if the issue persists
             </p>
           </div>
@@ -281,7 +281,7 @@ function createWindow () {
                 <ol style="line-height: 1.6;">
                   <li><strong>Restart the application</strong> - Close and reopen Theseus Insight</li>
                   <li><strong>Check dependencies</strong> - Ensure Python and required packages are installed</li>
-                  <li><strong>Check PostgreSQL</strong> - Verify database is accessible</li>
+                  <li><strong>Check database file</strong> - Ensure the database file in the application data directory is accessible and not corrupted.</li>
                   <li><strong>Run debug script</strong> - Use the debug-app.sh script for detailed diagnostics</li>
                 </ol>
                 
@@ -313,336 +313,22 @@ function createWindow () {
   return win;
 }
 
-function startPostgres() {
-  const platform = process.platform;
-  const searchDirs = [];
-
-  if (app.isPackaged) {
-    // In packaged apps the postgres folder is bundled as an extraResource
-    searchDirs.push(path.join(process.resourcesPath, 'app', 'postgres', platform, 'bin'));
-  }
-
-  // Development fallback
-  searchDirs.push(path.join(__dirname, 'postgres', platform, 'bin'));
-
-  let binDir = null;
-  for (const dir of searchDirs) {
-    if (fs.existsSync(dir)) {
-      binDir = dir;
-      break;
-    }
-  }
-
-  if (!binDir) {
-    console.error('PostgreSQL binaries not found in any of:', searchDirs);
-    return null;
-  }
-
-  const pgPath = path.join(binDir, platform === 'win32' ? 'postgres.exe' : 'postgres');
-  const initdbPath = path.join(binDir, platform === 'win32' ? 'initdb.exe' : 'initdb');
-  const dataDir = path.join(app.getPath('userData'), 'postgres-data');
-  const lockFile = path.join(dataDir, 'postmaster.pid');
-
-  if (!fs.existsSync(pgPath)) {
-    console.error('postgres executable not found:', pgPath);
-    return null;
-  }
-
-  // Clean up stale lock file if it exists but no process is actually running
-  if (fs.existsSync(lockFile)) {
-    try {
-      const lockContent = fs.readFileSync(lockFile, 'utf8');
-      const pid = parseInt(lockContent.split('\n')[0]);
-      
-      if (pid) {
-        // Check if the process is actually running
-        try {
-          process.kill(pid, 0); // Signal 0 just checks if process exists
-          console.log(`PostgreSQL is already running with PID ${pid}. Stopping it first...`);
-          try {
-            process.kill(pid, 'SIGTERM');
-            // Wait a moment for graceful shutdown
-            setTimeout(() => {
-              try {
-                process.kill(pid, 0);
-                // If still running, force kill
-                console.log('Force killing PostgreSQL...');
-                process.kill(pid, 'SIGKILL');
-              } catch (e) {
-                // Process already stopped, good
-              }
-              // Remove the lock file
-              if (fs.existsSync(lockFile)) {
-                fs.unlinkSync(lockFile);
-                console.log('Removed stale PostgreSQL lock file');
-              }
-            }, 2000);
-          } catch (e) {
-            console.log('Failed to stop existing PostgreSQL process:', e.message);
-          }
-        } catch (e) {
-          // Process doesn't exist, remove stale lock file
-          fs.unlinkSync(lockFile);
-          console.log('Removed stale PostgreSQL lock file (process not running)');
-        }
-      }
-    } catch (error) {
-      console.warn('Error checking PostgreSQL lock file:', error.message);
-      // Try to remove it anyway
-      try {
-        fs.unlinkSync(lockFile);
-        console.log('Removed problematic lock file');
-      } catch (e) {
-        console.error('Could not remove lock file:', e.message);
-      }
-    }
-  }
-
-  // Clean up stale shared memory segments with health checks
-  function cleanupOrphanedSharedMemory(dataDir) {
-    try {
-      const { execSync } = require('child_process');
-      const username = require('os').userInfo().username;
-      
-      console.log('Running shared memory health checks...');
-      
-      // Get list of all shared memory segments
-      const ipcsOutput = execSync('ipcs -m', { encoding: 'utf8' });
-      const lines = ipcsOutput.split('\n');
-      
-      // Look for segments that might belong to PostgreSQL
-      const potentialPgSegments = [];
-      
-      for (const line of lines) {
-        if (line.includes(username) && line.includes('--rw-------')) {
-          const parts = line.trim().split(/\s+/);
-          if (parts.length >= 3) {
-            const shmid = parts[1];
-            const key = parts[2];
-            potentialPgSegments.push({ shmid, key, line });
-          }
-        }
-      }
-      
-      if (potentialPgSegments.length === 0) {
-        console.log('No shared memory segments found for cleanup');
-        return;
-      }
-      
-      console.log(`Found ${potentialPgSegments.length} potential shared memory segments to check`);
-      
-      // Health check each segment
-      for (const segment of potentialPgSegments) {
-        const isOrphaned = checkIfSharedMemoryOrphaned(segment, dataDir);
-        if (isOrphaned) {
-          try {
-            console.log(`Cleaning up orphaned shared memory segment: ${segment.shmid} (key: ${segment.key})`);
-            execSync(`ipcrm -m ${segment.shmid}`, { stdio: 'ignore' });
-            console.log(`Successfully removed shared memory segment ${segment.shmid}`);
-          } catch (e) {
-            console.warn(`Failed to remove shared memory segment ${segment.shmid}: ${e.message}`);
-          }
-        } else {
-          console.log(`Shared memory segment ${segment.shmid} appears to be in use, skipping`);
-        }
-      }
-      
-    } catch (error) {
-      console.log('Shared memory health check failed, skipping cleanup:', error.message);
-    }
-  }
-  
-  function checkIfSharedMemoryOrphaned(segment, dataDir) {
-    try {
-      const { execSync } = require('child_process');
-      
-      // Check 1: Look for any PostgreSQL processes that might be using this segment
-      try {
-        const pgProcesses = execSync('pgrep -f postgres', { encoding: 'utf8' }).trim();
-        if (pgProcesses) {
-          const pids = pgProcesses.split('\n');
-          
-          // Check if any PostgreSQL process is using our data directory
-          for (const pid of pids) {
-            try {
-              const cmdline = execSync(`ps -p ${pid} -o args=`, { encoding: 'utf8' }).trim();
-              if (cmdline.includes(dataDir)) {
-                console.log(`Found active PostgreSQL process using our data directory: PID ${pid}`);
-                return false; // Not orphaned, process is using our data dir
-              }
-            } catch (e) {
-              // Process might have disappeared, continue checking
-            }
-          }
-        }
-      } catch (e) {
-        // No PostgreSQL processes found, continue with other checks
-      }
-      
-      // Check 2: Verify if shared memory segment is actually accessible
-      try {
-        // macOS doesn't support ipcs -i, use alternative approach
-        const platform = require('os').platform();
-        let attachCount = 0;
-        
-        if (platform === 'darwin') {
-          // On macOS, use ipcs -m and parse the nattch column
-          const shmInfo = execSync('ipcs -m', { encoding: 'utf8' });
-          const lines = shmInfo.split('\n');
-          
-          for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            if (parts.length >= 6 && parts[1] === segment.shmid) {
-              // Column layout: T ID KEY MODE OWNER GROUP [NATTCH]
-              attachCount = parseInt(parts[6] || '0');
-              break;
-            }
-          }
-        } else {
-          // On Linux, use ipcs -i
-          const shmInfo = execSync(`ipcs -m -i ${segment.shmid}`, { encoding: 'utf8' });
-          const lines = shmInfo.split('\n');
-          for (const line of lines) {
-            if (line.includes('nattch')) {
-              attachCount = parseInt(line.split('=')[1]?.trim() || '0');
-              break;
-            }
-          }
-        }
-        
-        if (attachCount > 0) {
-          console.log(`Shared memory segment ${segment.shmid} has ${attachCount} attachments, not orphaned`);
-          return false;
-        }
-      } catch (e) {
-        // If we can't get info about the segment, it might already be cleaned up
-        console.log(`Cannot get attachment info for shared memory segment ${segment.shmid}: ${e.message}`);
-        return false;
-      }
-      
-      // Check 3: Look for specific PostgreSQL shared memory key patterns
-      // PostgreSQL typically uses keys in specific ranges for different purposes
-      const key = parseInt(segment.key, 16);
-      
-      // PostgreSQL main shared memory usually has predictable key patterns
-      // If this doesn't look like a PostgreSQL key, be cautious
-      if (key < 0x1000000 || key > 0xFFFFFFFF) {
-        console.log(`Shared memory key ${segment.key} doesn't match PostgreSQL patterns, skipping`);
-        return false;
-      }
-      
-      // Check 4: Final safety check - look for lock file association
-      if (fs.existsSync(path.join(dataDir, 'postmaster.pid'))) {
-        console.log('PostgreSQL lock file exists, shared memory might still be needed');
-        return false;
-      }
-      
-      console.log(`Shared memory segment ${segment.shmid} appears to be orphaned`);
-      return true;
-      
-    } catch (error) {
-      console.warn(`Error during health check for segment ${segment.shmid}: ${error.message}`);
-      return false; // When in doubt, don't clean up
-    }
-  }
-  
-  // Run the health-checked cleanup
-  cleanupOrphanedSharedMemory(dataDir);
-
-  if (!fs.existsSync(path.join(dataDir, 'PG_VERSION'))) {
-    spawnSync(initdbPath, ['-D', dataDir]);
-  }
-
-  try {
-    postgresProcess = spawn(pgPath, ['-D', dataDir, '-p', '55432']);
-  } catch (err) {
-    console.error('Failed to spawn postgres:', err);
-    return null;
-  }
-
-  postgresProcess.stdout.on('data', (data) => {
-    console.log(`postgres: ${data}`);
-  });
-
-  postgresProcess.stderr.on('data', (data) => {
-    console.error(`postgres err: ${data}`);
-  });
-
-  postgresProcess.on('error', (err) => {
-    console.error('postgres process error:', err);
-  });
-
-  postgresProcess.on('exit', (code, signal) => {
-    console.log(`PostgreSQL process exited with code ${code} and signal ${signal}`);
-    postgresProcess = null;
-  });
-
-  return postgresProcess;
-}
+// function startPostgres() { ... } // Removed entire startPostgres function
 
 function initializeDatabase() {
   return new Promise((resolve, reject) => {
-    console.log('Initializing database...');
-    
-    // Handle path resolution for packaged vs development
-    const isPackaged = app.isPackaged;
-    let initScript;
-    
-    if (isPackaged) {
-      // In packaged app, extract script from asar to temp location
-      const originalScript = path.join(__dirname, 'init_db.sh');
-      const tempScript = path.join(os.tmpdir(), 'theseus_init_db.sh');
-      
-      try {
-        // Copy script from asar to temp location
-        const scriptContent = fs.readFileSync(originalScript, 'utf8');
-        fs.writeFileSync(tempScript, scriptContent, { mode: 0o755 });
-        initScript = tempScript;
-        tempFiles.push(tempScript); // Track for cleanup
-        console.log(`Extracted init script to: ${initScript}`);
-      } catch (error) {
-        console.error('Failed to extract init script:', error);
-        return reject(error);
+    console.log('Ensuring user data directory exists for SQLite database...');
+    try {
+      const userDataPath = app.getPath('userData');
+      if (!fs.existsSync(userDataPath)) {
+        fs.mkdirSync(userDataPath, { recursive: true });
       }
-    } else {
-      // In development
-      initScript = path.join(__dirname, 'init_db.sh');
-    }
-    
-    console.log(`Using init script: ${initScript}`);
-    
-    const initProcess = spawn('bash', [initScript], {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        ELECTRON_IS_PACKAGED: isPackaged ? 'true' : 'false',
-        ELECTRON_RESOURCES_PATH: isPackaged ? process.resourcesPath : ''
-      }
-    });
-
-    initProcess.on('close', (code) => {
-      // Clean up temp file if created
-      if (isPackaged && fs.existsSync(initScript)) {
-        try {
-          fs.unlinkSync(initScript);
-        } catch (e) {
-          console.warn('Could not clean up temp init script:', e.message);
-        }
-      }
-      
-      if (code === 0) {
-        console.log('Database initialization completed successfully');
-        resolve();
-      } else {
-        console.error(`Database initialization failed with code ${code}`);
-        reject(new Error(`Database initialization failed with code ${code}`));
-      }
-    });
-
-    initProcess.on('error', (error) => {
-      console.error('Failed to start database initialization:', error);
+      console.log('User data directory ensured.');
+      resolve();
+    } catch (error) {
+      console.error('Failed to ensure user data directory:', error);
       reject(error);
-    });
+    }
   });
 }
 
@@ -728,11 +414,14 @@ function startBackend() {
     pythonPathParts.push(process.env.PYTHONPATH);
   }
 
+  const dbPath = path.join(app.getPath('userData'), 'theseus.db');
+  console.log(`SQLite database path will be: ${dbPath}`);
+
   pythonProcess = spawn(pythonCmd, startupArgs, {
     cwd: projectRoot,  // Set working directory to project root
     env: {
       ...process.env,
-      DATABASE_URL: 'postgresql://theseus:theseus@localhost:55432/theseusdb',
+      DATABASE_URL: `sqlite:///${dbPath}`, // Corrected for file path
       ELECTRON_IS_PACKAGED: isPackaged ? 'true' : 'false',
       ELECTRON_RESOURCES_PATH: isPackaged ? process.resourcesPath : '',
       PATH: process.env.PATH,
@@ -845,13 +534,7 @@ function waitForServer(url, maxAttempts = 20, delay = 2000) {
 
 async function startServices() {
   try {
-    // Start PostgreSQL
-    startPostgres();
-    
-    // Wait a moment for PostgreSQL to fully start
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    // Initialize the database
+    // Initialize the database (ensure user data directory exists)
     await initializeDatabase();
     
     // Start the backend
@@ -889,23 +572,11 @@ function cleanupProcesses() {
   
   if (pythonProcess) {
     console.log('Shutting down Python backend...');
-    pythonProcess.kill('SIGTERM');
+    pythonProcess.kill('SIGTERM'); // SIGTERM is preferred for graceful shutdown
     pythonProcess = null;
   }
   
-  if (postgresProcess) {
-    console.log('Shutting down PostgreSQL...');
-    postgresProcess.kill('SIGTERM');
-    
-    // Give it a moment to shut down gracefully
-    setTimeout(() => {
-      if (postgresProcess && !postgresProcess.killed) {
-        console.log('Force killing PostgreSQL...');
-        postgresProcess.kill('SIGKILL');
-      }
-      postgresProcess = null;
-    }, 3000);
-  }
+  // No PostgreSQL process to manage
   
   cleanupTempFiles();
 }

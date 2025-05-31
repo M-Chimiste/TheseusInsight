@@ -1,16 +1,16 @@
 # Embedding Functionality for Semantic Search
 
-This document describes the new vector embedding functionality added to Theseus Insight, enabling semantic similarity search using pgvector with PostgreSQL.
+This document describes the vector embedding functionality in Theseus Insight, enabling semantic similarity search using `sqlite-vec` with SQLite.
 
 ## Overview
 
-The system now stores vector embeddings of paper abstracts in the database, allowing for sophisticated semantic similarity searches that go beyond simple keyword matching.
+The system stores vector embeddings of paper abstracts in an SQLite database, allowing for sophisticated semantic similarity searches that go beyond simple keyword matching. `sqlite-vec` is used to manage and query these embeddings efficiently.
 
 ## Features
 
 ### 1. Automatic Embedding Generation
-- When papers are processed through the main pipeline, their abstracts are automatically embedded using the configured embedding model
-- Embeddings are stored as vectors in the PostgreSQL database using the pgvector extension
+- When papers are processed through the main pipeline, their abstracts are automatically embedded using the configured embedding model.
+- Embeddings are stored as `BLOB` data types in the SQLite database and managed by the `sqlite-vec` extension (e.g., in a VSS virtual table like `papers_vss`).
 
 ### 2. Similarity Search API
 New API endpoints for semantic search:
@@ -82,9 +82,9 @@ Finds papers similar to an existing paper using its stored embedding.
 ### 3. Database Schema Updates
 
 The `papers` table now includes:
-- `embedding VECTOR` - Stores the vector embedding of the paper's abstract
-- Updated `fetch_all_papers()` to include embeddings
-- New similarity search methods using pgvector's cosine distance operator (`<=>`)
+- `embedding BLOB` - Stores the vector embedding of the paper's abstract. This is then typically indexed in a `sqlite-vec` VSS table.
+- Updated `fetch_all_papers()` to include embeddings (as deserialized lists of floats).
+- New similarity search methods utilize `sqlite-vec`'s functions (e.g., `vss_search`) to find similar vectors based on cosine distance/similarity.
 
 ### 4. Data Model Updates
 
@@ -102,7 +102,8 @@ from theseus_insight.data_model.data_handling import PaperDatabase
 from theseus_insight.inference import SentenceTransformerInference
 
 # Initialize database and embedding model
-db = PaperDatabase("postgresql://...")
+# For SQLite, the path is a file path, e.g., "sqlite:///./data/theseus.db"
+db = PaperDatabase("sqlite:///./data/development.db")
 embedding_model = SentenceTransformerInference("Alibaba-NLP/gte-modernbert-base")
 
 # Perform semantic search with text query
@@ -142,15 +143,15 @@ python -m theseus_insight.utils.backfill_embeddings --batch-size 5
 ## Technical Details
 
 ### Vector Storage
-- Uses PostgreSQL's pgvector extension for efficient vector storage and similarity search
-- Embeddings are stored as VECTOR type columns
-- Cosine similarity is calculated using the `<=>` operator
+- Uses the `sqlite-vec` extension for SQLite for efficient vector storage and similarity search.
+- Embeddings are typically stored as `BLOB`s in the main `papers` table and then indexed in a `sqlite-vec` virtual table (e.g., `papers_vss` using the `vss0` module).
+- `sqlite-vec` handles the specialized storage and indexing needed for fast vector queries.
 
 ### Similarity Calculation
-- Uses cosine distance: `embedding <=> query_embedding`
-- Similarity score is calculated as: `1 - cosine_distance`
-- Results are ordered by similarity (highest first)
-- Reference paper is excluded from similarity search results
+- `sqlite-vec`'s search functions (e.g., `vss_search`) return a distance metric (commonly cosine distance, where 0 is most similar).
+- The application converts this distance to a similarity score, typically in the range [0, 1] or [1, -1] where higher is more similar. For instance, if `distance` is cosine distance (0 to 2), similarity might be `1 - distance` or `(2 - distance) / 2`.
+- Results are ordered by this similarity score (highest first).
+- Reference paper is excluded from its own similarity search results.
 
 ### Model Configuration
 - Embedding model is configured in the orchestration settings
@@ -173,9 +174,9 @@ python -m theseus_insight.utils.backfill_embeddings --batch-size 5
 ### Performance Considerations
 
 - Embedding generation adds processing time to the paper analysis pipeline
-- Consider the embedding model size vs. performance trade-off
-- Use appropriate batch sizes for backfilling large numbers of papers
-- pgvector provides efficient indexing for similarity searches
+- Consider the embedding model size vs. performance trade-off.
+- Use appropriate batch sizes for backfilling large numbers of papers.
+- `sqlite-vec` provides efficient indexing (e.g., IVF_PQ) for similarity searches.
 
 ## Future Enhancements
 

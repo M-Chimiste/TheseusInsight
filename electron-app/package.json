@@ -16,9 +16,7 @@
     "build:mac-universal": "electron-builder --mac --universal",
     "build:mac-universal-custom": "node build-universal.js",
     "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux",
-    "download-pg": "bash ./download_postgres.sh",
-    "build-pg": "bash ./build_postgres.sh"
+    "build:linux": "electron-builder --linux"
   },
   "build": {
     "appId": "com.theseusinsight.desktop",
@@ -28,7 +26,6 @@
     },
     "asar": true,
     "asarUnpack": [
-      "**/postgres/**/*",
       "**/theseus_insight/**/*",
       "**/python_deps/**/*",
       "**/run_theseus_insight.py",
@@ -36,14 +33,9 @@
     ],
     "files": [
       "**/*",
-      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}",
-      "!postgres/**/*"
+      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}"
     ],
     "extraResources": [
-      {
-        "from": "postgres",
-        "to": "app/postgres"
-      },
       {
         "from": "../",
         "to": "app",
@@ -104,8 +96,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "afterPack": "./scripts/afterPack.js"
+    }
   },
   "engines": {
     "node": ">=20"

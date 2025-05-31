@@ -43,7 +43,7 @@ echo ""
 packages=(
     "fastapi>=0.100.0"
     "uvicorn[standard]>=0.20.0"
-    "psycopg2-binary>=2.9.0"
+    "sqlite-vec"  # Added
     "sqlalchemy>=2.0.0"
     "pydantic>=2.0.0"
     "python-multipart>=0.0.6"
@@ -88,11 +88,18 @@ echo ""
 echo "🧪 Testing installation..."
 
 # Test each critical package
-critical_packages=("fastapi" "uvicorn" "psycopg2" "sqlalchemy" "pydantic")
+critical_packages=("fastapi" "uvicorn" "sqlite3" "sqlite_vec" "sqlalchemy" "pydantic") # Modified
 test_failed=false
 
 for package in "${critical_packages[@]}"; do
-    if python3 -c "import $package; print(f'✅ {package.__name__} v{getattr(package, \"__version__\", \"unknown\")}')" 2>/dev/null; then
+    if [ "$package" == "sqlite3" ]; then
+        if python3 -c "import sqlite3; print(f'✅ sqlite3 (runtime v{sqlite3.sqlite_version})')" 2>/dev/null; then
+            echo "   ✅ sqlite3 working"
+        else
+            echo "   ❌ sqlite3 not working"
+            test_failed=true
+        fi
+    elif python3 -c "import $package; print(f'✅ {package.__name__} v{getattr(package, \"__version__\", \"unknown\")}')" 2>/dev/null; then
         echo "   ✅ $package working"
     else
         echo "   ❌ $package not working"

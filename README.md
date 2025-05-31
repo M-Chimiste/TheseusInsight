@@ -15,8 +15,6 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
 - [Running the Frontend](#running-the-frontend)
-- [External Database Access](#external-database-access)
-- [External Database Access](#external-database-access)
 - [Custom Data Storage Location](#custom-data-storage-location)
 - [Desktop Build](#desktop-build)
 - [Key Endpoints](#key-endpoints)
@@ -178,82 +176,10 @@ During development use the Vite dev server as shown in the [Quickstart](#quickst
 
 ---
 
-## External Database Access
-
-By default, the PostgreSQL database runs in an isolated Docker container and is not accessible from external tools. For development, debugging, data migration, or administrative tasks, you can enable external database access.
-
-### Enabling External Access
-
-**Option 1: Using the helper script (recommended)**
-```bash
-# Start with external database access enabled
-./scripts/start-with-db-access.sh
-
-# Or pass additional docker-compose arguments
-./scripts/start-with-db-access.sh -d  # Run in detached mode
-```
-
-**Option 2: Manual Docker Compose override**
-```bash
-# Start with both compose files
-docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
-```
-
-**Option 3: Environment variable in .env file**
-```bash
-# Add to your .env file
-ALLOW_DB_CONNECTION=true
-
-# Then start normally (this sets the variable but you still need the override file)
-docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
-```
-
-### Connection Details
-
-When external access is enabled, the database is accessible on:
-- **Host**: `localhost`
-- **Port**: `5433` (to avoid conflicts with local PostgreSQL)
-- **Database**: `theseusdb`
-- **Username**: `theseus`
-- **Password**: `theseus`
-
-### Example Connections
-
-**Using psql command line:**
-```bash
-psql -h localhost -p 5433 -U theseus -d theseusdb
-```
-
-**Using pgAdmin:**
-- Server: `localhost:5433`
-- Maintenance database: `theseusdb`
-- Username: `theseus`
-- Password: `theseus`
-
-**Using Python/SQLAlchemy:**
-```python
-from sqlalchemy import create_engine
-engine = create_engine("postgresql://theseus:theseus@localhost:5433/theseusdb")
-```
-
-### Security Considerations
-
-⚠️ **Important**: Only enable external database access in development environments or secure networks. When enabled:
-- The database accepts connections from any IP address on the host machine
-- Database credentials are transmitted over the network
-- The database port is exposed on the host machine
-
-For production deployments, use secure connection methods such as:
-- VPN tunnels
-- SSH port forwarding
-- Database connection pools with authentication
-- Network firewalls and access controls
-
----
 
 ## Custom Data Storage Location
 
-By default, Theseus Insight stores data in the local `./data` directory and uses Docker named volumes for the PostgreSQL database. For installations with limited internal storage, you can redirect all data to an external drive or custom location.
+By default, Theseus Insight stores data in the local `./data` directory. This folder contains the `theseus.db` SQLite database alongside generated newsletters, podcasts and other files. For installations with limited internal storage, you can redirect all data to an external drive or custom location.
 
 ### Quick Setup for External Storage
 
@@ -298,11 +224,7 @@ When using external storage, the following directory structure is created:
 │   ├── podcasts/               # Generated podcast audio/video
 │   ├── visualizations/         # Generated visualizations
 │   └── temp/                   # Temporary processing files
-└── postgres_data/              # PostgreSQL database files
-    ├── base/                   # Database tables and indexes
-    ├── global/                 # Cluster-wide data
-    ├── pg_wal/                 # Write-ahead log files
-    └── ...                     # Other PostgreSQL system files
+└── theseus.db                 # SQLite database file
 ```
 
 ### Platform-Specific Paths
@@ -347,13 +269,10 @@ If you've already been running Theseus Insight and want to move existing data to
 docker-compose down
 
 # Create external storage directory
-mkdir -p /Volumes/nyx/theseus_insight_data/{app_data,postgres_data}
+mkdir -p /Volumes/nyx/theseus_insight_data/app_data
 
 # Copy existing application data
 cp -r ./data/* /Volumes/nyx/theseus_insight_data/app_data/
-
-# Export existing database (if you have data)
-docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_insight_data/postgres_data:/backup alpine sh -c "cp -r /data/* /backup/"
 
 # Start with external storage
 ./scripts/start-with-external-storage.sh
@@ -413,13 +332,13 @@ docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_
 Theseus Insight features advanced hybrid search capabilities that combine the precision of BM25-style keyword ranking with the contextual understanding of semantic similarity. This provides significantly enhanced search accuracy compared to traditional keyword-only or semantic-only approaches.
 
 **Key Features:**
-- **BM25-Enhanced Keyword Search**: Uses PostgreSQL's full-text search with `ts_rank_cd()` for sophisticated term frequency and document ranking (replaces simple substring matching)
+- **BM25-Enhanced Keyword Search**: Uses SQLite FTS5 with the `bm25()` ranking function for accurate term frequency scoring
 - **Dual-Mode Search**: Simultaneously performs semantic similarity using vector embeddings and advanced keyword ranking across paper titles and abstracts
 - **Weighted Title Boost**: Title matches receive 2x scoring weight compared to abstract matches for improved relevance
 - **Weighted Scoring**: User-adjustable weights for combining semantic and keyword scores (default: 60% semantic, 40% keyword)
 - **Real-Time Scoring**: Returns individual `semantic_score`, `keyword_score`, and combined `hybrid_score` for transparency
 - **Full Integration**: Works seamlessly with existing filters (date range, score threshold, pagination)
-- **Performance Optimized**: Database-level operations using PostgreSQL with pgvector and GIN indexes for scalable performance
+- **Performance Optimized**: Database-level operations use sqlite-vec for vector search and FTS5 indexes for scalable performance
 
 **Example API Request:**
 ```json
@@ -461,10 +380,10 @@ POST /api/papers/hybrid-search
 The React interface provides an intuitive toggle for enabling hybrid search with interactive weight adjustment sliders. Users can fine-tune the balance between semantic understanding and BM25-style keyword ranking to optimize results for their specific research needs.
 
 **Technical Implementation:**
-- **PostgreSQL Full-Text Search**: Leverages native `tsvector` and `tsquery` types with English language stemming and stopword filtering
-- **Ranking Algorithm**: Uses `ts_rank_cd()` with normalization flags for document length and term frequency weighting
-- **Index Optimization**: GIN (Generalized Inverted Index) indexes on title, abstract, and combined search vectors for fast retrieval
-- **Automatic Migration**: Existing installations automatically gain BM25 capabilities through database schema updates
+- **SQLite Full-Text Search**: Utilises the FTS5 module with Unicode-aware tokenization and stopword filtering
+- **Ranking Algorithm**: Uses the `bm25()` ranking function for weighted relevance
+- **Index Optimization**: FTS5 indexes provide fast lookup over title and abstract text
+- **Automatic Migration**: Existing installations automatically update the SQLite schema when new search features are introduced
 
 See [docs/embedding_functionality_README.md](docs/embedding_functionality_README.md) for more details.
 ### Theseus Insight Run Orchestration
@@ -500,22 +419,22 @@ Theseus Insight includes comprehensive database migration tools for transferring
 **Export database to archive:**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate export \
-    --source-db "postgresql://user:pass@localhost:5432/theseus_dev" \
+    --source-db data/theseus.db \
     --output ./backup.tar.gz
 ```
 
 **Import archive to new database:**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate import \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --target-db data/theseus.db \
     --input ./backup.tar.gz
 ```
 
 **Direct migration with verification:**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_dev" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --source-db old.db \
+    --target-db new.db \
     --verify
 ```
 
@@ -533,8 +452,8 @@ For detailed documentation and advanced usage examples, see [`theseus_insight/do
 ## Desktop Build
 
 An Electron wrapper is provided in the `electron-app` directory. It bundles the
-Python backend and a PostgreSQL database using `pgvector`. PostgreSQL runs on
-port **55432** to avoid conflicts with existing installations.
+Python backend together with the built SQLite database so no separate database
+server is required.
 
 ### Building
 
@@ -563,7 +482,7 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
 - [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
-- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for backend processing.
+- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), SQLite with [sqlite-vec](https://github.com/asg017/sqlite-vss) for backend processing.
 
 Theseus Insight is maintained by [M. Chimiste](https://github.com/M-Chimiste) & contributors.
 

@@ -31,9 +31,9 @@ export const settingsApi = {
   exportDatabase: (onProgress?: (percent: number) => void) =>
     api.get('/settings/database/export', {
       responseType: 'blob',
-      onDownloadProgress: (event: ProgressEvent) => {
-        if (onProgress && event.total) {
-          const percent = Math.round((event.loaded * 100) / event.total);
+      onDownloadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           onProgress(percent);
         }
       },
@@ -45,9 +45,9 @@ export const settingsApi = {
   ) =>
     api.get(`/settings/database/export-task/${taskId}/download`, {
       responseType: 'blob',
-      onDownloadProgress: (event: ProgressEvent) => {
-        if (onProgress && event.total) {
-          const percent = Math.round((event.loaded * 100) / event.total);
+      onDownloadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           onProgress(percent);
         }
       },

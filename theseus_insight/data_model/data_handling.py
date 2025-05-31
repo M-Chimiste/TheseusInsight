@@ -8,6 +8,7 @@ import sqlite3
 import numpy as np
 from ..utils.common_utils import cosine_similarity
 
+
 from .papers import Newsletter, Paper, Logs, Podcast
 
 INITIAL_PROVIDERS = [
@@ -152,6 +153,13 @@ class PaperDatabase:
         """Check if a paper with the given URL already exists in the database."""
         with self.get_cursor() as cursor:
             cursor.execute('SELECT COUNT(*) FROM papers WHERE url = ?', (url,))
+            count = cursor.fetchone()[0]
+            return count > 0
+
+    def paper_exists_by_title(self, title: str) -> bool:
+        """Check if a paper with the given title already exists in the database."""
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) FROM papers WHERE title = ?', (title,))
             count = cursor.fetchone()[0]
             return count > 0
 
@@ -504,7 +512,6 @@ class PaperDatabase:
                 WHERE embedding IS NOT NULL
             """
             )
-
             rows = cursor.fetchall()
 
         results = []
@@ -610,6 +617,7 @@ class PaperDatabase:
                 (json.dumps(embedding) if embedding is not None else None, paper_id),
             )
 
+
     def get_paper_embedding(self, paper_id: int):
         """Get the embedding for a specific paper.
         
@@ -627,6 +635,7 @@ class PaperDatabase:
                 """,
                 (paper_id,),
             )
+
             row = cursor.fetchone()
             if row:
                 try:
@@ -657,7 +666,6 @@ class PaperDatabase:
                 """,
                 (paper_id,),
             )
-
             reference_row = cursor.fetchone()
             if not reference_row:
                 return None
@@ -751,6 +759,7 @@ class PaperDatabase:
             key = str(key)
         with self.get_cursor() as cursor:
             cursor.execute('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', (key, value))
+
 
     def delete_setting(self, key: str):
         with self.get_cursor() as cursor:
@@ -1201,6 +1210,7 @@ class PaperDatabase:
                             (1 - (embedding <=> ?::vector)) as semantic_score,
                             0.0 as keyword_score,
                             (1 - (embedding <=> ?::vector)) as hybrid_score
+
                         FROM papers 
                         WHERE {where_clause}
                         ORDER BY hybrid_score DESC
@@ -1220,6 +1230,7 @@ class PaperDatabase:
                             p.id, p.title, p.abstract, p.date, p.date_run, p.score, p.rationale, p.related,
                             p.cosine_similarity, p.url, p.embedding_model, p.embedding,
                             (1 - (p.embedding <=> ?::vector)) as semantic_score,
+
                             COALESCE(
                                 ts_rank_cd(
                                     setweight(p.title_vector, 'A') ||
@@ -1231,11 +1242,13 @@ class PaperDatabase:
                             ) as keyword_score,
                             (
                                 ({semantic_weight} * (1 - (p.embedding <=> ?::vector))) +
+
                                 ({keyword_weight} * COALESCE(
                                     ts_rank_cd(
                                         setweight(p.title_vector, 'A') ||
                                         setweight(p.abstract_vector, 'B'),
                                         plainto_tsquery('english', ?),
+
                                         32
                                     ),
                                     0.0
@@ -1360,6 +1373,7 @@ class PaperDatabase:
                     WHERE {where_clause}
                     ORDER BY hybrid_score DESC
                     LIMIT ? OFFSET ?
+
                 """
                 
                 cursor.execute(semantic_query, [query_embedding, query_embedding] + params + [page_size, offset])
@@ -1416,10 +1430,11 @@ class PaperDatabase:
             cutoff_time = (datetime.datetime.now() - datetime.timedelta(hours=hours_back)).isoformat()
             
             query = '''
-                SELECT task_id, task_type, status, config_json, start_time, end_time, 
+                SELECT task_id, task_type, status, config_json, start_time, end_time,
                        error, result_json, progress, current_step, message
                 FROM tasks 
                 WHERE status = 'completed' 
+
                 AND end_time >= ?
                 AND result_json IS NOT NULL
             '''

@@ -95,6 +95,7 @@ const Settings: React.FC = () => {
   const [importProgress, setImportProgress] = useState<number>(0);
   const [importStatus, setImportStatus] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [exportProgress, setExportProgress] = useState<number>(0);
 
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration, isError: isErrorOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -187,9 +188,13 @@ const Settings: React.FC = () => {
   });
 
   const exportDatabaseMutation = useMutation({
-    mutationFn: () => settingsApi.exportDatabase(),
+    mutationFn: () => settingsApi.exportDatabase((p) => setExportProgress(p)),
+    onMutate: () => {
+      setExportProgress(0);
+    },
     onSuccess: (response) => {
       try {
+        setExportProgress(100);
         // Validate response data
         if (!response.data || response.data.size === 0) {
           throw new Error('Export file is empty or corrupt');
@@ -843,9 +848,23 @@ const Settings: React.FC = () => {
                 {exportDatabaseMutation.isPending ? 'Exporting...' : 'Export Database'}
               </Button>
               {exportDatabaseMutation.isPending && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  This may take a few minutes for large databases...
-                </Typography>
+                <Box sx={{ mt: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ width: '100%' }}>
+                      <LinearProgress
+                        variant="determinate"
+                        value={exportProgress}
+                        sx={{ height: 8, borderRadius: 4 }}
+                      />
+                    </Box>
+                    <Typography variant="body2" color="text.secondary">
+                      {exportProgress}%
+                    </Typography>
+                  </Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    This may take a few minutes for large databases...
+                  </Typography>
+                </Box>
               )}
             </Box>
 

@@ -28,7 +28,16 @@ export const settingsApi = {
   getModels: () => api.get('/models'),
   runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
   abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
-  exportDatabase: () => api.get('/settings/database/export', { responseType: 'blob' }),
+  exportDatabase: (onProgress?: (percent: number) => void) =>
+    api.get('/settings/database/export', {
+      responseType: 'blob',
+      onDownloadProgress: (event: ProgressEvent) => {
+        if (onProgress && event.total) {
+          const percent = Math.round((event.loaded * 100) / event.total);
+          onProgress(percent);
+        }
+      },
+    }),
   importDatabase: (file: File, importMode: 'merge' | 'overwrite' = 'merge') => {
     const formData = new FormData();
     formData.append('backup_file', file);

@@ -1,7 +1,7 @@
 const builder = require('electron-builder');
 
 async function buildUniversal() {
-  console.log('🔄 Building Universal macOS App with custom postgres handling...');
+  console.log('🔄 Building Universal macOS App...');
   
   const config = {
     appId: 'com.theseusinsight.desktop',
@@ -9,17 +9,12 @@ async function buildUniversal() {
     directories: {
       output: 'dist'
     },
-    // Unpack native PostgreSQL binaries so they are real files on disk
-    asarUnpack: ["**/postgres/**/*"],
+    asarUnpack: [],
     files: [
       '**/*',
       '!node_modules/*/{CHANGELOG.md,README.md,readme.md,example,examples,**/test/**}'
     ],
     extraResources: [
-      {
-        from: 'postgres',
-        to: 'app/postgres'
-      },
       {
         from: '../',
         to: 'app',
@@ -43,7 +38,6 @@ async function buildUniversal() {
       entitlements: 'build/entitlements.mac.plist',
       entitlementsInherit: 'build/entitlements.mac.plist',
       category: 'public.app-category.productivity',
-      // Configure x64ArchFiles to handle postgres binaries that are the same across architectures
       target: [
         {
           target: 'dmg',
@@ -51,8 +45,7 @@ async function buildUniversal() {
         }
       ]
     },
-    // Patch postgres binaries after they're copied but before signing
-    afterPack: './scripts/fix-postgres.js',
+    afterPack: null,
   };
 
   try {

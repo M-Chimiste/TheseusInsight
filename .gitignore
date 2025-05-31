@@ -433,6 +433,7 @@ build/
 # Dependencies
 node_modules/
 python_deps/
+python_runtime/
 
 # Distribution packages
 *.zip

@@ -152,7 +152,7 @@ echo "🔍 Checking app bundle integrity..."
 check_status "Main executable exists" "[ -f '$APP_PATH/Contents/MacOS/Theseus Insight' ]"
 check_status "Electron Framework exists" "[ -d '$APP_PATH/Contents/Frameworks/Electron Framework.framework' ]"
 check_status "App resources exist" "[ -f '$APP_PATH/Contents/Resources/app.asar' ]"
-check_status "PostgreSQL binaries exist" "[ -d '$APP_PATH/Contents/Resources/app/postgres' ]"
+check_status "Python runtime exists" "[ -d '$APP_PATH/Contents/Resources/app/python_runtime' ]"
 check_status "Frontend files exist" "[ -d '$APP_PATH/Contents/Resources/app/theseus-ui' ]"
 echo ""
 

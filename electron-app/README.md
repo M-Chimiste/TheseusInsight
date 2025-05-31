@@ -34,4 +34,7 @@ npm run build -- -w
 ```
 Creates a Windows installer (`.exe`).
 
-Ensure that Python and the PostgreSQL binaries are included in the `extraResources` section of `package.json` so they are packaged with the app.
+The Electron package includes a bundled Python runtime and all required dependencies,
+including the `sqlite-vec` extension. Ensure the `python_runtime` directory is
+listed in the `extraResources` section of `package.json` so it is packaged with
+the application.

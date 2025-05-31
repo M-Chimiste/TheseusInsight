@@ -99,8 +99,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "afterPack": ""
+    }
   },
   "engines": {
     "node": ">=20"

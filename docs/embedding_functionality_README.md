@@ -1,6 +1,6 @@
 # Embedding Functionality for Semantic Search
 
-This document describes the new vector embedding functionality added to Theseus Insight, enabling semantic similarity search using pgvector with PostgreSQL.
+This document describes the vector embedding functionality added to Theseus Insight, enabling semantic similarity search using sqlite-vec with SQLite.
 
 ## Overview
 
@@ -10,7 +10,7 @@ The system now stores vector embeddings of paper abstracts in the database, allo
 
 ### 1. Automatic Embedding Generation
 - When papers are processed through the main pipeline, their abstracts are automatically embedded using the configured embedding model
-- Embeddings are stored as vectors in the PostgreSQL database using the pgvector extension
+- Embeddings are stored as vectors in the SQLite database using the sqlite-vec extension
 
 ### 2. Similarity Search API
 New API endpoints for semantic search:
@@ -84,7 +84,7 @@ Finds papers similar to an existing paper using its stored embedding.
 The `papers` table now includes:
 - `embedding VECTOR` - Stores the vector embedding of the paper's abstract
 - Updated `fetch_all_papers()` to include embeddings
-- New similarity search methods using pgvector's cosine distance operator (`<=>`)
+- New similarity search methods using sqlite-vec cosine distance functions
 
 ### 4. Data Model Updates
 
@@ -142,9 +142,9 @@ python -m theseus_insight.utils.backfill_embeddings --batch-size 5
 ## Technical Details
 
 ### Vector Storage
-- Uses PostgreSQL's pgvector extension for efficient vector storage and similarity search
-- Embeddings are stored as VECTOR type columns
-- Cosine similarity is calculated using the `<=>` operator
+- Uses the sqlite-vec extension for efficient vector storage and similarity search
+- Embeddings are stored as BLOB columns compatible with sqlite-vec
+- Cosine similarity is calculated using sqlite-vec functions
 
 ### Similarity Calculation
 - Uses cosine distance: `embedding <=> query_embedding`
@@ -175,7 +175,7 @@ python -m theseus_insight.utils.backfill_embeddings --batch-size 5
 - Embedding generation adds processing time to the paper analysis pipeline
 - Consider the embedding model size vs. performance trade-off
 - Use appropriate batch sizes for backfilling large numbers of papers
-- pgvector provides efficient indexing for similarity searches
+- sqlite-vec provides efficient indexing for similarity searches
 
 ## Future Enhancements
 

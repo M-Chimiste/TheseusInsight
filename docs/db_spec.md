@@ -1,6 +1,6 @@
 # Theseus Insight - Database Specification v1.0
 
-> PostgreSQL schema (with pgvector) created automatically by `PaperDatabase._initialize_db()` during application start-up
+> SQLite schema (with sqlite-vec) created automatically by `PaperDatabase._initialize_db()` during application start-up
 
 ---
 
@@ -22,11 +22,11 @@ Database access is configured via the `DATABASE_URL` environment variable.
 
 | Property             | Default value                                                                                                                                                    | Notes                                                  |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| **Engine**           | PostgreSQL + pgvector |
-|                          | Requires running Postgres server |
-| **Connection string**| `postgresql://theseus:theseus@localhost:5432/theseusdb` |
+| **Engine**           | SQLite + sqlite-vec |
+|                          | Single file database (`theseus.db`) |
+| **Connection string**| `data/theseus.db` |
 |                          | Provided via `DATABASE_URL` environment variable |
-| **Connection model** | One connection per CRUD call using `psycopg` |
+| **Connection model** | Uses Python's builtin `sqlite3` |
 ---
 
 ## 3. Entity-Relationship Overview
@@ -182,8 +182,8 @@ WHERE p.name = 'openai';
 
 ## 6. Performance & Indexing Notes
 
-* Primary keys automatically create B-tree indexes in PostgreSQL.
-* Full-text search vectors are indexed with `GIN`.
+* Primary keys automatically create B-tree indexes in SQLite.
+* Full-text search vectors are indexed with FTS5.
 * The composite `UNIQUE(provider_id, name)` on `models` also yields an index.
 * Add B-tree indexes on `date` or `score` if query latency grows:
 

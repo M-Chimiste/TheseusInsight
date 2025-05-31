@@ -2,21 +2,15 @@
 
 ## Overview
 
-We have successfully upgraded Theseus Insight's hybrid search capabilities from simple substring matching to a sophisticated BM25-style ranking system using PostgreSQL's full-text search functionality. This provides dramatically improved keyword search relevance while maintaining the powerful semantic similarity capabilities.
+We have successfully upgraded Theseus Insight's hybrid search capabilities from simple substring matching to a sophisticated BM25-style ranking system using SQLite's FTS5 module. This provides dramatically improved keyword search relevance while maintaining the powerful semantic similarity capabilities.
 
 ## What Was Implemented
 
 ### 1. Database Schema Enhancements
 
-**New Columns Added:**
-- `search_vector` (tsvector) - Combined title + abstract for general search
-- `title_vector` (tsvector) - Title-only search vector
-- `abstract_vector` (tsvector) - Abstract-only search vector
-
-**Indexes Created:**
-- `papers_search_vector_idx` - GIN index on search_vector
-- `papers_title_vector_idx` - GIN index on title_vector  
-- `papers_abstract_vector_idx` - GIN index on abstract_vector
+**New FTS Table:**
+- `papers_fts` (virtual table) mirrors title and abstract
+- Triggers keep the FTS table synchronized with the main `papers` table
 
 ### 2. Enhanced Keyword Scoring Algorithm
 
@@ -27,13 +21,7 @@ CASE WHEN (LOWER(title) LIKE %s OR LOWER(abstract) LIKE %s) THEN 1 ELSE 0 END
 
 **After (BM25-style ranking):**
 ```sql
-COALESCE(
-    GREATEST(
-        ts_rank_cd(p.search_vector, plainto_tsquery('english', %s), 32),
-        ts_rank_cd(p.title_vector, plainto_tsquery('english', %s), 32) * 2.0,
-        ts_rank_cd(p.abstract_vector, plainto_tsquery('english', %s), 32)
-    ), 0.0
-) as keyword_score
+bm25(papers_fts, 1.0, 2.0) AS keyword_score
 ```
 
 ### 3. Key Improvements
@@ -52,12 +40,12 @@ COALESCE(
 ### 4. Automatic Migration System
 
 **Migration Script:** `theseus_insight/utils/update_search_vectors.py`
-- Safely adds new columns to existing installations
-- Populates search vectors for all existing papers
+- Creates the FTS5 virtual table if missing
+- Backfills FTS entries for all existing papers
 - Handles edge cases and provides detailed progress reporting
 
-**Auto-Population:** New papers automatically get search vectors on insertion
-- Updated `insert_paper()` method includes tsvector generation
+**Auto-Population:** New papers automatically get FTS entries on insertion
+- Updated `insert_paper()` method maintains the FTS table
 - No manual intervention required for new data
 
 ## Performance Benefits
@@ -69,7 +57,7 @@ COALESCE(
 - **Weighted Fields**: Title matches prioritized over abstract matches
 
 ### 2. Database Performance
-- **GIN Indexes**: Fast full-text search without table scans
+- **FTS5 Indexes**: Fast full-text search without table scans
 - **Optimized Queries**: Single query vs multiple LIKE operations
 - **Scalability**: Performance stays consistent as database grows
 
@@ -114,11 +102,11 @@ COALESCE(
 
 ## Technical Architecture
 
-### PostgreSQL Full-Text Search Stack
-1. **tsvector**: Preprocessed, indexed document representation
-2. **tsquery**: Query parsing with operators (&, |, !, phrase matching)
-3. **ts_rank_cd()**: Ranking function with normalization options
-4. **GIN Indexes**: Inverted index structure for fast lookups
+### SQLite FTS5 Search Stack
+1. **FTS5 table**: Virtual table storing tokenized title and abstract
+2. **MATCH queries**: Standard FTS5 query syntax with operators and phrase matching
+3. **bm25()**: Built-in ranking function with adjustable weights
+4. **FTS5 indexes**: Inverted indexes for fast lookups
 
 ### Integration Points
 - **Database Layer**: `hybrid_search_papers()` method in `data_handling.py`
@@ -145,7 +133,7 @@ COALESCE(
 1. Automatic migration occurs on next API startup
 2. Run `python -m theseus_insight.utils.update_search_vectors` to verify migration
 3. No downtime required - migration is additive only
-4. Rollback possible by dropping the new tsvector columns if needed
+4. Rollback possible by dropping the FTS table if needed (it will be rebuilt automatically)
 
 **For New Installations:**
 - Full BM25 functionality available immediately
@@ -156,4 +144,4 @@ COALESCE(
 
 This enhancement represents a significant improvement in search quality while maintaining full backward compatibility. The BM25-style keyword ranking provides more nuanced and relevant results, especially for complex multi-term queries, while the existing semantic similarity capabilities remain unchanged.
 
-The implementation leverages PostgreSQL's mature full-text search capabilities, ensuring both performance and reliability at scale. 
+The implementation leverages SQLite's FTS5 module together with sqlite-vec, ensuring both performance and reliability at scale.

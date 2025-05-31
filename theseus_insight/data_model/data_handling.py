@@ -404,7 +404,7 @@ class PaperDatabase:
     def fetch_podcast_by_id(self, podcast_id: int):
         """Fetch a single podcast by its ID."""
         with self.get_cursor() as cursor:
-            cursor.execute("SELECT id, title, date, script, description FROM podcasts WHERE id = %s", (podcast_id,))
+            cursor.execute("SELECT id, title, date, script, description FROM podcasts WHERE id = ?", (podcast_id,))
             row = cursor.fetchone()
             if row:
                 # Convert date objects to strings if they're not already strings
@@ -422,18 +422,18 @@ class PaperDatabase:
     def delete_podcast(self, title: str):
         """Delete a podcast from the database by its title."""
         with self.get_cursor() as cursor:
-            cursor.execute("DELETE FROM podcasts WHERE title = %s", (title,))
+            cursor.execute("DELETE FROM podcasts WHERE title = ?", (title,))
 
     def delete_podcast_by_id(self, podcast_id: int):
         """Delete a podcast from the database by its ID."""
         with self.get_cursor() as cursor:
-            cursor.execute("DELETE FROM podcasts WHERE id = %s", (podcast_id,))
+            cursor.execute("DELETE FROM podcasts WHERE id = ?", (podcast_id,))
             return cursor.rowcount > 0  # Return True if a row was actually deleted
 
     def update_podcast_title(self, podcast_id: int, new_title: str):
         """Update the title of a podcast by its ID."""
         with self.get_cursor() as cursor:
-            cursor.execute("UPDATE podcasts SET title = %s WHERE id = %s", (new_title, podcast_id))
+            cursor.execute("UPDATE podcasts SET title = ? WHERE id = ?", (new_title, podcast_id))
             return cursor.rowcount > 0  # Return True if a row was actually updated
 
     def fetch_all_newsletters(self):
@@ -495,15 +495,15 @@ class PaperDatabase:
         """
         with self.get_cursor() as cursor:
             cursor.execute('''
-                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                SELECT id, title, abstract, date, date_run, score, rationale, related,
                        cosine_similarity, url, embedding_model, embedding,
-                       (embedding <=> %s::vector) as similarity_distance,
-                       (1 - (embedding <=> %s::vector)) as similarity_score
-                FROM papers 
+                       (embedding <=> ?::vector) as similarity_distance,
+                       (1 - (embedding <=> ?::vector)) as similarity_score
+                FROM papers
                 WHERE embedding IS NOT NULL
-                AND (1 - (embedding <=> %s::vector)) >= %s
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
+                AND (1 - (embedding <=> ?::vector)) >= ?
+                ORDER BY embedding <=> ?::vector
+                LIMIT ?
             ''', (query_embedding, query_embedding, query_embedding, similarity_threshold, query_embedding, limit))
             
             rows = cursor.fetchall()
@@ -593,9 +593,9 @@ class PaperDatabase:
         """
         with self.get_cursor() as cursor:
             cursor.execute('''
-                UPDATE papers 
-                SET embedding = %s 
-                WHERE id = %s
+                UPDATE papers
+                SET embedding = ?
+                WHERE id = ?
             ''', (embedding, paper_id))
 
     def get_paper_embedding(self, paper_id: int):
@@ -609,8 +609,8 @@ class PaperDatabase:
         """
         with self.get_cursor() as cursor:
             cursor.execute('''
-                SELECT embedding FROM papers 
-                WHERE id = %s AND embedding IS NOT NULL
+                SELECT embedding FROM papers
+                WHERE id = ? AND embedding IS NOT NULL
             ''', (paper_id,))
             row = cursor.fetchone()
             return row[0] if row else None
@@ -629,10 +629,10 @@ class PaperDatabase:
         # Get the reference paper and its embedding
         with self.get_cursor() as cursor:
             cursor.execute('''
-                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                SELECT id, title, abstract, date, date_run, score, rationale, related,
                        cosine_similarity, url, embedding_model, embedding
-                FROM papers 
-                WHERE id = %s AND embedding IS NOT NULL
+                FROM papers
+                WHERE id = ? AND embedding IS NOT NULL
             ''', (paper_id,))
             
             reference_row = cursor.fetchone()
@@ -662,17 +662,17 @@ class PaperDatabase:
             
             # Find similar papers (excluding the reference paper itself)
             cursor.execute('''
-                SELECT id, title, abstract, date, date_run, score, rationale, related, 
+                SELECT id, title, abstract, date, date_run, score, rationale, related,
                        cosine_similarity, url, embedding_model, embedding,
-                       (embedding <=> %s::vector) as similarity_distance,
-                       (1 - (embedding <=> %s::vector)) as similarity_score
-                FROM papers 
+                       (embedding <=> ?::vector) as similarity_distance,
+                       (1 - (embedding <=> ?::vector)) as similarity_score
+                FROM papers
                 WHERE embedding IS NOT NULL
-                AND id != %s
-                AND (1 - (embedding <=> %s::vector)) >= %s
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
-            ''', (reference_embedding, reference_embedding, paper_id, 
+                AND id != ?
+                AND (1 - (embedding <=> ?::vector)) >= ?
+                ORDER BY embedding <=> ?::vector
+                LIMIT ?
+            ''', (reference_embedding, reference_embedding, paper_id,
                   reference_embedding, similarity_threshold, reference_embedding, limit))
             
             similar_rows = cursor.fetchall()
@@ -708,7 +708,7 @@ class PaperDatabase:
     # SETTINGS CRUD
     def get_setting(self, key: str):
         with self.get_cursor() as cursor:
-            cursor.execute('SELECT value FROM settings WHERE key = %s', (key,))
+            cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
             row = cursor.fetchone()
             return row[0] if row else None
 
@@ -718,11 +718,11 @@ class PaperDatabase:
         if not isinstance(key, str):
             key = str(key)
         with self.get_cursor() as cursor:
-            cursor.execute('INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', (key, value))
+            cursor.execute('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', (key, value))
 
     def delete_setting(self, key: str):
         with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM settings WHERE key = %s', (key,))
+            cursor.execute('DELETE FROM settings WHERE key = ?', (key,))
 
     def get_all_settings(self):
         with self.get_cursor() as cursor:
@@ -761,7 +761,7 @@ class PaperDatabase:
     # MODEL PROVIDERS CRUD
     def add_model_provider(self, id: int, name: str):
         with self.get_cursor() as cursor:
-            cursor.execute('INSERT INTO model_providers (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING', (id, name))
+            cursor.execute('INSERT INTO model_providers (id, name) VALUES (?, ?) ON CONFLICT DO NOTHING', (id, name))
 
     def get_model_providers(self):
         with self.get_cursor() as cursor:
@@ -770,7 +770,7 @@ class PaperDatabase:
 
     def delete_model_provider(self, provider_id: int):
         with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM model_providers WHERE id = %s', (provider_id,))
+            cursor.execute('DELETE FROM model_providers WHERE id = ?', (provider_id,))
 
     # MODELS CRUD
     # def add_model(self, provider_id: int, name: str, config_json: str = None):
@@ -842,8 +842,8 @@ class PaperDatabase:
             cursor.execute('''
                 INSERT INTO tasks
                 (task_id, task_type, status, config_json, start_time, progress, current_step, message)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (task_id) DO UPDATE SET
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
                     task_type = EXCLUDED.task_type,
                     status = EXCLUDED.status,
                     config_json = EXCLUDED.config_json,
@@ -857,31 +857,31 @@ class PaperDatabase:
         """Update task status and other fields."""
         with self.get_cursor() as cursor:
             # Build dynamic update query based on provided parameters
-            fields_to_update = ["status = %s"]
+            fields_to_update = ["status = ?"]
             params = [status]
             
             if progress is not None:
-                fields_to_update.append("progress = %s")
+                fields_to_update.append("progress = ?")
                 params.append(progress)
             if current_step is not None:
-                fields_to_update.append("current_step = %s")
+                fields_to_update.append("current_step = ?")
                 params.append(current_step)
             if message is not None:
-                fields_to_update.append("message = %s")
+                fields_to_update.append("message = ?")
                 params.append(message)
             if error is not None:
-                fields_to_update.append("error = %s")
+                fields_to_update.append("error = ?")
                 params.append(error)
             if result is not None:
-                fields_to_update.append("result_json = %s")
+                fields_to_update.append("result_json = ?")
                 params.append(json.dumps(result))
             if end_time is not None:
-                fields_to_update.append("end_time = %s")
+                fields_to_update.append("end_time = ?")
                 params.append(end_time)
             
             params.append(task_id)  # WHERE clause parameter
             
-            query = f"UPDATE tasks SET {', '.join(fields_to_update)} WHERE task_id = %s"
+            query = f"UPDATE tasks SET {', '.join(fields_to_update)} WHERE task_id = ?"
             cursor.execute(query, params)
 
     def get_task(self, task_id: str) -> dict | None:
@@ -890,7 +890,7 @@ class PaperDatabase:
             cursor.execute('''
                 SELECT task_id, task_type, status, config_json, start_time, end_time,
                        error, result_json, progress, current_step, message
-                FROM tasks WHERE task_id = %s
+                FROM tasks WHERE task_id = ?
             ''', (task_id,))
             row = cursor.fetchone()
             if row:
@@ -921,7 +921,7 @@ class PaperDatabase:
             params = []
             
             if task_types:
-                placeholders = ','.join(['%s'] * len(task_types))
+                placeholders = ','.join(['?'] * len(task_types))
                 query += f' AND task_type IN ({placeholders})'
                 params.extend(task_types)
             
@@ -950,7 +950,7 @@ class PaperDatabase:
     def delete_task(self, task_id: str):
         """Delete a task from the database."""
         with self.get_cursor() as cursor:
-            cursor.execute('DELETE FROM tasks WHERE task_id = %s', (task_id,))
+            cursor.execute('DELETE FROM tasks WHERE task_id = ?', (task_id,))
 
     def cleanup_old_tasks(self, days_old: int = 7):
         """Clean up completed/failed tasks older than specified days."""
@@ -959,7 +959,7 @@ class PaperDatabase:
             cursor.execute('''
                 DELETE FROM tasks
                 WHERE status IN ('completed', 'failed')
-                AND start_time < %s
+                AND start_time < ?
             ''', (cutoff_date,))
 
     def mark_interrupted_tasks_as_failed(self):
@@ -980,7 +980,7 @@ class PaperDatabase:
                     SET status = 'failed',
                         error = 'Task was interrupted by server restart',
                         message = 'Task failed due to server restart',
-                        end_time = %s,
+                        end_time = ?,
                         current_step = 'interrupted'
                     WHERE status IN ('pending', 'processing')
                 ''', (current_time,))
@@ -1013,23 +1013,23 @@ class PaperDatabase:
             params = []
             
             if min_score is not None:
-                where_conditions.append("score >= %s")
+                where_conditions.append("score >= ?")
                 params.append(min_score)
             
             if max_score is not None:
-                where_conditions.append("score <= %s")
+                where_conditions.append("score <= ?")
                 params.append(max_score)
             
             if from_date:
-                where_conditions.append("date >= %s")
+                where_conditions.append("date >= ?")
                 params.append(from_date)
             
             if to_date:
-                where_conditions.append("date <= %s")
+                where_conditions.append("date <= ?")
                 params.append(to_date)
             
             if search:
-                where_conditions.append("(LOWER(title) LIKE %s OR LOWER(abstract) LIKE %s)")
+                where_conditions.append("(LOWER(title) LIKE ? OR LOWER(abstract) LIKE ?)")
                 search_pattern = f"%{search.lower()}%"
                 params.extend([search_pattern, search_pattern])
             
@@ -1063,7 +1063,7 @@ class PaperDatabase:
                 FROM papers 
                 {where_clause}
                 ORDER BY {sort_field} {sort_direction}
-                LIMIT %s OFFSET %s
+                LIMIT ? OFFSET ?
             """
             cursor.execute(data_query, params + [page_size, offset])
             rows = cursor.fetchall()
@@ -1136,23 +1136,23 @@ class PaperDatabase:
                 where_params = []
                 
                 if min_score is not None:
-                    where_conditions.append("score >= %s")
+                where_conditions.append("score >= ?")
                     where_params.append(min_score)
                 
                 if max_score is not None:
-                    where_conditions.append("score <= %s")
+                where_conditions.append("score <= ?")
                     where_params.append(max_score)
                 
                 if from_date:
-                    where_conditions.append("date >= %s")
+                where_conditions.append("date >= ?")
                     where_params.append(from_date)
                 
                 if to_date:
-                    where_conditions.append("date <= %s")
+                where_conditions.append("date <= ?")
                     where_params.append(to_date)
                 
                 # Add similarity threshold
-                where_conditions.append("(1 - (embedding <=> %s::vector)) >= %s")
+                where_conditions.append("(1 - (embedding <=> ?::vector)) >= ?")
                 where_params.extend([query_embedding, similarity_threshold])
                 
                 where_clause = " AND ".join(where_conditions)
@@ -1166,9 +1166,9 @@ class PaperDatabase:
                         SELECT 
                             id, title, abstract, date, date_run, score, rationale, related, 
                             cosine_similarity, url, embedding_model, embedding,
-                            (1 - (embedding <=> %s::vector)) as semantic_score,
+                          (1 - (embedding <=> ?::vector)) as semantic_score,
                             0.0 as keyword_score,
-                            (1 - (embedding <=> %s::vector)) as hybrid_score
+                          (1 - (embedding <=> ?::vector)) as hybrid_score
                         FROM papers 
                         WHERE {where_clause}
                         ORDER BY hybrid_score DESC
@@ -1187,23 +1187,23 @@ class PaperDatabase:
                         SELECT
                             p.id, p.title, p.abstract, p.date, p.date_run, p.score, p.rationale, p.related,
                             p.cosine_similarity, p.url, p.embedding_model, p.embedding,
-                            (1 - (p.embedding <=> %s::vector)) as semantic_score,
+                              (1 - (p.embedding <=> ?::vector)) as semantic_score,
                             COALESCE(
                                 ts_rank_cd(
                                     setweight(p.title_vector, 'A') ||
                                     setweight(p.abstract_vector, 'B'),
-                                    plainto_tsquery('english', %s),
+                                      plainto_tsquery('english', ?),
                                     32
                                 ),
                                 0.0
                             ) as keyword_score,
                             (
-                                ({semantic_weight} * (1 - (p.embedding <=> %s::vector))) +
+                                  ({semantic_weight} * (1 - (p.embedding <=> ?::vector))) +
                                 ({keyword_weight} * COALESCE(
                                     ts_rank_cd(
                                         setweight(p.title_vector, 'A') ||
                                         setweight(p.abstract_vector, 'B'),
-                                        plainto_tsquery('english', %s),
+                                          plainto_tsquery('english', ?),
                                         32
                                     ),
                                     0.0
@@ -1230,8 +1230,8 @@ class PaperDatabase:
                 has_next_page = page < total_pages
                 
                 # Get paginated results
-                paginated_query = semantic_query + f" LIMIT %s OFFSET %s"
-                cursor.execute(paginated_query, query_params + [page_size, offset])
+                  paginated_query = semantic_query + f" LIMIT ? OFFSET ?"
+                  cursor.execute(paginated_query, query_params + [page_size, offset])
                 
                 rows = cursor.fetchall()
                 
@@ -1287,22 +1287,22 @@ class PaperDatabase:
                 params = []
                 
                 if min_score is not None:
-                    where_conditions.append("score >= %s")
+                    where_conditions.append("score >= ?")
                     params.append(min_score)
                 
                 if max_score is not None:
-                    where_conditions.append("score <= %s")
+                    where_conditions.append("score <= ?")
                     params.append(max_score)
                 
                 if from_date:
-                    where_conditions.append("date >= %s")
+                    where_conditions.append("date >= ?")
                     params.append(from_date)
                 
                 if to_date:
-                    where_conditions.append("date <= %s")
+                    where_conditions.append("date <= ?")
                     params.append(to_date)
                 
-                where_conditions.append("(1 - (embedding <=> %s::vector)) >= %s")
+                where_conditions.append("(1 - (embedding <=> ?::vector)) >= ?")
                 params.extend([query_embedding, similarity_threshold])
                 
                 where_clause = " AND ".join(where_conditions)
@@ -1321,13 +1321,13 @@ class PaperDatabase:
                     SELECT 
                         id, title, abstract, date, date_run, score, rationale, related, 
                         cosine_similarity, url, embedding_model, embedding,
-                        (1 - (embedding <=> %s::vector)) as semantic_score,
+                          (1 - (embedding <=> ?::vector)) as semantic_score,
                         0.0 as keyword_score,
-                        (1 - (embedding <=> %s::vector)) as hybrid_score
+                          (1 - (embedding <=> ?::vector)) as hybrid_score
                     FROM papers 
                     WHERE {where_clause}
                     ORDER BY hybrid_score DESC
-                    LIMIT %s OFFSET %s
+                      LIMIT ? OFFSET ?
                 """
                 
                 cursor.execute(semantic_query, [query_embedding, query_embedding] + params + [page_size, offset])
@@ -1384,17 +1384,17 @@ class PaperDatabase:
             cutoff_time = (datetime.datetime.now() - datetime.timedelta(hours=hours_back)).isoformat()
             
             query = '''
-                SELECT task_id, task_type, status, config_json, start_time, end_time, 
+                SELECT task_id, task_type, status, config_json, start_time, end_time,
                        error, result_json, progress, current_step, message
-                FROM tasks 
-                WHERE status = 'completed' 
-                AND end_time >= %s
+                FROM tasks
+                WHERE status = 'completed'
+                AND end_time >= ?
                 AND result_json IS NOT NULL
             '''
             params = [cutoff_time]
             
             if task_types:
-                placeholders = ','.join(['%s'] * len(task_types))
+                placeholders = ','.join(['?'] * len(task_types))
                 query += f' AND task_type IN ({placeholders})'
                 params.extend(task_types)
             

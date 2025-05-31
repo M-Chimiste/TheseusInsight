@@ -467,3 +467,68 @@ pids
 # Temporary files
 *.tmp
 *.temp 
+
+# Build outputs
+dist/
+node_modules/
+*.dmg
+*.pkg
+*.app
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+node_modules/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.test
+.env.local
+.env.production
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# Python runtime (if bundled locally)
+python_runtime/
+
+# Personal signing configuration
+package.json
+
+# Backup files from build scripts
+package.json.bak 

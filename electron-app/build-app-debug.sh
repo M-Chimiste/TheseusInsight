@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # Debug build script for Theseus Insight Electron App
-# This builds without code signing/notarization for testing
-# PostgreSQL path fixing is now handled automatically by afterPack hook
+# Builds a macOS DMG without code signing for local testing.
 
 set -e
 
@@ -38,19 +37,13 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-# Bundle Python dependencies
-echo "🐍 Bundling Python dependencies..."
-if [ -f "./bundle-python-deps.sh" ]; then
-    if ./bundle-python-deps.sh; then
-        echo "✅ Python dependencies bundled successfully"
-    else
-        echo "❌ Failed to bundle Python dependencies"
-        echo "   The app may not work on systems without Python packages"
-        echo "   Continuing with build anyway..."
-    fi
+# Bundle a standalone Python runtime with dependencies
+echo "🐍 Bundling Python runtime..."
+if [ -f "./bundle-python-runtime.sh" ]; then
+    ./bundle-python-runtime.sh
 else
-    echo "⚠️  bundle-python-deps.sh not found, skipping dependency bundling"
-    echo "   Recipients will need to install Python packages manually"
+    echo "⚠️  bundle-python-runtime.sh not found, skipping runtime bundling"
+    echo "   The app will require a system Python installation"
 fi
 
 # Build the React frontend
@@ -81,9 +74,9 @@ echo "✅ Frontend build successful ($ASSET_COUNT assets)"
 
 cd ../electron-app
 
-# Build the Electron app with automatic PostgreSQL path fixing
+npm run lint >/dev/null 2>&1 || true
+# Build the Electron app
 echo "📱 Building Electron app for $BUILD_ARCH..."
-echo "🔧 Note: PostgreSQL path fixing will run automatically via afterPack hook"
 npm run build:mac-$BUILD_ARCH
 
 if [ $? -ne 0 ]; then
@@ -95,7 +88,8 @@ echo "✅ Build completed successfully!"
 echo "📁 Output files are in the 'dist' directory"
 echo ""
 
-# Enhanced verification
+
+# Verify build output
 echo "🔍 Verifying build output..."
 BUILT_APP=$(find dist -name "*.app" -type d | head -1)
 
@@ -105,52 +99,6 @@ if [ -z "$BUILT_APP" ]; then
 fi
 
 echo "✅ Found built app: $(basename "$BUILT_APP")"
-
-# Verify PostgreSQL was bundled
-POSTGRES_PATH="$BUILT_APP/Contents/Resources/app/postgres/darwin"
-if [ -d "$POSTGRES_PATH" ]; then
-    echo "✅ PostgreSQL bundled successfully"
-    
-    # Enhanced verification - check multiple binaries
-    echo "🔍 Detailed PostgreSQL path verification..."
-    INITDB_PATH="$POSTGRES_PATH/bin/initdb"
-    POSTGRES_BIN_PATH="$POSTGRES_PATH/bin/postgres"
-    
-    if [ -f "$INITDB_PATH" ]; then
-        echo "🔍 Checking initdb dependencies:"
-        otool -L "$INITDB_PATH" | while read -r line; do
-            line=$(echo "$line" | xargs)  # trim whitespace
-            if [[ "$line" == *"/Users/"* ]] || [[ "$line" == *"TheseusInsight"* ]]; then
-                echo "  ❌ HARDCODED: $line"
-            elif [[ "$line" == *"postgres"* ]] && [[ "$line" == "/"* ]] && [[ "$line" != "/@"* ]]; then
-                echo "  ❌ ABSOLUTE: $line"
-            elif [[ "$line" == *".dylib"* ]]; then
-                echo "  ✅ OK: $line"
-            fi
-        done
-        
-        # Quick check for any remaining bad paths
-        BAD_PATHS=$(otool -L "$INITDB_PATH" 2>/dev/null | grep -E "(/Users/|TheseusInsight)" || true)
-        if [ -z "$BAD_PATHS" ]; then
-            echo "✅ initdb: No hardcoded paths found"
-        else
-            echo "❌ initdb: Some hardcoded paths remain:"
-            echo "$BAD_PATHS" | sed 's/^/    /'
-        fi
-    fi
-    
-    if [ -f "$POSTGRES_BIN_PATH" ]; then
-        BAD_PATHS=$(otool -L "$POSTGRES_BIN_PATH" 2>/dev/null | grep -E "(/Users/|TheseusInsight)" || true)
-        if [ -z "$BAD_PATHS" ]; then
-            echo "✅ postgres: No hardcoded paths found"
-        else
-            echo "❌ postgres: Some hardcoded paths remain:"
-            echo "$BAD_PATHS" | sed 's/^/    /'
-        fi
-    fi
-else
-    echo "⚠️  PostgreSQL not found in bundle"
-fi
 
 # Verify frontend was bundled
 FRONTEND_PATH="$BUILT_APP/Contents/Resources/app/theseus-ui/dist"

@@ -29,7 +29,7 @@
     "asar": true,
     "asarUnpack": [
       "**/theseus_insight/**/*",
-      "**/python_deps/**/*",
+      "**/python_runtime/**/*",
       "**/run_theseus_insight.py",
       "**/requirements.txt"
     ],
@@ -51,8 +51,8 @@
         ]
       },
       {
-        "from": "python_deps",
-        "to": "app/python_deps"
+        "from": "python_runtime",
+        "to": "app/python_runtime"
       },
       {
         "from": "env.template",

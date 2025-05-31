@@ -80,15 +80,20 @@ def setup_environment():
     os.chdir(app_root)
     print_debug(f"Working directory: {os.getcwd()}")
     
-    # Add bundled Python dependencies to Python path
-    python_deps_path = os.path.join(app_root, 'python_deps')
-    if os.path.exists(python_deps_path):
-        print_debug(f"✅ Found bundled Python dependencies: {python_deps_path}")
-        if python_deps_path not in sys.path:
-            sys.path.insert(0, python_deps_path)
-        print_debug(f"Added to Python path: {python_deps_path}")
+    # Add bundled Python runtime site-packages to Python path
+    python_runtime = os.path.join(app_root, 'python_runtime')
+    site_packages = None
+    if os.path.exists(python_runtime):
+        lib_dir = os.path.join(python_runtime, 'lib')
+        for entry in Path(lib_dir).glob('python*/site-packages'):
+            site_packages = str(entry)
+            break
+    if site_packages and os.path.exists(site_packages):
+        print_debug(f"✅ Using bundled Python runtime: {site_packages}")
+        if site_packages not in sys.path:
+            sys.path.insert(0, site_packages)
     else:
-        print_debug(f"❌ Bundled Python dependencies not found: {python_deps_path}")
+        print_debug(f"❌ Bundled Python runtime not found: {python_runtime}")
     
     # Add app root to Python path
     if app_root not in sys.path:

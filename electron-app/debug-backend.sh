@@ -23,39 +23,16 @@ echo "🔍 Checking backend components..."
 PYTHON_PATH="$APP_PATH/Contents/Resources/app/run_theseus_insight.py"
 REQUIREMENTS_PATH="$APP_PATH/Contents/Resources/app/requirements.txt"
 THESEUS_PATH="$APP_PATH/Contents/Resources/app/theseus_insight"
-POSTGRES_PATH="$APP_PATH/Contents/Resources/app/postgres"
+PYTHON_RUNTIME="$APP_PATH/Contents/Resources/app/python_runtime"
 FRONTEND_PATH="$APP_PATH/Contents/Resources/app/theseus-ui/dist"
 
 echo "  📄 Python entry point: $([ -f "$PYTHON_PATH" ] && echo "✅ Found" || echo "❌ Missing")"
 echo "  📄 Requirements file: $([ -f "$REQUIREMENTS_PATH" ] && echo "✅ Found" || echo "❌ Missing")"
 echo "  📁 Theseus backend: $([ -d "$THESEUS_PATH" ] && echo "✅ Found" || echo "❌ Missing")"
-echo "  📁 PostgreSQL binaries: $([ -d "$POSTGRES_PATH" ] && echo "✅ Found" || echo "❌ Missing")"
+echo "  📁 Python runtime: $([ -d "$PYTHON_RUNTIME" ] && echo "✅ Found" || echo "❌ Missing")"
 echo "  📁 Frontend files: $([ -d "$FRONTEND_PATH" ] && echo "✅ Found" || echo "❌ Missing")"
 echo ""
 
-# Check PostgreSQL setup
-if [ -d "$POSTGRES_PATH" ]; then
-    echo "🔍 Checking PostgreSQL setup..."
-    PG_BIN="$POSTGRES_PATH/darwin/bin"
-    PG_LIB="$POSTGRES_PATH/darwin/lib"
-    
-    echo "  📁 PostgreSQL bin: $([ -d "$PG_BIN" ] && echo "✅ Found" || echo "❌ Missing")"
-    echo "  📁 PostgreSQL lib: $([ -d "$PG_LIB" ] && echo "✅ Found" || echo "❌ Missing")"
-    
-    if [ -f "$PG_BIN/initdb" ]; then
-        echo "  🔍 PostgreSQL binary dependencies:"
-        otool -L "$PG_BIN/initdb" | head -5 | while read line; do
-            if [[ "$line" == *"@loader_path"* ]]; then
-                echo "    ✅ $line"
-            elif [[ "$line" == *"/Users/"* ]] || [[ "$line" == *"TheseusInsight"* ]]; then
-                echo "    ❌ $line (hardcoded path)"
-            elif [[ "$line" == *".dylib"* ]]; then
-                echo "    ✅ $line"
-            fi
-        done
-    fi
-    echo ""
-fi
 
 # Check Python environment
 echo "🔍 Checking Python environment..."

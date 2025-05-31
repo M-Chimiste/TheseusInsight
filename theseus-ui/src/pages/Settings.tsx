@@ -250,6 +250,7 @@ const Settings: React.FC = () => {
         } else if (status.overallStatus === 'failed') {
           setError(status.error || 'Database export failed');
           setIsExporting(false);
+
         }
       };
 
@@ -861,6 +862,7 @@ const Settings: React.FC = () => {
                 {isExporting ? 'Exporting...' : 'Export Database'}
               </Button>
               {isExporting && (
+
                 <Box sx={{ mt: 2 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Box sx={{ width: '100%' }}>

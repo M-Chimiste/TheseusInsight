@@ -5,6 +5,9 @@ import base64
 import hashlib
 from contextlib import contextmanager
 import sqlite3
+import numpy as np
+from ..utils.common_utils import cosine_similarity
+
 
 from .papers import Newsletter, Paper, Logs, Podcast
 
@@ -501,26 +504,30 @@ class PaperDatabase:
             List of papers with similarity scores, ordered by similarity (highest first)
         """
         with self.get_cursor() as cursor:
-            cursor.execute('''
+            cursor.execute(
+                """
                 SELECT id, title, abstract, date, date_run, score, rationale, related,
-                       cosine_similarity, url, embedding_model, embedding,
-                       (embedding <=> ?::vector) as similarity_distance,
-                       (1 - (embedding <=> ?::vector)) as similarity_score
+                       cosine_similarity, url, embedding_model, embedding
                 FROM papers
                 WHERE embedding IS NOT NULL
-                AND (1 - (embedding <=> ?::vector)) >= ?
-                ORDER BY embedding <=> ?::vector
-                LIMIT ?
-            ''', (query_embedding, query_embedding, query_embedding, similarity_threshold, query_embedding, limit))
-            
+            """
+            )
             rows = cursor.fetchall()
-            result = []
-            for row in rows:
-                # Convert date objects to strings if they're not already strings
+
+        results = []
+        query_vec = np.array(query_embedding, dtype=float)
+        for row in rows:
+            try:
+                emb_list = json.loads(row[11]) if row[11] is not None else None
+            except Exception:
+                continue
+            if emb_list is None:
+                continue
+            score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+            if score >= similarity_threshold:
                 date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
                 date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
-                
-                result.append({
+                results.append({
                     'id': row[0],
                     'title': row[1],
                     'abstract': row[2],
@@ -533,10 +540,12 @@ class PaperDatabase:
                     'url': row[9],
                     'embedding_model': row[10],
                     'embedding': row[11],
-                    'similarity_distance': row[12],
-                    'similarity_score': row[13]
+                    'similarity_distance': 1 - score,
+                    'similarity_score': score,
                 })
-            return result
+
+        results.sort(key=lambda x: x['similarity_score'], reverse=True)
+        return results[:limit]
 
     def find_papers_by_semantic_search(self, query_text: str, embedding_model, limit: int = 10, similarity_threshold: float = 0.7):
         """Find papers similar to a text query by first generating an embedding.
@@ -599,11 +608,15 @@ class PaperDatabase:
             embedding: List of floats representing the embedding
         """
         with self.get_cursor() as cursor:
-            cursor.execute('''
+            cursor.execute(
+                """
                 UPDATE papers
                 SET embedding = ?
                 WHERE id = ?
-            ''', (embedding, paper_id))
+                """,
+                (json.dumps(embedding) if embedding is not None else None, paper_id),
+            )
+
 
     def get_paper_embedding(self, paper_id: int):
         """Get the embedding for a specific paper.
@@ -615,12 +628,21 @@ class PaperDatabase:
             List of floats representing the embedding, or None if not found
         """
         with self.get_cursor() as cursor:
-            cursor.execute('''
+            cursor.execute(
+                """
                 SELECT embedding FROM papers
                 WHERE id = ? AND embedding IS NOT NULL
-            ''', (paper_id,))
+                """,
+                (paper_id,),
+            )
+
             row = cursor.fetchone()
-            return row[0] if row else None
+            if row:
+                try:
+                    return json.loads(row[0])
+                except Exception:
+                    return None
+            return None
 
     def find_similar_papers_to_existing(self, paper_id: int, limit: int = 10, similarity_threshold: float = 0.7):
         """Find papers similar to an existing paper using its stored embedding.
@@ -635,13 +657,15 @@ class PaperDatabase:
         """
         # Get the reference paper and its embedding
         with self.get_cursor() as cursor:
-            cursor.execute('''
+            cursor.execute(
+                """
                 SELECT id, title, abstract, date, date_run, score, rationale, related,
                        cosine_similarity, url, embedding_model, embedding
                 FROM papers
                 WHERE id = ? AND embedding IS NOT NULL
-            ''', (paper_id,))
-            
+                """,
+                (paper_id,),
+            )
             reference_row = cursor.fetchone()
             if not reference_row:
                 return None
@@ -665,30 +689,36 @@ class PaperDatabase:
                 'embedding': reference_row[11]
             }
             
-            reference_embedding = reference_row[11]
-            
-            # Find similar papers (excluding the reference paper itself)
-            cursor.execute('''
+            try:
+                reference_embedding = json.loads(reference_row[11])
+            except Exception:
+                return None
+
+            # Fetch all other papers with embeddings
+            cursor.execute(
+                """
                 SELECT id, title, abstract, date, date_run, score, rationale, related,
-                       cosine_similarity, url, embedding_model, embedding,
-                       (embedding <=> ?::vector) as similarity_distance,
-                       (1 - (embedding <=> ?::vector)) as similarity_score
+                       cosine_similarity, url, embedding_model, embedding
                 FROM papers
-                WHERE embedding IS NOT NULL
-                AND id != ?
-                AND (1 - (embedding <=> ?::vector)) >= ?
-                ORDER BY embedding <=> ?::vector
-                LIMIT ?
-            ''', (reference_embedding, reference_embedding, paper_id,
-                  reference_embedding, similarity_threshold, reference_embedding, limit))
-            
-            similar_rows = cursor.fetchall()
-            similar_papers = []
-            for row in similar_rows:
-                # Convert date objects to strings for similar papers
+                WHERE embedding IS NOT NULL AND id != ?
+                """,
+                (paper_id,),
+            )
+            rows = cursor.fetchall()
+
+        query_vec = np.array(reference_embedding, dtype=float)
+        similar_papers = []
+        for row in rows:
+            try:
+                emb_list = json.loads(row[11]) if row[11] is not None else None
+            except Exception:
+                continue
+            if emb_list is None:
+                continue
+            score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+            if score >= similarity_threshold:
                 date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
                 date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
-                
                 similar_papers.append({
                     'id': row[0],
                     'title': row[1],
@@ -702,15 +732,18 @@ class PaperDatabase:
                     'url': row[9],
                     'embedding_model': row[10],
                     'embedding': row[11],
-                    'similarity_distance': row[12],
-                    'similarity_score': row[13]
+                    'similarity_distance': 1 - score,
+                    'similarity_score': score,
                 })
-            
-            return {
-                'reference_paper': reference_paper,
-                'similar_papers': similar_papers,
-                'total_similar': len(similar_papers)
-            }
+
+        similar_papers.sort(key=lambda x: x['similarity_score'], reverse=True)
+        similar_papers = similar_papers[:limit]
+
+        return {
+            'reference_paper': reference_paper,
+            'similar_papers': similar_papers,
+            'total_similar': len(similar_papers),
+        }
 
     # SETTINGS CRUD
     def get_setting(self, key: str):
@@ -725,7 +758,8 @@ class PaperDatabase:
         if not isinstance(key, str):
             key = str(key)
         with self.get_cursor() as cursor:
-            cursor.execute('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', (key, value))
+            cursor.execute('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', (key, value))
+
 
     def delete_setting(self, key: str):
         with self.get_cursor() as cursor:
@@ -850,7 +884,7 @@ class PaperDatabase:
                 INSERT INTO tasks
                 (task_id, task_type, status, config_json, start_time, progress, current_step, message)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(task_id) DO UPDATE SET
+                ON CONFLICT (task_id) DO UPDATE SET
                     task_type = EXCLUDED.task_type,
                     status = EXCLUDED.status,
                     config_json = EXCLUDED.config_json,
@@ -1173,9 +1207,10 @@ class PaperDatabase:
                         SELECT 
                             id, title, abstract, date, date_run, score, rationale, related, 
                             cosine_similarity, url, embedding_model, embedding,
-                          (1 - (embedding <=> ?::vector)) as semantic_score,
+                            (1 - (embedding <=> ?::vector)) as semantic_score,
                             0.0 as keyword_score,
-                          (1 - (embedding <=> ?::vector)) as hybrid_score
+                            (1 - (embedding <=> ?::vector)) as hybrid_score
+
                         FROM papers 
                         WHERE {where_clause}
                         ORDER BY hybrid_score DESC
@@ -1194,23 +1229,26 @@ class PaperDatabase:
                         SELECT
                             p.id, p.title, p.abstract, p.date, p.date_run, p.score, p.rationale, p.related,
                             p.cosine_similarity, p.url, p.embedding_model, p.embedding,
-                              (1 - (p.embedding <=> ?::vector)) as semantic_score,
+                            (1 - (p.embedding <=> ?::vector)) as semantic_score,
+
                             COALESCE(
                                 ts_rank_cd(
                                     setweight(p.title_vector, 'A') ||
                                     setweight(p.abstract_vector, 'B'),
-                                      plainto_tsquery('english', ?),
+                                    plainto_tsquery('english', ?),
                                     32
                                 ),
                                 0.0
                             ) as keyword_score,
                             (
-                                  ({semantic_weight} * (1 - (p.embedding <=> ?::vector))) +
+                                ({semantic_weight} * (1 - (p.embedding <=> ?::vector))) +
+
                                 ({keyword_weight} * COALESCE(
                                     ts_rank_cd(
                                         setweight(p.title_vector, 'A') ||
                                         setweight(p.abstract_vector, 'B'),
-                                          plainto_tsquery('english', ?),
+                                        plainto_tsquery('english', ?),
+
                                         32
                                     ),
                                     0.0
@@ -1328,13 +1366,14 @@ class PaperDatabase:
                     SELECT 
                         id, title, abstract, date, date_run, score, rationale, related, 
                         cosine_similarity, url, embedding_model, embedding,
-                          (1 - (embedding <=> ?::vector)) as semantic_score,
+                        (1 - (embedding <=> ?::vector)) as semantic_score,
                         0.0 as keyword_score,
-                          (1 - (embedding <=> ?::vector)) as hybrid_score
+                        (1 - (embedding <=> ?::vector)) as hybrid_score
                     FROM papers 
                     WHERE {where_clause}
                     ORDER BY hybrid_score DESC
-                      LIMIT ? OFFSET ?
+                    LIMIT ? OFFSET ?
+
                 """
                 
                 cursor.execute(semantic_query, [query_embedding, query_embedding] + params + [page_size, offset])
@@ -1393,8 +1432,9 @@ class PaperDatabase:
             query = '''
                 SELECT task_id, task_type, status, config_json, start_time, end_time,
                        error, result_json, progress, current_step, message
-                FROM tasks
-                WHERE status = 'completed'
+                FROM tasks 
+                WHERE status = 'completed' 
+
                 AND end_time >= ?
                 AND result_json IS NOT NULL
             '''

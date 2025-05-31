@@ -68,12 +68,6 @@
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "category": "public.app-category.productivity",
       "identity": "Christian Merrill (4H8Z97B24M)",
-      "signIgnore": [
-        "python_runtime/.*\\.pyc$",
-        "python_runtime/.*/__pycache__/.*",
-        "python_runtime/.*\\.egg-info/.*",
-        "python_runtime/.*\\.dist-info/.*"
-      ],
       "target": [
         {
           "target": "dmg",

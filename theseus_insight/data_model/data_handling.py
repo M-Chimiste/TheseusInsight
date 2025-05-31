@@ -46,6 +46,7 @@ class PaperDatabase:
             except Exception:
                 pass
 
+
     @contextmanager
     def get_cursor(self, register_vectors=True):
         """Context manager for database connections."""
@@ -53,6 +54,7 @@ class PaperDatabase:
         conn.row_factory = sqlite3.Row
         try:
             if register_vectors and self.vector_search_enabled:
+
                 try:
                     conn.enable_load_extension(True)
                     if self.sqlite_vec_path:
@@ -61,6 +63,7 @@ class PaperDatabase:
                         conn.load_extension("sqlite_vec")
                 except Exception:
                     self.vector_search_enabled = False
+
             cursor = conn.cursor()
             yield cursor
             conn.commit()
@@ -1393,6 +1396,7 @@ class PaperDatabase:
             }
 
         except Exception:
+
             import traceback
             traceback.print_exc()
             return {

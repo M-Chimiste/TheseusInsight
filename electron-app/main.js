@@ -366,29 +366,27 @@ function startBackend() {
   // Choose the startup method based on packaging
   let startupArgs;
   if (isPackaged) {
-    // Try the robust backend script first
-    const robustScript = path.join(__dirname, 'start_backend_robust.py');
-    const fallbackScript = path.join(__dirname, 'start_backend.py');
+    // Use the simple startup script
+    const simpleScript = path.join(__dirname, 'start_backend_simple.py');
     
-    let scriptToUse = robustScript;
-    if (!fs.existsSync(robustScript)) {
-      console.log('Robust backend script not found, using fallback');
-      scriptToUse = fallbackScript;
-    }
-    
-    // Extract the script from asar to temp location
-    const tempScript = path.join(os.tmpdir(), 'theseus_start_backend.py');
-    
-    try {
-      const scriptContent = fs.readFileSync(scriptToUse, 'utf8');
-      fs.writeFileSync(tempScript, scriptContent, { mode: 0o755 });
-      console.log(`Extracted backend script to: ${tempScript}`);
-      startupArgs = [tempScript];
-      tempFiles.push(tempScript); // Track for cleanup
-    } catch (error) {
-      console.error('Failed to extract backend script:', error);
-      // Fallback to trying the asar path
-      startupArgs = [scriptToUse];
+    if (fs.existsSync(simpleScript)) {
+      // Extract the script from asar to temp location
+      const tempScript = path.join(os.tmpdir(), 'theseus_start_backend_simple.py');
+      
+      try {
+        const scriptContent = fs.readFileSync(simpleScript, 'utf8');
+        fs.writeFileSync(tempScript, scriptContent, { mode: 0o755 });
+        console.log(`Extracted simple backend script to: ${tempScript}`);
+        startupArgs = [tempScript];
+        tempFiles.push(tempScript); // Track for cleanup
+      } catch (error) {
+        console.error('Failed to extract simple backend script:', error);
+        // Fallback to direct uvicorn
+        startupArgs = ['-m', 'uvicorn', 'theseus_insight.main:app', '--host', '0.0.0.0', '--port', '8000'];
+      }
+    } else {
+      console.log('Simple backend script not found, using direct uvicorn');
+      startupArgs = ['-m', 'uvicorn', 'theseus_insight.main:app', '--host', '0.0.0.0', '--port', '8000'];
     }
   } else {
     // Use uvicorn directly for development

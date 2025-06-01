@@ -5,7 +5,16 @@
   "description": "Electron wrapper for Theseus Insight",
   "author": "Theseus Insight Team",
   "scripts": {
-    "build:--help": "electron-builder ----help --arm64"
+    "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "build": "node build-app-turnkey.js",
+    "build:mac": "node build-app-turnkey.js mac",
+    "build:win": "node build-app-turnkey.js win", 
+    "build:linux": "node build-app-turnkey.js linux",
+    "build:mac:x64": "node build-app-turnkey.js mac x64",
+    "build:mac:arm64": "node build-app-turnkey.js mac arm64",
+    "build:win:x64": "node build-app-turnkey.js win x64",
+    "build:linux:x64": "node build-app-turnkey.js linux x64"
   },
   "build": {
     "appId": "com.theseusinsight.desktop",
@@ -34,10 +43,56 @@
         ]
       },
       {
+        "from": "python_runtime",
+        "to": "app/python_runtime"
+      },
+      {
         "from": "env.template",
         "to": ".env"
       }
-    ]
+    ],
+    "mac": {
+      "icon": "icons/mac/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "category": "public.app-category.productivity",
+      "identity": "Christian Merrill (4H8Z97B24M)",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "win": {
+      "icon": "icons/win/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "icons/png",
+      "category": "Office",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "engines": {
     "node": ">=20"

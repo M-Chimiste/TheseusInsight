@@ -449,26 +449,6 @@ For detailed documentation and advanced usage examples, see [`theseus_insight/do
 
 ---
 
-## Desktop Build
-
-An Electron wrapper is provided in the `electron-app` directory. It bundles the
-Python backend together with the built SQLite database so no separate database
-server is required.
-
-### Building
-
-```
-cd electron-app
-npm install
-npm run build-pg   # or npm run download-pg
-npm run build
-```
-
-See [`electron-app/README.md`](electron-app/README.md) for platform specific
-instructions.
-
----
-
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE) unless otherwise stated.

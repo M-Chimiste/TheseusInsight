@@ -43,7 +43,7 @@ const navItems: NavCardItem[] = [
   },
   {
     title: 'Podcast History',
-    description: 'Listen to and review previously generated podcasts.',
+    description: 'Browse and review previously generated podcasts.',
     icon: <PodcastsIcon fontSize="large" color="primary" />,
     path: '/podcast-history',
   },

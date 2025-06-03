@@ -97,21 +97,106 @@ Configuration files live in `config/` and the React app is located in `theseus-u
 
 ## Installation
 
-If you prefer running locally without Docker:
-1. Install Python dependencies
+### Automated Installation (Recommended)
+
+For the fastest setup, use our automated installation scripts that handle all dependencies and start both servers:
+
+#### macOS / Linux
+```bash
+# Make the script executable and run
+chmod +x scripts/install-and-start.sh
+./scripts/install-and-start.sh
+```
+
+#### Windows (Command Prompt)
+```cmd
+scripts\install-and-start.bat
+```
+
+#### Windows (PowerShell)
+```powershell
+.\scripts\install-and-start.ps1
+```
+
+**What the scripts do:**
+- Check for Python 3.8+ and Node.js installations
+- Create Python virtual environment and install dependencies
+- Install and build the React frontend
+- Create necessary data directories
+- Generate default configuration files
+- Start both backend (port 8000) and frontend (port 5173) servers
+
+**Script Options:**
+- `--install-only` - Only install dependencies, don't start servers
+- `--start-only` - Only start servers (skip installation)  
+- `--help` - Show help and usage information
+
+**Examples:**
+```bash
+# Install dependencies only
+./scripts/install-and-start.sh --install-only
+
+# Start servers only (after installation)
+./scripts/install-and-start.sh --start-only
+
+# Full setup (default)
+./scripts/install-and-start.sh
+```
+
+After successful installation, you'll have:
+- **Backend API:** `http://localhost:8000`
+- **Frontend UI:** `http://localhost:5173` 
+- **API Documentation:** `http://localhost:8000/docs`
+
+For detailed troubleshooting and platform-specific installation instructions, see [`docs/installation.md`](docs/installation_README.md).
+
+### Manual Installation
+
+If you prefer to install manually or the automated scripts don't work for your environment:
+
+#### Prerequisites
+- **Python 3.8+** - Download from [python.org](https://www.python.org/downloads/)
+- **Node.js 16+** - Download from [nodejs.org](https://nodejs.org/)
+
+#### Steps
+1. **Install Python dependencies**
    ```bash
-
+   # Create virtual environment
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate.bat
+   
+   # Install dependencies
    pip install -r requirements.txt
-
    ```
-2. (Optional) install Node.js 20+ and build the frontend
+
+2. **Install and build frontend**
    ```bash
    cd theseus-ui
    npm install
    npm run build
+   cd ..
    ```
-3. Configure environment variables as shown below.
-4. The SQLite database will be created automatically on first run.
+
+3. **Create data directories**
+   ```bash
+   mkdir -p data/{newsletters,podcasts,visualizations,temp}
+   mkdir -p config
+   ```
+
+4. **Configure environment variables** (see [Environment Variables](#environment-variables) section)
+
+5. **Start the application**
+   ```bash
+   # Backend (in one terminal)
+   source venv/bin/activate
+   uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
+   
+   # Frontend (in another terminal) 
+   cd theseus-ui
+   npm run dev
+   ```
+
+The SQLite database will be created automatically on first run.
 
 ---
 

@@ -642,7 +642,7 @@ const Settings: React.FC = () => {
                     renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
                     : <Typography>Loading configuration for {tabDef.label}...</Typography>
                   }
-                  <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-start' }}>
                     <Button
                       variant="contained"
                       onClick={() => {

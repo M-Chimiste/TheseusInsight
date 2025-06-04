@@ -540,6 +540,56 @@ class LlamacppInference(InferenceModel):
             return response['choices'][0]['message']['content']
 
 
+class CustomOAIInference(InferenceModel):
+    """Custom OpenAI-compatible Inference."""
+    def __init__(self,
+                 model_name: str,
+                 max_new_tokens: int = 4096,
+                 temperature: float = 0.1,
+                 base_url: Optional[str] = None,
+                 api_key: Optional[str] = None):
+        self.base_url = base_url or os.environ.get("CUSTOM_OAI_BASE_URL")
+        self.api_key = api_key or os.environ.get("CUSTOM_OAI_API_KEY")
+        if not self.base_url:
+            raise ValueError("CUSTOM_OAI_BASE_URL environment variable or base_url parameter must be set for CustomOAIInference.")
+        # API key can be optional for some self-hosted OAI compatible servers
+        super().__init__(model_name, max_new_tokens, temperature)
+
+    def _get_provider(self) -> str:
+        return "custom-oai"
+
+    def _load_model(self):
+        from openai import OpenAI
+        return OpenAI(base_url=self.base_url, api_key=self.api_key)
+    
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
+               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        if streaming:
+            stream = self.client.chat.completions.create(
+                model=model_name or self.model_name,
+                messages=full_messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                stream=True,
+            )
+
+            def _gen() -> Iterator[str]:
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+            return _gen()
+        else:
+            response = self.client.chat.completions.create(
+                model=model_name or self.model_name,
+                messages=full_messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+            )
+            return response.choices[0].message.content
+
+
 class LLMModelFactory:
     """
     Factory class for creating inference model instances.
@@ -549,6 +599,7 @@ class LLMModelFactory:
         'anthropic': AnthropicInference,
         'openai': OpenAIInference,
         'gemini': GeminiInference,
+        'custom-oai': CustomOAIInference,
         'sentence-transformer': SentenceTransformerInference,
         'ollama-embed': OllamaEmbedInference,
         'llamacpp': LlamacppInference

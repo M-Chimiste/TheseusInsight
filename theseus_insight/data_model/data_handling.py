@@ -18,6 +18,7 @@ INITIAL_PROVIDERS = [
     {"id": 4, "name": "sentence-transformers"},
     {"id": 5, "name": "llamacpp"},
     {"id": 6, "name": "anthropic"},
+    {"id": 7, "name": "ollama-embed"},
 ]
 
 

@@ -13,7 +13,7 @@
 # limitations under the License.
 import os
 from abc import ABC, abstractmethod
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union, Optional, Iterator
 from pydantic import BaseModel
 import numpy as np
 
@@ -42,8 +42,20 @@ class InferenceModel(ABC):
         pass
 
     @abstractmethod
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, **kwargs) -> str:
-        """Generate a response based on the given messages and system prompt."""
+    def invoke(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: str,
+        *,
+        streaming: bool = False,
+        **kwargs
+    ) -> Union[str, Iterator[str]]:
+        """Generate a response.
+
+        If *streaming* is True and the underlying provider offers token
+        streaming, return an iterator that yields those tokens.  Providers
+        that do not support streaming MUST silently ignore the flag and
+        return the full response string as before."""
         pass
 
 
@@ -66,8 +78,10 @@ class OllamaInference(InferenceModel):
         from ollama import Client
         return Client(host=self.url)
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, 
-               model_name: Optional[str] = None, num_ctx: Optional[int] = None, schema: Optional[BaseModel] = None) -> str:
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
+               streaming: bool = False,
+               model_name: Optional[str] = None, num_ctx: Optional[int] = None,
+               schema: Optional[BaseModel] = None) -> Union[str, Iterator[str]]:
         """
         Generate a response using the Ollama model.
 
@@ -88,20 +102,44 @@ class OllamaInference(InferenceModel):
             "num_ctx": self.num_ctx
         }
 
-        if schema:
-            response = self.client.chat(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                format=schema.model_json_schema(),
-                options=options
-            )
+        if streaming:
+            if schema:
+                stream = self.client.chat(
+                    model=model_name or self.model_name,
+                    messages=full_messages,
+                    format=schema.model_json_schema(),
+                    options=options,
+                    stream=True
+                )
+            else:
+                stream = self.client.chat(
+                    model=model_name or self.model_name,
+                    messages=full_messages,
+                    options=options,
+                    stream=True
+                )
+
+            def _gen() -> Iterator[str]:
+                for chunk in stream:
+                    content = chunk["message"]["content"]
+                    if content:
+                        yield content
+            return _gen()
         else:
-            response = self.client.chat(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                options=options
-            )
-        return response['message']['content']
+            if schema:
+                response = self.client.chat(
+                    model=model_name or self.model_name,
+                    messages=full_messages,
+                    format=schema.model_json_schema(),
+                    options=options
+                )
+            else:
+                response = self.client.chat(
+                    model=model_name or self.model_name,
+                    messages=full_messages,
+                    options=options
+                )
+            return response['message']['content']
 
 
 class AnthropicInference(InferenceModel):
@@ -113,8 +151,8 @@ class AnthropicInference(InferenceModel):
         from anthropic import Anthropic
         return Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, 
-               model_name: Optional[str] = None) -> str:
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
+               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
         """
         Generate a response using the Anthropic model.
 
@@ -126,14 +164,32 @@ class AnthropicInference(InferenceModel):
         Returns:
             str: The generated response text
         """
-        response = self.client.messages.create(
-            model=model_name or self.model_name,
-            system=system_prompt,
-            messages=messages,
-            max_tokens=self.max_new_tokens,
-            temperature=self.temperature,
-        )
-        return response.content[0].text
+        if streaming:
+            stream = self.client.messages.create(
+                model=model_name or self.model_name,
+                system=system_prompt,
+                messages=messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                stream=True,
+            )
+
+            def _gen() -> Iterator[str]:
+                for event in stream:
+                    if getattr(event, "type", None) == "content_block_delta":
+                        delta = event.delta.get("text", "")
+                        if delta:
+                            yield delta
+            return _gen()
+        else:
+            response = self.client.messages.create(
+                model=model_name or self.model_name,
+                system=system_prompt,
+                messages=messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+            )
+            return response.content[0].text
 
 
 class OpenAIInference(InferenceModel):
@@ -145,7 +201,8 @@ class OpenAIInference(InferenceModel):
         from openai import OpenAI
         return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, model_name: Optional[str] = None) -> str:
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
+               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
         """
         Generate a response using the OpenAI model.
 
@@ -157,13 +214,29 @@ class OpenAIInference(InferenceModel):
             str: The generated response text
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
-        response = self.client.chat.completions.create(
-            model=model_name or self.model_name,
-            messages=full_messages,
-            max_tokens=self.max_new_tokens,
-            temperature=self.temperature,
-        )
-        return response.choices[0].message.content
+        if streaming:
+            stream = self.client.chat.completions.create(
+                model=model_name or self.model_name,
+                messages=full_messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                stream=True,
+            )
+
+            def _gen() -> Iterator[str]:
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+            return _gen()
+        else:
+            response = self.client.chat.completions.create(
+                model=model_name or self.model_name,
+                messages=full_messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+            )
+            return response.choices[0].message.content
 
 
 class GeminiInference(InferenceModel):
@@ -187,22 +260,42 @@ class GeminiInference(InferenceModel):
         genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
         return genai
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, model_name: Optional[str] = None) -> str:
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
+               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
         gemini_messages = [{"role": "user", "parts": [system_prompt]}]
         for message in messages:
             role = "model" if message["role"] == "assistant" else "user"
             gemini_messages.append({"role": role, "parts": [message["content"]]})
 
-        model = self.client.GenerativeModel(model_name=model_name or self.model_name)
-        response = model.generate_content(
-            gemini_messages,
-            safety_settings=self.safety,
-            generation_config=self.client.types.GenerationConfig(
-                max_output_tokens=self.max_new_tokens,
-                temperature=self.temperature
+        if streaming:
+            model = self.client.GenerativeModel(model_name=model_name or self.model_name)
+            stream = model.generate_content(
+                gemini_messages,
+                safety_settings=self.safety,
+                generation_config=self.client.types.GenerationConfig(
+                    max_output_tokens=self.max_new_tokens,
+                    temperature=self.temperature
+                ),
+                stream=True
             )
-        )
-        return response.text
+
+            def _gen() -> Iterator[str]:
+                for chunk in stream:
+                    text = getattr(chunk, "text", None)
+                    if text:
+                        yield text
+            return _gen()
+        else:
+            model = self.client.GenerativeModel(model_name=model_name or self.model_name)
+            response = model.generate_content(
+                gemini_messages,
+                safety_settings=self.safety,
+                generation_config=self.client.types.GenerationConfig(
+                    max_output_tokens=self.max_new_tokens,
+                    temperature=self.temperature
+                )
+            )
+            return response.text
 
 
 class SentenceTransformerInference(InferenceModel):
@@ -229,9 +322,11 @@ class SentenceTransformerInference(InferenceModel):
         from sentence_transformers import SentenceTransformer
         return SentenceTransformer(self.model_name, trust_remote_code=self.remote_code, device=self.device)
     
-    def invoke(self, 
-               text: Union[str, List[str]], 
-               to_list: bool = False, 
+    def invoke(self,
+               text: Union[str, List[str]],
+               *,
+               streaming: bool = False,
+               to_list: bool = False,
                normalize: bool = False,
                batch_size: Optional[int] = None,
                show_progress_bar: Optional[bool] = None,
@@ -254,6 +349,7 @@ class SentenceTransformerInference(InferenceModel):
         Returns:
             Embeddings as numpy array(s), tensor(s), or list(s) depending on parameters
         """
+        _ = streaming
         is_string_input = isinstance(text, str)
         if is_string_input:
             text = [text]
@@ -306,7 +402,9 @@ class OllamaEmbedInference(InferenceModel):
         from ollama import Client
         return Client(host=self.url)
     
-    def invoke(self, text: Union[str, List[str]], to_list: bool = False, 
+    def invoke(self, text: Union[str, List[str]], *,
+               streaming: bool = False,
+               to_list: bool = False,
                normalize: bool = False, model_name: Optional[str] = None, **kwargs) -> Union[List, object]:
         """
         Generate embeddings using the Ollama embedding model.
@@ -321,6 +419,7 @@ class OllamaEmbedInference(InferenceModel):
         Returns:
             Union[List, object]: The generated embeddings
         """
+        _ = streaming
         if isinstance(text, str):
             text = [text]
         
@@ -391,9 +490,12 @@ class LlamacppInference(InferenceModel):
             **self.model_kwargs
         )
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str,
-               max_tokens: Optional[int] = None, temperature: Optional[float] = None,
-               schema: Optional[BaseModel] = None, **kwargs) -> str:
+    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
+               streaming: bool = False,
+               max_tokens: Optional[int] = None,
+               temperature: Optional[float] = None,
+               schema: Optional[BaseModel] = None,
+               **kwargs) -> Union[str, Iterator[str]]:
         """
         Generate a response using the Llamacpp model.
 
@@ -424,8 +526,18 @@ class LlamacppInference(InferenceModel):
                 "schema": schema.model_json_schema()
             }
         
-        response = self.client.create_chat_completion(**generation_params)
-        return response['choices'][0]['message']['content']
+        if streaming:
+            stream = self.client.create_chat_completion(**generation_params, stream=True)
+
+            def _gen() -> Iterator[str]:
+                for chunk in stream:
+                    delta = chunk["choices"][0]["delta"].get("content")
+                    if delta:
+                        yield delta
+            return _gen()
+        else:
+            response = self.client.create_chat_completion(**generation_params)
+            return response['choices'][0]['message']['content']
 
 
 class LLMModelFactory:

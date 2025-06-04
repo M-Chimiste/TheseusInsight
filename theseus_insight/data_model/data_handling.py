@@ -17,6 +17,7 @@ INITIAL_PROVIDERS = [
     {"id": 3, "name": "openai"},
     {"id": 4, "name": "sentence-transformers"},
     {"id": 5, "name": "llamacpp"},
+    {"id": 6, "name": "anthropic"},
 ]
 
 

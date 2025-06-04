@@ -47,6 +47,8 @@ const CREDENTIAL_KEYS = [
   'CLIENT_ID',
   'PROJECT_ID',
   'CLIENT_SECRET',
+  'CUSTOM_OAI_BASE_URL',
+  'CUSTOM_OAI_API_KEY',
 ];
 
 const MODEL_TABS = [
@@ -832,12 +834,12 @@ const Settings: React.FC = () => {
               <TextField
                 key={key}
                 label={key}
-                type={key === 'OLLAMA_URL' ? 'text' : (showCreds[key] ? 'text' : 'password')}
+                type={(key === 'OLLAMA_URL' || key === 'CUSTOM_OAI_BASE_URL') ? 'text' : (showCreds[key] ? 'text' : 'password')}
                 value={credValues[key] || ''}
                 onChange={e => setCredValues({ ...credValues, [key]: e.target.value })}
                 InputProps={{
                   endAdornment:
-                    key === 'OLLAMA_URL' ? null : (
+                    (key === 'OLLAMA_URL' || key === 'CUSTOM_OAI_BASE_URL') ? null : (
                       <IconButton onClick={() => setShowCreds({ ...showCreds, [key]: !showCreds[key] })}>
                         {showCreds[key] ? <VisibilityOffIcon /> : <VisibilityIcon />}
                       </IconButton>

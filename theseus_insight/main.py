@@ -39,6 +39,8 @@ CREDENTIAL_KEYS = [
     "CLIENT_ID",
     "PROJECT_ID",
     "CLIENT_SECRET",
+    "CUSTOM_OAI_BASE_URL",
+    "CUSTOM_OAI_API_KEY",
 ]
 import asyncio
 

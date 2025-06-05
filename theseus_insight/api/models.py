@@ -313,6 +313,83 @@ class HybridSearchResponse(BaseModel):
     semantic_weight: float
     keyword_weight: float
 
+# Research Agent Model Configuration
+class ResearchAgentModelConfigApi(BaseModel):
+    """API model for Research Agent model configuration (FR-16, FR-17)."""
+    boss_model: ModelConfig = Field(..., description="Main coordinating model")
+    worker_models: Dict[str, ModelConfig] = Field(
+        default_factory=dict, 
+        description="Task-specific worker models (summary, analysis, search)"
+    )
+    default_worker: str = Field("summary", description="Default worker model role")
+    max_retries: int = Field(3, ge=1, le=10, description="Maximum retry attempts")
+    timeout_seconds: int = Field(30, ge=5, le=300, description="Timeout in seconds")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "boss_model": {
+                    "model_name": "gemini-2.0-flash",
+                    "model_type": "gemini",
+                    "max_new_tokens": 4096,
+                    "temperature": 0.1,
+                    "num_ctx": 131072
+                },
+                "worker_models": {
+                    "summary": {
+                        "model_name": "gemma3:27b-it-qat",
+                        "model_type": "ollama",
+                        "max_new_tokens": 4096,
+                        "temperature": 0.1,
+                        "num_ctx": 131072
+                    },
+                    "analysis": {
+                        "model_name": "phi4-mini:3.8b-q8_0",
+                        "model_type": "ollama",
+                        "max_new_tokens": 2048,
+                        "temperature": 0.1,
+                        "num_ctx": 4096
+                    }
+                },
+                "default_worker": "summary",
+                "max_retries": 3,
+                "timeout_seconds": 30
+            }
+        }
+
+# Research Agent Request/Response models
+class ResearchAgentRunRequest(BaseModel):
+    """Request model for starting a research agent run (FR-18)."""
+    research_question: str = Field(..., min_length=10, description="Research question to investigate")
+    num_papers_target: int = Field(5, ge=1, le=20, description="Target number of papers to collect")
+    max_steps: int = Field(10, ge=1, le=50, description="Maximum agent iteration steps")
+    model_config_override: Optional[ResearchAgentModelConfigApi] = Field(
+        None, description="Optional model configuration override"
+    )
+
+class ResearchAgentRunResponse(BaseModel):
+    """Response model for research agent run initiation."""
+    task_id: str = Field(..., description="Unique task identifier")
+    message: str = Field(..., description="Status message")
+
+# Literature Review result models
+class LiteratureReviewSummary(BaseModel):
+    """Summary of a literature review result."""
+    paper_id: int
+    title: str
+    summary: str
+    rationale: str
+    relevance_score: float
+
+class LiteratureReviewResult(BaseModel):
+    """Complete literature review result."""
+    id: int
+    research_question: str
+    summaries: List[LiteratureReviewSummary]
+    created_ts: str
+    total_papers: int
+    trace_log: List[Dict[str, Any]] = Field(default_factory=list)
+
 # Removed the conflicting/simpler NodeStatus definition that was here.
 # class NodeStatus(BaseModel):
 #     id: str 

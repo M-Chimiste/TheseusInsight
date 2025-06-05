@@ -497,17 +497,21 @@ class LlamacppInference(InferenceModel):
                schema: Optional[BaseModel] = None,
                **kwargs) -> Union[str, Iterator[str]]:
         """
-        Generate a response using the Llamacpp model.
+        Initiates the inference process for generating text based on input messages and a system prompt.
+
+        This method orchestrates the text generation process by preparing the input messages, system prompt, and additional parameters for the model. It supports both streaming and non-streaming modes of operation. In streaming mode, it yields chunks of generated text as they become available. In non-streaming mode, it returns the complete generated text.
 
         Args:
-            messages (List[Dict[str, str]]): List of message dictionaries with 'role' and 'content' keys
-            system_prompt (str): System prompt to prepend to the messages
-            max_tokens (Optional[int]): Override the default max_new_tokens if provided
-            temperature (Optional[float]): Override the default temperature if provided
-            schema (Optional[BaseModel]): Pydantic model for structured output
+            messages (List[Dict[str, str]]): A list of dictionaries, where each dictionary contains a 'role' and 'content'. The 'role' specifies the type of message (e.g., 'system', 'user'), and 'content' is the text of the message.
+            system_prompt (str): A string that provides context or instructions for the model to generate text.
+            streaming (bool, optional): If True, the method operates in streaming mode, yielding chunks of generated text. Defaults to False.
+            max_tokens (Optional[int], optional): The maximum number of tokens to generate. Defaults to the model's default max_new_tokens.
+            temperature (Optional[float], optional): The temperature parameter for sampling. Defaults to the model's default temperature.
+            schema (Optional[BaseModel], optional): A Pydantic model schema for structured output. Defaults to None.
+            **kwargs: Additional keyword arguments to pass to the model for generation.
 
         Returns:
-            str: The generated response text
+            Union[str, Iterator[str]]: In non-streaming mode, returns the complete generated text as a string. In streaming mode, returns an iterator that yields chunks of generated text as strings.
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         
@@ -562,8 +566,34 @@ class CustomOAIInference(InferenceModel):
         from openai import OpenAI
         return OpenAI(base_url=self.base_url, api_key=self.api_key)
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
-               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
+    def invoke(self, 
+               messages: List[Dict[str, str]], 
+               system_prompt: str, *,
+               streaming: bool = False, 
+               model_name: Optional[str] = None,
+               **kwargs) -> Union[str, Iterator[str]]:
+        """
+        Invokes the model to generate text based on the provided messages and system prompt.
+
+        This method orchestrates the interaction with the model, preparing the input data and
+        handling the response. It supports both streaming and non-streaming modes, allowing for
+        flexible usage depending on the application's requirements.
+
+        Args:
+            messages (List[Dict[str, str]]): A list of dictionaries, where each dictionary contains
+                'role' and 'content' keys. 'role' specifies the role of the message (e.g., 'user' or
+                'system'), and 'content' is the actual message content.
+            system_prompt (str): The system prompt to be used as the initial message.
+            streaming (bool, optional): If True, the method will return an iterator over the
+                generated text, allowing for streaming of the output. Defaults to False.
+            model_name (Optional[str], optional): The name of the model to use for generation. If
+                not provided, the default model name set during initialization will be used.
+            **kwargs: Additional keyword arguments to be passed to the model's generation method.
+
+        Returns:
+            Union[str, Iterator[str]]: The generated text or an iterator over the generated text,
+                depending on the streaming mode.
+        """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         if streaming:
             stream = self.client.chat.completions.create(
@@ -572,6 +602,7 @@ class CustomOAIInference(InferenceModel):
                 max_tokens=self.max_new_tokens,
                 temperature=self.temperature,
                 stream=True,
+                **kwargs
             )
 
             def _gen() -> Iterator[str]:

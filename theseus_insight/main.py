@@ -121,10 +121,8 @@ async def lifespan(app_instance: FastAPI):
     # Startup logic
     print("INFO:     Starting up Theseus Insight API...")
     try:
-        os.makedirs("data/newsletters", exist_ok=True)
-        os.makedirs("data/podcasts", exist_ok=True)
-        os.makedirs("data/visualizations", exist_ok=True)
-        os.makedirs("data/temp", exist_ok=True)
+        # Directory structure is now created during database initialization
+        pass
 
         # Load credentials from DB (encrypted) and apply to environment
         for key in CREDENTIAL_KEYS:

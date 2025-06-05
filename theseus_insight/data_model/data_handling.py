@@ -89,9 +89,17 @@ class PaperDatabase:
                 "cosine_similarity REAL,"
                 "url TEXT UNIQUE,"
                 "embedding_model TEXT,"
-                "embedding BLOB"
+                "embedding BLOB,"
+                "text TEXT"
                 ")"
             )
+
+            # Add the text column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute("ALTER TABLE papers ADD COLUMN text TEXT")
+            except Exception:
+                # Column likely already exists, ignore
+                pass
 
             cursor.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5("
@@ -198,7 +206,7 @@ class PaperDatabase:
         with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT id, title, abstract, date, date_run, score, rationale, related,"
-                " cosine_similarity, url, embedding_model, embedding FROM papers WHERE url = ?",
+                " cosine_similarity, url, embedding_model, embedding, text FROM papers WHERE url = ?",
                 (url,),
             )
             row = cursor.fetchone()
@@ -219,7 +227,8 @@ class PaperDatabase:
                     'cosine_similarity': row[8],
                     'url': row[9],
                     'embedding_model': row[10],
-                    'embedding': row[11]
+                    'embedding': row[11],
+                    'text': row[12]
                 }
             return None
 
@@ -262,8 +271,8 @@ class PaperDatabase:
 
         with self.get_cursor() as cursor:
             cursor.execute(
-                "INSERT INTO papers (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO papers (title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding, text)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     paper.title,
                     paper.abstract,
@@ -276,6 +285,7 @@ class PaperDatabase:
                     paper.url,
                     paper.embedding_model,
                     json.dumps(paper.embedding) if paper.embedding is not None else None,
+                    getattr(paper, 'text', None),  # Optional text field
                 ),
             )
 
@@ -1452,3 +1462,97 @@ class PaperDatabase:
                     'message': row[10]
                 })
             return tasks
+
+    # Research Agent specific methods
+    def get_paper_text(self, paper_id: int) -> str | None:
+        """Get the full text content of a paper by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT text FROM papers WHERE id = ?", (paper_id,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def update_paper_text(self, paper_id: int, text: str):
+        """Update the full text content of a paper."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE papers SET text = ? WHERE id = ?",
+                (text, paper_id)
+            )
+
+    def get_paper_by_id(self, paper_id: int) -> dict | None:
+        """Get paper details by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, title, abstract, date, date_run, score, rationale, related,"
+                " cosine_similarity, url, embedding_model, embedding, text FROM papers WHERE id = ?",
+                (paper_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                # Convert date objects to strings if they're not already strings
+                date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
+                date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
+                
+                return {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': date_str,
+                    'date_run': date_run_str,
+                    'score': row[5],
+                    'rationale': row[6],
+                    'related': row[7],
+                    'cosine_similarity': row[8],
+                    'url': row[9],
+                    'embedding_model': row[10],
+                    'embedding': row[11],
+                    'text': row[12]
+                }
+            return None
+
+    def insert_literature_review(self, research_question: str, summary_json: str, trace_json: str) -> int:
+        """Insert a literature review result and return the ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO lit_reviews (research_question, summary_json, trace_json, created_ts) VALUES (?, ?, ?, ?)",
+                (research_question, summary_json, trace_json, datetime.datetime.now().isoformat())
+            )
+            return cursor.lastrowid
+
+    def get_literature_review(self, review_id: int) -> dict | None:
+        """Get a literature review by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, research_question, summary_json, trace_json, created_ts FROM lit_reviews WHERE id = ?",
+                (review_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'research_question': row[1],
+                    'summary_json': row[2],
+                    'trace_json': row[3],
+                    'created_ts': row[4]
+                }
+            return None
+
+    def get_recent_literature_reviews(self, limit: int = 10) -> list:
+        """Get recent literature reviews."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, research_question, summary_json, trace_json, created_ts FROM lit_reviews "
+                "ORDER BY created_ts DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'research_question': row[1],
+                    'summary_json': row[2],
+                    'trace_json': row[3],
+                    'created_ts': row[4]
+                }
+                for row in rows
+            ]

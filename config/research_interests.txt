@@ -1,9 +1,10 @@
-1. Mixture of experts in Large Language Models as well as alternative architectures to current large language models.
-2. Small language models and their applications.
-3. Training large language models and training advancements to enable: cheaper, faster, better performance.
-4. More efficient inference on large language models.
-5. Information extraction and knowledge graph creation/generation with Large Language Models.
-6. Prompt engineering and dataset generation for LLMs.
-7. Agentic systems and their applications.
-8. Multi-modal models and their applications.
-9. Synthetic data generation for training and evaluation of generative AI models.
+1. Mixture of experts in large language models and alternative architectures
+2. Small language models and their applications
+3. Training large language models and advances for cheaper, faster, better performance
+4. More efficient inference on large language models
+5. Information extraction and knowledge-graph creation/generation with large language models
+6. Prompt engineering and dataset generation for LLMs
+7. Agentic systems and their applications
+8. Multi-modal models and their applications
+9. Synthetic data generation for training and evaluation of generative AI models
+10. Reinforcement learning methods and RL-related work in large language models

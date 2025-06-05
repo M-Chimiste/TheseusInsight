@@ -46,39 +46,9 @@ import asyncio
 
 # Determine base path for static files
 IS_RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
-IS_ELECTRON_PACKAGED = os.getenv("ELECTRON_IS_PACKAGED", "false").lower() == "true"
 
 if IS_RUNNING_IN_DOCKER:
     STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend")
-elif IS_ELECTRON_PACKAGED:
-    # In packaged Electron app, frontend is in the app resources
-    resources_path = os.getenv("ELECTRON_RESOURCES_PATH", "")
-    if resources_path:
-        STATIC_FILES_BASE_DIR = pathlib.Path(resources_path) / "app" / "theseus-ui" / "dist"
-    else:
-        # Fallback for packaged apps without ELECTRON_RESOURCES_PATH
-        # Try to find the frontend relative to current location
-        current_dir = pathlib.Path(__file__).resolve().parent
-        possible_paths = [
-            current_dir.parent / "theseus-ui" / "dist",  # ../theseus-ui/dist (standard dev layout)
-            current_dir / ".." / ".." / "theseus-ui" / "dist",  # ../../theseus-ui/dist (potential alt)
-            pathlib.Path.cwd() / "theseus-ui" / "dist",  # cwd/theseus-ui/dist
-        ]
-        
-        STATIC_FILES_BASE_DIR = None
-        for path in possible_paths:
-            if path.exists() and (path / "index.html").exists():
-                STATIC_FILES_BASE_DIR = path
-                break
-        
-        if STATIC_FILES_BASE_DIR is None:
-            # Final fallback - create a dummy path and log the issue
-            STATIC_FILES_BASE_DIR = pathlib.Path("static_frontend_missing")
-            print(f"ERROR: Could not locate frontend static files in packaged Electron app.")
-            print(f"       Searched in: {[str(p) for p in possible_paths]}")
-            print(f"       ELECTRON_RESOURCES_PATH: {resources_path}")
-            print(f"       Current working directory: {pathlib.Path.cwd()}")
-            print(f"       Script location: {pathlib.Path(__file__).resolve().parent}")
 else:
     # Development mode - look for theseus-ui/dist relative to project root
     PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent

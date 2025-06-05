@@ -83,16 +83,22 @@ class OllamaInference(InferenceModel):
                model_name: Optional[str] = None, num_ctx: Optional[int] = None,
                schema: Optional[BaseModel] = None) -> Union[str, Iterator[str]]:
         """
-        Generate a response using the Ollama model.
+        Invokes the Ollama model to generate a response based on the provided messages and system prompt.
+
+        This method orchestrates the interaction with the Ollama model, handling both streaming and non-streaming modes.
+        It prepares the input messages, including the system prompt, and configures the model invocation options.
+        Depending on the streaming flag, it either returns the full response string or an iterator yielding tokens.
 
         Args:
-            messages (List[Dict[str, str]]): List of message dictionaries with 'role' and 'content' keys
-            system_prompt (str): System prompt to prepend to the messages
-            model_name (Optional[str]): Override the default model name if provided
-            num_ctx (Optional[int]): Override the default context window size if provided
+            messages (List[Dict[str, str]]): A list of dictionaries, each containing a 'role' and 'content' for the message.
+            system_prompt (str): The system prompt to be included in the input.
+            streaming (bool, optional): If True, returns an iterator over the response tokens. Defaults to False.
+            model_name (Optional[str], optional): The name of the model to use. Defaults to the model name set in the constructor.
+            num_ctx (Optional[int], optional): The number of context tokens to use. Defaults to the num_ctx set in the constructor.
+            schema (Optional[BaseModel], optional): The schema to use for formatting the response. Defaults to None.
 
         Returns:
-            str: The generated response text
+            Union[str, Iterator[str]]: The response from the model, either as a full string or an iterator over tokens.
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -154,15 +160,17 @@ class AnthropicInference(InferenceModel):
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
                streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
         """
-        Generate a response using the Anthropic model.
+        Generates a response using the Anthropic model.
+
+        This method orchestrates the interaction with the Anthropic API to generate a response based on the provided messages and system prompt. It can operate in either streaming or non-streaming mode, depending on the value of the `streaming` parameter. In streaming mode, it returns an iterator over the generated text chunks. In non-streaming mode, it returns the complete generated response as a string.
 
         Args:
-            messages (List[Dict[str, str]]): List of message dictionaries with 'role' and 'content' keys
-            system_prompt (str): System prompt to prepend to the messages
-            model_name (Optional[str]): Override the default model name if provided
+            messages (List[Dict[str, str]]): A list of dictionaries, each containing 'role' and 'content' keys, representing the conversation history.
+            system_prompt (str): The system prompt to prepend to the conversation history.
+            model_name (Optional[str]): The name of the model to use for generation. If not provided, the default model is used.
 
         Returns:
-            str: The generated response text
+            Union[str, Iterator[str]]: The generated response text or an iterator over the generated text chunks if streaming is enabled.
         """
         if streaming:
             stream = self.client.messages.create(
@@ -204,14 +212,18 @@ class OpenAIInference(InferenceModel):
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
                streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
         """
-        Generate a response using the OpenAI model.
+        Invokes the OpenAI model to generate a response based on the provided messages and system prompt.
+
+        This method orchestrates the interaction with the OpenAI API to generate a response. It can operate in either streaming or non-streaming mode, depending on the value of the `streaming` parameter. In streaming mode, it returns an iterator over the generated text chunks. In non-streaming mode, it returns the complete generated response as a string.
 
         Args:
-            messages (List[Dict[str, str]]): List of message dictionaries with 'role' and 'content' keys
-            system_prompt (str): System prompt to prepend to the messages
+            messages (List[Dict[str, str]]): A list of dictionaries, each containing 'role' and 'content' keys, representing the conversation history.
+            system_prompt (str): The system prompt to prepend to the conversation history.
+            streaming (bool, optional): If True, the method returns an iterator over the generated text chunks. Defaults to False.
+            model_name (Optional[str], optional): The name of the model to use for generation. If not provided, the default model is used.
 
         Returns:
-            str: The generated response text
+            Union[str, Iterator[str]]: The generated response as a string or an iterator over the generated text chunks, depending on the `streaming` parameter.
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         if streaming:
@@ -244,6 +256,17 @@ class GeminiInference(InferenceModel):
     def __init__(self, model_name: str = "gemini-1.5-flash",
                  max_new_tokens: int = 4096,
                  temperature: float = 0.1):
+        """
+        Initializes the GeminiInference model with specified parameters.
+
+        Args:
+            model_name (str, optional): The name of the Gemini model to use for inference. Defaults to "gemini-1.5-flash".
+            max_new_tokens (int, optional): The maximum number of new tokens to generate. Defaults to 4096.
+            temperature (float, optional): The temperature parameter for the model. Defaults to 0.1.
+
+        Raises:
+            ValueError: If the model_name is not recognized or if max_new_tokens or temperature are invalid.
+        """
         self.safety = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -260,8 +283,27 @@ class GeminiInference(InferenceModel):
         genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
         return genai
     
-    def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
-               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
+    def invoke(self, 
+               messages: List[Dict[str, str]], 
+               system_prompt: str, *,
+               streaming: bool = False, 
+               model_name: Optional[str] = None,
+               **kwargs) -> Union[str, Iterator[str]]:
+        """
+        Initiates the Gemini Inference process for generating text based on input messages and a system prompt.
+
+        This method orchestrates the Gemini Inference process, which involves preparing input messages, setting up the model configuration, and invoking the model to generate text. It supports both streaming and non-streaming modes of operation.
+
+        Args:
+            messages (List[Dict[str, str]]): A list of dictionaries, where each dictionary contains a 'role' and a 'content'. The 'role' specifies the type of message (e.g., user or model), and the 'content' is the actual message.
+            system_prompt (str): A string that serves as the initial prompt for the model to generate text.
+            streaming (bool, optional): A boolean indicating whether to use streaming mode. Defaults to False.
+            model_name (Optional[str], optional): The name of the model to use for inference. Defaults to None, which uses the default model name set during initialization.
+            **kwargs: Additional keyword arguments that can be passed to the model for configuration.
+
+        Returns:
+            Union[str, Iterator[str]]: The generated text. If streaming is True, returns an iterator over the generated text. Otherwise, returns the complete generated text as a string.
+        """
         gemini_messages = [{"role": "user", "parts": [system_prompt]}]
         for message in messages:
             role = "model" if message["role"] == "assistant" else "user"
@@ -303,6 +345,19 @@ class SentenceTransformerInference(InferenceModel):
                  model_name: str = "Alibaba-NLP/gte-large-en-v1.5",
                  remote_code: bool = True,
                  device: Optional[str] = None):
+        """
+        Initializes a SentenceTransformerInference model instance.
+
+        This constructor sets up the SentenceTransformer model for inference tasks. It allows for customization of the model name, remote code execution, and device selection.
+
+        Args:
+            model_name (str, optional): The name of the SentenceTransformer model to use. Defaults to "Alibaba-NLP/gte-large-en-v1.5".
+            remote_code (bool, optional): Whether to allow remote code execution. Defaults to True.
+            device (Optional[str], optional): The device to use for model computations. Defaults to None, which automatically selects the best available device.
+
+        Raises:
+            ValueError: If an invalid device is specified.
+        """
         import torch
         self.remote_code = remote_code
         if not device:
@@ -334,20 +389,24 @@ class SentenceTransformerInference(InferenceModel):
                convert_to_tensor: bool = False,
                **kwargs) -> Union[List, object]:
         """
-        Generate embeddings for text(s) using SentenceTransformer.
-        
+        Invokes the SentenceTransformer model to generate embeddings for the given text(s).
+
+        This method processes the input text(s) and returns their corresponding embeddings. It supports
+        various options for customization, such as streaming, converting to list, normalization, and more.
+
         Args:
-            text: String or list of strings to embed
-            to_list: Whether to convert embeddings to Python lists
-            normalize: Whether to normalize the embeddings  
-            batch_size: Batch size for processing. If None, uses model default
-            show_progress_bar: Whether to show progress bar for large batches
-            convert_to_numpy: Whether to convert to numpy arrays (default: True)
-            convert_to_tensor: Whether to convert to PyTorch tensors
-            **kwargs: Additional arguments passed to SentenceTransformer.encode()
-            
+            text (Union[str, List[str]]): The input text or list of texts to generate embeddings for.
+            streaming (bool, optional): If True, processes the input text in a streaming fashion. Defaults to False.
+            to_list (bool, optional): If True, converts the output embeddings to a list. Defaults to False.
+            normalize (bool, optional): If True, normalizes the embeddings. Defaults to False.
+            batch_size (Optional[int], optional): The batch size to use for encoding. Defaults to None.
+            show_progress_bar (Optional[bool], optional): If True, shows a progress bar during encoding. Defaults to None.
+            convert_to_numpy (bool, optional): If True, converts the embeddings to numpy arrays. Defaults to True.
+            convert_to_tensor (bool, optional): If True, converts the embeddings to tensors. Defaults to False.
+            **kwargs: Additional keyword arguments to pass to the encoding function.
+
         Returns:
-            Embeddings as numpy array(s), tensor(s), or list(s) depending on parameters
+            Union[List, object]: The generated embeddings. If `to_list` is True, returns a list of embeddings. Otherwise, returns the embeddings as is.
         """
         _ = streaming
         is_string_input = isinstance(text, str)
@@ -386,11 +445,11 @@ class OllamaEmbedInference(InferenceModel):
                  model_name: str = "nomic-embed-text",
                  url: str = None):
         """
-        Initialize Ollama embedding inference.
-        
+        Initializes the Ollama Embedding Inference model.
+
         Args:
-            model_name (str): Name of the embedding model (e.g., 'nomic-embed-text')
-            url (str): Ollama server URL, defaults to environment variable or localhost
+            model_name (str, optional): The name of the model to use for embedding generation. Defaults to "nomic-embed-text".
+            url (str, optional): The URL of the Ollama API. If None, uses the OLLAMA_URL environment variable. Defaults to None.
         """
         self.url = url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
         super().__init__(model_name)
@@ -407,17 +466,19 @@ class OllamaEmbedInference(InferenceModel):
                to_list: bool = False,
                normalize: bool = False, model_name: Optional[str] = None, **kwargs) -> Union[List, object]:
         """
-        Generate embeddings using the Ollama embedding model.
+        Invokes the Ollama embedding model to generate embeddings for the given text(s).
+
+        This method takes in a single string or a list of strings as input, and returns the corresponding embeddings. It supports various options such as streaming, converting to list, normalizing, and specifying a custom model name.
 
         Args:
-            text (Union[str, List[str]]): Text or list of texts to embed
-            to_list (bool): Whether to convert embeddings to Python lists
-            normalize (bool): Whether to normalize the embeddings (Note: normalization handled by model)
-            model_name (Optional[str]): Override the default model name if provided
-            **kwargs: Additional arguments
+            text (Union[str, List[str]]): The input text(s) for which embeddings are to be generated.
+            streaming (bool, optional): If True, the method will process the input text(s) in a streaming fashion. Defaults to False.
+            to_list (bool, optional): If True, the method will convert the embeddings to a list format. Defaults to False.
+            normalize (bool, optional): If True, the method will normalize the embeddings. Defaults to False.
+            model_name (Optional[str], optional): The name of the model to use for embedding generation. Defaults to the model name specified during initialization.
 
         Returns:
-            Union[List, object]: The generated embeddings
+            Union[List, object]: The generated embeddings. If to_list is True, returns a list of embeddings; otherwise, returns a single embedding if the input was a single string, or a list of embeddings if the input was a list of strings.
         """
         _ = streaming
         if isinstance(text, str):
@@ -460,16 +521,19 @@ class LlamacppInference(InferenceModel):
                  verbose: bool = False,
                  **kwargs):
         """
-        Initialize Llamacpp inference.
-        
+        Initializes the LlamacppInference model with the specified parameters.
+
         Args:
-            model_name (str): Path to the GGUF model file
-            max_new_tokens (int): Maximum number of new tokens to generate
-            temperature (float): Sampling temperature
-            num_ctx (int): Context window size
-            n_gpu_layers (int): Number of layers to offload to GPU (-1 for all)
-            verbose (bool): Whether to enable verbose logging
-            **kwargs: Additional arguments to pass to Llama constructor
+            model_name (str): The name of the model to use for inference.
+            max_new_tokens (int, optional): The maximum number of new tokens to generate. Defaults to 4096.
+            temperature (float, optional): The temperature parameter for sampling. Defaults to 0.1.
+            num_ctx (int, optional): The number of context tokens to use. Defaults to 131072.
+            n_gpu_layers (int, optional): The number of GPU layers to use. Defaults to -1.
+            verbose (bool, optional): Whether to enable verbose mode. Defaults to False.
+            **kwargs: Additional keyword arguments to pass to the model.
+
+        Raises:
+            ValueError: If the model_name is not specified.
         """
         self.num_ctx = num_ctx
         self.n_gpu_layers = n_gpu_layers
@@ -552,6 +616,19 @@ class CustomOAIInference(InferenceModel):
                  temperature: float = 0.1,
                  base_url: Optional[str] = None,
                  api_key: Optional[str] = None):
+        """
+        Initializes a CustomOAIInference instance with the specified model name, maximum new tokens, temperature, base URL, and API key.
+
+        Args:
+            model_name (str): The name of the model to use for inference.
+            max_new_tokens (int, optional): The maximum number of tokens to generate in a single response. Defaults to 4096.
+            temperature (float, optional): The temperature parameter for sampling. Defaults to 0.1.
+            base_url (Optional[str], optional): The base URL for the custom OAI-compatible server. Defaults to None.
+            api_key (Optional[str], optional): The API key for the custom OAI-compatible server. Defaults to None.
+
+        Raises:
+            ValueError: If the base_url or CUSTOM_OAI_BASE_URL environment variable is not set.
+        """
         self.base_url = base_url or os.environ.get("CUSTOM_OAI_BASE_URL")
         self.api_key = api_key or os.environ.get("CUSTOM_OAI_API_KEY")
         if not self.base_url:

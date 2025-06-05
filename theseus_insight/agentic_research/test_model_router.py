@@ -1,7 +1,3 @@
-"""
-Test script for AgentModelRouter to verify functionality
-"""
-
 import json
 from .model_router import (
     AgentModelRouter, 

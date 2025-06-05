@@ -1,12 +1,3 @@
-"""
-Research Agent Model Router
-
-Implements FR-8, FR-9, FR-10: Model configuration management and routing for Research Agent.
-- Loads boss/worker model configurations from settings
-- Routes all LLM calls through existing LLMModelFactory
-- Records model selection decisions in trace logs
-"""
-
 import json
 import time
 from typing import Dict, List, Any, Optional, Union

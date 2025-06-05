@@ -76,6 +76,7 @@ class DatabaseImporter:
                     print(f"Warning: Missing required metadata field: {field}")
                     return False
             
+            # Core required tables (literature_reviews is optional for backward compatibility)
             expected_tables = {"papers", "podcasts", "newsletters"}
             exported_tables = set(metadata["tables_exported"])
             
@@ -83,6 +84,10 @@ class DatabaseImporter:
                 missing = expected_tables - exported_tables
                 print(f"Warning: Missing expected tables in export: {missing}")
                 return False
+            
+            # Check if literature_reviews is available (new feature)
+            if "literature_reviews" in exported_tables:
+                print("Literature reviews data detected in export")
             
             print(f"Metadata validation passed. Export from: {metadata['export_timestamp']}")
             return True
@@ -267,6 +272,55 @@ class DatabaseImporter:
         print(f"Newsletters import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
     
+    def import_literature_reviews(self, literature_reviews_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import literature reviews from JSON file.
+        
+        Args:
+            literature_reviews_file: Path to literature_reviews.json file
+            skip_duplicates: Whether to skip literature reviews that already exist (by research question and date)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing literature reviews...")
+        
+        with open(literature_reviews_file, 'r', encoding='utf-8') as f:
+            literature_reviews_data = json.load(f)
+        
+        stats = {"total": len(literature_reviews_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, review_data in enumerate(literature_reviews_data):
+            try:
+                # Check for duplicates by research question and creation timestamp if requested
+                if skip_duplicates:
+                    existing_reviews = self.db.get_recent_literature_reviews(1000)  # Get a large batch to check
+                    if any(r["research_question"] == review_data["research_question"] and 
+                          r["created_ts"] == review_data["created_ts"] for r in existing_reviews):
+                        stats["skipped"] += 1
+                        continue
+                
+                # Insert literature review (excluding the ID since it's auto-increment)
+                self.db.insert_literature_review(
+                    research_question=review_data["research_question"],
+                    summary_json=review_data["summary_json"],
+                    trace_json=review_data["trace_json"],
+                    report_text=review_data.get("report_text")  # Optional field for backward compatibility
+                )
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing literature review '{review_data.get('research_question', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(literature_reviews_data), f"Importing literature reviews: {i + 1}/{len(literature_reviews_data)}")
+        
+        print(f"Literature reviews import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
     def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
@@ -289,7 +343,19 @@ class DatabaseImporter:
         
         results = {}
         current_step = 0
-        total_steps = 3  # papers, podcasts, newsletters
+        
+        # Check what files are available
+        available_files = []
+        if (input_path / "papers.json").exists():
+            available_files.append("papers")
+        if (input_path / "podcasts.json").exists():
+            available_files.append("podcasts")
+        if (input_path / "newsletters.json").exists():
+            available_files.append("newsletters")
+        if (input_path / "literature_reviews.json").exists():
+            available_files.append("literature_reviews")
+        
+        total_steps = len(available_files)
         
         # Import papers
         papers_file = input_path / "papers.json"
@@ -345,9 +411,29 @@ class DatabaseImporter:
                     m
                 ) if progress_callback else None
             )
+            current_step += 1
         else:
             print("Warning: newsletters.json not found")
             results["newsletters"] = {"error": "File not found"}
+            current_step += 1
+        
+        # Import literature reviews (optional for backward compatibility)
+        literature_reviews_file = input_path / "literature_reviews.json"
+        if literature_reviews_file.exists():
+            if progress_callback:
+                progress_callback(int((current_step / total_steps) * 100), 100, "Starting literature reviews import...")
+            results["literature_reviews"] = self.import_literature_reviews(
+                str(literature_reviews_file), 
+                skip_duplicates,
+                lambda c, t, m: progress_callback(
+                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
+                    100, 
+                    m
+                ) if progress_callback else None
+            )
+        else:
+            print("Note: literature_reviews.json not found (this is optional for older exports)")
+            results["literature_reviews"] = {"note": "File not found (optional)"}
         
         if progress_callback:
             progress_callback(100, 100, "Import completed!")
@@ -418,7 +504,7 @@ class DatabaseImporter:
         print("WARNING: Clearing all data from database tables...")
         
         # Tables to clear in order (respecting potential foreign key constraints)
-        tables_to_clear = ['logs', 'tasks', 'newsletters', 'podcasts', 'papers']
+        tables_to_clear = ['logs', 'tasks', 'lit_reviews', 'newsletters', 'podcasts', 'papers']
         deletion_counts = {}
         total_tables = len(tables_to_clear)
         
@@ -432,8 +518,8 @@ class DatabaseImporter:
                     cursor.execute(f"SELECT COUNT(*) FROM {table}")
                     count_before = cursor.fetchone()[0]
                     
-                    # Truncate the table (faster than DELETE and resets auto-increment)
-                    cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
+                    # Delete all records (SQLite doesn't support TRUNCATE)
+                    cursor.execute(f"DELETE FROM {table}")
                     deletion_counts[table] = count_before
                     
                     print(f"Cleared {count_before} records from {table} table")

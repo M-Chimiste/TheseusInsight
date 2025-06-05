@@ -796,5 +796,164 @@ class TaskManager:
             )
             raise
 
+    async def run_research_agent_task(self, task_id: str):
+        """Run the research agent task with progress tracking."""
+        try:
+            print(f"DEBUG: Starting research agent task {task_id}")
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            
+            config = task["config"]
+            research_question = config.get("research_question")
+            num_papers_target = config.get("num_papers_target", 5)
+            max_steps = config.get("max_steps", 10)
+            enable_pdf_download = config.get("enable_pdf_download", True)
+            
+            if not research_question:
+                raise ValueError("Research question is required")
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Starting literature review: {research_question}",
+                progress=5,
+                current_step="initializing_agent",
+            )
+            
+            # Import research agent here to avoid circular imports
+            from ..agentic_research.agent_loop import create_research_agent
+            
+            # Create research agent
+            agent = create_research_agent(
+                db=self.db,
+                num_papers_target=num_papers_target,
+                max_steps=max_steps,
+                enable_pdf_download=enable_pdf_download
+            )
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Research agent initialized. Starting literature review...",
+                progress=10,
+                current_step="starting_review",
+            )
+            
+            # Custom progress tracking for agent iterations
+            class ProgressTracker:
+                def __init__(self, task_manager, task_id, max_steps, num_papers_target):
+                    self.task_manager = task_manager
+                    self.task_id = task_id
+                    self.max_steps = max_steps
+                    self.num_papers_target = num_papers_target
+                    self.last_update_time = 0
+                    
+                async def update_progress(self, iteration, summaries_count, current_action=""):
+                    # Calculate progress: 10% (start) + 80% (main work) + 10% (completion)
+                    iteration_progress = min(iteration / self.max_steps, 1.0) * 0.6  # 60% for iterations
+                    summary_progress = min(summaries_count / self.num_papers_target, 1.0) * 0.2  # 20% for summaries
+                    total_progress = 10 + (iteration_progress + summary_progress) * 80
+                    
+                    message = f"Iteration {iteration}/{self.max_steps}, Found {summaries_count}/{self.num_papers_target} papers"
+                    if current_action:
+                        message += f". {current_action}"
+                        
+                    await self.task_manager.update_task_status(
+                        self.task_id,
+                        TaskStatus.PROCESSING,
+                        message,
+                        progress=total_progress,
+                        current_step=f"iteration_{iteration}",
+                    )
+            
+            progress_tracker = ProgressTracker(self, task_id, max_steps, num_papers_target)
+            
+            # Add a custom progress callback to the agent
+            original_add_trace_entry = agent._add_trace_entry
+            
+            def enhanced_add_trace_entry(action_type, details, model_used=None, duration_seconds=None):
+                # Call original method
+                original_add_trace_entry(action_type, details, model_used, duration_seconds)
+                
+                # Update progress for key milestones
+                if action_type in ["agent_response", "search_execution", "summary_extracted"]:
+                    asyncio.create_task(progress_tracker.update_progress(
+                        agent.current_iteration,
+                        len(agent.collected_summaries),
+                        action_type.replace("_", " ").title()
+                    ))
+            
+            # Monkey-patch the trace entry method for progress updates
+            agent._add_trace_entry = enhanced_add_trace_entry
+            
+            # Run the literature review
+            result = agent.run_literature_review(research_question)
+            
+            if result.success:
+                await self.update_task_status(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    "Literature review completed. Saving results...",
+                    progress=90,
+                    current_step="saving_results",
+                )
+                
+                # Save results to database
+                review_id = agent.save_results(result)
+                
+                await self.update_task_status(
+                    task_id,
+                    TaskStatus.COMPLETED,
+                    f"Literature review completed successfully! Found {len(result.summaries)} papers in {result.total_iterations} iterations.",
+                    progress=100,
+                    current_step="review_complete",
+                    result={
+                        "review_id": review_id,
+                        "research_question": result.research_question,
+                        "papers_found": len(result.summaries),
+                        "iterations_used": result.total_iterations,
+                        "success": result.success,
+                        "summaries": [
+                            {
+                                "paper_id": s.paper_id,
+                                "title": s.title,
+                                "summary": s.summary,
+                                "rationale": s.rationale,
+                                "relevance_score": s.relevance_score
+                            }
+                            for s in result.summaries
+                        ],
+                        "trace_entries_count": len(result.trace_entries)
+                    },
+                )
+            else:
+                await self.update_task_status(
+                    task_id,
+                    TaskStatus.FAILED,
+                    f"Literature review failed: {result.error or 'Unknown error'}",
+                    error=result.error,
+                    current_step="review_failed",
+                    result={
+                        "papers_found": len(result.summaries),
+                        "iterations_used": result.total_iterations,
+                        "success": result.success,
+                        "error": result.error
+                    },
+                )
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await self.update_task_status(
+                task_id,
+                TaskStatus.FAILED,
+                f"Research agent task failed: {str(e)}",
+                error=str(e),
+                current_step="task_failed",
+            )
+            raise
+
+
 # Create global task manager instance
 task_manager = TaskManager() 

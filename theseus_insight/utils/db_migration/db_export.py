@@ -83,12 +83,24 @@ class DatabaseExporter:
         print(f"Exported {len(newsletters)} newsletters to {output_file}")
         return str(output_file)
     
+    def export_literature_reviews(self) -> str:
+        """Export all literature reviews to JSON file."""
+        print("Exporting literature reviews...")
+        literature_reviews = self.db.fetch_all_literature_reviews()
+        
+        output_file = self.output_dir / "literature_reviews.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(literature_reviews, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(literature_reviews)} literature reviews to {output_file}")
+        return str(output_file)
+    
     def create_metadata(self) -> str:
         """Create metadata file with export information."""
         metadata = {
             "export_timestamp": datetime.datetime.now().isoformat(),
-            "export_version": "1.0",
-            "tables_exported": ["papers", "podcasts", "newsletters"],
+            "export_version": "1.1",
+            "tables_exported": ["papers", "podcasts", "newsletters", "literature_reviews"],
             "description": "Theseus Insight database export"
         }
         
@@ -147,22 +159,26 @@ class DatabaseExporter:
         # Export all tables
         papers_file = self.export_papers()
         if progress_callback:
-            progress_callback(25, "papers_exported")
+            progress_callback(20, "papers_exported")
         podcasts_file = self.export_podcasts()
         if progress_callback:
-            progress_callback(50, "podcasts_exported")
+            progress_callback(40, "podcasts_exported")
         newsletters_file = self.export_newsletters()
         if progress_callback:
-            progress_callback(75, "newsletters_exported")
+            progress_callback(60, "newsletters_exported")
+        literature_reviews_file = self.export_literature_reviews()
+        if progress_callback:
+            progress_callback(80, "literature_reviews_exported")
         metadata_file = self.create_metadata()
         if progress_callback:
-            progress_callback(85, "metadata_created")
+            progress_callback(90, "metadata_created")
         
         result = {
             "files": {
                 "papers": papers_file,
                 "podcasts": podcasts_file,
                 "newsletters": newsletters_file,
+                "literature_reviews": literature_reviews_file,
                 "metadata": metadata_file
             },
             "output_directory": str(self.output_dir)

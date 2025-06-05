@@ -59,6 +59,7 @@ const MODEL_TABS = [
   { key: 'newsletter_intro_model', label: 'Newsletter Intro Model', tooltip: 'Generates newsletter introduction.' },
   { key: 'podcast_model', label: 'Podcast Model', tooltip: 'Used for podcast generation.' },
   { key: 'tts_model', label: 'TTS Model', tooltip: 'Text-to-speech for podcast.' },
+  { key: 'research_agent_model_config', label: 'Research Agent Models', tooltip: 'Boss and worker models for automated literature review.' },
 ];
 
 interface TabPanelProps {
@@ -340,7 +341,25 @@ const Settings: React.FC = () => {
     if (!newOrchestrationConfig[modelKey]) {
       newOrchestrationConfig[modelKey] = {};
     }
-    newOrchestrationConfig[modelKey][field] = value;
+    
+    // Handle nested paths like "boss_model.model_name" or "worker_models.summary.temperature"
+    if (field.includes('.')) {
+      const fieldParts = field.split('.');
+      let currentObj = newOrchestrationConfig[modelKey];
+      
+      // Navigate to the parent object
+      for (let i = 0; i < fieldParts.length - 1; i++) {
+        if (!currentObj[fieldParts[i]]) {
+          currentObj[fieldParts[i]] = {};
+        }
+        currentObj = currentObj[fieldParts[i]];
+      }
+      
+      // Set the final value
+      currentObj[fieldParts[fieldParts.length - 1]] = value;
+    } else {
+      newOrchestrationConfig[modelKey][field] = value;
+    }
     
     // Optimistically update local state for UI responsiveness
     queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
@@ -394,6 +413,122 @@ const Settings: React.FC = () => {
     }
   };
 
+  const renderResearchAgentModelConfig = (config: any) => {
+    if (!config) return <Typography>Research Agent configuration not available.</Typography>;
+
+    const bossModel = config.boss_model || {};
+    const workerModels = config.worker_models || {};
+    const defaultWorker = config.default_worker || 'summary';
+    const maxRetries = config.max_retries || 3;
+    const timeoutSeconds = config.timeout_seconds || 30;
+
+    const renderModelFields = (modelConfig: any, prefix: string, title: string) => (
+      <Card variant="outlined" sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>{title}</Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                fullWidth
+                label="Model Name"
+                value={modelConfig.model_name || ''}
+                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, e.target.value)}
+              />
+              <FormControl fullWidth>
+                <InputLabel>Model Type (Provider)</InputLabel>
+                <Select
+                  value={modelConfig.model_type || ''}
+                  label="Model Type (Provider)"
+                  onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.model_type`, e.target.value)}
+                >
+                  {(modelProviders || []).map((provider: any) => (
+                    <MenuItem key={provider.id} value={provider.name}>
+                      {provider.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                fullWidth
+                label="Max New Tokens"
+                type="number"
+                value={modelConfig.max_new_tokens || 4096}
+                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.max_new_tokens`, Number(e.target.value))}
+              />
+              <TextField
+                fullWidth
+                label="Temperature"
+                type="number"
+                inputProps={{ step: '0.1' }}
+                value={modelConfig.temperature || 0.1}
+                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.temperature`, parseFloat(e.target.value))}
+              />
+              {(modelConfig.model_type === 'ollama' || modelConfig.model_type === 'llamacpp') && (
+                <TextField
+                  fullWidth
+                  label="Context Window (num_ctx)"
+                  type="number"
+                  value={modelConfig.num_ctx || 131072}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.num_ctx`, Number(e.target.value))}
+                />
+              )}
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    );
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Boss Model */}
+        {renderModelFields(bossModel, 'boss_model', 'Boss Model (Main Coordinator)')}
+        
+        {/* Worker Models */}
+        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Worker Models</Typography>
+        {renderModelFields(workerModels.summary || {}, 'worker_models.summary', 'Summary Worker')}
+        {renderModelFields(workerModels.analysis || {}, 'worker_models.analysis', 'Analysis Worker')}
+        {renderModelFields(workerModels.search || {}, 'worker_models.search', 'Search Worker')}
+        
+        {/* Configuration Settings */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Agent Configuration</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <FormControl sx={{ minWidth: 200 }}>
+                <InputLabel>Default Worker</InputLabel>
+                <Select
+                  value={defaultWorker}
+                  label="Default Worker"
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'default_worker', e.target.value)}
+                >
+                  <MenuItem value="summary">Summary</MenuItem>
+                  <MenuItem value="analysis">Analysis</MenuItem>
+                  <MenuItem value="search">Search</MenuItem>
+                </Select>
+              </FormControl>
+              <TextField
+                label="Max Retries"
+                type="number"
+                value={maxRetries}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_retries', Number(e.target.value))}
+                sx={{ minWidth: 150 }}
+              />
+              <TextField
+                label="Timeout (seconds)"
+                type="number"
+                value={timeoutSeconds}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'timeout_seconds', Number(e.target.value))}
+                sx={{ minWidth: 150 }}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  };
+
   if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders || isCheckingDbTasks) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
@@ -415,6 +550,11 @@ const Settings: React.FC = () => {
     if (!config) return <Typography>Configuration not available for {modelKey}.</Typography>;
 
     const currentConfig = orchestrationConfig?.[modelKey] || {};
+
+    // Research Agent model is a special case (boss + worker models)
+    if (modelKey === 'research_agent_model_config') {
+      return renderResearchAgentModelConfig(currentConfig);
+    }
 
     // TTS model is a special case (single column)
     if (modelKey === 'tts_model') {

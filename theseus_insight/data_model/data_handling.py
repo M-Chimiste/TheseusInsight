@@ -170,6 +170,24 @@ class PaperDatabase:
                 ")"
             )
 
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS lit_reviews ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "research_question TEXT NOT NULL,"
+                "summary_json TEXT NOT NULL,"
+                "trace_json TEXT NOT NULL,"
+                "report_text TEXT,"
+                "created_ts TEXT DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+            
+            # Add report_text column to existing lit_reviews table if it doesn't exist
+            try:
+                cursor.execute("ALTER TABLE lit_reviews ADD COLUMN report_text TEXT")
+            except Exception:
+                # Column likely already exists, ignore
+                pass
+
     def insert_podcast(self, podcast: Podcast):
         # Validate date formats
         try:
@@ -1510,12 +1528,12 @@ class PaperDatabase:
                 }
             return None
 
-    def insert_literature_review(self, research_question: str, summary_json: str, trace_json: str) -> int:
+    def insert_literature_review(self, research_question: str, summary_json: str, trace_json: str, report_text: str = None) -> int:
         """Insert a literature review result and return the ID."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "INSERT INTO lit_reviews (research_question, summary_json, trace_json, created_ts) VALUES (?, ?, ?, ?)",
-                (research_question, summary_json, trace_json, datetime.datetime.now().isoformat())
+                "INSERT INTO lit_reviews (research_question, summary_json, trace_json, report_text, created_ts) VALUES (?, ?, ?, ?, ?)",
+                (research_question, summary_json, trace_json, report_text, datetime.datetime.now().isoformat())
             )
             return cursor.lastrowid
 
@@ -1523,7 +1541,7 @@ class PaperDatabase:
         """Get a literature review by ID."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "SELECT id, research_question, summary_json, trace_json, created_ts FROM lit_reviews WHERE id = ?",
+                "SELECT id, research_question, summary_json, trace_json, report_text, created_ts FROM lit_reviews WHERE id = ?",
                 (review_id,)
             )
             row = cursor.fetchone()
@@ -1533,7 +1551,8 @@ class PaperDatabase:
                     'research_question': row[1],
                     'summary_json': row[2],
                     'trace_json': row[3],
-                    'created_ts': row[4]
+                    'report_text': row[4],
+                    'created_ts': row[5]
                 }
             return None
 
@@ -1541,7 +1560,7 @@ class PaperDatabase:
         """Get recent literature reviews."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "SELECT id, research_question, summary_json, trace_json, created_ts FROM lit_reviews "
+                "SELECT id, research_question, summary_json, trace_json, report_text, created_ts FROM lit_reviews "
                 "ORDER BY created_ts DESC LIMIT ?",
                 (limit,)
             )
@@ -1552,7 +1571,28 @@ class PaperDatabase:
                     'research_question': row[1],
                     'summary_json': row[2],
                     'trace_json': row[3],
-                    'created_ts': row[4]
+                    'report_text': row[4],
+                    'created_ts': row[5]
+                }
+                for row in rows
+            ]
+
+    def fetch_all_literature_reviews(self) -> list:
+        """Fetch all literature reviews for export/migration purposes."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, research_question, summary_json, trace_json, report_text, created_ts FROM lit_reviews "
+                "ORDER BY created_ts ASC"
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'research_question': row[1],
+                    'summary_json': row[2],
+                    'trace_json': row[3],
+                    'report_text': row[4],
+                    'created_ts': row[5]
                 }
                 for row in rows
             ]

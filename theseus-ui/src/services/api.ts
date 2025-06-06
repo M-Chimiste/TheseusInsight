@@ -148,9 +148,9 @@ export const researchAgentApi = {
 // Model Catalog API
 export const modelCatalogApi = {
   createModel: (model: any) => 
-    api.post('/model-catalog', model),
+    api.post('/model-catalog/', model),
   searchModels: (params: any = {}) => 
-    api.get('/model-catalog', { params }),
+    api.get('/model-catalog/', { params }),
   getModel: (modelId: number) => 
     api.get(`/model-catalog/${modelId}`),
   updateModel: (modelId: number, model: any) => 

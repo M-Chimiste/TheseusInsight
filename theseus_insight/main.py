@@ -159,6 +159,15 @@ async def lifespan(app_instance: FastAPI):
         except Exception as e:
             print(f"Warning: Media file cleanup encountered an error: {e}")
             # Continue startup even if cleanup fails
+        
+        # Start task manager workers
+        print("INFO:     Starting task manager workers...")
+        try:
+            await task_manager.start_worker()
+            print("INFO:     Task manager workers started successfully.")
+        except Exception as e:
+            print(f"Error: Failed to start task manager workers: {e}")
+            # Continue startup even if worker startup fails, but log the error
             
     except Exception as e:
         print(f"Error during startup: {e}")

@@ -76,7 +76,7 @@ class DatabaseImporter:
                     print(f"Warning: Missing required metadata field: {field}")
                     return False
             
-            # Core required tables (literature_reviews is optional for backward compatibility)
+            # Core required tables (literature_reviews and model_catalog are optional for backward compatibility)
             expected_tables = {"papers", "podcasts", "newsletters"}
             exported_tables = set(metadata["tables_exported"])
             
@@ -85,9 +85,13 @@ class DatabaseImporter:
                 print(f"Warning: Missing expected tables in export: {missing}")
                 return False
             
-            # Check if literature_reviews is available (new feature)
+            # Check if literature_reviews is available (added in version 1.1)
             if "literature_reviews" in exported_tables:
                 print("Literature reviews data detected in export")
+            
+            # Check if model_catalog is available (added in version 1.2)
+            if "model_catalog" in exported_tables:
+                print("Model catalog data detected in export")
             
             print(f"Metadata validation passed. Export from: {metadata['export_timestamp']}")
             return True
@@ -321,6 +325,62 @@ class DatabaseImporter:
         print(f"Literature reviews import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
     
+    def import_model_catalog(self, model_catalog_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import model catalog entries from JSON file.
+        
+        Args:
+            model_catalog_file: Path to model_catalog.json file
+            skip_duplicates: Whether to skip model catalog entries that already exist (by alias)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing model catalog...")
+        
+        with open(model_catalog_file, 'r', encoding='utf-8') as f:
+            model_catalog_data = json.load(f)
+        
+        stats = {"total": len(model_catalog_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, model_data in enumerate(model_catalog_data):
+            try:
+                # Check for duplicates by alias if requested
+                if skip_duplicates:
+                    # Get all existing model aliases from the paginated method
+                    existing_models = self.db.get_all_model_catalog_entries(page=1, page_size=10000)
+                    if any(m["alias"] == model_data["alias"] for m in existing_models["models"]):
+                        stats["skipped"] += 1
+                        continue
+                
+                # Insert model catalog entry (excluding auto-generated fields like id, created_at, updated_at)
+                self.db.insert_model_catalog_entry(
+                    alias=model_data["alias"],
+                    model_string=model_data["model_string"],
+                    provider_name=model_data["provider_name"],
+                    model_type=model_data["model_type"],
+                    description=model_data.get("description"),
+                    max_new_tokens=model_data.get("max_new_tokens"),
+                    temperature=model_data.get("temperature"),
+                    num_ctx=model_data.get("num_ctx"),
+                    trust_remote_code=model_data.get("trust_remote_code", False),
+                    tags=model_data.get("tags", []),
+                    is_favorite=model_data.get("is_favorite", False)
+                )
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing model catalog entry '{model_data.get('alias', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(model_catalog_data), f"Importing model catalog: {i + 1}/{len(model_catalog_data)}")
+        
+        print(f"Model catalog import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
     def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
@@ -354,6 +414,8 @@ class DatabaseImporter:
             available_files.append("newsletters")
         if (input_path / "literature_reviews.json").exists():
             available_files.append("literature_reviews")
+        if (input_path / "model_catalog.json").exists():
+            available_files.append("model_catalog")
         
         total_steps = len(available_files)
         
@@ -434,6 +496,24 @@ class DatabaseImporter:
         else:
             print("Note: literature_reviews.json not found (this is optional for older exports)")
             results["literature_reviews"] = {"note": "File not found (optional)"}
+        
+        # Import model catalog (optional for backward compatibility)
+        model_catalog_file = input_path / "model_catalog.json"
+        if model_catalog_file.exists():
+            if progress_callback:
+                progress_callback(int((current_step / total_steps) * 100), 100, "Starting model catalog import...")
+            results["model_catalog"] = self.import_model_catalog(
+                str(model_catalog_file), 
+                skip_duplicates,
+                lambda c, t, m: progress_callback(
+                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
+                    100, 
+                    m
+                ) if progress_callback else None
+            )
+        else:
+            print("Note: model_catalog.json not found (this is optional for older exports)")
+            results["model_catalog"] = {"note": "File not found (optional)"}
         
         if progress_callback:
             progress_callback(100, 100, "Import completed!")

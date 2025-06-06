@@ -28,7 +28,7 @@ import {
   LinearProgress,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi, researchAgentApi } from '../services/api';
+import { settingsApi, researchAgentApi, modelCatalogApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -82,6 +82,133 @@ function TabPanel(props: TabPanelProps) {
     </div>
   );
 }
+
+// Interface for model catalog entries
+interface ModelCatalogOption {
+  id: number;
+  alias: string;
+  model_string: string;
+  provider_name: string;
+  model_type: string;
+  display: string; // "Alias (model_string)"
+}
+
+// Component for model name autocomplete with catalog integration
+interface ModelNameAutocompleteProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onModelSelected?: (model: any) => void; // Called when a catalog model is selected
+  modelCatalogData?: any;
+  fullWidth?: boolean;
+}
+
+const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
+  label,
+  value,
+  onChange,
+  onModelSelected,
+  modelCatalogData,
+  fullWidth = true
+}) => {
+  // Transform model catalog data into options
+  const catalogOptions: ModelCatalogOption[] = React.useMemo(() => {
+    if (!modelCatalogData?.models) {
+      return [];
+    }
+    
+    const options = modelCatalogData.models.map((model: any) => ({
+      id: model.id,
+      alias: model.alias,
+      model_string: model.model_string,
+      provider_name: model.provider_name,
+      model_type: model.model_type,
+      display: `${model.alias} (${model.model_string})`
+    }));
+    
+    return options;
+  }, [modelCatalogData]);
+
+  // Find the currently selected option based on model_string
+  const selectedOption = catalogOptions.find(opt => opt.model_string === value) || null;
+
+  const handleChange = (_: any, newValue: ModelCatalogOption | string | null) => {
+    if (typeof newValue === 'string') {
+      // User typed a custom value
+      onChange(newValue);
+    } else if (newValue) {
+      // User selected from catalog - let batched update handle everything including model_name
+      // This prevents race conditions between individual and batched updates
+      if (onModelSelected) {
+        onModelSelected(newValue);
+      } else {
+        // Fallback if no batched update callback - set model name directly
+        onChange(newValue.model_string);
+      }
+    } else {
+      // Cleared
+      onChange('');
+    }
+  };
+
+  return (
+    <Autocomplete
+      fullWidth={fullWidth}
+      freeSolo
+      options={catalogOptions}
+      getOptionLabel={(option) => {
+        if (typeof option === 'string') return option;
+        return option.display;
+      }}
+      renderOption={(props, option) => (
+        <li {...props} key={option.id}>
+          <Box>
+            <Typography variant="body2" fontWeight={500}>
+              {option.alias}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {option.model_string} • {option.provider_name}
+            </Typography>
+          </Box>
+        </li>
+      )}
+      value={selectedOption}
+      onChange={handleChange}
+      inputValue={selectedOption ? selectedOption.display : value}
+      blurOnSelect={true}
+      selectOnFocus={true}
+      clearOnBlur={false}
+      onInputChange={(_, newInputValue, reason) => {
+        if (reason === 'clear') {
+          onChange('');
+        } else if (reason === 'input' && !selectedOption) {
+          onChange(newInputValue);
+        }
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          helperText={catalogOptions.length > 0 ? 
+            `Search model catalog (${catalogOptions.length} models) or enter custom model name` : 
+            "Model catalog not loaded - enter custom model name"
+          }
+        />
+      )}
+      filterOptions={(options, { inputValue }) => {
+        if (!inputValue) return options.slice(0, 10); // Show first 10 when no input
+        
+        const filtered = options.filter(option =>
+          option.alias.toLowerCase().includes(inputValue.toLowerCase()) ||
+          option.model_string.toLowerCase().includes(inputValue.toLowerCase()) ||
+          option.provider_name.toLowerCase().includes(inputValue.toLowerCase())
+        );
+        
+        return filtered.slice(0, 20); // Limit to 20 results
+      }}
+    />
+  );
+};
 
 const Settings: React.FC = () => {
   const queryClient = useQueryClient();
@@ -140,7 +267,16 @@ const Settings: React.FC = () => {
     queryKey: ['researchAgentModelConfig'],
     queryFn: () => researchAgentApi.getModelConfig().then((res: any) => res.data),
   });
-  
+
+  // Query for model catalog to enable autocomplete
+  const { data: modelCatalogData } = useQuery({
+    queryKey: ['modelCatalogForSettings'],
+    queryFn: () => modelCatalogApi.searchModels({
+      page: 1,
+      page_size: 100  // Maximum allowed by backend validation
+    }).then(res => res.data),
+  });
+
   const updateOrchestrationMutation = useMutation({
     mutationFn: (newConfig: any) => settingsApi.updateOrchestrationConfig(newConfig),
     onSuccess: (data) => {
@@ -351,7 +487,9 @@ const Settings: React.FC = () => {
   const handleModelConfigChange = (modelKey: string, field: string, value: any) => {
     // Handle research agent model config separately
     if (modelKey === 'research_agent_model_config') {
-      if (!researchAgentModelConfig) return;
+      if (!researchAgentModelConfig) {
+        return;
+      }
       const newResearchAgentConfig = JSON.parse(JSON.stringify(researchAgentModelConfig)); // Deep copy
       
       // Handle nested paths like "boss_model.model_name" or "worker_models.summary.temperature"
@@ -379,7 +517,9 @@ const Settings: React.FC = () => {
     }
     
     // Handle regular orchestration config
-    if (!orchestrationConfig) return;
+    if (!orchestrationConfig) {
+      return;
+    }
     const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
     
     if (!newOrchestrationConfig[modelKey]) {
@@ -407,8 +547,112 @@ const Settings: React.FC = () => {
     
     // Optimistically update local state for UI responsiveness
     queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
-    // Debounce or handle mutation trigger carefully if needed, for now direct mutation
-    // updateOrchestrationMutation.mutate(newOrchestrationConfig); // This will be triggered by Save button
+  };
+
+  // Handle when a model is selected from the catalog - auto-populate other fields
+  const handleModelSelectedFromCatalog = (modelKey: string, selectedOption: ModelCatalogOption, prefix?: string) => {
+    // Find the full catalog entry to get all the metadata
+    const fullCatalogEntry = modelCatalogData?.models?.find((model: any) => 
+      model.id === selectedOption.id
+    );
+
+    if (!fullCatalogEntry) {
+      return;
+    }
+
+    // Build model data object with all fields to update
+    const modelData: any = {};
+
+    // Always include the model_name when selecting from catalog
+    modelData.model_name = fullCatalogEntry.model_string;
+
+    // model_type should match provider names from the modelProviders query
+    if (fullCatalogEntry.provider_name) {
+      modelData.model_type = fullCatalogEntry.provider_name;
+    }
+
+    // Populate other fields from catalog if they exist
+    if (fullCatalogEntry.max_new_tokens !== null && fullCatalogEntry.max_new_tokens !== undefined) {
+      modelData.max_new_tokens = fullCatalogEntry.max_new_tokens;
+    }
+
+    if (fullCatalogEntry.temperature !== null && fullCatalogEntry.temperature !== undefined) {
+      modelData.temperature = fullCatalogEntry.temperature;
+    }
+
+    if (fullCatalogEntry.num_ctx !== null && fullCatalogEntry.num_ctx !== undefined) {
+      modelData.num_ctx = fullCatalogEntry.num_ctx;
+    }
+
+    // Only include trust_remote_code for sentence-transformers models
+    if (fullCatalogEntry.provider_name === 'sentence-transformers') {
+      modelData.trust_remote_code = fullCatalogEntry.trust_remote_code !== null ? fullCatalogEntry.trust_remote_code : false;
+    }
+
+    // Apply all fields in a single batch update to avoid race conditions
+    if (Object.keys(modelData).length > 0) {
+      if (modelKey === 'research_agent_model_config') {
+        if (!researchAgentModelConfig) {
+          return;
+        }
+        const newResearchAgentConfig = JSON.parse(JSON.stringify(researchAgentModelConfig)); // Deep copy
+        
+        // Apply all fields to the config
+        Object.entries(modelData).forEach(([field, value]) => {
+          const fieldPath = prefix ? `${prefix}.${field}` : field;
+          
+          if (fieldPath.includes('.')) {
+            const fieldParts = fieldPath.split('.');
+            let currentObj = newResearchAgentConfig;
+            
+            for (let i = 0; i < fieldParts.length - 1; i++) {
+              if (!currentObj[fieldParts[i]]) {
+                currentObj[fieldParts[i]] = {};
+              }
+              currentObj = currentObj[fieldParts[i]];
+            }
+            
+            currentObj[fieldParts[fieldParts.length - 1]] = value;
+          } else {
+            newResearchAgentConfig[fieldPath] = value;
+          }
+        });
+        
+        queryClient.setQueryData(['researchAgentModelConfig'], newResearchAgentConfig);
+      } else {
+        if (!orchestrationConfig) {
+          return;
+        }
+        const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
+        
+        if (!newOrchestrationConfig[modelKey]) {
+          newOrchestrationConfig[modelKey] = {};
+        }
+        
+        // Apply all fields to the config
+        Object.entries(modelData).forEach(([field, value]) => {
+          const fieldPath = prefix ? `${prefix}.${field}` : field;
+          
+          if (fieldPath.includes('.')) {
+            const fieldParts = fieldPath.split('.');
+            let currentObj = newOrchestrationConfig[modelKey];
+            
+            for (let i = 0; i < fieldParts.length - 1; i++) {
+              if (!currentObj[fieldParts[i]]) {
+                currentObj[fieldParts[i]] = {};
+              }
+              currentObj = currentObj[fieldParts[i]];
+            }
+            
+            currentObj[fieldParts[fieldParts.length - 1]] = value;
+          } else {
+            newOrchestrationConfig[modelKey][fieldPath] = value;
+          }
+        });
+        
+        queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
+      }
+    }
   };
 
   useEffect(() => {
@@ -472,11 +716,12 @@ const Settings: React.FC = () => {
           <Typography variant="h6" gutterBottom>{title}</Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
             <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                fullWidth
+              <ModelNameAutocomplete
                 label="Model Name"
                 value={modelConfig.model_name || ''}
-                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, e.target.value)}
+                onChange={value => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, value)}
+                onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, prefix)}
+                modelCatalogData={modelCatalogData}
               />
               <FormControl fullWidth>
                 <InputLabel>Model Type (Provider)</InputLabel>
@@ -618,11 +863,12 @@ const Settings: React.FC = () => {
               ))}
             </Select>
           </FormControl>
-          <TextField
-            fullWidth
+          <ModelNameAutocomplete
             label="TTS Model Name"
             value={currentConfig.tts_model_name || ''}
-            onChange={e => handleModelConfigChange(modelKey, 'tts_model_name', e.target.value)}
+            onChange={value => handleModelConfigChange(modelKey, 'tts_model_name', value)}
+            onModelSelected={selectedModel => handleModelSelectedFromCatalog(modelKey, selectedModel)}
+            modelCatalogData={modelCatalogData}
           />
           <TextField
             fullWidth
@@ -660,11 +906,12 @@ const Settings: React.FC = () => {
     return (
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
         <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <TextField
-            fullWidth
+          <ModelNameAutocomplete
             label="Model Name"
             value={currentConfig.model_name || ''}
-            onChange={e => handleModelConfigChange(modelKey, 'model_name', e.target.value)}
+            onChange={value => handleModelConfigChange(modelKey, 'model_name', value)}
+            onModelSelected={selectedModel => handleModelSelectedFromCatalog(modelKey, selectedModel)}
+            modelCatalogData={modelCatalogData}
           />
           <FormControl fullWidth>
             <InputLabel>Model Type (Provider)</InputLabel>
@@ -712,18 +959,18 @@ const Settings: React.FC = () => {
               onChange={e => handleModelConfigChange(modelKey, 'num_ctx', Number(e.target.value))}
             />
           )}
-          {typeof currentConfig.trust_remote_code === 'boolean' && (
+          {currentConfig.model_type === 'sentence-transformers' && (
             <FormControlLabel
               control={
                 <Switch
-                  checked={currentConfig.trust_remote_code}
+                  checked={currentConfig.trust_remote_code || false}
                   onChange={e => handleModelConfigChange(modelKey, 'trust_remote_code', e.target.checked)}
                 />
               }
               label={
                 <Box display="flex" alignItems="center" gap={0.5}>
                   Trust Remote Code
-                  <Tooltip title="Allow loading remote code for this model. (Typically for embedding models)">
+                  <Tooltip title="Allow loading remote code for this model. Required for some sentence-transformers models.">
                     <IconButton size="small">
                       <InfoOutlinedIcon fontSize="small" />
                     </IconButton>

@@ -176,9 +176,10 @@ const ResearchAgent: React.FC = () => {
                     p: 2, 
                     height: 300, 
                     overflow: 'auto', 
-                    backgroundColor: 'grey.100',
+                    backgroundColor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.100',
                     fontFamily: 'monospace',
-                    fontSize: '0.875rem'
+                    fontSize: '0.875rem',
+                    border: (theme) => `1px solid ${theme.palette.divider}`
                   }}
                 >
                   {logs.map((log, index) => (

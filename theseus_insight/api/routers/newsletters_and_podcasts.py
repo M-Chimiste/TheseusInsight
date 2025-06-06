@@ -321,20 +321,45 @@ async def get_podcast_history_list():
         
         response_items = []
         for p_data in podcasts_data:
+            # Handle malformed dates by trying to fix them or defaulting to a safe value
+            date_str = p_data['date']
+            try:
+                # Try to parse the date to validate it's in correct format
+                datetime.strptime(date_str, '%Y-%m-%d')
+            except ValueError:
+                # If date is malformed (e.g., just '2025'), try to fix it
+                if date_str.isdigit() and len(date_str) == 4:
+                    # Looks like just a year, default to January 1st
+                    date_str = f"{date_str}-01-01"
+                    print(f"Warning: Fixed malformed date for podcast ID {p_data['id']}: '{p_data['date']}' -> '{date_str}'")
+                else:
+                    # Unknown format, use current date as fallback
+                    date_str = datetime.now().strftime('%Y-%m-%d')
+                    print(f"Warning: Used current date as fallback for podcast ID {p_data['id']} with invalid date: '{p_data['date']}'")
+            
             description_snippet = (p_data['description'][:150] + '...') if len(p_data['description']) > 150 else p_data['description']
             response_items.append(
                 PodcastListItemResponse(
                     id=p_data['id'],
                     title=p_data['title'],
-                    date=p_data['date'],
+                    date=date_str,
                     description_snippet=description_snippet
                 )
             )
-        # To strictly sort by date if IDs don't guarantee it:
-        response_items.sort(key=lambda x: datetime.strptime(x.date, '%Y-%m-%d'), reverse=True)
+        
+        # Sort by date - now safe since all dates are in correct format
+        try:
+            response_items.sort(key=lambda x: datetime.strptime(x.date, '%Y-%m-%d'), reverse=True)
+        except ValueError as e:
+            print(f"Warning: Could not sort podcasts by date, using ID order instead: {e}")
+            # Fall back to sorting by ID if date parsing still fails
+            response_items.sort(key=lambda x: x.id, reverse=True)
+        
         return response_items
     except Exception as e:
         print(f"Error fetching podcast history list: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail="An internal server error occurred while fetching podcast history.")
 
 @router.get("/api/podcasts/history/{podcast_id}", response_model=PodcastDetailResponse)
@@ -356,12 +381,28 @@ async def get_podcast_detail(podcast_id: int):
         if not podcast_data:
             raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
         
+        # Handle malformed dates by trying to fix them or defaulting to a safe value
+        date_str = podcast_data['date']
+        try:
+            # Try to parse the date to validate it's in correct format
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            # If date is malformed (e.g., just '2025'), try to fix it
+            if date_str.isdigit() and len(date_str) == 4:
+                # Looks like just a year, default to January 1st
+                date_str = f"{date_str}-01-01"
+                print(f"Warning: Fixed malformed date for podcast ID {podcast_id}: '{podcast_data['date']}' -> '{date_str}'")
+            else:
+                # Unknown format, use current date as fallback
+                date_str = datetime.now().strftime('%Y-%m-%d')
+                print(f"Warning: Used current date as fallback for podcast ID {podcast_id} with invalid date: '{podcast_data['date']}'")
+        
         # The script from db.fetch_podcast_by_id is already a Python list of dicts
         # Pydantic will validate it against List[PodcastScriptItem]
         return PodcastDetailResponse(
             id=podcast_data['id'],
             title=podcast_data['title'],
-            date=podcast_data['date'],
+            date=date_str,
             description=podcast_data['description'],
             script=podcast_data['script'] # Pydantic validation happens here
         )

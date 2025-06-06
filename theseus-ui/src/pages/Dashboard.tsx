@@ -9,6 +9,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import ScienceIcon from '@mui/icons-material/Science';
+import CollectionsBookmarkIcon from '@mui/icons-material/CollectionsBookmark';
 
 interface NavCardItem {
   title: string;
@@ -66,6 +67,12 @@ const navItems: NavCardItem[] = [
     icon: <SettingsIcon fontSize="large" color="primary" />,
     path: '/settings',
   },
+  {
+    title: 'Model Catalog',
+    description: 'Browse and manage available models.',
+    icon: <CollectionsBookmarkIcon fontSize="large" color="primary" />,
+    path: '/model-catalog',
+  }
 ];
 
 const Dashboard: React.FC = () => {

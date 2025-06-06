@@ -1859,3 +1859,33 @@ class PaperDatabase:
             })
         
         return models
+
+    def fetch_all_model_catalog_entries(self) -> list:
+        """Fetch all model catalog entries for export/migration purposes."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, alias, model_string, provider_name, model_type, description, "
+                "max_new_tokens, temperature, num_ctx, trust_remote_code, created_at, "
+                "updated_at, tags, is_favorite FROM model_catalog "
+                "ORDER BY created_at ASC"
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'alias': row[1],
+                    'model_string': row[2],
+                    'provider_name': row[3],
+                    'model_type': row[4],
+                    'description': row[5],
+                    'max_new_tokens': row[6],
+                    'temperature': row[7],
+                    'num_ctx': row[8],
+                    'trust_remote_code': bool(row[9]) if row[9] is not None else False,
+                    'created_at': row[10],
+                    'updated_at': row[11],
+                    'tags': json.loads(row[12]) if row[12] else [],
+                    'is_favorite': bool(row[13]) if row[13] is not None else False
+                }
+                for row in rows
+            ]

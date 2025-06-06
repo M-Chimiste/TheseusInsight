@@ -16,6 +16,8 @@ The migration tools focus on the core data tables:
 - **papers** - Research papers with embeddings and metadata
 - **podcasts** - Generated podcast content
 - **newsletters** - Newsletter content and metadata
+- **literature_reviews** - Literature review results and reports (added in v1.1)
+- **model_catalog** - Model configurations and metadata (added in v1.2)
 
 ## Quick Start
 
@@ -140,6 +142,8 @@ The migration tools handle duplicates intelligently:
 - **Papers**: Duplicates detected by URL
 - **Podcasts**: Duplicates detected by title
 - **Newsletters**: Duplicates detected by date range (start_date + end_date)
+- **Literature Reviews**: Duplicates detected by research question and creation timestamp
+- **Model Catalog**: Duplicates detected by alias (display name)
 
 By default, duplicates are skipped during import. Use `--allow-duplicates` to override this behavior.
 
@@ -149,18 +153,20 @@ Archives are created as compressed tar.gz files containing:
 
 ```
 backup.tar.gz
-├── papers.json      # All papers with embeddings
-├── podcasts.json    # All podcast content
-├── newsletters.json # All newsletter content
-└── metadata.json    # Export metadata and version info
+├── papers.json           # All papers with embeddings
+├── podcasts.json         # All podcast content
+├── newsletters.json      # All newsletter content
+├── literature_reviews.json # All literature review data (v1.1+)
+├── model_catalog.json    # All model catalog entries (v1.2+)
+└── metadata.json         # Export metadata and version info
 ```
 
 ### Metadata Structure
 ```json
 {
   "export_timestamp": "2024-01-15T10:30:00",
-  "export_version": "1.0",
-  "tables_exported": ["papers", "podcasts", "newsletters"],
+  "export_version": "1.2",
+  "tables_exported": ["papers", "podcasts", "newsletters", "literature_reviews", "model_catalog"],
   "description": "Theseus Insight database export"
 }
 ```
@@ -281,8 +287,17 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 ## Version Compatibility
 
 - Export format version: 1.0
-- Requires Python 3.8+
-- Dependencies: sqlite3, pydantic
+- Export format version: 1.2
+- **Version 1.0**: Basic support for papers, podcasts, newsletters
+- **Version 1.1**: Added literature reviews support
+- **Version 1.2**: Added model catalog support
+
+### Backwards Compatibility
+
+The migration tools maintain full backwards compatibility:
+- **v1.2 tools** can import v1.0 and v1.1 exports (missing tables are skipped with warnings)
+- **Literature reviews** and **model catalog** are optional during import
+- Older exports without these tables will import successfully with informational messages
 
 ## Support
 

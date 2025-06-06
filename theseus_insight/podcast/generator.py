@@ -227,20 +227,38 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
 
         messages = [{"role": "user", "content": user_content}]
         if self.verbose:
-            print(f"Sending messages to LLM")
-        # Use schema for Ollama, standard generation for others
-        if self.text_inference.provider == "ollama":
-            raw_response = self.text_inference.invoke(
-                messages, 
-                system_prompt=system_prompt,
-                schema=DialogueOutput
-            )
-        else:
-            if self.text_inference.provider == "anthropic":
-                messages.append({"role": "assistant", "content": "{"})
-            raw_response = self.text_inference.invoke(messages, system_prompt=system_prompt)
-            if self.text_inference.provider == "anthropic":
-                raw_response = "{" + raw_response
+            print(f"Sending messages to LLM for {section_type}")
+        
+        try:
+            # Use schema for Ollama, standard generation for others
+            if self.text_inference.provider == "ollama":
+                raw_response = self.text_inference.invoke(
+                    messages, 
+                    system_prompt=system_prompt,
+                    schema=DialogueOutput
+                )
+            else:
+                if self.text_inference.provider == "anthropic":
+                    messages.append({"role": "assistant", "content": "{"})
+                raw_response = self.text_inference.invoke(messages, system_prompt=system_prompt)
+                if self.text_inference.provider == "anthropic":
+                    raw_response = "{" + raw_response
+        except Exception as e:
+            error_msg = str(e)
+            if ("timeout" in error_msg.lower() or 
+                "deadline" in error_msg.lower() or 
+                "504" in error_msg or
+                "DeadlineExceeded" in error_msg):
+                # For API timeout errors, provide a more user-friendly message
+                raise Exception(
+                    f"API timeout error while generating dialogue for {section_type}. "
+                    f"This could be due to network issues or high API load. "
+                    f"Please try again in a few minutes or consider using a different model. "
+                    f"Original error: {error_msg}"
+                ) from e
+            else:
+                # Re-raise other errors as-is
+                raise Exception(f"Error generating dialogue for {section_type}: {error_msg}") from e
 
         data = json_repair.loads(raw_response)
         if self.verbose:

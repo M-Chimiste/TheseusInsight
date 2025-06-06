@@ -445,11 +445,31 @@ class TaskManager:
             )
             
         except Exception as e:
+            error_msg = str(e)
+            
+            # Provide user-friendly error messages for common issues
+            if ("timeout" in error_msg.lower() or 
+                "deadline" in error_msg.lower() or 
+                "504" in error_msg or
+                "DeadlineExceeded" in error_msg):
+                user_friendly_msg = (
+                    "Podcast generation failed due to API timeout. "
+                    "This is usually temporary - please try again in a few minutes. "
+                    "If the issue persists, consider using a different model in the orchestration settings."
+                )
+            elif "api" in error_msg.lower() and ("key" in error_msg.lower() or "auth" in error_msg.lower()):
+                user_friendly_msg = (
+                    "Podcast generation failed due to API authentication issues. "
+                    "Please check your API keys in the settings."
+                )
+            else:
+                user_friendly_msg = f"Podcast generation failed: {error_msg}"
+            
             await self.update_task_status(
                 task_id,
                 TaskStatus.FAILED,
-                "Podcast generation failed",
-                error=str(e),
+                user_friendly_msg,
+                error=error_msg,
                 current_step="podcast_failed",
             )
             raise
@@ -824,68 +844,30 @@ class TaskManager:
             # Import research agent here to avoid circular imports
             from ..agentic_research.agent_loop import create_research_agent
             
-            # Create research agent
+            # Create progress callback function
+            def progress_callback(step: str, progress: float, message: str = ""):
+                """Callback function to handle progress updates from the research agent."""
+                try:
+                    # Create async task to update status
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(self.update_task_status(
+                        task_id,
+                        TaskStatus.PROCESSING,
+                        message,
+                        progress=progress,
+                        current_step=step,
+                    ))
+                except Exception as e:
+                    print(f"Error in progress callback: {e}")
+            
+            # Create research agent with progress callback
             agent = create_research_agent(
                 db=self.db,
                 num_papers_target=num_papers_target,
                 max_steps=max_steps,
-                enable_pdf_download=enable_pdf_download
+                enable_pdf_download=enable_pdf_download,
+                progress_callback=progress_callback
             )
-            
-            await self.update_task_status(
-                task_id,
-                TaskStatus.PROCESSING,
-                "Research agent initialized. Starting literature review...",
-                progress=10,
-                current_step="starting_review",
-            )
-            
-            # Custom progress tracking for agent iterations
-            class ProgressTracker:
-                def __init__(self, task_manager, task_id, max_steps, num_papers_target):
-                    self.task_manager = task_manager
-                    self.task_id = task_id
-                    self.max_steps = max_steps
-                    self.num_papers_target = num_papers_target
-                    self.last_update_time = 0
-                    
-                async def update_progress(self, iteration, summaries_count, current_action=""):
-                    # Calculate progress: 10% (start) + 80% (main work) + 10% (completion)
-                    iteration_progress = min(iteration / self.max_steps, 1.0) * 0.6  # 60% for iterations
-                    summary_progress = min(summaries_count / self.num_papers_target, 1.0) * 0.2  # 20% for summaries
-                    total_progress = 10 + (iteration_progress + summary_progress) * 80
-                    
-                    message = f"Iteration {iteration}/{self.max_steps}, Found {summaries_count}/{self.num_papers_target} papers"
-                    if current_action:
-                        message += f". {current_action}"
-                        
-                    await self.task_manager.update_task_status(
-                        self.task_id,
-                        TaskStatus.PROCESSING,
-                        message,
-                        progress=total_progress,
-                        current_step=f"iteration_{iteration}",
-                    )
-            
-            progress_tracker = ProgressTracker(self, task_id, max_steps, num_papers_target)
-            
-            # Add a custom progress callback to the agent
-            original_add_trace_entry = agent._add_trace_entry
-            
-            def enhanced_add_trace_entry(action_type, details, model_used=None, duration_seconds=None):
-                # Call original method
-                original_add_trace_entry(action_type, details, model_used, duration_seconds)
-                
-                # Update progress for key milestones
-                if action_type in ["agent_response", "search_execution", "summary_extracted"]:
-                    asyncio.create_task(progress_tracker.update_progress(
-                        agent.current_iteration,
-                        len(agent.collected_summaries),
-                        action_type.replace("_", " ").title()
-                    ))
-            
-            # Monkey-patch the trace entry method for progress updates
-            agent._add_trace_entry = enhanced_add_trace_entry
             
             # Run the literature review
             result = agent.run_literature_review(research_question)

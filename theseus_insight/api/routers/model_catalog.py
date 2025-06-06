@@ -9,10 +9,52 @@ from ..models import (
 
 router = APIRouter(prefix="/api/model-catalog", tags=["model-catalog"])
 
+@router.get("/debug", response_model=dict)
+async def debug_model_catalog():
+    """Debug endpoint to check model catalog status."""
+    try:
+        # Check if table exists and get basic stats
+        result = db.get_all_model_catalog_entries(page=1, page_size=1)
+        
+        # Get all model providers
+        providers = db.get_model_providers()
+        
+        debug_info = {
+            "status": "OK",
+            "table_accessible": True,
+            "total_models": result["total_count"],
+            "available_providers": len(providers),
+            "providers": [p["name"] for p in providers],
+            "database_path": str(db.db_path) if hasattr(db, 'db_path') else "Unknown",
+            "router_prefix": router.prefix,
+            "router_tags": router.tags
+        }
+        
+        return debug_info
+        
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "error": str(e),
+            "table_accessible": False,
+            "router_prefix": router.prefix,
+            "router_tags": router.tags
+        }
+
 @router.post("/", response_model=ModelCatalogEntry)
 async def create_model(request: ModelCatalogCreateRequest):
     """Create a new model in the catalog."""
     try:
+        # Validate that the provider exists
+        providers = db.get_model_providers()
+        provider_names = [p["name"] for p in providers]
+        
+        if request.provider_name not in provider_names:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Provider '{request.provider_name}' not found. Available providers: {', '.join(provider_names)}"
+            )
+        
         model_id = db.insert_model_catalog_entry(
             alias=request.alias,
             model_string=request.model_string,
@@ -34,6 +76,8 @@ async def create_model(request: ModelCatalogCreateRequest):
         
         return ModelCatalogEntry(**model)
         
+    except HTTPException:
+        raise
     except Exception as e:
         if "UNIQUE constraint failed" in str(e):
             raise HTTPException(status_code=400, detail=f"Model alias '{request.alias}' already exists")

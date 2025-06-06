@@ -29,6 +29,7 @@ import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import ViewListIcon from '@mui/icons-material/ViewList';
 import DeleteIcon from '@mui/icons-material/Delete';
 import HistoryIcon from '@mui/icons-material/History';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { format } from 'date-fns';
 
 type ViewMode = 'grid' | 'list';
@@ -48,7 +49,7 @@ const PodcastHistory: React.FC = () => {
 
   const queryClient = useQueryClient();
 
-  const { data: podcasts, isLoading, error } = useQuery<PodcastListItemResponse[], Error>({
+  const { data: podcasts, isLoading, error, refetch } = useQuery<PodcastListItemResponse[], Error>({
     queryKey: ['podcastHistoryList'],
     queryFn: podcastHistoryApi.getPodcastHistoryList,
   });
@@ -88,6 +89,11 @@ const PodcastHistory: React.FC = () => {
     setSelectedPodcastId(null);
   };
 
+  const handleRefresh = () => {
+    refetch();
+    setSnackbarMessage('Podcast history refreshed');
+  };
+
   if (isLoading) {
     return (
       <Container sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -118,20 +124,30 @@ const PodcastHistory: React.FC = () => {
         <Typography variant="h4" component="div">
           Podcast History
         </Typography>
-        <ToggleButtonGroup
-          value={viewMode}
-          exclusive
-          onChange={handleViewModeChange}
-          aria-label="view mode"
-          size="small"
-        >
-          <ToggleButton value="grid" aria-label="grid view">
-            <ViewModuleIcon />
-          </ToggleButton>
-          <ToggleButton value="list" aria-label="list view">
-            <ViewListIcon />
-          </ToggleButton>
-        </ToggleButtonGroup>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          <IconButton
+            onClick={handleRefresh}
+            color="primary"
+            size="small"
+            title="Refresh podcast history"
+          >
+            <RefreshIcon />
+          </IconButton>
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={handleViewModeChange}
+            aria-label="view mode"
+            size="small"
+          >
+            <ToggleButton value="grid" aria-label="grid view">
+              <ViewModuleIcon />
+            </ToggleButton>
+            <ToggleButton value="list" aria-label="list view">
+              <ViewListIcon />
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
       </Box>
 
       {viewMode === 'grid' ? (

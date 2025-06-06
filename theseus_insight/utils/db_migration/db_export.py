@@ -95,12 +95,24 @@ class DatabaseExporter:
         print(f"Exported {len(literature_reviews)} literature reviews to {output_file}")
         return str(output_file)
     
+    def export_model_catalog(self) -> str:
+        """Export all model catalog entries to JSON file."""
+        print("Exporting model catalog...")
+        model_catalog = self.db.fetch_all_model_catalog_entries()
+        
+        output_file = self.output_dir / "model_catalog.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(model_catalog, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(model_catalog)} model catalog entries to {output_file}")
+        return str(output_file)
+    
     def create_metadata(self) -> str:
         """Create metadata file with export information."""
         metadata = {
             "export_timestamp": datetime.datetime.now().isoformat(),
-            "export_version": "1.1",
-            "tables_exported": ["papers", "podcasts", "newsletters", "literature_reviews"],
+            "export_version": "1.2",
+            "tables_exported": ["papers", "podcasts", "newsletters", "literature_reviews", "model_catalog"],
             "description": "Theseus Insight database export"
         }
         
@@ -169,9 +181,12 @@ class DatabaseExporter:
         literature_reviews_file = self.export_literature_reviews()
         if progress_callback:
             progress_callback(80, "literature_reviews_exported")
+        model_catalog_file = self.export_model_catalog()
+        if progress_callback:
+            progress_callback(90, "model_catalog_exported")
         metadata_file = self.create_metadata()
         if progress_callback:
-            progress_callback(90, "metadata_created")
+            progress_callback(95, "metadata_created")
         
         result = {
             "files": {
@@ -179,6 +194,7 @@ class DatabaseExporter:
                 "podcasts": podcasts_file,
                 "newsletters": newsletters_file,
                 "literature_reviews": literature_reviews_file,
+                "model_catalog": model_catalog_file,
                 "metadata": metadata_file
             },
             "output_directory": str(self.output_dir)

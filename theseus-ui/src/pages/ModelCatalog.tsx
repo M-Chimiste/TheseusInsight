@@ -42,12 +42,12 @@ import {
   ViewList as ViewListIcon,
   ViewModule as ViewModuleIcon,
   FilterList as FilterIcon,
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon,
+
   Close as CloseIcon
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { modelCatalogApi, settingsApi } from '../services/api';
 
 interface ModelCatalogEntry {
@@ -101,15 +101,17 @@ const ModelCatalog: React.FC = () => {
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
   const [favoriteFilter, setFavoriteFilter] = useState<boolean | null>(null);
   const [page, setPage] = useState(1);
-  const [expandedCard, setExpandedCard] = useState<number | null>(null);
   
   // Dialog state
   const [isCreateEditDialogOpen, setIsCreateEditDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelCatalogEntry | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [modelToDelete, setModelToDelete] = useState<ModelCatalogEntry | null>(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<ModelCatalogEntry | null>(null);
   
   // Form state
   const [formData, setFormData] = useState<CreateEditModelData>({
@@ -132,41 +134,139 @@ const ModelCatalog: React.FC = () => {
     'efficient', 'multilingual', 'vision', 'experimental', 'production'
   ];
 
-  // Queries
-  const { data: modelsData, isLoading: isLoadingModels } = useQuery({
-    queryKey: ['modelCatalog', { 
-      search, 
-      provider_name: providerFilter || undefined, 
-      model_type: typeFilter || undefined, 
-      is_favorite: favoriteFilter, 
-      page,
-      page_size: 12
-    }],
+  // Queries - Get all models for client-side filtering
+  const { data: allModelsData, isLoading: isLoadingModels, error: modelsError } = useQuery({
+    queryKey: ['modelCatalog'],
     queryFn: () => modelCatalogApi.searchModels({
-      search: search || undefined,
-      provider_name: providerFilter || undefined,
-      model_type: typeFilter || undefined,
-      is_favorite: favoriteFilter,
-      page,
-      page_size: 12
+      page: 1,
+      page_size: 100 // Get more models for client-side filtering
     }).then(res => res.data),
   });
 
-  const { data: modelProviders } = useQuery({
+  const { data: modelProviders, error: providersError } = useQuery({
     queryKey: ['modelProviders'],
     queryFn: () => settingsApi.getModelProviders().then(res => res.data || []),
   });
 
+  // Client-side filtering function
+  const filterModels = (models: ModelCatalogEntry[]) => {
+    if (!models) return [];
+
+    return models.filter(model => {
+      // Search filter - keyword-based search across multiple fields
+      if (search.trim()) {
+        const searchTerms = search.toLowerCase().trim().split(/\s+/);
+        const searchableText = [
+          model.alias,
+          model.model_string,
+          model.description || '',
+          ...(model.tags || [])
+        ].join(' ').toLowerCase();
+
+        const matchesSearch = searchTerms.every(term => 
+          searchableText.includes(term)
+        );
+        if (!matchesSearch) return false;
+      }
+
+      // Provider filter
+      if (providerFilter && model.provider_name !== providerFilter) {
+        return false;
+      }
+
+      // Type filter
+      if (typeFilter && model.model_type !== typeFilter) {
+        return false;
+      }
+
+      // Tag filter
+      if (tagFilter && (!model.tags || !model.tags.includes(tagFilter))) {
+        return false;
+      }
+
+      // Favorite filter
+      if (favoriteFilter !== null && Boolean(model.is_favorite) !== favoriteFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  };
+
+  // Apply filters to get filtered models
+  const filteredModels = filterModels((allModelsData as any)?.models || []);
+
+  // Pagination for filtered results
+  const modelsPerPage = 12;
+  const totalPages = Math.ceil(filteredModels.length / modelsPerPage);
+  const startIndex = (page - 1) * modelsPerPage;
+  const endIndex = startIndex + modelsPerPage;
+  const paginatedModels = filteredModels.slice(startIndex, endIndex);
+
+  // Create modelsData structure to match the original API response
+  const modelsData = {
+    models: paginatedModels,
+    total_count: filteredModels.length,
+    total_pages: totalPages,
+    current_page: page,
+    page_size: modelsPerPage
+  };
+
+  // Get all available tags for the filter dropdown
+  const allTags = React.useMemo(() => {
+    const tagSet = new Set<string>();
+    ((allModelsData as any)?.models || []).forEach((model: ModelCatalogEntry) => {
+      if (model.tags) {
+        model.tags.forEach(tag => tagSet.add(tag));
+      }
+    });
+    return Array.from(tagSet).sort();
+  }, [allModelsData]);
+
+  // Reset to page 1 when filters change
+  React.useEffect(() => {
+    setPage(1);
+  }, [search, providerFilter, typeFilter, tagFilter, favoriteFilter]);
+
+  // Handle errors from queries
+  React.useEffect(() => {
+    if (modelsError) {
+      console.error('Models fetch error:', modelsError);
+      const errorMsg = (modelsError as any)?.response?.data?.detail || 
+                      (modelsError as any)?.message || 
+                      'Failed to fetch models';
+      setError(`Models error: ${errorMsg}`);
+    }
+  }, [modelsError]);
+
+  React.useEffect(() => {
+    if (providersError) {
+      console.error('Providers fetch error:', providersError);
+      const errorMsg = (providersError as any)?.response?.data?.detail || 
+                      (providersError as any)?.message || 
+                      'Failed to fetch providers';
+      setError(`Providers error: ${errorMsg}`);
+    }
+  }, [providersError]);
+
   // Mutations
   const createModelMutation = useMutation({
-    mutationFn: (model: any) => modelCatalogApi.createModel(model),
+    mutationFn: (model: any) => {
+      console.log('Creating model with data:', model);
+      return modelCatalogApi.createModel(model);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['modelCatalog'] });
       setSuccess('Model created successfully');
       setIsCreateEditDialogOpen(false);
       resetForm();
     },
-    onError: (error: any) => setError(error?.response?.data?.detail || 'Failed to create model'),
+    onError: (error: any) => {
+      console.error('Create model error:', error);
+      console.error('Error response:', error?.response);
+      console.error('Error data:', error?.response?.data);
+      setError(`Failed to create model: ${error?.response?.status} ${error?.response?.statusText || ''} - ${error?.response?.data?.detail || error?.message || 'Unknown error'}`);
+    },
   });
 
   const updateModelMutation = useMutation({
@@ -260,13 +360,36 @@ const ModelCatalog: React.FC = () => {
     }
   };
 
-  const getDescriptionSnippet = (description: string, maxLength: number = 100) => {
-    if (!description) return '';
-    if (description.length <= maxLength) return description;
-    return description.substring(0, maxLength) + '...';
+  const openDetailView = (model: ModelCatalogEntry) => {
+    setSelectedModel(model);
+    setDetailDialogOpen(true);
   };
 
-  const ModelCard = ({ model, isExpanded }: { model: ModelCatalogEntry; isExpanded: boolean }) => (
+  const getDescriptionSnippet = (description: string, maxLength: number = 100) => {
+    if (!description || description.trim() === '') return '';
+    
+    // Strip markdown formatting for preview
+    const plainText = description
+      .replace(/^#{1,6}\s+/gm, '') // Remove headers
+      .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
+      .replace(/\*(.*?)\*/g, '$1') // Remove italic
+      .replace(/`(.*?)`/g, '$1') // Remove inline code
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Remove links, keep text
+      .replace(/^\s*[-*+]\s+/gm, '') // Remove list bullets
+      .replace(/^\s*\d+\.\s+/gm, '') // Remove numbered lists
+      .replace(/^\s*>\s+/gm, '') // Remove blockquotes
+      .replace(/\n\s*\n/g, ' ') // Replace multiple newlines with space
+      .replace(/\s+/g, ' ') // Collapse multiple spaces
+      .trim();
+    
+    if (plainText.length <= maxLength) return plainText;
+    return plainText.substring(0, maxLength) + '...';
+  };
+
+
+
+    const ModelCard = ({ model }: { model: ModelCatalogEntry }) => {
+    return (
     <Card 
       elevation={model.is_favorite ? 3 : 1}
       sx={{ 
@@ -274,8 +397,14 @@ const ModelCatalog: React.FC = () => {
         display: 'flex', 
         flexDirection: 'column',
         border: model.is_favorite ? '2px solid #ff6b6b' : undefined,
-        '&:hover': { elevation: 4 }
+        cursor: 'pointer',
+        transition: 'all 0.2s ease-in-out',
+        '&:hover': { 
+          elevation: 8,
+          transform: 'translateY(-2px)'
+        }
       }}
+      onClick={() => openDetailView(model)}
     >
       <CardContent sx={{ flexGrow: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1 }}>
@@ -315,25 +444,25 @@ const ModelCatalog: React.FC = () => {
           </Box>
         )}
 
-        {model.description && (
+        {model.description && model.description.trim() && (
           <Box sx={{ mb: 2 }}>
-            <Collapse in={isExpanded} collapsedSize={60}>
-              <Paper elevation={0} sx={{ p: 1, bgcolor: 'grey.50' }}>
-                <ReactMarkdown>
-                  {isExpanded ? model.description : getDescriptionSnippet(model.description, 150)}
-                </ReactMarkdown>
-              </Paper>
-            </Collapse>
-            {model.description.length > 150 && (
-              <Button
-                size="small"
-                onClick={() => setExpandedCard(isExpanded ? null : model.id)}
-                startIcon={isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                sx={{ mt: 1 }}
-              >
-                {isExpanded ? 'Show Less' : 'Show More'}
-              </Button>
-            )}
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              <strong>Description:</strong>
+            </Typography>
+            <Typography 
+              variant="body2"
+              color="text.primary"
+              sx={{ 
+                display: '-webkit-box',
+                overflow: 'hidden',
+                WebkitBoxOrient: 'vertical',
+                WebkitLineClamp: 3,
+                lineHeight: 1.4,
+                fontSize: '0.875rem'
+              }}
+            >
+              {getDescriptionSnippet(model.description, 100)}
+            </Typography>
           </Box>
         )}
 
@@ -342,7 +471,7 @@ const ModelCatalog: React.FC = () => {
           {model.max_new_tokens && (
             <Chip label={`Tokens: ${model.max_new_tokens}`} size="small" />
           )}
-          {model.temperature !== undefined && (
+          {model.temperature && (
             <Chip label={`Temp: ${model.temperature}`} size="small" />
           )}
           {model.num_ctx && (
@@ -354,21 +483,36 @@ const ModelCatalog: React.FC = () => {
       <CardActions sx={{ justifyContent: 'space-between', pt: 0 }}>
         <Box>
           <IconButton 
-            onClick={() => toggleFavoriteMutation.mutate(model.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFavoriteMutation.mutate(model.id);
+            }}
             color={model.is_favorite ? 'error' : 'default'}
           >
             {model.is_favorite ? <FavoriteIcon /> : <FavoriteBorderIcon />}
           </IconButton>
-          <IconButton onClick={() => openEditDialog(model)}>
+          <IconButton 
+            onClick={(e) => {
+              e.stopPropagation();
+              openEditDialog(model);
+            }}
+          >
             <EditIcon />
           </IconButton>
         </Box>
-        <IconButton onClick={() => handleDelete(model)} color="error">
+        <IconButton 
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDelete(model);
+          }} 
+          color="error"
+        >
           <DeleteIcon />
         </IconButton>
       </CardActions>
     </Card>
-  );
+    );
+  };
 
   if (isLoadingModels) {
     return (
@@ -447,7 +591,7 @@ const ModelCatalog: React.FC = () => {
           <Collapse in={showFilters}>
             <Divider sx={{ mb: 2 }} />
             <Grid container spacing={2}>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 3 }}>
                 <FormControl fullWidth size="small">
                   <InputLabel>Provider</InputLabel>
                   <Select
@@ -456,7 +600,7 @@ const ModelCatalog: React.FC = () => {
                     onChange={(e) => setProviderFilter(e.target.value)}
                   >
                     <MenuItem value="">All Providers</MenuItem>
-                    {(modelProviders || []).map((provider: any) => (
+                    {((modelProviders as any) || []).map((provider: any) => (
                       <MenuItem key={provider.name} value={provider.name}>
                         {provider.name}
                       </MenuItem>
@@ -464,7 +608,7 @@ const ModelCatalog: React.FC = () => {
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 3 }}>
                 <FormControl fullWidth size="small">
                   <InputLabel>Type</InputLabel>
                   <Select
@@ -481,7 +625,24 @@ const ModelCatalog: React.FC = () => {
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 3 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Tag</InputLabel>
+                  <Select
+                    value={tagFilter}
+                    label="Tag"
+                    onChange={(e) => setTagFilter(e.target.value)}
+                  >
+                    <MenuItem value="">All Tags</MenuItem>
+                    {allTags.map((tag) => (
+                      <MenuItem key={tag} value={tag}>
+                        {tag}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 3 }}>
                 <FormControl fullWidth size="small">
                   <InputLabel>Favorites</InputLabel>
                   <Select
@@ -504,21 +665,21 @@ const ModelCatalog: React.FC = () => {
       </Card>
 
       {/* Models Grid/List */}
-      {modelsData?.models && modelsData.models.length > 0 ? (
+      {modelsData && (modelsData as any)?.models && (modelsData as any).models.length > 0 ? (
         <>
           <Grid container spacing={3}>
-            {modelsData.models.map((model: ModelCatalogEntry) => (
+            {(modelsData as any).models.map((model: ModelCatalogEntry) => (
               <Grid size={{ xs: 12, sm: viewMode === 'grid' ? 6 : 12, md: viewMode === 'grid' ? 4 : 12 }} key={model.id}>
-                <ModelCard model={model} isExpanded={expandedCard === model.id} />
+                <ModelCard model={model} />
               </Grid>
             ))}
           </Grid>
 
           {/* Pagination */}
-          {modelsData.total_pages > 1 && (
+          {(modelsData as any).total_pages > 1 && (
             <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
               <Pagination
-                count={modelsData.total_pages}
+                count={(modelsData as any).total_pages}
                 page={page}
                 onChange={(_, newPage) => setPage(newPage)}
                 color="primary"
@@ -532,8 +693,8 @@ const ModelCatalog: React.FC = () => {
             No models found
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {search || providerFilter || typeFilter || favoriteFilter !== null
-              ? 'Try adjusting your filters'
+            {search || providerFilter || typeFilter || tagFilter || favoriteFilter !== null
+              ? 'Try adjusting your search terms or filters'
               : 'Start by adding your first model to the catalog'
             }
           </Typography>
@@ -559,12 +720,16 @@ const ModelCatalog: React.FC = () => {
         onClose={() => setIsCreateEditDialogOpen(false)}
         maxWidth="md"
         fullWidth
+        disableEscapeKeyDown={false}
+        keepMounted={false}
+        aria-labelledby="model-dialog-title"
       >
-        <DialogTitle>
+        <DialogTitle id="model-dialog-title">
           {editingModel ? 'Edit Model' : 'Add New Model'}
           <IconButton
             onClick={() => setIsCreateEditDialogOpen(false)}
             sx={{ position: 'absolute', right: 8, top: 8 }}
+            aria-label="Close dialog"
           >
             <CloseIcon />
           </IconButton>
@@ -598,7 +763,7 @@ const ModelCatalog: React.FC = () => {
                   label="Provider"
                   onChange={(e) => setFormData({ ...formData, provider_name: e.target.value })}
                 >
-                  {(modelProviders || []).map((provider: any) => (
+                  {((modelProviders as any) || []).map((provider: any) => (
                     <MenuItem key={provider.name} value={provider.name}>
                       {provider.name}
                     </MenuItem>
@@ -720,9 +885,262 @@ const ModelCatalog: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Model Detail Dialog */}
+      <Dialog
+        open={detailDialogOpen}
+        onClose={() => setDetailDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        aria-labelledby="detail-dialog-title"
+        keepMounted={false}
+      >
+        <DialogTitle id="detail-dialog-title" sx={{ pb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography variant="h5" component="h2" sx={{ fontWeight: 'bold' }}>
+                {selectedModel?.alias}
+              </Typography>
+              {selectedModel?.is_favorite && (
+                <FavoriteIcon sx={{ color: '#ff6b6b' }} />
+              )}
+              <Chip 
+                label={selectedModel?.provider_name}
+                color="primary"
+                variant="outlined"
+              />
+            </Box>
+            <IconButton
+              onClick={() => setDetailDialogOpen(false)}
+              aria-label="Close dialog"
+            >
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        
+        <DialogContent sx={{ pt: 0 }}>
+          {selectedModel && (
+            <Box>
+              {/* Basic Info */}
+              <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                  Model Information
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Model String:</strong>
+                    </Typography>
+                    <Typography variant="body1" sx={{ mb: 1 }}>
+                      {selectedModel.model_string}
+                    </Typography>
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Type:</strong>
+                    </Typography>
+                    <Typography variant="body1" sx={{ mb: 1 }}>
+                      {selectedModel.model_type}
+                    </Typography>
+                  </Grid>
+                </Grid>
+              </Paper>
+
+              {/* Parameters */}
+              <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                  Model Parameters
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {selectedModel.max_new_tokens && (
+                    <Chip label={`Max Tokens: ${selectedModel.max_new_tokens}`} variant="outlined" />
+                  )}
+                  {selectedModel.temperature !== undefined && (
+                    <Chip label={`Temperature: ${selectedModel.temperature}`} variant="outlined" />
+                  )}
+                  {selectedModel.num_ctx && (
+                    <Chip label={`Context Window: ${selectedModel.num_ctx}`} variant="outlined" />
+                  )}
+                  {selectedModel.trust_remote_code && (
+                    <Chip label="Trust Remote Code" color="warning" variant="outlined" />
+                  )}
+                </Box>
+              </Paper>
+
+              {/* Tags */}
+              {selectedModel.tags && selectedModel.tags.length > 0 && (
+                <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Tags
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {selectedModel.tags.map((tag, index) => (
+                      <Chip key={index} label={tag} color="primary" variant="outlined" />
+                    ))}
+                  </Box>
+                </Paper>
+              )}
+
+              {/* Description */}
+              {selectedModel.description && selectedModel.description.trim() && (
+                <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Description
+                  </Typography>
+                                     <Box 
+                     sx={{ 
+                       '& h1, & h2, & h3, & h4, & h5, & h6': {
+                         fontWeight: 'bold',
+                         margin: '16px 0 8px 0',
+                         '&:first-of-type': { marginTop: 0 }
+                       },
+                       '& h1': { fontSize: '1.5rem' },
+                       '& h2': { fontSize: '1.25rem' },
+                       '& h3': { fontSize: '1.1rem' },
+                       '& p': {
+                         margin: '8px 0',
+                         lineHeight: 1.6
+                       },
+                       '& ul, & ol': {
+                         margin: '8px 0',
+                         paddingLeft: '24px'
+                       },
+                       '& li': {
+                         margin: '4px 0'
+                       },
+                       '& code': {
+                         backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                         padding: '2px 4px',
+                         borderRadius: '4px',
+                         fontFamily: 'monospace',
+                         fontSize: '0.9em'
+                       },
+                       '& pre': {
+                         backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                         padding: '12px',
+                         borderRadius: '4px',
+                         overflow: 'auto',
+                         fontFamily: 'monospace'
+                       },
+                       '& table': {
+                         width: '100%',
+                         borderCollapse: 'collapse',
+                         margin: '16px 0',
+                         fontSize: '0.75rem',
+                         border: '1px solid rgba(224, 224, 224, 1)'
+                       },
+                       '& th': {
+                         border: '1px solid rgba(224, 224, 224, 1)',
+                         padding: '6px 8px',
+                         backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                         fontWeight: 'bold',
+                         textAlign: 'left'
+                       },
+                       '& td': {
+                         border: '1px solid rgba(224, 224, 224, 1)',
+                         padding: '6px 8px',
+                         textAlign: 'left'
+                       },
+                       '& tbody tr:nth-of-type(odd)': {
+                         backgroundColor: 'rgba(0, 0, 0, 0.02)'
+                       },
+                       '& blockquote': {
+                         borderLeft: '4px solid',
+                         borderColor: 'primary.main',
+                         paddingLeft: '16px',
+                         margin: '16px 0',
+                         fontStyle: 'italic'
+                       }
+                     }}
+                   >
+                     <ReactMarkdown
+                       remarkPlugins={[remarkGfm]}
+                       components={{
+                         table: ({node, ...props}) => (
+                           <Box sx={{ overflowX: 'auto', mb: 2 }}>
+                             <table {...props} />
+                           </Box>
+                         )
+                       }}
+                     >
+                       {selectedModel.description}
+                     </ReactMarkdown>
+                   </Box>
+                </Paper>
+              )}
+
+              {/* Metadata */}
+              {(selectedModel.created_at || selectedModel.updated_at) && (
+                <Paper elevation={1} sx={{ p: 2 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Metadata
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {selectedModel.created_at && (
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          <strong>Created:</strong>
+                        </Typography>
+                        <Typography variant="body1">
+                          {new Date(selectedModel.created_at).toLocaleString()}
+                        </Typography>
+                      </Grid>
+                    )}
+                    {selectedModel.updated_at && (
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          <strong>Updated:</strong>
+                        </Typography>
+                        <Typography variant="body1">
+                          {new Date(selectedModel.updated_at).toLocaleString()}
+                        </Typography>
+                      </Grid>
+                    )}
+                  </Grid>
+                </Paper>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={() => setDetailDialogOpen(false)}>
+            Close
+          </Button>
+          {selectedModel && (
+            <>
+              <Button
+                onClick={() => {
+                  setDetailDialogOpen(false);
+                  openEditDialog(selectedModel);
+                }}
+                startIcon={<EditIcon />}
+              >
+                Edit
+              </Button>
+              <Button
+                onClick={() => {
+                  setDetailDialogOpen(false);
+                  handleDelete(selectedModel);
+                }}
+                color="error"
+                startIcon={<DeleteIcon />}
+              >
+                Delete
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
+
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
-        <DialogTitle>Delete Model</DialogTitle>
+      <Dialog 
+        open={deleteDialogOpen} 
+        onClose={() => setDeleteDialogOpen(false)}
+        aria-labelledby="delete-dialog-title"
+        keepMounted={false}
+      >
+        <DialogTitle id="delete-dialog-title">Delete Model</DialogTitle>
         <DialogContent>
           <Typography>
             Are you sure you want to delete "{modelToDelete?.alias}"? This action cannot be undone.

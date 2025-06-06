@@ -280,7 +280,10 @@ class GeminiInference(InferenceModel):
 
     def _load_model(self):
         import google.generativeai as genai
+        
+        # Configure API key
         genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+        
         return genai
     
     def invoke(self, 
@@ -311,33 +314,73 @@ class GeminiInference(InferenceModel):
 
         if streaming:
             model = self.client.GenerativeModel(model_name=model_name or self.model_name)
-            stream = model.generate_content(
-                gemini_messages,
-                safety_settings=self.safety,
-                generation_config=self.client.types.GenerationConfig(
-                    max_output_tokens=self.max_new_tokens,
-                    temperature=self.temperature
-                ),
-                stream=True
-            )
+            try:
+                stream = model.generate_content(
+                    gemini_messages,
+                    safety_settings=self.safety,
+                    generation_config=self.client.types.GenerationConfig(
+                        max_output_tokens=self.max_new_tokens,
+                        temperature=self.temperature
+                    ),
+                    stream=True,
+                    request_options={'timeout': 300}  # 5 minutes
+                )
 
-            def _gen() -> Iterator[str]:
-                for chunk in stream:
-                    text = getattr(chunk, "text", None)
-                    if text:
-                        yield text
-            return _gen()
+                def _gen() -> Iterator[str]:
+                    try:
+                        for chunk in stream:
+                            text = getattr(chunk, "text", None)
+                            if text:
+                                yield text
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "DeadlineExceeded" in error_msg or "504" in error_msg:
+                            raise Exception(f"Gemini API streaming timeout: {error_msg}. Please try again later or use a different model.") from e
+                        else:
+                            raise
+                return _gen()
+            except Exception as e:
+                error_msg = str(e)
+                if "DeadlineExceeded" in error_msg or "504" in error_msg:
+                    raise Exception(f"Gemini API timeout error: {error_msg}. Please try again later or use a different model.") from e
+                else:
+                    raise
         else:
             model = self.client.GenerativeModel(model_name=model_name or self.model_name)
-            response = model.generate_content(
-                gemini_messages,
-                safety_settings=self.safety,
-                generation_config=self.client.types.GenerationConfig(
-                    max_output_tokens=self.max_new_tokens,
-                    temperature=self.temperature
+            
+            # Try with retry logic and better error handling
+            try:
+                response = model.generate_content(
+                    gemini_messages,
+                    safety_settings=self.safety,
+                    generation_config=self.client.types.GenerationConfig(
+                        max_output_tokens=self.max_new_tokens,
+                        temperature=self.temperature
+                    )
                 )
-            )
-            return response.text
+                return response.text
+            except Exception as e:
+                # Handle specific Gemini API errors
+                error_msg = str(e)
+                if "DeadlineExceeded" in error_msg or "504" in error_msg:
+                    # For timeout errors, try again with a shorter generation
+                    print(f"Warning: Gemini API timeout, retrying with reduced max_tokens...")
+                    try:
+                        response = model.generate_content(
+                            gemini_messages,
+                            safety_settings=self.safety,
+                            generation_config=self.client.types.GenerationConfig(
+                                max_output_tokens=min(self.max_new_tokens // 2, 2048),  # Reduce tokens
+                                temperature=self.temperature
+                            )
+                        )
+                        return response.text
+                    except Exception as e2:
+                        print(f"Error: Gemini API failed even with reduced tokens: {e2}")
+                        raise Exception(f"Gemini API timeout error: {error_msg}. Please try again later or use a different model.") from e
+                else:
+                    # Re-raise other errors as-is
+                    raise
 
 
 class SentenceTransformerInference(InferenceModel):

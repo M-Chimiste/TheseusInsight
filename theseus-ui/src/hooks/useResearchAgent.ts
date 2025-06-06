@@ -124,7 +124,40 @@ export const useResearchAgent = () => {
         try {
           const data = JSON.parse(event.data);
           
-          if (data.type === 'progress') {
+          // Handle the TaskManager format (RunStatus)
+          if (data.overallStatus) {
+            const status = data.overallStatus;
+            const progress = data.progress || 0;
+            const message = data.message || '';
+            const currentStep = data.currentStep || '';
+            const error = data.error;
+            
+            updateProgress(progress, currentStep, message);
+            addLog(`${progress}% - ${currentStep || message || status}`);
+            
+            if (status === 'completed') {
+              setState(prev => ({
+                ...prev,
+                isRunning: false,
+                progress: 100,
+                currentStep: 'Completed',
+                message: 'Literature review completed successfully',
+              }));
+              addLog('Literature review completed!');
+              
+              // Refresh recent reviews to show the new result
+              fetchRecentReviews();
+            } else if (status === 'failed') {
+              setState(prev => ({
+                ...prev,
+                isRunning: false,
+                error: error || 'An error occurred',
+              }));
+              addLog(`Error: ${error || 'Unknown error'}`);
+            }
+          }
+          // Fallback for legacy format (if any)
+          else if (data.type === 'progress') {
             updateProgress(data.progress || 0, data.current_step || '', data.message || '');
             addLog(`Progress: ${data.progress}% - ${data.current_step || data.message}`);
           } else if (data.type === 'log') {
@@ -195,18 +228,18 @@ export const useResearchAgent = () => {
 
     try {
       const response = await researchAgentApi.runResearch(researchQuestion);
-      const { taskId } = response.data;
+      const { task_id } = response.data;
       
       setState(prev => ({
         ...prev,
-        currentTask: taskId,
+        currentTask: task_id,
         loading: false,
       }));
 
-      addLog(`Task created: ${taskId}`);
+      addLog(`Task created: ${task_id}`);
       
       // Connect to WebSocket for real-time updates
-      connectWebSocket(taskId);
+      connectWebSocket(task_id);
       
     } catch (error: any) {
       console.error('Error starting research:', error);

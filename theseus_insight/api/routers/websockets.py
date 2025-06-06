@@ -194,4 +194,9 @@ async def database_import_status(websocket: WebSocket, task_id: str):
 @router.websocket("/ws/database-export/{task_id}")
 async def database_export_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for database export status updates."""
-    await handle_websocket_connection(websocket, task_id, "database-export") 
+    await handle_websocket_connection(websocket, task_id, "database-export")
+
+@router.websocket("/ws/research-agent/{task_id}")
+async def research_agent_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for research agent status updates."""
+    await handle_websocket_connection(websocket, task_id, "research-agent") 

@@ -2,7 +2,7 @@ import json
 import re
 import time
 import logging
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, callable
 from dataclasses import dataclass, asdict
 from datetime import datetime
 
@@ -56,19 +56,29 @@ class ResearchAgentLoop:
         search_tool: LocalSearchTool,
         model_router: AgentModelRouter,
         num_papers_target: int = 5,
-        max_steps: int = 10
+        max_steps: int = 10,
+        progress_callback: Optional[callable] = None
     ):
         self.db = db
         self.search_tool = search_tool
         self.model_router = model_router
         self.num_papers_target = num_papers_target
         self.max_steps = max_steps
+        self.progress_callback = progress_callback
         
         # State tracking
         self.current_iteration = 0
         self.collected_summaries: List[LiteratureReviewSummary] = []
         self.trace_entries: List[AgentTraceEntry] = []
         self.papers_seen: set = set()
+        
+    def _report_progress(self, step: str, progress: float, message: str = ""):
+        """Report progress via callback if available."""
+        if self.progress_callback:
+            try:
+                self.progress_callback(step, progress, message)
+            except Exception as e:
+                logger.warning(f"Progress callback error: {e}")
         
     def _add_trace_entry(
         self,
@@ -88,6 +98,20 @@ class ResearchAgentLoop:
         )
         self.trace_entries.append(entry)
         logger.debug(f"Trace: {action_type} - {details}")
+        
+        # Report progress for key actions
+        if action_type in ["iteration_start", "command_parsing", "search_execution", "summary_extracted"]:
+            progress = min((len(self.collected_summaries) / self.num_papers_target) * 80, 80) + 10
+            if action_type == "iteration_start":
+                self._report_progress(f"iteration_{self.current_iteration}", progress, 
+                                    f"Starting iteration {self.current_iteration}/{self.max_steps}")
+            elif action_type == "search_execution":
+                query = details.get("query", "")
+                self._report_progress(f"searching", progress, f"Searching for: {query}")
+            elif action_type == "summary_extracted":
+                paper_id = details.get("paper_id", "")
+                self._report_progress(f"summarizing", progress, 
+                                    f"Extracted summary for paper {paper_id}")
     
     def _parse_agent_commands(self, agent_response: str) -> List[Tuple[str, str]]:
         """
@@ -370,6 +394,9 @@ SCORE: [0.0-1.0]"""
         """
         logger.info(f"Starting literature review for: {research_question}")
         
+        # Report initial progress
+        self._report_progress("initializing", 5, f"Starting literature review: {research_question}")
+        
         self._add_trace_entry(
             "review_started",
             {
@@ -390,8 +417,17 @@ SCORE: [0.0-1.0]"""
                 self.current_iteration += 1
                 logger.info(f"Agent iteration {self.current_iteration}/{self.max_steps}")
                 
+                # Report iteration start
+                iteration_progress = 10 + (self.current_iteration / self.max_steps) * 60
+                self._report_progress(f"iteration_{self.current_iteration}", iteration_progress, 
+                                    f"Iteration {self.current_iteration}/{self.max_steps} - Planning next steps")
+                
+                self._add_trace_entry("iteration_start", {"iteration": self.current_iteration})
+                
                 # Get agent response using boss model
                 prompt = self._build_agent_prompt(research_question, context)
+                
+                self._report_progress("thinking", iteration_progress + 5, "Boss agent analyzing current state and planning actions")
                 
                 start_time = time.time()
                 agent_response = self.model_router.invoke(
@@ -414,41 +450,57 @@ SCORE: [0.0-1.0]"""
                 )
                 
                 # Parse and execute commands
+                self._report_progress("parsing", iteration_progress + 10, "Parsing agent commands")
                 commands = self._parse_agent_commands(agent_response)
                 
                 if not commands:
                     logger.warning("No valid commands found in agent response")
+                    self._report_progress("error", iteration_progress, "No valid commands found, retrying...")
                     context = "No valid commands detected. Please use the specified command format: ```COMMAND argument```"
                     continue
                 
                 # Process each command
                 command_results = []
-                for command, arg in commands:
+                self._report_progress("executing", iteration_progress + 15, f"Executing {len(commands)} command(s)")
+                
+                for i, (command, arg) in enumerate(commands):
+                    cmd_progress = iteration_progress + 15 + (i / len(commands)) * 25
+                    
                     if command == "COMPLETE":
                         logger.info("Agent signaled completion")
+                        self._report_progress("completing", 95, "Agent signaled completion")
                         self._add_trace_entry("completion_signaled", {"final_summaries_count": len(self.collected_summaries)})
                         break
                     
                     elif command == "SUMMARY":
+                        self._report_progress("searching", cmd_progress, f"Searching for: {arg}")
                         result = self._execute_summary_command(arg)
                         command_results.append(f"Search results for '{arg}':\n{result}")
                         
                         # Try to extract summaries from any papers mentioned
                         paper_id_matches = re.findall(r'Paper ID:\s*(\d+)', result)
+                        self._report_progress("analyzing", cmd_progress + 5, f"Found {len(paper_id_matches)} potential papers")
+                        
                         for paper_id_str in paper_id_matches[:3]:  # Limit to prevent overwhelm
                             paper_id = int(paper_id_str)
                             if paper_id not in self.papers_seen:
                                 self.papers_seen.add(paper_id)
+                                self._report_progress("summarizing", cmd_progress + 10, f"Extracting summary for paper {paper_id}")
                                 summary = self._extract_paper_summary(agent_response, result)
                                 if summary and summary.relevance_score >= 0.6:  # Quality threshold
                                     self.collected_summaries.append(summary)
                                     logger.info(f"Added summary for paper {paper_id}: {summary.title}")
+                                    current_count = len(self.collected_summaries)
+                                    self._report_progress("collected", cmd_progress + 15, 
+                                                        f"Collected {current_count}/{self.num_papers_target} papers")
                     
                     elif command == "FULL_TEXT":
+                        self._report_progress("retrieving", cmd_progress, f"Retrieving full text for paper {arg}")
                         result = self._execute_full_text_command(arg)
                         command_results.append(f"Full text for paper {arg}:\n{result[:1000]}{'...' if len(result) > 1000 else ''}")
                     
                     elif command == "ADD_PAPER":
+                        self._report_progress("adding", cmd_progress, f"Adding paper: {arg}")
                         result = self._execute_add_paper_command(arg)
                         command_results.append(result)
                 
@@ -465,6 +517,9 @@ SCORE: [0.0-1.0]"""
             # Determine success
             success = len(self.collected_summaries) >= self.num_papers_target
             
+            # Report completion progress
+            self._report_progress("generating_report", 90, "Generating final markdown report")
+            
             self._add_trace_entry(
                 "review_completed",
                 {
@@ -479,6 +534,9 @@ SCORE: [0.0-1.0]"""
             
             # Generate full markdown report
             report_text = self._generate_markdown_report(research_question, self.collected_summaries)
+            
+            # Report final completion
+            self._report_progress("completed", 100, f"Literature review completed! Found {len(self.collected_summaries)} papers")
             
             return ResearchAgentResult(
                 research_question=research_question,
@@ -675,7 +733,8 @@ def create_research_agent(
     db: PaperDatabase,
     num_papers_target: int = 5,
     max_steps: int = 10,
-    enable_pdf_download: bool = True
+    enable_pdf_download: bool = True,
+    progress_callback: Optional[callable] = None
 ) -> ResearchAgentLoop:
     """
     Factory function to create a configured ResearchAgentLoop instance.
@@ -685,6 +744,7 @@ def create_research_agent(
         num_papers_target: Target number of papers to collect
         max_steps: Maximum agent iterations
         enable_pdf_download: Whether to enable PDF download for new papers
+        progress_callback: Optional callback function for progress updates
     
     Returns:
         Configured ResearchAgentLoop instance
@@ -704,7 +764,8 @@ def create_research_agent(
         search_tool=search_tool,
         model_router=model_router,
         num_papers_target=num_papers_target,
-        max_steps=max_steps
+        max_steps=max_steps,
+        progress_callback=progress_callback
     )
     
     return agent 

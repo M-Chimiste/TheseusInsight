@@ -54,5 +54,44 @@
     "speaker_1_speed": 1.0,
     "speaker_2_voice": "ash",
     "speaker_2_speed": 1.0
+  },
+  "research_agent_model_config": {
+    "boss_model": {
+      "model_name": "gemini-2.0-flash",
+      "model_type": "gemini",
+      "max_new_tokens": 4096,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "worker_models": {
+      "summary": {
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 4096,
+        "temperature": 0.1,
+        "num_ctx": 131072,
+        "trust_remote_code": null
+      },
+      "analysis": {
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 2048,
+        "temperature": 0.1,
+        "num_ctx": 4096,
+        "trust_remote_code": null
+      },
+      "search": {
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 512,
+        "temperature": 0.3,
+        "num_ctx": 4096,
+        "trust_remote_code": null
+      }
+    },
+    "default_worker": "summary",
+    "max_retries": 3,
+    "timeout_seconds": 30
   }
 }

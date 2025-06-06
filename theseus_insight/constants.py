@@ -2,6 +2,16 @@ _ARXIV_NS = "{http://arxiv.org/OAI/arXiv/}"
 _BASE_URL = "https://export.arxiv.org/oai2"
 _OAI_NS = "{http://www.openarchives.org/OAI/2.0/}"
 _MIN_INTERVAL = 3.0  # ≤ 1 request / 3 s (arXiv legacy policy)
+
+# Task Types
+TASK_TYPE_NEWSLETTER = "newsletter"
+TASK_TYPE_PODCAST = "podcast"
+TASK_TYPE_VISUALIZER = "visualizer"
+TASK_TYPE_CUSTOM_NEWSLETTER_RUN = "custom_newsletter_run"
+TASK_TYPE_DATABASE_EXPORT = "database_export"
+TASK_TYPE_DATABASE_IMPORT = "database_import"
+TASK_TYPE_RESEARCH_AGENT = "research_agent"
+
 INTRO_TEXT = [
     "This fascinating study sheds light on...",
     "This research shows that...",

@@ -2032,7 +2032,6 @@ async def serve_react_app(full_path: str):
             "index_html_path": str(STATIC_INDEX_HTML) if STATIC_INDEX_HTML else "Not set", 
             "index_html_exists": STATIC_INDEX_HTML.exists() if STATIC_INDEX_HTML else False,
             "is_docker": IS_RUNNING_IN_DOCKER,
-            "is_electron_packaged": IS_ELECTRON_PACKAGED,
             "electron_resources_path": os.getenv("ELECTRON_RESOURCES_PATH", "Not set"),
             "current_working_dir": str(pathlib.Path.cwd()),
             "requested_path": full_path
@@ -2040,14 +2039,7 @@ async def serve_react_app(full_path: str):
         
         detail_message = f"Frontend index.html not found at {STATIC_INDEX_HTML}."
         
-        if IS_ELECTRON_PACKAGED:
-            detail_message += f"\n\nElectron app debugging info:"
-            detail_message += f"\n- ELECTRON_RESOURCES_PATH: {os.getenv('ELECTRON_RESOURCES_PATH', 'Not set')}"
-            detail_message += f"\n- Current working directory: {pathlib.Path.cwd()}"
-            detail_message += f"\n- Static files directory: {STATIC_FILES_BASE_DIR}"
-            detail_message += f"\n- Expected index.html at: {STATIC_INDEX_HTML}"
-            detail_message += f"\n\nThis usually means the frontend was not properly bundled in the Electron app."
-        elif not IS_RUNNING_IN_DOCKER:
+        if not IS_RUNNING_IN_DOCKER:
             detail_message += " Ensure the frontend has been built (e.g., `npm run build` in `theseus-ui` directory)."
         
         print(f"ERROR: Frontend serving failed. Details: {error_details}")

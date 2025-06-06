@@ -26,10 +26,30 @@ INITIAL_PROVIDERS = [
 class PaperDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        # Ensure the directory structure exists before initializing the database
+        self._ensure_directory_structure()
         self.sqlite_vec_path = os.getenv("SQLITE_VEC_PATH")
         self.vector_search_enabled = False
         self._check_sqlite_vec()
         self._initialize_db()
+
+    def _ensure_directory_structure(self):
+        """Ensure the directory structure for the database and related files exists."""
+        # Create the database directory
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:  # Only create if there's actually a directory component
+            os.makedirs(db_dir, exist_ok=True)
+        
+        # Create other necessary directories
+        directories_to_create = [
+            "data/newsletters",
+            "data/podcasts", 
+            "data/visualizations",
+            "data/temp"
+        ]
+        
+        for directory in directories_to_create:
+            os.makedirs(directory, exist_ok=True)
 
     def _check_sqlite_vec(self):
         """Check if the sqlite_vec extension can be loaded."""
@@ -41,11 +61,12 @@ class PaperDatabase:
             else:
                 conn.load_extension("sqlite_vec")
             self.vector_search_enabled = True
+            conn.close()
         except Exception:
             self.vector_search_enabled = False
-        finally:
             try:
-                conn.close()
+                if 'conn' in locals():
+                    conn.close()
             except Exception:
                 pass
 

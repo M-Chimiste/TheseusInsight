@@ -16,7 +16,7 @@
     "trust_remote_code": null
   },
   "content_extraction_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_name": "qwen3:235b",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
@@ -24,7 +24,7 @@
     "trust_remote_code": null
   },
   "newsletter_sections_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_name": "qwen3:235b",
     "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
@@ -32,8 +32,8 @@
     "trust_remote_code": null
   },
   "newsletter_intro_model": {
-    "model_name": "gemini-2.0-flash",
-    "model_type": "gemini",
+    "model_name": "llama4:17b-maverick-128e-instruct-q4_K_M",
+    "model_type": "ollama",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072,

@@ -80,18 +80,41 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 
 ```
 theseus_insight/
-  api/               # FastAPI models, tasks and routes
-  communication/     # Gmail and YouTube helpers
-  data_model/        # SQLite interactions and pydantic models
-  data_processing/   # Arxiv harvesting utilities
-  inference/         # LLM and TTS wrappers
-  pdf/               # PDF parsing helpers
-  podcast/           # Podcast and visualiser generation
-  main.py            # FastAPI entrypoint
-  theseus_insight.py # Pipeline orchestrator
+  api/                    # FastAPI backend components
+    routers/              # Modular API route definitions
+      papers.py           # Paper search, similarity, embeddings
+      settings.py         # Configuration and credentials
+      model_providers.py  # Model provider management
+      runs_and_tasks.py   # Task management and status
+      logs.py             # Logging and task history
+      newsletters_and_podcasts.py  # Content generation
+      actions.py          # Visualizer pipeline actions
+      database.py         # Import/export functionality
+      websockets.py       # WebSocket connections
+      __init__.py         # Router registry
+    dependencies.py       # Shared dependencies (db, credentials)
+    models.py            # Pydantic data models
+    tasks.py             # Background task management
+  communication/          # Gmail and YouTube helpers
+  data_model/            # SQLite interactions and pydantic models
+  data_processing/       # Arxiv harvesting utilities
+  inference/             # LLM and TTS wrappers
+  pdf/                   # PDF parsing helpers
+  podcast/               # Podcast and visualiser generation
+  main.py                # FastAPI entrypoint and app configuration
+  theseus_insight.py     # Pipeline orchestrator
 ```
 
 Configuration files live in `config/` and the React app is located in `theseus-ui/`.
+
+### API Router Architecture
+
+The FastAPI backend uses a modular router architecture for better maintainability and separation of concerns:
+
+- **Centralized Dependencies**: Shared resources like database connections and credential keys are managed in `api/dependencies.py`
+- **Focused Routers**: Each router handles a specific domain (papers, settings, tasks, etc.)
+- **Clean Separation**: Route definitions are separated from the main application setup
+- **Easy Extension**: New functionality can be added by creating focused router modules
 
 ---
 

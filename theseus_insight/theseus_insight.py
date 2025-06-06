@@ -401,23 +401,65 @@ class TheseusInsight:
             if self.verbose:
                 print(f"Failed to clear judge model cache: {e}")
 
-    def _handle_no_papers_found(self):
-        """Handle the case where no papers were found from ArXiv."""
-        if self.verbose:
-            print("No papers found from ArXiv for the specified date range and categories.")
+    def _handle_no_papers_found(self, reason="no_papers_from_arxiv"):
+        """Handle the case where no papers were found from ArXiv or all papers were duplicates."""
         
-        # Log the event
-        log = Logs(
-            task_id=self.task_id, 
-            status="NO_PAPERS_FOUND",
-            datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        )
-        self.papers_db.insert_log(log)
-        
-        # Send notification email if email generation is enabled
-        if self.generate_email and self.receiver_address:
-            try:
-                no_papers_message = f"""
+        if reason == "all_duplicates":
+            if self.verbose:
+                print("All papers already exist in database - no new papers to process.")
+            log_status = "NO_NEW_PAPERS_ALL_DUPLICATES"
+            email_message = f"""
+No New Research Papers - Theseus Insight
+
+Dear Subscriber,
+
+We retrieved research papers from ArXiv for the period {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}, but all papers found were already processed in previous runs.
+
+This means:
+• ArXiv papers were successfully retrieved for your specified categories
+• All papers have been previously analyzed and included in earlier newsletters
+• No new research papers were published in your areas of interest during this period
+
+Search Parameters:
+• Date Range: {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}
+• Categories: {getattr(self, 'arxiv_filter_categories', 'Not specified')}
+
+We'll continue monitoring for new papers in your next scheduled run.
+
+Best regards,
+Theseus Insight
+            """.strip()
+        elif reason == "threshold_not_met":
+            if self.verbose:
+                print("No papers met the relevance threshold.")
+            log_status = "NO_PAPERS_MEET_THRESHOLD"
+            email_message = f"""
+No Relevant Research Papers - Theseus Insight
+
+Dear Subscriber,
+
+We retrieved research papers from ArXiv for the period {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}, but none of the papers met your relevance criteria.
+
+This means:
+• ArXiv papers were successfully retrieved for your specified categories
+• After analyzing each paper's relevance to your research interests, none scored above the minimum threshold
+• The papers published during this period may not align closely with your specified research focus
+
+Search Parameters:
+• Date Range: {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}
+• Categories: {getattr(self, 'arxiv_filter_categories', 'Not specified')}
+• Relevance Threshold: {getattr(self, 'cosine_similarity_threshold', 'Not specified')}
+
+Consider lowering your relevance threshold if you'd like to receive papers with broader relevance to your interests.
+
+Best regards,
+Theseus Insight
+            """.strip()
+        else:
+            if self.verbose:
+                print("No papers found from ArXiv for the specified date range and categories.")
+            log_status = "NO_PAPERS_FOUND"
+            email_message = f"""
 No Research Papers Found - Theseus Insight
 
 Dear Subscriber,
@@ -437,28 +479,51 @@ We'll try again during the next scheduled run. If this issue persists, please ch
 
 Best regards,
 Theseus Insight Team
-                """.strip()
+            """.strip()
+        
+        # Log the event
+        log = Logs(
+            task_id=self.task_id, 
+            status=log_status,
+            datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        )
+        self.papers_db.insert_log(log)
+        
+        # Send notification email if email generation is enabled
+        if self.generate_email and self.receiver_address:
+            try:
                 
                 # Compose the email message
                 self.communication.compose_message(
-                    content=no_papers_message,
+                    content=email_message,
                     start_date=self.start_date,
                     end_date=self.end_date
                 )
                 # Replace the subject to indicate no papers found (remove existing and set new)
                 if self.communication.email_message:
                     del self.communication.email_message['Subject']
-                    self.communication.email_message['Subject'] = "Theseus Insight - No Papers Found"
+                    if reason == "all_duplicates":
+                        self.communication.email_message['Subject'] = "Theseus Insight - No New Papers"
+                    elif reason == "threshold_not_met":
+                        self.communication.email_message['Subject'] = "Theseus Insight - No Relevant Papers"
+                    else:
+                        self.communication.email_message['Subject'] = "Theseus Insight - No Papers Found"
                 self.communication.send_email()
                 
                 if self.verbose:
                     print(f"Sent 'no papers found' notification to {self.receiver_address}")
                     
                 # Log successful email notification
+                if reason == "all_duplicates":
+                    notification_type = "NO_NEW_PAPERS"
+                elif reason == "threshold_not_met":
+                    notification_type = "NO_RELEVANT_PAPERS"
+                else:
+                    notification_type = "NO_PAPERS_FOUND"
                 self.papers_db.insert_log(
                     Logs(
                         task_id=self.task_id, 
-                        status=f"EMAIL_NO_PAPERS_NOTIFICATION: Sent to {self.receiver_address}",
+                        status=f"EMAIL_{notification_type}_NOTIFICATION: Sent to {self.receiver_address}",
                         datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     )
                 )
@@ -787,11 +852,10 @@ Theseus Insight Team
                             
                             if len(new_papers_df) == 0:
                                 if self.verbose:
-                                    print("All papers already exist in database, skipping embedding stage")
-                                # Create empty filtered_df to continue pipeline
-                                filtered_df = data_df.iloc[0:0].copy()  # Empty dataframe with same columns
-                                filtered_df['cosine_similarity'] = []
-                                filtered_df['abstract_embedding'] = []
+                                    print("All papers already exist in database - no new papers to process")
+                                # Handle no new papers case and exit early
+                                self._handle_no_papers_found(reason="all_duplicates")
+                                return
                             else:
                                 # Process only new papers
                                 abstracts = list(new_papers_df['abstract'])
@@ -811,6 +875,14 @@ Theseus Insight Team
                                 # Filter by threshold
                                 filtered_df = new_papers_df[new_papers_df['cosine_similarity'] >= self.cosine_similarity_threshold]
                                 filtered_df = filtered_df.reset_index(drop=True)
+                                
+                                # Check if no papers meet the threshold criteria
+                                if len(filtered_df) == 0:
+                                    if self.verbose:
+                                        print(f"No papers meet the cosine similarity threshold ({self.cosine_similarity_threshold})")
+                                    # Handle no papers meeting criteria and exit early
+                                    self._handle_no_papers_found(reason="threshold_not_met")
+                                    return
                         else:
                             # Original behavior when not saving to DB
                             abstracts = list(data_df['abstract'])
@@ -830,6 +902,14 @@ Theseus Insight Team
                             # Filter by threshold
                             filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
                             filtered_df = filtered_df.reset_index(drop=True)
+                            
+                            # Check if no papers meet the threshold criteria
+                            if len(filtered_df) == 0:
+                                if self.verbose:
+                                    print(f"No papers meet the cosine similarity threshold ({self.cosine_similarity_threshold})")
+                                # Handle no papers meeting criteria and exit early
+                                self._handle_no_papers_found(reason="threshold_not_met")
+                                return
                         
                         # Ensure filtered_df is always defined (safety check)
                         if 'filtered_df' not in locals():

@@ -7,6 +7,8 @@ from .newsletters_and_podcasts import router as newsletters_and_podcasts_router
 from .actions import router as actions_router
 from .database import router as database_router
 from .websockets import router as websockets_router, manager as websocket_manager
+from .research_agent import router as research_agent_router
+from .model_catalog import router as model_catalog_router
 
 # List of all routers for easy importing in main.py
 all_routers = [
@@ -18,7 +20,9 @@ all_routers = [
     newsletters_and_podcasts_router,
     actions_router,
     database_router,
-    websockets_router
+    websockets_router,
+    research_agent_router,
+    model_catalog_router
 ]
 
 __all__ = [
@@ -32,5 +36,7 @@ __all__ = [
     "database_router",
     "websockets_router",
     "websocket_manager",
+    "research_agent_router",
+    "model_catalog_router",
     "all_routers"
 ] 

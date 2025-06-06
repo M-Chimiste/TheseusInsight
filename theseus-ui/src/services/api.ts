@@ -131,8 +131,42 @@ export const runsApi = {
   deleteRunArtifact: (runId: number) => api.delete(`/runs/${runId}/artifact`),
 };
 
+// Research Agent API
+export const researchAgentApi = {
+  runResearch: (researchQuestion: string) => 
+    api.post('/research-agent/run', { research_question: researchQuestion }),
+  getReview: (reviewId: number) => 
+    api.get(`/research-agent/reviews/${reviewId}`),
+  getRecentReviews: (limit: number = 10) => 
+    api.get('/research-agent/reviews', { params: { limit } }),
+  getModelConfig: () => 
+    api.get('/settings/research-agent-model-config'),
+  updateModelConfig: (config: any) => 
+    api.put('/settings/research-agent-model-config', config),
+};
+
+// Model Catalog API
+export const modelCatalogApi = {
+  createModel: (model: any) => 
+    api.post('/model-catalog', model),
+  searchModels: (params: any = {}) => 
+    api.get('/model-catalog', { params }),
+  getModel: (modelId: number) => 
+    api.get(`/model-catalog/${modelId}`),
+  updateModel: (modelId: number, model: any) => 
+    api.put(`/model-catalog/${modelId}`, model),
+  deleteModel: (modelId: number) => 
+    api.delete(`/model-catalog/${modelId}`),
+  getModelsByProvider: (providerName: string, modelType?: string) => {
+    const params = modelType ? { model_type: modelType } : {};
+    return api.get(`/model-catalog/by-provider/${providerName}`, { params });
+  },
+  toggleFavorite: (modelId: number) => 
+    api.post(`/model-catalog/${modelId}/favorite`),
+};
+
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer') => {
+export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };

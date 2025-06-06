@@ -28,7 +28,7 @@ import {
   LinearProgress,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../services/api';
+import { settingsApi, researchAgentApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -135,6 +135,11 @@ const Settings: React.FC = () => {
     queryKey: ['modelProviders'],
     queryFn: () => settingsApi.getModelProviders().then(res => res.data || []),
   });
+
+  const { data: researchAgentModelConfig, isLoading: isLoadingResearchAgent } = useQuery({
+    queryKey: ['researchAgentModelConfig'],
+    queryFn: () => researchAgentApi.getModelConfig().then((res: any) => res.data),
+  });
   
   const updateOrchestrationMutation = useMutation({
     mutationFn: (newConfig: any) => settingsApi.updateOrchestrationConfig(newConfig),
@@ -199,6 +204,15 @@ const Settings: React.FC = () => {
       setSuccess('Credentials updated');
     },
     onError: (error: any) => setError(error.message),
+  });
+
+  const updateResearchAgentModelConfigMutation = useMutation({
+    mutationFn: (config: any) => researchAgentApi.updateModelConfig(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['researchAgentModelConfig'] });
+      setSuccess('Research agent model configuration updated successfully');
+    },
+    onError: (error: any) => setError(error.message || 'Failed to update research agent model config'),
   });
 
   const exportDatabaseMutation = useMutation({
@@ -335,6 +349,36 @@ const Settings: React.FC = () => {
   }, [credentials]);
 
   const handleModelConfigChange = (modelKey: string, field: string, value: any) => {
+    // Handle research agent model config separately
+    if (modelKey === 'research_agent_model_config') {
+      if (!researchAgentModelConfig) return;
+      const newResearchAgentConfig = JSON.parse(JSON.stringify(researchAgentModelConfig)); // Deep copy
+      
+      // Handle nested paths like "boss_model.model_name" or "worker_models.summary.temperature"
+      if (field.includes('.')) {
+        const fieldParts = field.split('.');
+        let currentObj = newResearchAgentConfig;
+        
+        // Navigate to the parent object
+        for (let i = 0; i < fieldParts.length - 1; i++) {
+          if (!currentObj[fieldParts[i]]) {
+            currentObj[fieldParts[i]] = {};
+          }
+          currentObj = currentObj[fieldParts[i]];
+        }
+        
+        // Set the final value
+        currentObj[fieldParts[fieldParts.length - 1]] = value;
+      } else {
+        newResearchAgentConfig[field] = value;
+      }
+      
+      // Optimistically update local state for UI responsiveness
+      queryClient.setQueryData(['researchAgentModelConfig'], newResearchAgentConfig);
+      return;
+    }
+    
+    // Handle regular orchestration config
     if (!orchestrationConfig) return;
     const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
     
@@ -529,7 +573,7 @@ const Settings: React.FC = () => {
     );
   };
 
-  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders || isCheckingDbTasks) {
+  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders || isLoadingResearchAgent || isCheckingDbTasks) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
@@ -549,12 +593,12 @@ const Settings: React.FC = () => {
   const renderModelConfigFields = (modelKey: string, config: any) => {
     if (!config) return <Typography>Configuration not available for {modelKey}.</Typography>;
 
-    const currentConfig = orchestrationConfig?.[modelKey] || {};
-
     // Research Agent model is a special case (boss + worker models)
     if (modelKey === 'research_agent_model_config') {
-      return renderResearchAgentModelConfig(currentConfig);
+      return renderResearchAgentModelConfig(config);
     }
+
+    const currentConfig = config;
 
     // TTS model is a special case (single column)
     if (modelKey === 'tts_model') {
@@ -780,23 +824,38 @@ const Settings: React.FC = () => {
                   <Typography variant="h6" gutterBottom component="div">
                     {tabDef.label} Settings
                   </Typography>
-                  {orchestrationConfig && orchestrationConfig[tabDef.key] ?
-                    renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
-                    : <Typography>Loading configuration for {tabDef.label}...</Typography>
-                  }
+                  {tabDef.key === 'research_agent_model_config' ? (
+                    researchAgentModelConfig ?
+                      renderModelConfigFields(tabDef.key, researchAgentModelConfig)
+                      : <Typography>Loading configuration for {tabDef.label}...</Typography>
+                  ) : (
+                    orchestrationConfig && orchestrationConfig[tabDef.key] ?
+                      renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
+                      : <Typography>Loading configuration for {tabDef.label}...</Typography>
+                  )}
                   <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-start' }}>
                     <Button
                       variant="contained"
                       onClick={() => {
-                        if (orchestrationConfig) {
-                           // Create a payload with only the specific model config that was changed
-                           const payload = {
-                            ...orchestrationConfig, // Send the whole config, backend expects OrchestrationConfig
-                           };
-                          updateOrchestrationMutation.mutate(payload);
+                        if (tabDef.key === 'research_agent_model_config') {
+                          if (researchAgentModelConfig) {
+                            updateResearchAgentModelConfigMutation.mutate(researchAgentModelConfig);
+                          }
+                        } else {
+                          if (orchestrationConfig) {
+                             // Create a payload with only the specific model config that was changed
+                             const payload = {
+                              ...orchestrationConfig, // Send the whole config, backend expects OrchestrationConfig
+                             };
+                            updateOrchestrationMutation.mutate(payload);
+                          }
                         }
                       }}
-                      disabled={updateOrchestrationMutation.isPending || !orchestrationConfig || !orchestrationConfig[tabDef.key]}
+                      disabled={
+                        tabDef.key === 'research_agent_model_config' 
+                          ? updateResearchAgentModelConfigMutation.isPending || !researchAgentModelConfig
+                          : updateOrchestrationMutation.isPending || !orchestrationConfig || !orchestrationConfig[tabDef.key]
+                      }
                     >
                       Save {tabDef.label} Settings
                     </Button>

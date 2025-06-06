@@ -8,6 +8,7 @@ import MenuBookIcon from '@mui/icons-material/MenuBook';
 import HistoryIcon from '@mui/icons-material/History';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
+import ScienceIcon from '@mui/icons-material/Science';
 
 interface NavCardItem {
   title: string;
@@ -17,6 +18,12 @@ interface NavCardItem {
 }
 
 const navItems: NavCardItem[] = [
+  {
+    title: 'Research Agent',
+    description: 'Automated literature reviews with AI-generated reports.',
+    icon: <ScienceIcon fontSize="large" color="primary" />,
+    path: '/research-agent',
+  },
   {
     title: 'Newsletter',
     description: 'Generate research newsletters based on criteria.',

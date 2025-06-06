@@ -15,6 +15,8 @@ const RunHistory = React.lazy(() => import('./pages/RunHistory'));
 const PodcastHistory = React.lazy(() => import('./pages/PodcastHistory'));
 const PodcastDetail = React.lazy(() => import('./pages/PodcastDetail'));
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+const ResearchAgent = React.lazy(() => import('./pages/ResearchAgent'));
+const ModelCatalog = React.lazy(() => import('./pages/ModelCatalog'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -39,6 +41,8 @@ function App() {
                   <Route path="/newsletter" element={<Newsletter />} />
                   <Route path="/podcast" element={<Podcast />} />
                   <Route path="/visualizer" element={<Visualizer />} />
+                  <Route path="/research-agent" element={<ResearchAgent />} />
+                  <Route path="/model-catalog" element={<ModelCatalog />} />
                   <Route path="/papers" element={<Papers />} />
                   <Route path="/run-history" element={<RunHistory />} />
                   <Route path="/podcast-history" element={<PodcastHistory />} />

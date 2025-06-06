@@ -176,6 +176,26 @@ class PaperDatabase:
                 )
 
             cursor.execute(
+                "CREATE TABLE IF NOT EXISTS model_catalog ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "alias TEXT NOT NULL UNIQUE,"  # Display name/alias
+                "model_string TEXT NOT NULL,"  # Actual model identifier
+                "provider_name TEXT NOT NULL,"  # Provider (ollama, openai, etc.)
+                "model_type TEXT NOT NULL,"  # Type of model (chat, embedding, etc.)
+                "description TEXT,"  # Markdown description
+                "max_new_tokens INTEGER,"  # Default token limit
+                "temperature REAL,"  # Default temperature
+                "num_ctx INTEGER,"  # Context window
+                "trust_remote_code BOOLEAN DEFAULT FALSE,"  # For embedding models
+                "created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+                "updated_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+                "tags TEXT,"  # JSON array of tags
+                "is_favorite BOOLEAN DEFAULT FALSE,"
+                "FOREIGN KEY (provider_name) REFERENCES model_providers (name)"
+                ")"
+            )
+
+            cursor.execute(
                 "CREATE TABLE IF NOT EXISTS tasks ("
                 "task_id TEXT PRIMARY KEY,"
                 "task_type TEXT NOT NULL,"
@@ -1617,3 +1637,225 @@ class PaperDatabase:
                 }
                 for row in rows
             ]
+
+    # Model Catalog CRUD Operations
+    def insert_model_catalog_entry(self, alias: str, model_string: str, provider_name: str, 
+                                   model_type: str, description: str = None, max_new_tokens: int = None,
+                                   temperature: float = None, num_ctx: int = None, 
+                                   trust_remote_code: bool = False, tags: list = None,
+                                   is_favorite: bool = False) -> int:
+        """Insert a new model into the catalog."""
+        tags_json = json.dumps(tags) if tags else None
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO model_catalog (alias, model_string, provider_name, model_type, description, "
+                "max_new_tokens, temperature, num_ctx, trust_remote_code, tags, is_favorite) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (alias, model_string, provider_name, model_type, description, 
+                 max_new_tokens, temperature, num_ctx, trust_remote_code, tags_json, is_favorite)
+            )
+            return cursor.lastrowid
+
+    def get_model_catalog_entry(self, model_id: int) -> dict | None:
+        """Get a specific model from the catalog by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, alias, model_string, provider_name, model_type, description, "
+                "max_new_tokens, temperature, num_ctx, trust_remote_code, created_at, "
+                "updated_at, tags, is_favorite FROM model_catalog WHERE id = ?",
+                (model_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "alias": row[1],
+                    "model_string": row[2],
+                    "provider_name": row[3],
+                    "model_type": row[4],
+                    "description": row[5],
+                    "max_new_tokens": row[6],
+                    "temperature": row[7],
+                    "num_ctx": row[8],
+                    "trust_remote_code": bool(row[9]) if row[9] is not None else False,
+                    "created_at": row[10],
+                    "updated_at": row[11],
+                    "tags": json.loads(row[12]) if row[12] else [],
+                    "is_favorite": bool(row[13]) if row[13] is not None else False
+                }
+            return None
+
+    def get_all_model_catalog_entries(self, provider_name: str = None, model_type: str = None,
+                                      is_favorite: bool = None, search: str = None,
+                                      page: int = 1, page_size: int = 20) -> dict:
+        """Get all models from the catalog with optional filtering and pagination."""
+        conditions = []
+        params = []
+        
+        if provider_name:
+            conditions.append("provider_name = ?")
+            params.append(provider_name)
+        
+        if model_type:
+            conditions.append("model_type = ?")
+            params.append(model_type)
+            
+        if is_favorite is not None:
+            conditions.append("is_favorite = ?")
+            params.append(is_favorite)
+            
+        if search:
+            conditions.append("(alias LIKE ? OR model_string LIKE ? OR description LIKE ?)")
+            search_param = f"%{search}%"
+            params.extend([search_param, search_param, search_param])
+        
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        
+        # Count total
+        with self.get_cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM model_catalog{where_clause}", params)
+            total_count = cursor.fetchone()[0]
+        
+        # Get paginated results
+        offset = (page - 1) * page_size
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"SELECT id, alias, model_string, provider_name, model_type, description, "
+                f"max_new_tokens, temperature, num_ctx, trust_remote_code, created_at, "
+                f"updated_at, tags, is_favorite FROM model_catalog{where_clause} "
+                f"ORDER BY is_favorite DESC, alias ASC LIMIT ? OFFSET ?",
+                params + [page_size, offset]
+            )
+            rows = cursor.fetchall()
+        
+        models = []
+        for row in rows:
+            models.append({
+                "id": row[0],
+                "alias": row[1],
+                "model_string": row[2],
+                "provider_name": row[3],
+                "model_type": row[4],
+                "description": row[5],
+                "max_new_tokens": row[6],
+                "temperature": row[7],
+                "num_ctx": row[8],
+                "trust_remote_code": bool(row[9]) if row[9] is not None else False,
+                "created_at": row[10],
+                "updated_at": row[11],
+                "tags": json.loads(row[12]) if row[12] else [],
+                "is_favorite": bool(row[13]) if row[13] is not None else False
+            })
+        
+        total_pages = (total_count + page_size - 1) // page_size
+        
+        return {
+            "models": models,
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "current_page": page,
+            "page_size": page_size
+        }
+
+    def update_model_catalog_entry(self, model_id: int, alias: str = None, model_string: str = None,
+                                   provider_name: str = None, model_type: str = None,
+                                   description: str = None, max_new_tokens: int = None,
+                                   temperature: float = None, num_ctx: int = None,
+                                   trust_remote_code: bool = None, tags: list = None,
+                                   is_favorite: bool = None) -> bool:
+        """Update a model in the catalog."""
+        updates = []
+        params = []
+        
+        if alias is not None:
+            updates.append("alias = ?")
+            params.append(alias)
+        if model_string is not None:
+            updates.append("model_string = ?")
+            params.append(model_string)
+        if provider_name is not None:
+            updates.append("provider_name = ?")
+            params.append(provider_name)
+        if model_type is not None:
+            updates.append("model_type = ?")
+            params.append(model_type)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if max_new_tokens is not None:
+            updates.append("max_new_tokens = ?")
+            params.append(max_new_tokens)
+        if temperature is not None:
+            updates.append("temperature = ?")
+            params.append(temperature)
+        if num_ctx is not None:
+            updates.append("num_ctx = ?")
+            params.append(num_ctx)
+        if trust_remote_code is not None:
+            updates.append("trust_remote_code = ?")
+            params.append(trust_remote_code)
+        if tags is not None:
+            updates.append("tags = ?")
+            params.append(json.dumps(tags))
+        if is_favorite is not None:
+            updates.append("is_favorite = ?")
+            params.append(is_favorite)
+        
+        if not updates:
+            return False
+        
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(model_id)
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"UPDATE model_catalog SET {', '.join(updates)} WHERE id = ?",
+                params
+            )
+            return cursor.rowcount > 0
+
+    def delete_model_catalog_entry(self, model_id: int) -> bool:
+        """Delete a model from the catalog."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM model_catalog WHERE id = ?", (model_id,))
+            return cursor.rowcount > 0
+
+    def get_models_by_provider_and_type(self, provider_name: str, model_type: str = None) -> list:
+        """Get models from catalog filtered by provider and optionally by type."""
+        conditions = ["provider_name = ?"]
+        params = [provider_name]
+        
+        if model_type:
+            conditions.append("model_type = ?")
+            params.append(model_type)
+        
+        where_clause = " WHERE " + " AND ".join(conditions)
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"SELECT id, alias, model_string, provider_name, model_type, description, "
+                f"max_new_tokens, temperature, num_ctx, trust_remote_code, tags, is_favorite "
+                f"FROM model_catalog{where_clause} ORDER BY is_favorite DESC, alias ASC",
+                params
+            )
+            rows = cursor.fetchall()
+        
+        models = []
+        for row in rows:
+            models.append({
+                "id": row[0],
+                "alias": row[1],
+                "model_string": row[2],
+                "provider_name": row[3],
+                "model_type": row[4],
+                "description": row[5],
+                "max_new_tokens": row[6],
+                "temperature": row[7],
+                "num_ctx": row[8],
+                "trust_remote_code": bool(row[9]) if row[9] is not None else False,
+                "tags": json.loads(row[10]) if row[10] else [],
+                "is_favorite": bool(row[11]) if row[11] is not None else False
+            })
+        
+        return models

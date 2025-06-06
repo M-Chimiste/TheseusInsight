@@ -28,6 +28,8 @@ import {
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
   ChevronLeft as ChevronLeftIcon,
+  Science as ScienceIcon,
+  ViewModule as ViewModuleIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
@@ -76,6 +78,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
+    { text: 'Model Catalog', icon: <ViewModuleIcon />, path: '/model-catalog' },
+    { text: 'Research Agent', icon: <ScienceIcon />, path: '/research-agent' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },

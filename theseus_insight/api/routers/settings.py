@@ -1,0 +1,253 @@
+from fastapi import APIRouter, HTTPException
+from typing import Dict, List
+import json
+import os
+
+from ..models import (
+    OrchestrationConfig, ArxivCategoriesConfig, ModelProvider,
+    ResearchInterests, EmailRecipients, VisualizerSettings,
+    ModelConfig, TTSModelConfig
+)
+from ..dependencies import db, CREDENTIAL_KEYS
+from ...utils.path_resolver import get_config_path, config_file_exists
+from ... import theseus_insight as ti_module
+
+router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+@router.get("/orchestration", response_model=OrchestrationConfig)
+async def get_orchestration_config_api():
+    """Get orchestration configuration, ensuring defaults for all fields including podcast and TTS."""
+    try:
+        db_config_json = db.get_setting("orchestration")
+        loaded_config_data = {}
+
+        if db_config_json:
+            loaded_config_data = json.loads(db_config_json)
+        else:
+            # Fallback to orchestration.json if DB is empty
+            config_path = get_config_path('orchestration.json')
+            if config_file_exists('orchestration.json'):
+                with open(config_path, 'r') as f:
+                    loaded_config_data = json.load(f)
+        
+        # Define comprehensive defaults that Pydantic models expect
+        default_embedding_model = ModelConfig(model_name='Alibaba-NLP/gte-modernbert-base', model_type='sentence-transformers', trust_remote_code=True)
+        default_judge_model = ModelConfig(model_name='phi4-mini:3.8b-q8_0', model_type='ollama', max_new_tokens=512, temperature=0.1, num_ctx=4096)
+        default_content_extraction_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        default_newsletter_sections_model = ModelConfig(model_name='gemma3:27b-it-qat', model_type='ollama', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        default_newsletter_intro_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
+        default_podcast_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=8192, temperature=0.1, num_ctx=131072)
+        default_tts_model = TTSModelConfig(tts_provider='openai', tts_model_name='tts-1', speaker_1_voice='sage', speaker_1_speed=1.0, speaker_2_voice='ash', speaker_2_speed=1.0)
+
+        # Create OrchestrationConfig by merging loaded data with defaults for missing top-level keys
+        # Pydantic will handle missing sub-fields within ModelConfig/TTSModelConfig if they are optional or have defaults in their own definitions
+        final_config = OrchestrationConfig(
+            embedding_model=ModelConfig(**loaded_config_data.get('embedding_model', default_embedding_model.dict())),
+            judge_model=ModelConfig(**loaded_config_data.get('judge_model', default_judge_model.dict())),
+            content_extraction_model=ModelConfig(**loaded_config_data.get('content_extraction_model', default_content_extraction_model.dict())),
+            newsletter_sections_model=ModelConfig(**loaded_config_data.get('newsletter_sections_model', default_newsletter_sections_model.dict())),
+            newsletter_intro_model=ModelConfig(**loaded_config_data.get('newsletter_intro_model', default_newsletter_intro_model.dict())),
+            podcast_model=ModelConfig(**loaded_config_data.get('podcast_model', default_podcast_model.dict())),
+            tts_model=TTSModelConfig(**loaded_config_data.get('tts_model', default_tts_model.dict()))
+        )
+        return final_config
+
+    except Exception as e:
+        # Adding more context to the error for easier debugging
+        error_detail = f"Error getting orchestration config: {str(e)}. DB JSON: {db_config_json if 'db_config_json' in locals() else 'Not fetched/Error'}. Loaded Data: {loaded_config_data if 'loaded_config_data' in locals() else 'Not loaded/Error'}."
+        raise HTTPException(status_code=500, detail=error_detail)
+
+@router.put("/orchestration")
+async def update_orchestration_config_api(config: OrchestrationConfig):
+    """Update orchestration configuration."""
+    try:
+        db.set_setting("orchestration", config.json())
+        # Also update orchestration.json for legacy/fallback
+        config_path = get_config_path('orchestration.json')
+        with open(config_path, 'w') as f:
+            json.dump(json.loads(config.json()), f, indent=2)
+        return {"status": "success", "message": "Orchestration configuration updated successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating orchestration config: {str(e)}")
+
+@router.get("/arxiv-categories", response_model=ArxivCategoriesConfig)
+async def get_arxiv_categories_api():
+    """Get ArXiv search categories."""
+    try:
+        settings_json = db.get_setting("arxiv_search_categories")
+        if settings_json:
+            return ArxivCategoriesConfig.parse_raw(settings_json)
+        # Return default ArXivCategoriesConfig if not found in DB
+        return ArxivCategoriesConfig(
+            main_category="cs",
+            filter_categories=["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting ArXiv categories: {str(e)}")
+
+@router.put("/arxiv-categories")
+async def update_arxiv_categories_api(config: ArxivCategoriesConfig):
+    """Update ArXiv search categories."""
+    try:
+        db.set_setting("arxiv_search_categories", config.json())
+        return {"status": "success", "message": "ArXiv categories updated successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating ArXiv categories: {str(e)}")
+
+@router.get("/research-interests", response_model=ResearchInterests)
+async def get_research_interests_api():
+    """Get research interests. Prioritizes DB, then research_interests.txt, then empty string."""
+    try:
+        interests = db.get_setting("research_interests")
+        if interests is not None: # Check if DB returned a value (could be empty string)
+            return ResearchInterests(interests=interests)
+        else:
+            # Fallback to research_interests.txt
+            config_path = get_config_path('research_interests.txt')
+            if config_file_exists('research_interests.txt'):
+                with open(config_path, 'r') as f:
+                    interests_from_file = f.read().strip()
+                return ResearchInterests(interests=interests_from_file)
+            else:
+                # Default to empty string if neither DB nor file exists
+                return ResearchInterests(interests="")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting research interests: {str(e)}")
+
+@router.put("/research-interests", response_model=ResearchInterests)
+async def update_research_interests_api(data: ResearchInterests):
+    """Update research interests in DB and research_interests.txt."""
+    try:
+        # Save to DB
+        db.set_setting("research_interests", data.interests)
+        
+        # Save to research_interests.txt
+        config_path = get_config_path('research_interests.txt')
+        try:
+            with open(config_path, 'w') as f:
+                f.write(data.interests)
+        except IOError as e:
+            # Log error but don't fail the request if DB save was successful
+            print(f"Warning: Could not write to {config_path}: {e}")
+            # Optionally, you could raise an HTTPException here if writing to file is critical
+            # raise HTTPException(status_code=500, detail=f"Error saving research interests to file: {str(e)}")
+
+        return data # Return the updated data
+    except Exception as e:
+        # Log the full error for debugging
+        print(f"Full error updating research interests: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating research interests: {str(e)}")
+
+@router.get("/email-recipients", response_model=EmailRecipients)
+async def get_email_recipients():
+    """Get email recipients list."""
+    try:
+        recipients_list = db.get_email_recipients()
+        return EmailRecipients(recipients=recipients_list)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/email-recipients")
+async def update_email_recipients(data: EmailRecipients):
+    """Update email recipients list."""
+    try:
+        # Basic email validation (optional here if Pydantic model handles it, or keep for defense-in-depth)
+        for email in data.recipients:
+            if "@" not in email or "." not in email: # Basic check
+                raise HTTPException(status_code=400, detail=f"Invalid email address: {email}")
+        db.set_email_recipients(data.recipients)
+        return {"status": "success", "message": "Email recipients updated successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/visualizer-settings", response_model=VisualizerSettings)
+async def get_visualizer_settings():
+    """Get visualizer settings."""
+    try:
+        settings = db.get_visualizer_settings()
+        if not settings:
+            # Return default settings from the model
+            return VisualizerSettings().dict()
+        return settings
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/send-test-email")
+async def send_test_email():
+    """Send a test email to email address in GMAIL_SENDER_ADDRESS environment variable."""
+    try:
+        from ...communication import GmailCommunication
+        
+        # Initialize email client
+        gmail_sender = os.getenv("GMAIL_SENDER_ADDRESS")
+        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+        
+        if not gmail_sender or not gmail_password:
+            raise HTTPException(
+                status_code=500,
+                detail="Email credentials not configured"
+            )
+            
+        comm = GmailCommunication(
+            sender_address=gmail_sender,
+            app_password=gmail_password,
+            receiver_address=gmail_sender
+        )
+        
+        # Send test email
+        test_content = """
+        This is a test email from Theseus Insight.
+        
+        If you're receiving this, your email configuration is working correctly.
+        
+        Best regards,
+        Theseus Insight Team
+        """
+        
+        from datetime import datetime
+        comm.compose_message(
+            content=test_content,
+            start_date=datetime.now().date(),
+            end_date=datetime.now().date(),
+            subject="Theseus Insight - Test Email"
+        )
+        comm.send_email()
+
+        return {"status": "success", "message": "Test email sent successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/credentials")
+async def get_credentials():
+    """Return API credentials from DB or environment."""
+    try:
+        creds = {}
+        for key in CREDENTIAL_KEYS:
+            if key == "OLLAMA_URL":
+                val = db.get_setting(key) or os.getenv(key, "")
+            else:
+                val = db.get_secret_setting(key) or os.getenv(key, "")
+            creds[key] = val
+        return creds
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/credentials")
+async def update_credentials(data: Dict[str, str]):
+    """Update credentials in DB and environment."""
+    try:
+        for key, value in data.items():
+            if key not in CREDENTIAL_KEYS:
+                continue
+            if key == "OLLAMA_URL":
+                db.set_setting(key, value)
+            else:
+                db.set_secret_setting(key, value)
+            os.environ[key] = value
+            if hasattr(ti_module, key):
+                setattr(ti_module, key, value)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) 

@@ -25,13 +25,18 @@ async def run_newsletter(
     config: Optional[str] = Form(None),
     intro_music_file: Optional[UploadFile] = File(None)
 ):
-    """Start the newsletter generation pipeline."""
+    """
+    Starts the newsletter generation pipeline.
+
+    This endpoint accepts a newsletter configuration and an optional intro music file.
+    It creates a new task for generating a newsletter based on the provided configuration.
+    """
     try:
         # Parse config
         if not config:
             raise HTTPException(status_code=400, detail="Newsletter configuration is required")
         
-        newsletter_config = NewsletterConfig.parse_raw(config)
+        newsletter_config = NewsletterConfig.model_validate_json(config)
         task_id = str(uuid.uuid4())
         
         # Save intro music file if provided
@@ -61,18 +66,47 @@ async def run_newsletter_pipeline_endpoint(
     params: NewsletterRunParams,
     background_tasks: BackgroundTasks
 ):
+    """
+    Initiates the newsletter pipeline run process.
+
+    This endpoint accepts parameters for running the newsletter pipeline and initiates a background task
+    to execute the pipeline. It returns a task ID for tracking the progress of the pipeline run.
+
+    Args:
+        params (NewsletterRunParams): Parameters for running the newsletter pipeline.
+        background_tasks (BackgroundTasks): An instance of BackgroundTasks for managing background tasks.
+
+    Returns:
+        dict: A dictionary containing the task ID for tracking the pipeline run progress.
+    """
     task_id = str(uuid.uuid4())
     run_db_path = DB_URL
     loop = asyncio.get_event_loop()
 
     def pipeline_progress_callback(stage: str, progress_val: float, message: str):
-        """Relay progress from TheseusInsight.run to connected WebSocket clients."""
+        """
+        Updates the task status with the current pipeline progress.
+
+        This function is a callback for the pipeline progress. It updates the task status
+        with the current stage, progress percentage, and a message describing the progress.
+
+        Args:
+            stage (str): The current stage of the pipeline.
+            progress_val (float): The progress percentage of the current stage.
+            message (str): A message describing the current progress.
+        """
         status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
         overall_status_for_tm = TaskStatus.PROCESSING
         if stage.lower() == "newsletter_complete" and progress_val >= 100.0:
             overall_status_for_tm = TaskStatus.COMPLETED
 
         async def update_status_async():
+            """
+            Updates the task status with the current pipeline progress.
+
+            This function is a callback for the pipeline progress. It updates the task status
+            with the current stage, progress percentage, and a message describing the progress.
+            """
             await task_manager.update_task_status(
                 task_id,
                 overall_status_for_tm,
@@ -95,6 +129,16 @@ async def run_newsletter_pipeline_endpoint(
                 # Consider logging this to a file or a more robust system if it occurs
 
     async def background_pipeline_run():
+        """
+        Initiates the background pipeline run for newsletters and podcasts.
+
+        This function orchestrates the background processing of newsletters and podcasts.
+        It creates a new task for the pipeline, updates the task status, and initiates the pipeline run.
+        The pipeline progress is tracked and updated through a callback function.
+
+        Raises:
+            Exception: If an error occurs during the pipeline run, it is caught and handled.
+        """
         try:
             await task_manager.create_task(
                 task_id=task_id,
@@ -158,12 +202,23 @@ async def generate_podcast_pipeline(
     pdf_files: Optional[List[UploadFile]] = File(None, description="List of PDF files if input_type is 'pdfs'")
 ):
     """
-    Start the podcast generation pipeline using detailed parameters.
-    Accepts PodcastGenerationParams as a JSON string in 'params_json' form field,
-    an optional intro music file, and optional PDF files.
+    Initiates the podcast generation pipeline.
+
+    This endpoint accepts parameters for generating a podcast, including an optional intro music file and PDF files.
+    It creates a new task for generating the podcast based on the provided parameters, saves any uploaded files to a temporary directory,
+    and enqueues the task for processing.
+
+    Args:
+        background_tasks (BackgroundTasks): An instance of BackgroundTasks for managing background tasks.
+        params_json (str): A JSON string representing the podcast generation parameters.
+        intro_music_file (Optional[UploadFile]): The intro music file to be used in the podcast.
+        pdf_files (Optional[List[UploadFile]]): A list of PDF files to be used in the podcast, if applicable.
+
+    Returns:
+        dict: A dictionary containing the task ID and a success message.
     """
     try:
-        generation_params = PodcastGenerationParams.parse_raw(params_json)
+        generation_params = PodcastGenerationParams.model_validate_json(params_json)
         task_id = str(uuid.uuid4())
 
         # This will be the main config dictionary passed to the task manager
@@ -251,7 +306,16 @@ async def generate_podcast_pipeline(
 
 @router.get("/api/podcasts/history", response_model=List[PodcastListItemResponse])
 async def get_podcast_history_list():
-    """Get a list of all podcasts, sorted by date, for history view."""
+    """
+    Retrieves a list of podcast history items.
+
+    This endpoint fetches a list of podcast history items from the database.
+    It returns a list of podcast items with their ID, title, date, and a description snippet.
+    The list is sorted in descending order by date, with the most recent podcasts first.
+
+    Returns:
+        List[PodcastListItemResponse]: A list of podcast history items.
+    """
     try:
         podcasts_data = db.fetch_all_podcasts() # This already sorts by id DESC, which is fine if new IDs are always later dates. If date sorting is strict, we'd sort here.
         
@@ -275,7 +339,18 @@ async def get_podcast_history_list():
 
 @router.get("/api/podcasts/history/{podcast_id}", response_model=PodcastDetailResponse)
 async def get_podcast_detail(podcast_id: int):
-    """Get detailed information for a single podcast, including its parsed script."""
+    """
+    Retrieves the details of a podcast by its ID.
+
+    This endpoint fetches the details of a podcast from the database by its ID.
+    It returns a podcast detail object with ID, title, date, description, and script.
+
+    Args:
+        podcast_id (int): The ID of the podcast to retrieve.
+
+    Returns:
+        PodcastDetailResponse: A podcast detail object.
+    """
     try:
         podcast_data = db.fetch_podcast_by_id(podcast_id)
         if not podcast_data:
@@ -301,7 +376,7 @@ async def get_podcast_detail(podcast_id: int):
 
 @router.delete("/api/podcasts/history/{podcast_id}")
 async def delete_podcast(podcast_id: int):
-    """Delete a podcast by its ID."""
+    
     try:
         # Check if podcast exists first
         podcast_data = db.fetch_podcast_by_id(podcast_id)

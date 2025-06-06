@@ -312,9 +312,3 @@ class HybridSearchResponse(BaseModel):
     current_page: int
     semantic_weight: float
     keyword_weight: float
-
-# Removed the conflicting/simpler NodeStatus definition that was here.
-# class NodeStatus(BaseModel):
-#     id: str 
-#     status: str 
-#     message: Optional[str] = None 

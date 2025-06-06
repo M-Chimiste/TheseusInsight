@@ -16,7 +16,18 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("/orchestration", response_model=OrchestrationConfig)
 async def get_orchestration_config_api():
-    """Get orchestration configuration, ensuring defaults for all fields including podcast and TTS."""
+    """
+    Retrieves the orchestration configuration, ensuring defaults for all fields including podcast and TTS.
+
+    This endpoint fetches the orchestration configuration from the database.
+    It returns the configuration with defaults for all fields including podcast and TTS.
+
+    Returns:
+        OrchestrationConfig: The orchestration configuration with defaults.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the orchestration configuration.
+    """
     try:
         db_config_json = db.get_setting("orchestration")
         loaded_config_data = {}
@@ -59,7 +70,21 @@ async def get_orchestration_config_api():
 
 @router.put("/orchestration")
 async def update_orchestration_config_api(config: OrchestrationConfig):
-    """Update orchestration configuration."""
+    """
+    Updates the orchestration configuration.
+
+    This endpoint updates the orchestration configuration in the database.
+    It also updates the orchestration.json file for legacy/fallback.
+
+    Args:
+        config (OrchestrationConfig): The orchestration configuration to update.
+
+    Returns:
+        dict: A dictionary containing the status and message of the update operation.
+
+    Raises:
+        HTTPException: If an error occurs while updating the orchestration configuration.
+    """
     try:
         db.set_setting("orchestration", config.json())
         # Also update orchestration.json for legacy/fallback
@@ -72,7 +97,18 @@ async def update_orchestration_config_api(config: OrchestrationConfig):
 
 @router.get("/arxiv-categories", response_model=ArxivCategoriesConfig)
 async def get_arxiv_categories_api():
-    """Get ArXiv search categories."""
+    """
+    Retrieves the ArXiv search categories.
+
+    This endpoint fetches the ArXiv search categories from the database.
+    It returns the categories with defaults if not found in the database.
+    
+    Returns:
+        ArxivCategoriesConfig: The ArXiv search categories.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the ArXiv categories.
+    """
     try:
         settings_json = db.get_setting("arxiv_search_categories")
         if settings_json:
@@ -87,7 +123,21 @@ async def get_arxiv_categories_api():
 
 @router.put("/arxiv-categories")
 async def update_arxiv_categories_api(config: ArxivCategoriesConfig):
-    """Update ArXiv search categories."""
+    """
+    Updates the ArXiv search categories.
+
+    This endpoint updates the ArXiv search categories in the database.
+    It returns a success message if the categories are updated successfully.
+
+    Args:
+        config (ArxivCategoriesConfig): The ArXiv search categories to update.
+
+    Returns:
+        dict: A dictionary containing the status and message of the update operation.
+
+    Raises:
+        HTTPException: If an error occurs while updating the ArXiv categories.
+    """
     try:
         db.set_setting("arxiv_search_categories", config.json())
         return {"status": "success", "message": "ArXiv categories updated successfully."}
@@ -96,7 +146,18 @@ async def update_arxiv_categories_api(config: ArxivCategoriesConfig):
 
 @router.get("/research-interests", response_model=ResearchInterests)
 async def get_research_interests_api():
-    """Get research interests. Prioritizes DB, then research_interests.txt, then empty string."""
+    """
+    Retrieves the research interests.
+
+    This endpoint fetches the research interests from the database.
+    It returns the interests with defaults if not found in the database.
+
+    Returns:
+        ResearchInterests: The research interests.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the research interests.
+    """
     try:
         interests = db.get_setting("research_interests")
         if interests is not None: # Check if DB returned a value (could be empty string)
@@ -116,7 +177,21 @@ async def get_research_interests_api():
 
 @router.put("/research-interests", response_model=ResearchInterests)
 async def update_research_interests_api(data: ResearchInterests):
-    """Update research interests in DB and research_interests.txt."""
+    """
+    Updates the research interests.
+
+    This endpoint updates the research interests in the database.
+    It also updates the research_interests.txt file for legacy/fallback.
+
+    Args:
+        data (ResearchInterests): The research interests to update.
+
+    Returns:
+        ResearchInterests: The updated research interests.
+
+    Raises:
+        HTTPException: If an error occurs while updating the research interests.
+    """
     try:
         # Save to DB
         db.set_setting("research_interests", data.interests)
@@ -140,7 +215,18 @@ async def update_research_interests_api(data: ResearchInterests):
 
 @router.get("/email-recipients", response_model=EmailRecipients)
 async def get_email_recipients():
-    """Get email recipients list."""
+    """
+    Retrieves the email recipients list.
+
+    This endpoint fetches the email recipients list from the database.
+    It returns the recipients list with defaults if not found in the database.
+
+    Returns:
+        EmailRecipients: The email recipients list.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the email recipients list.
+    """
     try:
         recipients_list = db.get_email_recipients()
         return EmailRecipients(recipients=recipients_list)
@@ -149,7 +235,21 @@ async def get_email_recipients():
 
 @router.put("/email-recipients")
 async def update_email_recipients(data: EmailRecipients):
-    """Update email recipients list."""
+    """
+    Updates the email recipients list.
+
+    This endpoint updates the email recipients list in the database.
+    It returns a success message if the recipients are updated successfully.
+    
+    Args:
+        data (EmailRecipients): The email recipients list to update.
+
+    Returns:
+        dict: A dictionary containing the status and message of the update operation.
+
+    Raises:
+        HTTPException: If an error occurs while updating the email recipients list.
+    """
     try:
         # Basic email validation (optional here if Pydantic model handles it, or keep for defense-in-depth)
         for email in data.recipients:
@@ -164,7 +264,18 @@ async def update_email_recipients(data: EmailRecipients):
 
 @router.get("/visualizer-settings", response_model=VisualizerSettings)
 async def get_visualizer_settings():
-    """Get visualizer settings."""
+    """
+    Retrieves the visualizer settings.
+
+    This endpoint fetches the visualizer settings from the database.
+    It returns the settings with defaults if not found in the database.
+
+    Returns:
+        VisualizerSettings: The visualizer settings.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the visualizer settings.
+    """
     try:
         settings = db.get_visualizer_settings()
         if not settings:
@@ -176,7 +287,18 @@ async def get_visualizer_settings():
 
 @router.post("/send-test-email")
 async def send_test_email():
-    """Send a test email to email address in GMAIL_SENDER_ADDRESS environment variable."""
+    """
+    Sends a test email to the email address in GMAIL_SENDER_ADDRESS environment variable.
+
+    This endpoint sends a test email to the email address in GMAIL_SENDER_ADDRESS environment variable.
+    It returns a success message if the email is sent successfully.
+
+    Returns:
+        dict: A dictionary containing the status and message of the test email operation.
+
+    Raises:
+        HTTPException: If an error occurs while sending the test email.
+    """
     try:
         from ...communication import GmailCommunication
         
@@ -221,7 +343,18 @@ async def send_test_email():
 
 @router.get("/credentials")
 async def get_credentials():
-    """Return API credentials from DB or environment."""
+    """
+    Retrieves the API credentials from the database or environment.
+
+    This endpoint fetches the API credentials from the database or environment.
+    It returns the credentials as a dictionary.
+
+    Returns:
+        dict: A dictionary containing the API credentials.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the API credentials.
+    """
     try:
         creds = {}
         for key in CREDENTIAL_KEYS:
@@ -236,7 +369,21 @@ async def get_credentials():
 
 @router.put("/credentials")
 async def update_credentials(data: Dict[str, str]):
-    """Update credentials in DB and environment."""
+    """
+    Updates the API credentials in the database and environment.
+
+    This endpoint updates the API credentials in the database and environment.
+    It returns a success message if the credentials are updated successfully.
+
+    Args:
+        data (Dict[str, str]): A dictionary containing the API credentials to update.
+
+    Returns:
+        dict: A dictionary containing the status and message of the update operation.
+
+    Raises:
+        HTTPException: If an error occurs while updating the API credentials.
+    """
     try:
         for key, value in data.items():
             if key not in CREDENTIAL_KEYS:

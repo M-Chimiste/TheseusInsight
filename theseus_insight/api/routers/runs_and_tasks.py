@@ -18,7 +18,25 @@ async def get_runs(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None
 ):
-    """Get paginated list of runs."""
+    """
+    Retrieves a paginated list of runs.
+
+    This endpoint fetches a paginated list of runs from the database, allowing for filtering by date range and sorting options.
+    It returns a list of runs with their details, including ID, date, pipeline type, status, duration, and artifact path.
+
+    Args:
+        page (int): The page number to fetch. Defaults to 1.
+        sort_field (Optional[str]): The field to sort the runs by. Defaults to None.
+        sort_direction (Optional[str]): The direction to sort the runs. Defaults to None.
+        from_date (Optional[str]): The start date for filtering runs. Defaults to None.
+        to_date (Optional[str]): The end date for filtering runs. Defaults to None.
+
+    Returns:
+        PaginatedResponse: A response object containing the list of runs, total items, total pages, current page, and the next page number if available.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the runs.
+    """
     try:
         # TODO: Implement proper pagination and filtering
         # For now, return all runs
@@ -66,7 +84,21 @@ async def get_runs(
 
 @router.delete("/api/runs/{run_id}/artifact")
 async def delete_run_artifact(run_id: int):
-    """Delete the artifact associated with a run."""
+    """
+    Deletes the artifact associated with a run.
+
+    This endpoint deletes the artifact associated with a run by its ID.
+    It returns a success message if the artifact is deleted successfully.
+
+    Args:
+        run_id (int): The ID of the run to delete the artifact for.
+
+    Returns:
+        dict: A dictionary containing the status and a success message.
+
+    Raises:
+        HTTPException: If the run is not found or the artifact cannot be deleted.
+    """
     try:
         # First determine if this is a newsletter or podcast run
         newsletters = db.fetch_all_newsletters()
@@ -108,7 +140,21 @@ async def delete_run_artifact(run_id: int):
 # Tasks endpoints
 @router.get("/api/tasks/{task_id}/status")
 async def get_task_status(task_id: str):
-    """Get the current status of a task."""
+    """
+    Retrieves the current status of a task.
+
+    This endpoint fetches the current status of a task by its ID.
+    It returns the status of the task if found, otherwise raises an HTTP exception.
+
+    Args:
+        task_id (str): The ID of the task to retrieve the status for.
+
+    Returns:
+        dict: A dictionary containing the status of the task.
+    
+    Raises:
+        HTTPException: If the task is not found.
+    """
     try:
         status = task_manager.get_task_status(task_id)
         if not status:
@@ -119,7 +165,18 @@ async def get_task_status(task_id: str):
 
 @router.get("/api/tasks/active")
 async def get_active_tasks(task_types: Optional[str] = Query(None)):
-    """Get all active tasks, optionally filtered by type."""
+    """
+    Retrieves all active tasks, optionally filtered by type.
+
+    This endpoint fetches all active tasks from the database, optionally filtered by task type.
+    It returns a list of active tasks.
+
+    Args:
+        task_types (Optional[str]): The types of tasks to filter by. Defaults to None.
+
+    Returns:
+        dict: A dictionary containing the list of active tasks.
+    """
     try:
         types_filter = task_types.split(',') if task_types else None
         active_tasks = task_manager.db.get_active_tasks(task_types=types_filter)
@@ -129,7 +186,21 @@ async def get_active_tasks(task_types: Optional[str] = Query(None)):
 
 @router.get("/api/tasks/recent-completed")
 async def get_recent_completed_tasks(task_types: Optional[str] = Query(None)):
-    """Get recent completed tasks with results available for download."""
+    """
+    Retrieves recent completed tasks with results available for download.
+
+    This endpoint fetches recent completed tasks from the database, optionally filtered by task type.
+    It returns a list of completed tasks.
+
+    Args:
+        task_types (Optional[str]): The types of tasks to filter by. Defaults to None.
+
+    Returns:
+        dict: A dictionary containing the list of completed tasks.
+    
+    Raises:
+        HTTPException: If an error occurs while fetching the completed tasks.
+    """
     try:
         types_filter = task_types.split(',') if task_types else None
         completed_tasks = task_manager.db.get_recent_completed_tasks(task_types=types_filter)
@@ -139,7 +210,21 @@ async def get_recent_completed_tasks(task_types: Optional[str] = Query(None)):
 
 @router.get("/api/tasks/{task_id}/result")
 async def get_task_result(task_id: str):
-    """Get the result of a completed task."""
+    """
+    Retrieves the result of a completed task.
+
+    This endpoint fetches the result of a completed task by its ID.
+    It returns the result of the task if found, otherwise raises an HTTP exception.
+
+    Args:
+        task_id (str): The ID of the task to retrieve the result for.
+
+    Returns:
+        dict: A dictionary containing the result of the task.
+    
+    Raises:
+        HTTPException: If the task is not found or not completed.
+    """
     try:
         task = task_manager.get_task_status(task_id)
         if not task:
@@ -162,7 +247,21 @@ async def get_task_result(task_id: str):
 
 @router.post("/api/tasks/{task_id}/abort")
 async def abort_task(task_id: str):
-    """Abort a running task."""
+    """
+    Aborts a running task.
+
+    This endpoint aborts a running task by its ID.
+    It returns a success message if the task is aborted successfully.
+
+    Args:
+        task_id (str): The ID of the task to abort.
+
+    Returns:
+        dict: A dictionary containing the status and a success message.
+    
+    Raises:
+        HTTPException: If the task is not found or cannot be aborted.
+    """
     try:
         task = task_manager.get_task_status(task_id)
         if not task:
@@ -191,7 +290,22 @@ async def abort_task(task_id: str):
 
 @router.get("/api/tasks/{task_id}/download/{file_type}")
 async def download_task_artifact(task_id: str, file_type: str):
-    """Download a task artifact (newsletter or podcast)."""
+    """
+    Downloads a task artifact (newsletter or podcast).
+
+    This endpoint downloads a task artifact by its ID and file type.
+    It returns the artifact if found, otherwise raises an HTTP exception.
+
+    Args:
+        task_id (str): The ID of the task to download the artifact for.
+        file_type (str): The type of file to download.
+
+    Returns:
+        FileResponse: A file response containing the artifact.
+    
+    Raises:
+        HTTPException: If the task is not found, not completed, or the artifact is not found.
+    """
     try:
         task = task_manager.get_task_status(task_id)
         if not task:

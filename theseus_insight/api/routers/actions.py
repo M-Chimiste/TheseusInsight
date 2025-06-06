@@ -16,6 +16,25 @@ async def run_visualizer_pipeline_endpoint(
     audio_file: UploadFile = File(..., description="Audio file to visualize"),
     visualizer_params_json: str = Form(..., description="JSON string of VisualizerSettings")
 ):
+    """
+    Initiates the visualizer pipeline for processing an audio file.
+
+    This endpoint accepts an audio file and visualizer parameters in JSON format.
+    It creates a new task for visualizing the audio file based on the provided parameters,
+    saves the audio file to a temporary directory, and enqueues the task for processing.
+
+    Args:
+        background_tasks (BackgroundTasks): An instance of BackgroundTasks for managing background tasks.
+        audio_file (UploadFile): The audio file to be visualized.
+        visualizer_params_json (str): A JSON string representing the visualizer parameters.
+
+    Returns:
+        dict: A dictionary containing the task ID and a success message.
+
+    Raises:
+        HTTPException: If the JSON format is invalid or a validation error occurs.
+        Exception: If an internal server error occurs while processing the visualizer request.
+    """
     task_id = str(uuid.uuid4())
     try:
         visualizer_params = VisualizerSettings.parse_raw(visualizer_params_json)

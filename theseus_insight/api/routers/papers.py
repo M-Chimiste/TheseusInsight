@@ -24,7 +24,30 @@ async def get_papers(
     to_date: Optional[str] = None,
     page_size: int = Query(10, gt=0, le=100)
 ):
-    """Get paginated papers with filtering and sorting."""
+    """
+    Retrieves a paginated list of papers based on various filters and sorting options.
+
+    This endpoint fetches a paginated list of papers from the database, allowing for filtering by score range, 
+    date range, and search query. The results can be sorted by date or score in ascending or descending order.
+
+    Args:
+        page (int): The page number to fetch. Defaults to 1.
+        score (Optional[float]): The minimum score for filtering papers. Defaults to None.
+        max_score (Optional[float]): The maximum score for filtering papers. Defaults to None.
+        sort_field (Optional[str]): The field to sort the papers by. Defaults to None.
+        sort_direction (Optional[str]): The direction to sort the papers. Defaults to None.
+        search (Optional[str]): The search query to filter papers by. Defaults to None.
+        from_date (Optional[str]): The start date for filtering papers. Defaults to None.
+        to_date (Optional[str]): The end date for filtering papers. Defaults to None.
+        page_size (int): The number of papers to fetch per page. Defaults to 10.
+
+    Returns:
+        PaginatedPapersResponse: A response object containing the list of papers, total items, total pages, 
+                                 current page, and the next page number if available.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the papers.
+        """
     try:
         # Use database-level pagination instead of fetching all papers
         papers_data = db.fetch_papers_paginated(
@@ -62,7 +85,23 @@ async def get_papers(
 
 @router.post("/similarity-search", response_model=SimilaritySearchResponse)
 async def semantic_similarity_search(request: SimilaritySearchRequest):
-    """Perform semantic similarity search on papers using embeddings."""
+    """
+    This endpoint initiates a new task for semantic similarity search.
+    It retrieves the orchestration config, initializes the embedding model,
+    and performs the similarity search.
+    It returns a response object containing the query text, the list of similar papers,
+    and the total number of similar papers.
+
+    Args:
+        request (SimilaritySearchRequest): The request object containing the search parameters.
+
+    Returns:
+        SimilaritySearchResponse: A response object containing the query text, the list of similar papers, 
+                                  and the total number of similar papers.
+
+    Raises:
+        HTTPException: If the orchestration config is not found or the embedding model is not found.
+    """
     try:
         # Get the orchestration config to load the embedding model
         orchestration_json = db.get_setting("orchestration")
@@ -115,7 +154,22 @@ async def semantic_similarity_search(request: SimilaritySearchRequest):
 
 @router.post("/hybrid-search", response_model=HybridSearchResponse)
 async def hybrid_search_papers(request: HybridSearchRequest):
-    """Perform hybrid search combining semantic similarity and keyword matching."""
+    """
+    Initiates a hybrid search for papers based on semantic and keyword weights.
+
+    This endpoint performs a hybrid search for papers using both semantic and keyword-based approaches.
+    It takes into account the weights assigned to each approach to determine the relevance of the search results.
+    The search query is executed against the database, and the results are filtered based on the specified parameters.
+
+    Args:
+        request (HybridSearchRequest): The request object containing the search parameters.
+
+    Returns:
+        HybridSearchResponse: A response object containing the search results and metadata.
+
+    Raises:
+        HTTPException: If the orchestration config is not found or the embedding model is not found.
+    """
     try:
         # Validate that weights sum to approximately 1.0
         total_weight = request.semantic_weight + request.keyword_weight
@@ -202,7 +256,18 @@ async def hybrid_search_papers(request: HybridSearchRequest):
 
 @router.get("/without-embeddings")
 async def get_papers_without_embeddings():
-    """Get papers that don't have embeddings saved."""
+    """
+    Retrieves a list of papers without embeddings.
+
+    This endpoint fetches a list of papers from the database that do not have embeddings generated.
+    It returns a list of paper objects with their details, excluding embedding information.
+
+    Returns:
+        dict: A dictionary containing a list of paper objects and the total count of papers.
+
+    Raises:
+        HTTPException: If an error occurs while fetching the papers.
+    """
     try:
         papers = db.get_papers_without_embeddings()
         results = []
@@ -220,7 +285,22 @@ async def get_papers_without_embeddings():
 
 @router.post("/{paper_id}/update-embedding")
 async def update_paper_embedding(paper_id: int):
-    """Generate and update embedding for a specific paper."""
+    """
+    Generates and updates an embedding for a specific paper.
+
+    This endpoint generates an embedding for a paper's abstract and updates the paper's embedding in the database.
+    It retrieves the orchestration config, initializes the embedding model, and generates the embedding.
+    The updated paper is then saved to the database.
+
+    Args:
+        paper_id (int): The ID of the paper to update.
+
+    Returns:
+        dict: A dictionary containing a message and a boolean indicating if the embedding was updated successfully.
+    
+    Raises:
+        HTTPException: If the paper is not found or the embedding model is not found.
+    """
     try:
         # Get the paper details
         papers = db.fetch_all_papers()
@@ -269,7 +349,20 @@ async def find_similar_papers_to_existing(
     limit: int = Query(10, gt=0, le=200, description="Maximum number of similar papers to return"),
     similarity_threshold: float = Query(0.7, ge=0.0, le=1.0, description="Minimum similarity score (0-1)")
 ):
-    """Find papers similar to an existing paper using its stored embedding."""
+    """
+    Finds papers similar to an existing paper using its stored embedding.
+
+    This endpoint searches for similar papers to a given paper using its stored embedding.
+    It returns a response object containing the reference paper and a list of similar papers.
+
+    Args:
+        paper_id (int): The ID of the paper to find similar papers for.
+        limit (int): The maximum number of similar papers to return. Defaults to 10.
+        similarity_threshold (float): The minimum similarity score (0-1) for filtering similar papers. Defaults to 0.7.
+
+    Returns:
+        SimilarPapersResponse: A response object containing the reference paper and a list of similar papers.
+    """
     try:
         # Find similar papers using the database method
         result = db.find_similar_papers_to_existing(

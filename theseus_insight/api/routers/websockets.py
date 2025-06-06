@@ -11,7 +11,18 @@ class ConnectionManager:
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, task_id: str, websocket: WebSocket):
-        """Connect a new WebSocket client."""
+        """Connect a new WebSocket client.
+
+        This method connects a new WebSocket client to the task manager.
+        It accepts the task ID and the WebSocket connection.
+
+        Args:
+            task_id (str): The ID of the task to connect to.
+            websocket (WebSocket): The WebSocket connection to connect to.
+
+        Raises:
+            Exception: If an error occurs while connecting the WebSocket client.
+        """
         try:
             await websocket.accept()
             if task_id not in self.active_connections:
@@ -26,7 +37,18 @@ class ConnectionManager:
             raise
 
     def disconnect(self, task_id: str, websocket: WebSocket):
-        """Disconnect a WebSocket client."""
+        """Disconnect a WebSocket client.
+
+        This method disconnects a WebSocket client from the task manager.
+        It accepts the task ID and the WebSocket connection.
+
+        Args:
+            task_id (str): The ID of the task to disconnect from.
+            websocket (WebSocket): The WebSocket connection to disconnect.
+
+        Raises:
+            Exception: If an error occurs while disconnecting the WebSocket client.
+        """
         try:
             if task_id in self.active_connections:
                 if websocket in self.active_connections[task_id]:
@@ -37,7 +59,18 @@ class ConnectionManager:
             print(f"Error disconnecting WebSocket: {e}")
 
     async def broadcast_status(self, task_id: str, status):
-        """Broadcast status to all connected clients for a task."""
+        """Broadcast status to all connected clients for a task.
+
+        This method broadcasts the status of a task to all connected clients.
+        It accepts the task ID and the status to broadcast.
+
+        Args:
+            task_id (str): The ID of the task to broadcast the status for.
+            status: The status to broadcast.
+
+        Raises:
+            Exception: If an error occurs while broadcasting the status.
+        """
         if task_id in self.active_connections:
             dead_connections = []
             for connection in self.active_connections[task_id]:
@@ -54,7 +87,17 @@ class ConnectionManager:
                 self.disconnect(task_id, dead)
 
     async def close_all(self, task_id: str):
-        """Close all connections for a task."""
+        """Close all connections for a task.
+
+        This method closes all connections for a task.
+        It accepts the task ID.
+
+        Args:
+            task_id (str): The ID of the task to close all connections for.
+
+        Raises:
+            Exception: If an error occurs while closing the connections.
+        """
         if task_id in self.active_connections:
             connections_to_close = self.active_connections[task_id].copy()
             for connection in connections_to_close:
@@ -65,7 +108,10 @@ class ConnectionManager:
             del self.active_connections[task_id]
     
     async def cleanup_all(self):
-        """Close all active connections."""
+        """Close all active connections.
+
+        This method closes all active connections.
+        """
         task_ids = list(self.active_connections.keys())
         for task_id in task_ids:
             await self.close_all(task_id)
@@ -73,7 +119,19 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoint_name: str):
-    """Generic WebSocket handler for all task types."""
+    """Generic WebSocket handler for all task types.
+
+    This method handles the WebSocket connection for all task types.
+    It accepts the WebSocket connection, the task ID, and the endpoint name.
+
+    Args:
+        websocket (WebSocket): The WebSocket connection to handle.
+        task_id (str): The ID of the task to handle.
+        endpoint_name (str): The name of the endpoint to handle.
+
+    Raises:
+        Exception: If an error occurs while handling the WebSocket connection.
+    """
     status_queue = None
     try:
         await manager.connect(task_id, websocket)

@@ -1,16 +1,3 @@
-# Copyright 2023 M Chimiste
-
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-
-#     http://www.apache.org/licenses/LICENSE-2.0
-
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 import os
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional, Iterator
@@ -286,101 +273,91 @@ class GeminiInference(InferenceModel):
         
         return genai
     
-    def invoke(self, 
-               messages: List[Dict[str, str]], 
-               system_prompt: str, *,
-               streaming: bool = False, 
+    def invoke(self,
+               messages: List[Dict[str, str]],
+               system_prompt: str,
+               *,
+               streaming: bool = False,
                model_name: Optional[str] = None,
+               schema: Optional[BaseModel] = None,
                **kwargs) -> Union[str, Iterator[str]]:
         """
-        Initiates the Gemini Inference process for generating text based on input messages and a system prompt.
+        Initiates the Gemini Inference process for generating text or structured output based on input messages and a system prompt.
 
-        This method orchestrates the Gemini Inference process, which involves preparing input messages, setting up the model configuration, and invoking the model to generate text. It supports both streaming and non-streaming modes of operation.
+        This method orchestrates the Gemini Inference process, which involves preparing input messages, setting up the model configuration, and invoking the model to generate text or structured output. It supports both streaming and non-streaming modes of operation.
 
         Args:
             messages (List[Dict[str, str]]): A list of dictionaries, where each dictionary contains a 'role' and a 'content'. The 'role' specifies the type of message (e.g., user or model), and the 'content' is the actual message.
             system_prompt (str): A string that serves as the initial prompt for the model to generate text.
             streaming (bool, optional): A boolean indicating whether to use streaming mode. Defaults to False.
             model_name (Optional[str], optional): The name of the model to use for inference. Defaults to None, which uses the default model name set during initialization.
+            schema (Optional[BaseModel]): If provided, the response will be returned as structured JSON
+                matching this Pydantic schema (Gemini structured‑output mode).
             **kwargs: Additional keyword arguments that can be passed to the model for configuration.
 
         Returns:
-            Union[str, Iterator[str]]: The generated text. If streaming is True, returns an iterator over the generated text. Otherwise, returns the complete generated text as a string.
+            Union[str, list | BaseModel | Iterator[str]]: Parsed objects (or JSON string) when
+            `schema` is supplied; otherwise the generated text, or an iterator in streaming mode.
         """
+        # If the caller asks for streaming *and* structured output in the same request,
+        # Gemini cannot fulfil that combination yet.  Instead of raising, degrade
+        # gracefully by issuing a warning and switching to non‑streaming mode so the
+        # user still gets a structured JSON reply.
+        if streaming and schema is not None:
+            import warnings
+            warnings.warn(
+                "Gemini structured-output mode is not supported with `streaming=True`; "
+                "falling back to non-streaming inference."
+            )
+            streaming = False
+
+        # Build Gemini messages in the same style as before
         gemini_messages = [{"role": "user", "parts": [system_prompt]}]
         for message in messages:
             role = "model" if message["role"] == "assistant" else "user"
             gemini_messages.append({"role": role, "parts": [message["content"]]})
 
+        # Common kwargs for the request
+        request_kwargs = {
+            "safety_settings": self.safety,
+            "generation_config": self.client.types.GenerationConfig(
+                max_output_tokens=self.max_new_tokens,
+                temperature=self.temperature
+            )
+        }
+
+        # If the caller requested structured output add the new fields
+        if schema is not None:
+            request_kwargs["response_mime_type"] = "application/json"
+            request_kwargs["response_schema"] = schema   # e.g. list[MySchema]
+
+        # --- STREAMING -----------------------------------------------------
         if streaming:
             model = self.client.GenerativeModel(model_name=model_name or self.model_name)
-            try:
-                stream = model.generate_content(
-                    gemini_messages,
-                    safety_settings=self.safety,
-                    generation_config=self.client.types.GenerationConfig(
-                        max_output_tokens=self.max_new_tokens,
-                        temperature=self.temperature
-                    ),
-                    stream=True,
-                    request_options={'timeout': 300}  # 5 minutes
-                )
+            stream = model.generate_content(
+                gemini_messages,
+                stream=True,
+                request_options={'timeout': 300},
+                **request_kwargs
+            )
 
-                def _gen() -> Iterator[str]:
-                    try:
-                        for chunk in stream:
-                            text = getattr(chunk, "text", None)
-                            if text:
-                                yield text
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "DeadlineExceeded" in error_msg or "504" in error_msg:
-                            raise Exception(f"Gemini API streaming timeout: {error_msg}. Please try again later or use a different model.") from e
-                        else:
-                            raise
-                return _gen()
-            except Exception as e:
-                error_msg = str(e)
-                if "DeadlineExceeded" in error_msg or "504" in error_msg:
-                    raise Exception(f"Gemini API timeout error: {error_msg}. Please try again later or use a different model.") from e
-                else:
-                    raise
-        else:
-            model = self.client.GenerativeModel(model_name=model_name or self.model_name)
-            
-            # Try with retry logic and better error handling
-            try:
-                response = model.generate_content(
-                    gemini_messages,
-                    safety_settings=self.safety,
-                    generation_config=self.client.types.GenerationConfig(
-                        max_output_tokens=self.max_new_tokens,
-                        temperature=self.temperature
-                    )
-                )
-                return response.text
-            except Exception as e:
-                # Handle specific Gemini API errors
-                error_msg = str(e)
-                if "DeadlineExceeded" in error_msg or "504" in error_msg:
-                    # For timeout errors, try again with a shorter generation
-                    print(f"Warning: Gemini API timeout, retrying with reduced max_tokens...")
-                    try:
-                        response = model.generate_content(
-                            gemini_messages,
-                            safety_settings=self.safety,
-                            generation_config=self.client.types.GenerationConfig(
-                                max_output_tokens=min(self.max_new_tokens // 2, 2048),  # Reduce tokens
-                                temperature=self.temperature
-                            )
-                        )
-                        return response.text
-                    except Exception as e2:
-                        print(f"Error: Gemini API failed even with reduced tokens: {e2}")
-                        raise Exception(f"Gemini API timeout error: {error_msg}. Please try again later or use a different model.") from e
-                else:
-                    # Re-raise other errors as-is
-                    raise
+            def _gen() -> Iterator[str]:
+                for chunk in stream:
+                    text = getattr(chunk, "text", None)
+                    if text:
+                        yield text
+
+            return _gen()
+
+        # --- NON‑STREAMING -------------------------------------------------
+        model = self.client.GenerativeModel(model_name=model_name or self.model_name)
+        response = model.generate_content(gemini_messages, **request_kwargs)
+
+        if schema is not None:
+            # Prefer parsed objects if available, otherwise fall back to raw JSON
+            return getattr(response, "parsed", None) or response.text
+
+        return response.text
 
 
 class SentenceTransformerInference(InferenceModel):

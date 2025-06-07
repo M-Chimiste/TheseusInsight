@@ -40,7 +40,7 @@
     "trust_remote_code": null
   },
   "podcast_model": {
-    "model_name": "gemini-2.5-pro-preview-06-05",
+    "model_name": "gemini-2.0-flash",
     "model_type": "gemini",
     "max_new_tokens": 8192,
     "temperature": 0.1,

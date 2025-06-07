@@ -197,7 +197,8 @@ class OpenAIInference(InferenceModel):
         return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
-               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
+               streaming: bool = False, model_name: Optional[str] = None,
+               schema: Optional[BaseModel] = None, **kwargs) -> Union[str, Iterator[str]]:
         """
         Invokes the OpenAI model to generate a response based on the provided messages and system prompt.
 
@@ -208,10 +209,28 @@ class OpenAIInference(InferenceModel):
             system_prompt (str): The system prompt to prepend to the conversation history.
             streaming (bool, optional): If True, the method returns an iterator over the generated text chunks. Defaults to False.
             model_name (Optional[str], optional): The name of the model to use for generation. If not provided, the default model is used.
+            schema (Optional[BaseModel]): A Pydantic schema for structured‑output via
+                OpenAI function‑calling. If provided, the response is parsed against
+                this schema and returned as a Pydantic object (or JSON string on
+                fallback).
+            **kwargs: Additional keyword arguments to pass to the model.
 
         Returns:
-            Union[str, Iterator[str]]: The generated response as a string or an iterator over the generated text chunks, depending on the `streaming` parameter.
+            Union[str, BaseModel | Iterator[str]]: Parsed object (or JSON string) when
+            `schema` is supplied; otherwise the plain text response, or an iterator in
+            streaming mode.
         """
+        # If the caller requests streaming + structured output, fall back to
+        # non‑streaming and warn—OpenAI’s function‑calling isn’t supported with
+        # streaming responses yet.
+        if streaming and schema is not None:
+            import warnings
+            warnings.warn(
+                "OpenAI structured‑output (function calling) is not supported "
+                "with `streaming=True`; falling back to non‑streaming."
+            )
+            streaming = False
+
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         if streaming:
             stream = self.client.chat.completions.create(
@@ -220,6 +239,7 @@ class OpenAIInference(InferenceModel):
                 max_tokens=self.max_new_tokens,
                 temperature=self.temperature,
                 stream=True,
+                **kwargs
             )
 
             def _gen() -> Iterator[str]:
@@ -229,13 +249,41 @@ class OpenAIInference(InferenceModel):
                         yield delta
             return _gen()
         else:
-            response = self.client.chat.completions.create(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                max_tokens=self.max_new_tokens,
-                temperature=self.temperature,
-            )
-            return response.choices[0].message.content
+            # -------- Non‑streaming --------
+            if schema is not None:
+                # ---- Structured output via function‑calling ----
+                import json, openai
+                tool_spec = openai.pydantic_function_tool(schema)
+                response = self.client.chat.completions.create(
+                    model=model_name or self.model_name,
+                    messages=full_messages,
+                    tools=[tool_spec],
+                    tool_choice="auto",
+                    max_tokens=self.max_new_tokens,
+                    temperature=self.temperature,
+                    **kwargs
+                )
+                tool_calls = response.choices[0].message.tool_calls
+                if tool_calls:
+                    args_json = tool_calls[0].function.arguments
+                    try:
+                        parsed = schema.model_validate_json(args_json)
+                        return parsed
+                    except Exception:
+                        # Validation failed – return raw JSON string
+                        return args_json
+                # If no tool call was produced, fall back to message content
+                return response.choices[0].message.content
+            else:
+                # ---- Plain text completion ----
+                response = self.client.chat.completions.create(
+                    model=model_name or self.model_name,
+                    messages=full_messages,
+                    max_tokens=self.max_new_tokens,
+                    temperature=self.temperature,
+                    **kwargs
+                )
+                return response.choices[0].message.content
 
 
 class GeminiInference(InferenceModel):

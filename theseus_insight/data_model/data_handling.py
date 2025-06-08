@@ -1285,16 +1285,43 @@ class PaperDatabase:
                 search_terms = [t for t in query_text.lower().split() if t.strip()]
 
                 if search_terms:
-                    fts_query = " ".join(search_terms)
-                    keyword_sql = f"""
-                        SELECT p.id, p.title, p.abstract, p.date, p.date_run, p.score,
-                               p.rationale, p.related, p.cosine_similarity, p.url,
-                               p.embedding_model, p.embedding, bm25(papers_fts) as keyword_score
-                        FROM papers_fts
-                        JOIN papers p ON papers_fts.rowid = p.id
-                        WHERE papers_fts MATCH ? {('AND ' + where_clause) if where_clause else ''}
-                    """
-                    cursor.execute(keyword_sql, [fts_query] + where_params)
+                    # Escape FTS special characters and build proper FTS query
+                    escaped_terms = []
+                    for term in search_terms:
+                        # Remove FTS5 special characters that could cause syntax errors
+                        escaped_term = ''.join(c for c in term if c.isalnum() or c in ' -_')
+                        if escaped_term.strip():
+                            escaped_terms.append(f'"{escaped_term}"')
+                    
+                    if escaped_terms:
+                        fts_query = " ".join(escaped_terms)
+                        
+                        # Modify SQL to properly handle additional WHERE conditions
+                        if where_clause:
+                            keyword_sql = f"""
+                                SELECT p.id, p.title, p.abstract, p.date, p.date_run, p.score,
+                                       p.rationale, p.related, p.cosine_similarity, p.url,
+                                       p.embedding_model, p.embedding, bm25(papers_fts) as keyword_score
+                                FROM papers_fts
+                                JOIN papers p ON papers_fts.rowid = p.id
+                                WHERE papers_fts MATCH ? AND {where_clause}
+                            """
+                        else:
+                            keyword_sql = """
+                                SELECT p.id, p.title, p.abstract, p.date, p.date_run, p.score,
+                                       p.rationale, p.related, p.cosine_similarity, p.url,
+                                       p.embedding_model, p.embedding, bm25(papers_fts) as keyword_score
+                                FROM papers_fts
+                                JOIN papers p ON papers_fts.rowid = p.id
+                                WHERE papers_fts MATCH ?
+                            """
+                        cursor.execute(keyword_sql, [fts_query] + where_params)
+                    else:
+                        # Fallback to semantic search only if no valid FTS terms
+                        base_query = "SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding FROM papers"
+                        if where_clause:
+                            base_query += f" WHERE {where_clause}"
+                        cursor.execute(base_query, where_params)
                     rows = cursor.fetchall()
                 else:
                     base_query = "SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding FROM papers"

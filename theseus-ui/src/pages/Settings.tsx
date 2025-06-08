@@ -37,6 +37,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import taxonomy from '../arxiv_taxonomy.json';
 import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
 
+
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
   'ANTHROPIC_API_KEY',
@@ -704,116 +705,227 @@ const Settings: React.FC = () => {
   const renderResearchAgentModelConfig = (config: any) => {
     if (!config) return <Typography>Research Agent configuration not available.</Typography>;
 
-    const bossModel = config.boss_model || {};
-    const workerModels = config.worker_models || {};
-    const defaultWorker = config.default_worker || 'summary';
-    const maxRetries = config.max_retries || 3;
-    const timeoutSeconds = config.timeout_seconds || 30;
-
-    const renderModelFields = (modelConfig: any, prefix: string, title: string) => (
-      <Card variant="outlined" sx={{ mb: 2 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>{title}</Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <ModelNameAutocomplete
-                label="Model Name"
-                value={modelConfig.model_name || ''}
-                onChange={value => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, value)}
-                onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, prefix)}
-                modelCatalogData={modelCatalogData}
-              />
-              <FormControl fullWidth>
-                <InputLabel>Model Type (Provider)</InputLabel>
-                <Select
-                  value={modelConfig.model_type || ''}
-                  label="Model Type (Provider)"
-                  onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.model_type`, e.target.value)}
-                >
-                  {(modelProviders || []).map((provider: any) => (
-                    <MenuItem key={provider.id} value={provider.name}>
-                      {provider.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
-            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                fullWidth
-                label="Max New Tokens"
-                type="number"
-                value={modelConfig.max_new_tokens || 4096}
-                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.max_new_tokens`, Number(e.target.value))}
-              />
-              <TextField
-                fullWidth
-                label="Temperature"
-                type="number"
-                inputProps={{ step: '0.1' }}
-                value={modelConfig.temperature || 0.1}
-                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.temperature`, parseFloat(e.target.value))}
-              />
-              {(modelConfig.model_type === 'ollama' || modelConfig.model_type === 'llamacpp') && (
-                <TextField
-                  fullWidth
-                  label="Context Window (num_ctx)"
-                  type="number"
-                  value={modelConfig.num_ctx || 131072}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.num_ctx`, Number(e.target.value))}
-                />
-              )}
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
-    );
+    // For the new LangGraph implementation, we focus on the main reasoning model
+    // and search/retrieval configuration rather than boss/worker patterns
+    const reasoningModel = config.reasoning_model || config.boss_model || {};
+    const searchConfig = config.search_config || {};
+    const maxResearchLoops = config.max_research_loops || 10;
+    const initialSearchQueryCount = config.initial_search_query_count || 3;
+    const localSearchLimit = config.local_search_limit || 10;
+    const externalSearchLimit = config.external_search_limit || 5;
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {/* Boss Model */}
-        {renderModelFields(bossModel, 'boss_model', 'Boss Model (Main Coordinator)')}
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <Typography variant="body2">
+            <strong>LangGraph Research Agent:</strong> This agent uses a declarative workflow with parallel search operations, 
+            reflection loops, and intelligent source combination. The reasoning model coordinates all research activities 
+            through structured query generation, local/external search, and iterative refinement.
+          </Typography>
+        </Alert>
+
+        {/* Main Reasoning Model */}
+        <Card variant="outlined" sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Main Reasoning Model
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Primary model responsible for query generation, reflection, and final answer synthesis.
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <ModelNameAutocomplete
+                  label="Reasoning Model Name"
+                  value={reasoningModel.model_name || ''}
+                  onChange={value => handleModelConfigChange('research_agent_model_config', 'reasoning_model.model_name', value)}
+                  onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'reasoning_model')}
+                  modelCatalogData={modelCatalogData}
+                />
+                <FormControl fullWidth>
+                  <InputLabel>Model Type (Provider)</InputLabel>
+                  <Select
+                    value={reasoningModel.model_type || ''}
+                    label="Model Type (Provider)"
+                    onChange={e => handleModelConfigChange('research_agent_model_config', 'reasoning_model.model_type', e.target.value)}
+                  >
+                    {(modelProviders || []).map((provider: any) => (
+                      <MenuItem key={provider.id} value={provider.name}>
+                        {provider.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  fullWidth
+                  label="Max New Tokens"
+                  type="number"
+                  value={reasoningModel.max_new_tokens || 4096}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'reasoning_model.max_new_tokens', Number(e.target.value))}
+                />
+                <TextField
+                  fullWidth
+                  label="Temperature"
+                  type="number"
+                  inputProps={{ step: '0.1' }}
+                  value={reasoningModel.temperature || 0.1}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'reasoning_model.temperature', parseFloat(e.target.value))}
+                />
+                {(reasoningModel.model_type === 'ollama' || reasoningModel.model_type === 'llamacpp') && (
+                  <TextField
+                    fullWidth
+                    label="Context Window (num_ctx)"
+                    type="number"
+                    value={reasoningModel.num_ctx || 131072}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', 'reasoning_model.num_ctx', Number(e.target.value))}
+                  />
+                )}
+              </Box>
+            </Box>
+          </CardContent>
+        </Card>
         
-        {/* Worker Models */}
-        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Worker Models</Typography>
-        {renderModelFields(workerModels.summary || {}, 'worker_models.summary', 'Summary Worker')}
-        {renderModelFields(workerModels.analysis || {}, 'worker_models.analysis', 'Analysis Worker')}
-        {renderModelFields(workerModels.search || {}, 'worker_models.search', 'Search Worker')}
-        
-        {/* Configuration Settings */}
+        {/* Research Configuration */}
         <Card variant="outlined">
           <CardContent>
-            <Typography variant="h6" gutterBottom>Agent Configuration</Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              <FormControl sx={{ minWidth: 200 }}>
-                <InputLabel>Default Worker</InputLabel>
-                <Select
-                  value={defaultWorker}
-                  label="Default Worker"
-                  onChange={e => handleModelConfigChange('research_agent_model_config', 'default_worker', e.target.value)}
-                >
-                  <MenuItem value="summary">Summary</MenuItem>
-                  <MenuItem value="analysis">Analysis</MenuItem>
-                  <MenuItem value="search">Search</MenuItem>
-                </Select>
-              </FormControl>
+            <Typography variant="h6" gutterBottom>Research Workflow Configuration</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Controls the behavior of the LangGraph research workflow including search limits and iteration bounds.
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 3 }}>
               <TextField
-                label="Max Retries"
+                label="Max Research Loops"
                 type="number"
-                value={maxRetries}
-                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_retries', Number(e.target.value))}
-                sx={{ minWidth: 150 }}
+                value={maxResearchLoops}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_loops', Number(e.target.value))}
+                helperText="Maximum research iterations"
+                inputProps={{ min: 1, max: 50 }}
               />
               <TextField
-                label="Timeout (seconds)"
+                label="Initial Query Count"
                 type="number"
-                value={timeoutSeconds}
-                onChange={e => handleModelConfigChange('research_agent_model_config', 'timeout_seconds', Number(e.target.value))}
-                sx={{ minWidth: 150 }}
+                value={initialSearchQueryCount}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'initial_search_query_count', Number(e.target.value))}
+                helperText="Number of initial search queries"
+                inputProps={{ min: 1, max: 10 }}
+              />
+              <TextField
+                label="Local Search Limit"
+                type="number"
+                value={localSearchLimit}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'local_search_limit', Number(e.target.value))}
+                helperText="Papers per local search"
+                inputProps={{ min: 1, max: 50 }}
+              />
+              <TextField
+                label="External Search Limit"
+                type="number"
+                value={externalSearchLimit}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'external_search_limit', Number(e.target.value))}
+                helperText="Papers per external search"
+                inputProps={{ min: 1, max: 20 }}
               />
             </Box>
           </CardContent>
         </Card>
+
+        {/* Search Strategy Configuration */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Search Strategy</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Configure the hybrid search strategy for local paper database queries.
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 3 }}>
+              <TextField
+                label="Semantic Weight"
+                type="number"
+                inputProps={{ step: '0.1', min: 0, max: 1 }}
+                value={searchConfig.semantic_weight || 0.6}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.semantic_weight', parseFloat(e.target.value))}
+                helperText="Weight for semantic similarity"
+              />
+              <TextField
+                label="Keyword Weight"
+                type="number"
+                inputProps={{ step: '0.1', min: 0, max: 1 }}
+                value={searchConfig.keyword_weight || 0.4}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.keyword_weight', parseFloat(e.target.value))}
+                helperText="Weight for keyword matching"
+              />
+              <TextField
+                label="Similarity Threshold"
+                type="number"
+                inputProps={{ step: '0.05', min: 0, max: 1 }}
+                value={searchConfig.similarity_threshold || 0.3}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.similarity_threshold', parseFloat(e.target.value))}
+                helperText="Minimum similarity score"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={searchConfig.enable_pdf_download !== false}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.enable_pdf_download', e.target.checked)}
+                  />
+                }
+                label={
+                  <Box display="flex" alignItems="center" gap={0.5}>
+                    Enable PDF Download
+                    <Tooltip title="Automatically download and process PDFs for full-text analysis">
+                      <IconButton size="small">
+                        <InfoOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                }
+              />
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Legacy Configuration Support */}
+        {(config.boss_model || config.worker_models) && (
+                                <Card variant="outlined" sx={{ borderColor: 'warning.main', backgroundColor: 'warning.light' }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <InfoOutlinedIcon color="warning" />
+                <Typography variant="h6" color="warning.main">
+                  Legacy Configuration Detected
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                This configuration uses the old boss/worker model structure. Consider migrating to the new 
+                LangGraph configuration above for improved performance and capabilities.
+              </Typography>
+              <Button 
+                variant="outlined" 
+                color="warning" 
+                size="small"
+                onClick={() => {
+                  // Convert legacy config to new format
+                  const newConfig = {
+                    reasoning_model: config.boss_model || {},
+                    max_research_loops: 10,
+                    initial_search_query_count: 3,
+                    local_search_limit: 10,
+                    external_search_limit: 5,
+                    search_config: {
+                      semantic_weight: 0.6,
+                      keyword_weight: 0.4,
+                      similarity_threshold: 0.3,
+                      enable_pdf_download: true
+                    }
+                  };
+                  handleModelConfigChange('research_agent_model_config', '', newConfig);
+                }}
+              >
+                Migrate to New Format
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </Box>
     );
   };

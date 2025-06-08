@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -6,311 +6,733 @@ import {
   CardContent,
   TextField,
   Button,
-  Grid,
   Paper,
-  LinearProgress,
-  Chip,
-  Alert,
   IconButton,
   Tooltip,
-  Fade,
+  Alert,
+  Snackbar,
   CircularProgress,
+  Chip,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
+  useTheme,
+  Collapse,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import {
   Science as ScienceIcon,
-  History as HistoryIcon,
-  PlayArrow as PlayIcon,
+  Send as SendIcon,
   Stop as StopIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
+  ContentCopy as CopyIcon,
+  Check as CheckIcon,
   Refresh as RefreshIcon,
-  Description as ReportIcon,
+  Timeline as TimelineIcon,
+  Search as SearchIcon,
+  Psychology as PsychologyIcon,
+  Create as CreateIcon,
+  AutoAwesome as SmartIcon,
 } from '@mui/icons-material';
-import { useResearchAgent, type LiteratureReviewResult } from '../hooks/useResearchAgent';
-import ReportViewer from '../components/ReportViewer';
+import ReactMarkdown from 'react-markdown';
+import { useResearchAgent } from '../hooks/useResearchAgent';
 
-const ResearchAgent: React.FC = () => {
-  const [researchQuestion, setResearchQuestion] = useState('');
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [selectedReview, setSelectedReview] = useState<LiteratureReviewResult | null>(null);
-  
-  const {
-    isRunning,
-    currentTask,
-    progress,
-    currentStep,
-    message,
-    logs,
-    result,
-    recentReviews,
-    error,
-    loading,
-    startResearch,
-    stopResearch,
-    fetchRecentReviews,
-    clearError,
-  } = useResearchAgent();
+// Types based on the new LangGraph implementation
+interface ProcessedEvent {
+  title: string;
+  data: any;
+}
 
-  const handleStartResearch = async () => {
-    if (!researchQuestion.trim()) return;
-    await startResearch(researchQuestion);
+interface ConversationMessage {
+  id: string;
+  type: 'human' | 'ai';
+  content: string;
+}
+
+interface ActivityTimelineProps {
+  processedEvents: ProcessedEvent[];
+  isLoading: boolean;
+}
+
+// Activity Timeline Component
+const ActivityTimeline: React.FC<ActivityTimelineProps> = ({ processedEvents, isLoading }) => {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const theme = useTheme();
+
+  const getEventIcon = (title: string) => {
+    const titleLower = title.toLowerCase();
+    if (titleLower.includes('generating') || titleLower.includes('query')) {
+      return <SearchIcon sx={{ fontSize: 16, color: theme.palette.primary.main }} />;
+    } else if (titleLower.includes('research') || titleLower.includes('search')) {
+      return <ScienceIcon sx={{ fontSize: 16, color: theme.palette.secondary.main }} />;
+    } else if (titleLower.includes('reflection') || titleLower.includes('thinking')) {
+      return <PsychologyIcon sx={{ fontSize: 16, color: theme.palette.warning.main }} />;
+    } else if (titleLower.includes('finalizing') || titleLower.includes('answer')) {
+      return <CreateIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />;
+    }
+    return <TimelineIcon sx={{ fontSize: 16, color: theme.palette.text.secondary }} />;
   };
 
-  const handleStopResearch = () => {
-    stopResearch();
-  };
+  useEffect(() => {
+    if (!isLoading && processedEvents.length > 0) {
+      setIsCollapsed(true);
+    }
+  }, [isLoading, processedEvents]);
 
-  const handleViewResult = (review: LiteratureReviewResult) => {
-    setSelectedReview(review);
-    setReportModalOpen(true);
-  };
+  return (
+    <Card 
+      variant="outlined" 
+      sx={{ 
+        mb: 2, 
+        backgroundColor: alpha(theme.palette.primary.main, 0.02),
+        borderColor: alpha(theme.palette.primary.main, 0.1)
+      }}
+    >
+      <CardContent sx={{ pb: '16px !important' }}>
+        <Box 
+          sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            mb: isCollapsed ? 0 : 2
+          }}
+          onClick={() => setIsCollapsed(!isCollapsed)}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <TimelineIcon sx={{ fontSize: 20, color: theme.palette.primary.main }} />
+            <Typography variant="subtitle2" color="primary" fontWeight={600}>
+              Research Progress
+            </Typography>
+          </Box>
+          {isCollapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
+        </Box>
+        
+        <Collapse in={!isCollapsed}>
+          <Box sx={{ maxHeight: 300, overflow: 'auto' }}>
+            {isLoading && processedEvents.length === 0 && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 2 }}>
+                <CircularProgress size={16} />
+                <Typography variant="body2" color="text.secondary">
+                  Initializing research...
+                </Typography>
+              </Box>
+            )}
+            
+            {processedEvents.map((event, index) => (
+              <Box key={index} sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, py: 1 }}>
+                <Box sx={{ pt: 0.5 }}>
+                  {getEventIcon(event.title)}
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={500} sx={{ mb: 0.5 }}>
+                    {event.title}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {typeof event.data === 'string' 
+                      ? event.data 
+                      : Array.isArray(event.data)
+                        ? event.data.join(', ')
+                        : JSON.stringify(event.data)
+                    }
+                  </Typography>
+                </Box>
+              </Box>
+            ))}
+            
+            {isLoading && processedEvents.length > 0 && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 1 }}>
+                <CircularProgress size={16} />
+                <Typography variant="body2" color="text.secondary">
+                  Processing...
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        </Collapse>
+      </CardContent>
+    </Card>
+  );
+};
 
-  const handleCloseReportModal = () => {
-    setReportModalOpen(false);
-    setSelectedReview(null);
-  };
+// Message Component
+interface MessageBubbleProps {
+  message: ConversationMessage;
+  isLast: boolean;
+  isLoading: boolean;
+  liveActivity?: ProcessedEvent[];
+  historicalActivity?: ProcessedEvent[];
+}
 
-  const handleViewFullReport = () => {
-    if (result) {
-      handleViewResult(result);
+const MessageBubble: React.FC<MessageBubbleProps> = ({ 
+  message, 
+  isLast, 
+  isLoading, 
+  liveActivity, 
+  historicalActivity 
+}) => {
+  const [copied, setCopied] = useState(false);
+  const theme = useTheme();
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text:', err);
     }
   };
 
-  const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString();
-  };
+  const activityForThisBubble = isLast && isLoading ? liveActivity : historicalActivity;
+  const showActivity = activityForThisBubble && activityForThisBubble.length > 0;
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
-        <ScienceIcon fontSize="large" color="primary" />
-        Research Agent
-      </Typography>
-
-      <Grid container spacing={3}>
-        {/* Input Section */}
-        <Grid size={{ xs: 12 }}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Start Literature Review
-              </Typography>
-              <Box sx={{ mb: 2 }}>
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={3}
-                  label="Research Question"
-                  placeholder="Enter your research question here... (e.g., 'What are the latest advances in transformer architectures for natural language processing?')"
-                  value={researchQuestion}
-                  onChange={(e) => setResearchQuestion(e.target.value)}
-                  disabled={isRunning}
-                />
-              </Box>
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                <Button
-                  variant="contained"
-                  startIcon={loading ? <CircularProgress size={20} color="inherit" /> : (isRunning ? <StopIcon /> : <PlayIcon />)}
-                  onClick={isRunning ? handleStopResearch : handleStartResearch}
-                  disabled={(!researchQuestion.trim() && !isRunning) || loading}
-                  color={isRunning ? "error" : "primary"}
+    <Box sx={{ mb: 3 }}>
+      {message.type === 'human' ? (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Paper
+            elevation={1}
+            sx={{
+              p: 2,
+              maxWidth: '80%',
+              backgroundColor: theme.palette.primary.main,
+              color: theme.palette.primary.contrastText,
+              borderRadius: 3,
+              borderBottomRightRadius: 1,
+            }}
+          >
+            <Typography variant="body1">
+              {message.content}
+            </Typography>
+          </Paper>
+        </Box>
+      ) : (
+        <Box>
+          {showActivity && (
+            <ActivityTimeline
+              processedEvents={activityForThisBubble}
+              isLoading={isLast && isLoading}
+            />
+          )}
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+            <Box sx={{ flex: 1 }}>
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2,
+                  borderRadius: 3,
+                  borderBottomLeftRadius: 1,
+                  backgroundColor: alpha(theme.palette.background.paper, 0.8),
+                }}
+              >
+                <ReactMarkdown
+                  components={{
+                    h1: ({ children }) => <Typography variant="h5" gutterBottom>{children}</Typography>,
+                    h2: ({ children }) => <Typography variant="h6" gutterBottom>{children}</Typography>,
+                    h3: ({ children }) => <Typography variant="subtitle1" gutterBottom>{children}</Typography>,
+                    p: ({ children }) => <Typography variant="body1" paragraph>{children}</Typography>,
+                    a: ({ children, href }) => (
+                      <Chip 
+                        label={children} 
+                        component="a" 
+                        href={href} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        clickable 
+                        size="small" 
+                        sx={{ mx: 0.5 }}
+                      />
+                    ),
+                    ul: ({ children }) => <Box component="ul" sx={{ pl: 2, mb: 2 }}>{children}</Box>,
+                    ol: ({ children }) => <Box component="ol" sx={{ pl: 2, mb: 2 }}>{children}</Box>,
+                    li: ({ children }) => <Typography component="li" variant="body1">{children}</Typography>,
+                    blockquote: ({ children }) => (
+                      <Box 
+                        sx={{ 
+                          borderLeft: 4, 
+                          borderColor: theme.palette.divider, 
+                          pl: 2, 
+                          py: 1, 
+                          my: 2,
+                          fontStyle: 'italic',
+                          backgroundColor: alpha(theme.palette.action.hover, 0.3)
+                        }}
+                      >
+                        {children}
+                      </Box>
+                    ),
+                    code: ({ children }) => (
+                      <Typography 
+                        component="code" 
+                        sx={{ 
+                          backgroundColor: alpha(theme.palette.action.hover, 0.5),
+                          px: 0.5,
+                          py: 0.25,
+                          borderRadius: 0.5,
+                          fontFamily: 'monospace',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        {children}
+                      </Typography>
+                    ),
+                    pre: ({ children }) => (
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 2,
+                          my: 2,
+                          backgroundColor: alpha(theme.palette.action.hover, 0.1),
+                          overflow: 'auto',
+                          fontFamily: 'monospace',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        {children}
+                      </Paper>
+                    ),
+                  }}
                 >
-                  {loading ? 'Starting...' : (isRunning ? 'Stop Research' : 'Start Research')}
-                </Button>
-                <Tooltip title="Refresh recent reviews">
-                  <IconButton onClick={fetchRecentReviews} disabled={loading}>
-                    <RefreshIcon />
+                  {message.content}
+                </ReactMarkdown>
+              </Paper>
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+                <Tooltip title={copied ? "Copied!" : "Copy message"}>
+                  <IconButton size="small" onClick={handleCopy}>
+                    {copied ? <CheckIcon fontSize="small" /> : <CopyIcon fontSize="small" />}
                   </IconButton>
                 </Tooltip>
               </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+            </Box>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+};
 
-        {/* Progress Section */}
-        {isRunning && (
-          <Grid size={{ xs: 12 }}>
-            <Fade in={true}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Research Progress
-                  </Typography>
-                  <Box sx={{ mb: 2 }}>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={progress} 
-                      sx={{ height: 8, borderRadius: 4 }}
-                    />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      {progress}% Complete
-                    </Typography>
-                  </Box>
-                  {currentStep && (
-                    <Typography variant="body1" sx={{ mb: 2 }}>
-                      Current Step: {currentStep}
-                    </Typography>
-                  )}
-                  {message && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      {message}
-                    </Typography>
-                  )}
-                  {currentTask && (
-                    <Chip label={`Task ID: ${currentTask}`} size="small" variant="outlined" />
-                  )}
-                </CardContent>
-              </Card>
-            </Fade>
-          </Grid>
-        )}
+// Main Research Agent Component
+const ResearchAgent: React.FC = () => {
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [effort, setEffort] = useState<'low' | 'medium' | 'high'>('medium');
+  const [isLoading, setIsLoading] = useState(false);
+  const [liveActivity, setLiveActivity] = useState<ProcessedEvent[]>([]);
+  const [historicalActivities, setHistoricalActivities] = useState<Record<string, ProcessedEvent[]>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [websocket, setWebsocket] = useState<WebSocket | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
-        {/* Live Logs Section */}
-        {(isRunning || logs.length > 0) && (
-          <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Live Logs
-                </Typography>
-                <Paper 
-                  sx={{ 
-                    p: 2, 
-                    height: 300, 
-                    overflow: 'auto', 
-                    backgroundColor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.100',
-                    fontFamily: 'monospace',
-                    fontSize: '0.875rem',
-                    border: (theme) => `1px solid ${theme.palette.divider}`
-                  }}
-                >
-                  {logs.map((log, index) => (
-                    <Typography 
-                      key={index} 
-                      variant="body2" 
-                      sx={{ mb: 0.5, color: 'text.primary' }}
-                    >
-                      {log}
-                    </Typography>
-                  ))}
-                  {logs.length === 0 && !isRunning && (
-                    <Typography variant="body2" color="text.secondary">
-                      No logs yet...
-                    </Typography>
-                  )}
-                  {logs.length === 0 && isRunning && (
-                    <Typography variant="body2" color="text.secondary">
-                      Waiting for logs...
-                    </Typography>
-                  )}
-                </Paper>
-              </CardContent>
-            </Card>
-          </Grid>
-        )}
+  const {
+    recentReviews,
+    fetchRecentReviews,
+  } = useResearchAgent();
 
-        {/* Results Section */}
-        {result && (
-          <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Latest Results
-                </Typography>
-                <Typography variant="subtitle1" gutterBottom>
-                  {result.research_question}
-                </Typography>
-                <Box sx={{ mb: 2 }}>
-                  <Chip 
-                    label={`${result.total_papers} papers found`} 
-                    color="primary" 
-                    size="small" 
-                  />
-                  <Chip 
-                    label={formatTimestamp(result.created_ts)} 
-                    size="small" 
-                    sx={{ ml: 1 }}
-                  />
-                </Box>
-                {result.summaries.slice(0, 3).map((summary) => (
-                  <Box key={summary.paper_id} sx={{ mb: 2, p: 1, backgroundColor: 'grey.50', borderRadius: 1 }}>
-                    <Typography variant="subtitle2">
-                      {summary.title} (Score: {summary.relevance_score.toFixed(2)})
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>
-                      {summary.summary.substring(0, 150)}...
-                    </Typography>
-                  </Box>
-                ))}
-                {result.report_text && (
-                  <Button
-                    variant="outlined"
-                    startIcon={<ReportIcon />}
-                    size="small"
-                    onClick={handleViewFullReport}
-                  >
-                    View Full Report
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-        )}
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, liveActivity]);
 
-        {/* Error Section */}
-        {error && (
-          <Grid size={{ xs: 12 }}>
-            <Alert severity="error" onClose={() => clearError()}>
-              {error}
-            </Alert>
-          </Grid>
-        )}
+  // Clean up WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (websocket) {
+        websocket.close();
+      }
+    };
+  }, [websocket]);
 
-        {/* Recent Reviews Section */}
-        <Grid size={{ xs: 12 }}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <HistoryIcon />
-                Recent Literature Reviews
+  const connectWebSocket = useCallback((taskId: string) => {
+    if (websocket) {
+      websocket.close();
+    }
+
+    const ws = new WebSocket(`ws://localhost:8000/ws/research-agent/${taskId}`);
+    
+    ws.onopen = () => {
+      console.log('WebSocket connected for task:', taskId);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const status = JSON.parse(event.data);
+        
+        // Process different types of updates from our existing research agent
+        if (status.message) {
+          // Convert our existing progress messages to ProcessedEvent format
+          const eventTitle = status.currentStep || 'Research Progress';
+          const eventData = status.message;
+          
+          const processedEvent: ProcessedEvent = {
+            title: eventTitle,
+            data: eventData
+          };
+          
+          setLiveActivity(prev => [...prev, processedEvent]);
+        }
+
+        if (status.overallStatus === 'completed' && status.result) {
+          // Handle completion - add AI response
+          const aiMessage: ConversationMessage = {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: status.result.report_text || 'Research completed successfully.'
+          };
+          
+          setMessages(prev => [...prev, aiMessage]);
+          
+          // Store historical activity for this message
+          setHistoricalActivities(prev => ({
+            ...prev,
+            [aiMessage.id]: [...liveActivity]
+          }));
+          
+          setIsLoading(false);
+          setLiveActivity([]);
+          setSuccess('Research completed successfully!');
+        } else if (status.overallStatus === 'failed') {
+          setError(status.error || 'Research failed');
+          setIsLoading(false);
+          setLiveActivity([]);
+        }
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setError('Connection error during research');
+      setIsLoading(false);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket connection closed');
+    };
+
+    setWebsocket(ws);
+  }, [websocket, liveActivity]);
+
+  const handleSubmit = async (submittedInputValue: string, selectedEffort: string) => {
+    if (!submittedInputValue.trim() || isLoading) return;
+
+    // Clear any previous errors
+    setError(null);
+    setLiveActivity([]);
+
+    // Add user message
+    const userMessage: ConversationMessage = {
+      id: Date.now().toString(),
+      type: 'human',
+      content: submittedInputValue
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputValue('');
+    setIsLoading(true);
+
+    try {
+      // Convert effort to our API parameters
+      let num_papers_target = 5;
+      let max_steps = 10;
+      
+      switch (selectedEffort) {
+        case 'low':
+          num_papers_target = 3;
+          max_steps = 5;
+          break;
+        case 'medium':
+          num_papers_target = 5;
+          max_steps = 10;
+          break;
+        case 'high':
+          num_papers_target = 10;
+          max_steps = 20;
+          break;
+      }
+
+      // Convert messages to conversation history
+      const conversation_history = messages.map(msg => ({
+        role: msg.type === 'human' ? 'user' : 'assistant',
+        content: msg.content
+      }));
+
+      // Start research via our API
+      const response = await fetch('/api/research-agent/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          research_question: submittedInputValue,
+          num_papers_target,
+          max_steps,
+          conversation_history
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start research');
+      }
+
+      const result = await response.json();
+      
+      // Connect to WebSocket for progress updates
+      connectWebSocket(result.task_id);
+
+    } catch (err) {
+      console.error('Error starting research:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start research');
+      setIsLoading(false);
+    }
+  };
+
+  const handleCancel = () => {
+    if (websocket) {
+      websocket.close();
+    }
+    setIsLoading(false);
+    setLiveActivity([]);
+  };
+
+  const handleNewSearch = () => {
+    if (websocket) {
+      websocket.close();
+    }
+    setMessages([]);
+    setLiveActivity([]);
+    setHistoricalActivities({});
+    setIsLoading(false);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(inputValue, effort);
+    }
+  };
+
+  return (
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
+        <Typography 
+          variant="h4" 
+          component="h1" 
+          gutterBottom 
+          sx={{ display: 'flex', alignItems: 'center', gap: 2 }}
+        >
+          <ScienceIcon fontSize="large" color="primary" />
+          Research Agent
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Powered by LangGraph and local-first search
+        </Typography>
+      </Box>
+
+      {/* Main Content */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {messages.length === 0 ? (
+          // Welcome Screen
+          <Box 
+            sx={{ 
+              flex: 1, 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              gap: 4,
+              p: 4
+            }}
+          >
+            <Box sx={{ textAlign: 'center' }}>
+              <Typography variant="h3" component="h2" gutterBottom color="primary">
+                Welcome
               </Typography>
-              {recentReviews.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  No literature reviews yet. Start your first research above!
-                </Typography>
-              ) : (
-                <Grid container spacing={2}>
-                  {recentReviews.map((review) => (
-                     <Grid size={{ xs: 12, md: 6, lg: 4 }} key={review.id}>
-                       <Card variant="outlined" sx={{ cursor: 'pointer' }} onClick={() => handleViewResult(review)}>
-                         <CardContent>
-                           <Typography variant="subtitle1" noWrap>
-                             {review.research_question}
-                           </Typography>
-                           <Box sx={{ mt: 1, mb: 1 }}>
-                             <Chip 
-                               label={`${review.total_papers} papers`} 
-                               size="small" 
-                               variant="outlined"
-                             />
-                           </Box>
-                           <Typography variant="caption" color="text.secondary">
-                             {formatTimestamp(review.created_ts)}
-                           </Typography>
-                         </CardContent>
-                       </Card>
-                     </Grid>
-                   ))}
-                </Grid>
+              <Typography variant="h6" color="text.secondary">
+                How can I help you today?
+              </Typography>
+            </Box>
+          </Box>
+        ) : (
+          // Chat Messages
+          <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+            <Box sx={{ maxWidth: 800, mx: 'auto' }}>
+              {messages.map((message, index) => {
+                const isLast = index === messages.length - 1;
+                return (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    isLast={isLast}
+                    isLoading={isLoading}
+                    liveActivity={liveActivity}
+                    historicalActivity={historicalActivities[message.id]}
+                  />
+                );
+              })}
+              
+              {/* Live loading indicator for new AI response */}
+              {isLoading && (messages.length === 0 || messages[messages.length - 1].type === 'human') && (
+                <Box sx={{ mb: 3 }}>
+                  {liveActivity.length > 0 ? (
+                    <ActivityTimeline processedEvents={liveActivity} isLoading={true} />
+                  ) : (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 2 }}>
+                      <CircularProgress size={20} />
+                      <Typography variant="body2" color="text.secondary">
+                        Processing your request...
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
               )}
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+              
+              <div ref={chatEndRef} />
+            </Box>
+          </Box>
+        )}
 
-      <ReportViewer
-        open={reportModalOpen}
-        onClose={handleCloseReportModal}
-        review={selectedReview}
-      />
+        {/* Input Form */}
+        <Box sx={{ p: 3, borderTop: 1, borderColor: 'divider' }}>
+          <Box sx={{ maxWidth: 800, mx: 'auto' }}>
+            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <TextField
+                fullWidth
+                multiline
+                maxRows={4}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="What research question would you like me to investigate?"
+                disabled={isLoading}
+                variant="outlined"
+                sx={{ mb: 2 }}
+              />
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                  <FormControl size="small" sx={{ minWidth: 120 }}>
+                    <InputLabel>Effort</InputLabel>
+                    <Select
+                      value={effort}
+                      label="Effort"
+                      onChange={(e) => setEffort(e.target.value as 'low' | 'medium' | 'high')}
+                      disabled={isLoading}
+                    >
+                      <MenuItem value="low">Low</MenuItem>
+                      <MenuItem value="medium">Medium</MenuItem>
+                      <MenuItem value="high">High</MenuItem>
+                    </Select>
+                  </FormControl>
+                  
+                  <Tooltip title="Refresh recent reviews">
+                    <IconButton onClick={fetchRecentReviews} disabled={isLoading}>
+                      <RefreshIcon />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+                
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  {messages.length > 0 && (
+                    <Button
+                      variant="outlined"
+                      onClick={handleNewSearch}
+                      startIcon={<SmartIcon />}
+                      disabled={isLoading}
+                    >
+                      New Search
+                    </Button>
+                  )}
+                  
+                  {isLoading ? (
+                    <Button
+                      variant="contained"
+                      color="error"
+                      onClick={handleCancel}
+                      startIcon={<StopIcon />}
+                    >
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="contained"
+                      onClick={() => handleSubmit(inputValue, effort)}
+                      disabled={!inputValue.trim()}
+                      startIcon={<SendIcon />}
+                    >
+                      Search
+                    </Button>
+                  )}
+                </Box>
+              </Box>
+            </Paper>
+
+            {/* Recent Reviews */}
+            {recentReviews.length > 0 && (
+              <Accordion>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle1">Recent Reviews ({recentReviews.length})</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {recentReviews.slice(0, 5).map((review) => (
+                      <Chip
+                        key={review.id}
+                        label={`${review.research_question} (${review.total_papers} papers)`}
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                          // Load this review as a conversation
+                          const reviewMessage: ConversationMessage = {
+                            id: review.id.toString(),
+                            type: 'ai',
+                            content: review.report_text || 'No report available.'
+                          };
+                          setMessages([reviewMessage]);
+                        }}
+                        sx={{ alignSelf: 'flex-start' }}
+                      />
+                    ))}
+                  </Box>
+                </AccordionDetails>
+              </Accordion>
+            )}
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Snackbars */}
+      <Snackbar
+        open={Boolean(error)}
+        autoHideDuration={6000}
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert onClose={() => setError(null)} severity="error">
+          {error}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={Boolean(success)}
+        autoHideDuration={4000}
+        onClose={() => setSuccess(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert onClose={() => setSuccess(null)} severity="success">
+          {success}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

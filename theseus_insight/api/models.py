@@ -316,56 +316,80 @@ class HybridSearchResponse(BaseModel):
 
 # Research Agent Model Configuration
 class ResearchAgentModelConfigApi(BaseModel):
-    """API model for Research Agent model configuration (FR-16, FR-17)."""
-    boss_model: ModelConfig = Field(..., description="Main coordinating model")
-    worker_models: Dict[str, ModelConfig] = Field(
+    """API model for Research Agent model configuration supporting both legacy and LangGraph workflows."""
+    
+    # Legacy boss/worker model structure (for backward compatibility)
+    boss_model: Optional[ModelConfig] = Field(None, description="Legacy: Main coordinating model")
+    worker_models: Optional[Dict[str, ModelConfig]] = Field(
         default_factory=dict, 
-        description="Task-specific worker models (summary, analysis, search)"
+        description="Legacy: Task-specific worker models (summary, analysis, search)"
     )
-    default_worker: str = Field("summary", description="Default worker model role")
-    max_retries: int = Field(3, ge=1, le=10, description="Maximum retry attempts")
-    timeout_seconds: int = Field(30, ge=5, le=300, description="Timeout in seconds")
+    default_worker: Optional[str] = Field(None, description="Legacy: Default worker model role")
+    max_retries: Optional[int] = Field(None, ge=1, le=10, description="Legacy: Maximum retry attempts")
+    timeout_seconds: Optional[int] = Field(None, ge=5, le=300, description="Legacy: Timeout in seconds")
+    
+    # New LangGraph workflow configuration
+    reasoning_model: Optional[ModelConfig] = Field(None, description="LangGraph: Primary reasoning model for query generation, reflection, and synthesis")
+    query_generator_model: Optional[ModelConfig] = Field(None, description="LangGraph: Model for generating search queries")
+    reflection_model: Optional[ModelConfig] = Field(None, description="LangGraph: Model for reflecting on search results")
+    answer_model: Optional[ModelConfig] = Field(None, description="LangGraph: Model for final answer generation")
+    
+    # Research workflow configuration
+    max_research_loops: Optional[int] = Field(10, ge=1, le=50, description="Maximum research iteration loops")
+    initial_search_query_count: Optional[int] = Field(3, ge=1, le=10, description="Number of initial search queries")
+    local_search_limit: Optional[int] = Field(10, ge=1, le=50, description="Papers per local search operation")
+    external_search_limit: Optional[int] = Field(5, ge=1, le=20, description="Papers per external search operation")
+    
+    # Search strategy configuration
+    search_config: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: {
+            "semantic_weight": 0.6,
+            "keyword_weight": 0.4,
+            "similarity_threshold": 0.3,
+            "enable_pdf_download": True
+        },
+        description="Search strategy parameters for hybrid local/external search"
+    )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "boss_model": {
+                "reasoning_model": {
                     "model_name": "gemini-2.0-flash",
                     "model_type": "gemini",
                     "max_new_tokens": 4096,
                     "temperature": 0.1,
                     "num_ctx": 131072
                 },
-                "worker_models": {
-                    "summary": {
-                        "model_name": "gemma3:27b-it-qat",
-                        "model_type": "ollama",
-                        "max_new_tokens": 4096,
-                        "temperature": 0.1,
-                        "num_ctx": 131072
-                    },
-                    "analysis": {
-                        "model_name": "phi4-mini:3.8b-q8_0",
-                        "model_type": "ollama",
-                        "max_new_tokens": 2048,
-                        "temperature": 0.1,
-                        "num_ctx": 4096
-                    }
-                },
-                "default_worker": "summary",
-                "max_retries": 3,
-                "timeout_seconds": 30
+                "max_research_loops": 10,
+                "initial_search_query_count": 3,
+                "local_search_limit": 10,
+                "external_search_limit": 5,
+                "search_config": {
+                    "semantic_weight": 0.6,
+                    "keyword_weight": 0.4,
+                    "similarity_threshold": 0.3,
+                    "enable_pdf_download": True
+                }
             }
         }
 
 # Research Agent Request/Response models
+class ConversationMessage(BaseModel):
+    """Individual message in a conversation history."""
+    role: str = Field(..., description="Message role: 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
 class ResearchAgentRunRequest(BaseModel):
-    """Request model for starting a research agent run (FR-18)."""
+    """Request model for starting an enhanced research agent run with LangGraph workflow (FR-18)."""
     research_question: str = Field(..., min_length=10, description="Research question to investigate")
     num_papers_target: int = Field(5, ge=1, le=20, description="Target number of papers to collect")
     max_steps: int = Field(10, ge=1, le=50, description="Maximum agent iteration steps")
     model_config_override: Optional[ResearchAgentModelConfigApi] = Field(
         None, description="Optional model configuration override"
+    )
+    conversation_history: List[ConversationMessage] = Field(
+        default_factory=list, description="Previous conversation messages for multi-turn research"
     )
 
 class ResearchAgentRunResponse(BaseModel):

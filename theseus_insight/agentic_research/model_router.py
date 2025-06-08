@@ -150,33 +150,86 @@ class AgentModelRouter:
         try:
             # Get or create model instance
             if cache_key not in self.model_cache:
+                # Prepare model creation parameters - only include trust_remote_code for sentence-transformers
+                create_params = {
+                    "model_name": model_config.model_name,
+                    "max_new_tokens": model_config.max_new_tokens or 4096,
+                    "temperature": model_config.temperature or 0.1,
+                    "num_ctx": model_config.num_ctx or 131072,
+                }
+                
+                # Only add trust_remote_code for sentence-transformer models
+                if model_config.model_type == "sentence-transformers":
+                    create_params["trust_remote_code"] = model_config.trust_remote_code or False
+                
                 model_instance = self.model_factory.create_model(
                     model_config.model_type,
-                    model_name=model_config.model_name,
-                    max_new_tokens=model_config.max_new_tokens or 4096,
-                    temperature=model_config.temperature or 0.1,
-                    num_ctx=model_config.num_ctx or 131072,
-                    trust_remote_code=model_config.trust_remote_code or False
+                    **create_params
                 )
                 self.model_cache[cache_key] = model_instance
             else:
                 model_instance = self.model_cache[cache_key]
             
-            # Prepare parameters, merging config defaults with kwargs
+            # Prepare base parameters that ALL models accept (only messages, system_prompt, streaming)
             invoke_params = {
                 "messages": messages,
                 "system_prompt": system_prompt,
                 "streaming": kwargs.get("streaming", False),
-                "max_tokens": kwargs.get("max_tokens", model_config.max_new_tokens),
-                "temperature": kwargs.get("temperature", model_config.temperature),
             }
             
-            # Add model-specific parameters
+            # Add model-specific parameters based on what each model type actually accepts
             if hasattr(model_instance, 'invoke'):
                 if model_config.model_type == "ollama":
-                    invoke_params["num_ctx"] = kwargs.get("num_ctx", model_config.num_ctx)
-                elif model_config.model_type in ["openai", "anthropic", "gemini"]:
-                    invoke_params["model_name"] = kwargs.get("model_name", model_config.model_name)
+                    # OllamaInference accepts: streaming, model_name, num_ctx, schema
+                    if kwargs.get("model_name") or model_config.model_name:
+                        invoke_params["model_name"] = kwargs.get("model_name", model_config.model_name)
+                    if kwargs.get("num_ctx") or model_config.num_ctx:
+                        invoke_params["num_ctx"] = kwargs.get("num_ctx", model_config.num_ctx)
+                    if kwargs.get("schema"):
+                        invoke_params["schema"] = kwargs.get("schema")
+                        
+                elif model_config.model_type == "anthropic":
+                    # AnthropicInference accepts: streaming, model_name
+                    if kwargs.get("model_name") or model_config.model_name:
+                        invoke_params["model_name"] = kwargs.get("model_name", model_config.model_name)
+                        
+                elif model_config.model_type == "openai":
+                    # OpenAIInference accepts: streaming, model_name, schema
+                    if kwargs.get("model_name") or model_config.model_name:
+                        invoke_params["model_name"] = kwargs.get("model_name", model_config.model_name)
+                    if kwargs.get("schema"):
+                        invoke_params["schema"] = kwargs.get("schema")
+                        
+                elif model_config.model_type == "gemini":
+                    # GeminiInference accepts: streaming, model_name, **kwargs
+                    if kwargs.get("model_name") or model_config.model_name:
+                        invoke_params["model_name"] = kwargs.get("model_name", model_config.model_name)
+                    # Gemini accepts **kwargs, so we can pass additional parameters safely
+                    for key, value in kwargs.items():
+                        if key not in invoke_params:
+                            invoke_params[key] = value
+                            
+                elif model_config.model_type == "llamacpp":
+                    # LlamacppInference accepts: streaming, max_tokens, temperature, schema, **kwargs
+                    if kwargs.get("max_tokens") or model_config.max_new_tokens:
+                        invoke_params["max_tokens"] = kwargs.get("max_tokens", model_config.max_new_tokens)
+                    if kwargs.get("temperature") or model_config.temperature:
+                        invoke_params["temperature"] = kwargs.get("temperature", model_config.temperature)
+                    if kwargs.get("schema"):
+                        invoke_params["schema"] = kwargs.get("schema")
+                    # LlamacppInference accepts **kwargs, so we can pass additional parameters safely
+                    for key, value in kwargs.items():
+                        if key not in invoke_params:
+                            invoke_params[key] = value
+                            
+                elif model_config.model_type == "custom-oai":
+                    # CustomOAIInference accepts: streaming, model_name, **kwargs
+                    if kwargs.get("model_name") or model_config.model_name:
+                        invoke_params["model_name"] = kwargs.get("model_name", model_config.model_name)
+                    # CustomOAIInference accepts **kwargs, so we can pass additional parameters safely
+                    for key, value in kwargs.items():
+                        if key not in invoke_params:
+                            invoke_params[key] = value
             
             # Invoke the model
             response = model_instance.invoke(**invoke_params)

@@ -156,11 +156,13 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
     except WebSocketDisconnect:
         pass
     except ValueError as e:
+        print(f"DEBUG: ValueError in WebSocket handler for task {task_id}: {e}")
         try:
             await websocket.close(code=4004, reason=str(e))
         except Exception:
             pass
     except Exception as e:
+        print(f"DEBUG: Exception in WebSocket handler for task {task_id}: {e}")
         try:
             await websocket.close(code=4000, reason=str(e))
         except Exception:

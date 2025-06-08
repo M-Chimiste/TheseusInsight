@@ -52,3 +52,11 @@ uvicorn[standard]
 websockets
 python-multipart
 sqlite-vec
+
+#Agent Dependencies
+langgraph>=0.2.6
+langchain>=0.3.19
+python-dotenv>=1.0.1
+langgraph-sdk>=0.1.57
+langgraph-cli
+langgraph-api

@@ -2,9 +2,13 @@ import json
 import re
 import time
 import logging
-from typing import Dict, List, Optional, Tuple, Any, callable
+import os
+import json_repair
+from typing import Dict, List, Optional, Tuple, Any, Union, Literal
+from collections.abc import Callable
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from pydantic import BaseModel, Field
 
 from ..data_model.data_handling import PaperDatabase
 from .local_search import LocalSearchTool
@@ -12,6 +16,42 @@ from .model_router import AgentModelRouter, ModelRole
 from ..constants import TASK_TYPE_RESEARCH_AGENT
 
 logger = logging.getLogger(__name__)
+
+
+# Pydantic models for structured agent outputs
+class SummaryCommand(BaseModel):
+    """Command to search for papers based on a query."""
+    command: Literal["SUMMARY"] = "SUMMARY"
+    query: str = Field(..., description="The search query to find relevant papers")
+
+
+class FullTextCommand(BaseModel):
+    """Command to retrieve full text of a specific paper."""
+    command: Literal["FULL_TEXT"] = "FULL_TEXT"
+    paper_id: int = Field(..., description="The paper ID to retrieve full text for")
+
+
+class AddPaperCommand(BaseModel):
+    """Command to add a paper by ID or URL."""
+    command: Literal["ADD_PAPER"] = "ADD_PAPER"
+    identifier: str = Field(..., description="Paper ID (numeric) or URL to add")
+
+
+class CompleteCommand(BaseModel):
+    """Command to signal completion of the literature review."""
+    command: Literal["COMPLETE"] = "COMPLETE"
+    reason: str = Field(default="", description="Optional reason for completion")
+
+
+class AgentAction(BaseModel):
+    """Union model for all possible agent actions."""
+    action: Union[SummaryCommand, FullTextCommand, AddPaperCommand, CompleteCommand] = Field(
+        ..., 
+        description="The specific action to take",
+        discriminator="command"
+    )
+    reasoning: str = Field(..., description="Brief explanation of why this action was chosen")
+
 
 @dataclass
 class AgentTraceEntry:
@@ -57,7 +97,7 @@ class ResearchAgentLoop:
         model_router: AgentModelRouter,
         num_papers_target: int = 5,
         max_steps: int = 10,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[Callable] = None
     ):
         self.db = db
         self.search_tool = search_tool
@@ -117,6 +157,9 @@ class ResearchAgentLoop:
         """
         Parse agent response for fenced commands following PRD FR-3.
         
+        DEPRECATED: This method is deprecated in favor of structured JSON outputs.
+        Use _invoke_agent_with_schema() instead for new implementations.
+        
         Expected formats:
         ```SUMMARY <search_query>```
         ```FULL_TEXT <paper_id>```
@@ -126,19 +169,64 @@ class ResearchAgentLoop:
         Returns:
             List of (command, argument) tuples
         """
+        import warnings
+        warnings.warn(
+            "_parse_agent_commands is deprecated. Use structured JSON outputs with _invoke_agent_with_schema instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         commands = []
         
-        # Match fenced code blocks with commands
-        pattern = r'```(\w+)(?:\s+(.+?))?```'
-        matches = re.findall(pattern, agent_response, re.DOTALL | re.MULTILINE)
+        # Try multiple patterns to be more robust with LLM responses
+        patterns = [
+            # Standard fenced code blocks: ```COMMAND arg```
+            r'```(\w+)(?:\s+(.+?))?```',
+            # Alternative fenced blocks with optional language: ```bash COMMAND arg``` or ```text COMMAND arg```
+            r'```(?:\w+\s+)?(\w+)(?:\s+(.+?))?```',
+            # Fenced blocks with newlines: ```\nCOMMAND arg\n```
+            r'```\s*\n\s*(\w+)(?:\s+(.+?))?\s*\n\s*```',
+            # Simple patterns without fencing: COMMAND: arg or COMMAND arg
+            r'^\s*(\w+):\s*(.+?)$',
+            r'^\s*(\w+)\s+(.+?)$',
+            # Standalone COMPLETE command
+            r'\b(COMPLETE)\b'
+        ]
         
-        for command, arg in matches:
-            command = command.upper().strip()
-            arg = arg.strip() if arg else ""
+        for pattern in patterns:
+            matches = re.findall(pattern, agent_response, re.DOTALL | re.MULTILINE)
             
-            if command in ['SUMMARY', 'FULL_TEXT', 'ADD_PAPER', 'COMPLETE']:
-                commands.append((command, arg))
+            for match in matches:
+                if isinstance(match, tuple):
+                    command, arg = match
+                else:
+                    command = match
+                    arg = ""
+                    
+                command = command.upper().strip()
+                arg = arg.strip() if arg else ""
                 
+                if command in ['SUMMARY', 'FULL_TEXT', 'ADD_PAPER', 'COMPLETE']:
+                    # Avoid duplicates
+                    if (command, arg) not in commands:
+                        commands.append((command, arg))
+        
+        # If still no commands found, try to extract from natural language
+        if not commands:
+            # Look for natural language patterns
+            nl_patterns = [
+                r'(?:I want to|I will|Let me)\s+search for\s+(.+?)(?:\.|$)',
+                r'(?:search for|searching for)\s+["\']?(.+?)["\']?(?:\.|$)',
+                r'(?:I need to|Let me)\s+(?:search|find)\s+(?:papers?\s+(?:on|about))\s+(.+?)(?:\.|$)',
+            ]
+            
+            for pattern in nl_patterns:
+                matches = re.findall(pattern, agent_response, re.IGNORECASE)
+                for match in matches:
+                    query = match.strip()
+                    if query and len(query) > 3:  # Basic validation
+                        commands.append(("SUMMARY", query))
+                        break  # Take first valid match
+                        
         self._add_trace_entry(
             "command_parsing",
             {"raw_response": agent_response, "parsed_commands": commands}
@@ -154,21 +242,57 @@ class ResearchAgentLoop:
             # Use search tool to find relevant papers
             search_results = self.search_tool.find_papers_by_str(
                 search_query, 
-                top_k=10  # Get more than target to allow for selection
+                limit=10  # Get more than target to allow for selection
             )
+            
+            # Extract paper IDs from search results and automatically create summaries
+            paper_ids = []
+            lines = search_results.split('\n')
+            for line in lines:
+                if line.startswith('ID: '):
+                    try:
+                        paper_id = int(line.split('ID: ')[1])
+                        paper_ids.append(paper_id)
+                    except (ValueError, IndexError):
+                        continue
+            
+            # Create summaries for papers we don't already have
+            new_summaries = []
+            existing_ids = {s.paper_id for s in self.collected_summaries}
+            
+            for paper_id in paper_ids:
+                if paper_id not in existing_ids and len(self.collected_summaries) + len(new_summaries) < self.num_papers_target:
+                    paper = self.db.get_paper_by_id(paper_id)
+                    if paper:
+                        summary = LiteratureReviewSummary(
+                            paper_id=paper_id,
+                            title=paper.get('title', 'Unknown Title'),
+                            summary=paper.get('abstract', 'No abstract available')[:500] + ('...' if len(paper.get('abstract', '')) > 500 else ''),
+                            rationale=f"Found via search query: '{search_query}'",
+                            relevance_score=paper.get('hybrid_score', paper.get('semantic_score', 0.5))
+                        )
+                        new_summaries.append(summary)
+            
+            # Add new summaries to collection
+            self.collected_summaries.extend(new_summaries)
             
             duration = time.time() - start_time
             self._add_trace_entry(
                 "search_execution",
                 {
                     "query": search_query,
-                    "results_count": len(search_results.split('\n')) - 1,  # Rough count
-                    "search_results": search_results
+                    "results_count": len(paper_ids),
+                    "new_summaries_added": len(new_summaries),
+                    "total_summaries": len(self.collected_summaries),
+                    "search_results": search_results[:1000] + "..." if len(search_results) > 1000 else search_results
                 },
                 duration_seconds=duration
             )
             
-            return search_results
+            if new_summaries:
+                return f"Found {len(paper_ids)} papers, added {len(new_summaries)} new summaries. Total summaries: {len(self.collected_summaries)}/{self.num_papers_target}"
+            else:
+                return f"Found {len(paper_ids)} papers, but none were new or relevant. Total summaries: {len(self.collected_summaries)}/{self.num_papers_target}"
             
         except Exception as e:
             duration = time.time() - start_time
@@ -285,10 +409,21 @@ class ResearchAgentLoop:
         else:
             summaries_block = "No summaries collected yet."
         
-        prompt = f"""System: You are a diligent PhD candidate conducting a literature review.
-
-User:
-Research topic: "{research_question}"
+        # Provide search strategy guidance based on current state
+        search_guidance = ""
+        if len(self.collected_summaries) == 0:
+            search_guidance = """
+SEARCH STRATEGY: Start with simple, broad keyword searches. Use 1-3 relevant keywords rather than full questions.
+Good examples: "agents", "AI agents", "language model agents", "autonomous agents"
+Avoid: Long questions like "What are the current trends in..."
+"""
+        elif len(self.collected_summaries) < self.num_papers_target // 2:
+            search_guidance = """
+SEARCH STRATEGY: Try different keyword combinations to find more papers.
+Examples: "multi-agent systems", "agent architectures", "agent frameworks"
+"""
+        
+        prompt = f"""Research topic: "{research_question}"
 Phase: "research_gathering" (step {self.current_iteration + 1})
 Target papers: {self.num_papers_target} (currently have {len(self.collected_summaries)})
 
@@ -297,16 +432,160 @@ Known summaries so far:
 
 {context}
 
-Instructions:
-- If you need more papers, respond with ```SUMMARY <search query>``` to search for relevant papers.
-- To inspect full text of a paper you've seen, respond with ```FULL_TEXT <paper_id>``` to get the complete text.
-- To add a specific paper by ID or URL, respond with ```ADD_PAPER <paper_id_or_url>```.
-- Once you have found {self.num_papers_target} high-quality papers and their summaries, respond with ```COMPLETE``` followed by a final analysis.
-- Focus on recent, high-impact papers that directly address the research topic.
+Current status: You have {len(self.collected_summaries)} out of {self.num_papers_target} papers.
 
-Remember: Be systematic and thorough. Quality over quantity."""
+Available actions:
+1. SUMMARY <query>: Search for papers using keywords (use simple, relevant keywords)
+2. FULL_TEXT <paper_id>: Retrieve full text of a specific paper by ID
+3. ADD_PAPER <identifier>: Add a paper by ID or URL
+4. COMPLETE: Signal completion when you have enough high-quality papers
+
+{search_guidance}
+
+CRITICAL RULES:
+- If you have 0 papers, you MUST use SUMMARY with simple keywords (2-4 words maximum)
+- If you have fewer than {self.num_papers_target} papers, continue searching with SUMMARY
+- NEVER use COMPLETE unless you have {self.num_papers_target} or more papers
+- Use simple keyword searches, not full questions or sentences
+- Focus on recent, high-impact papers that directly address the research topic
+
+Respond with valid JSON in this exact format:
+{{
+  "action": {{"command": "SUMMARY", "query": "your search keywords"}},
+  "reasoning": "explanation of your choice"
+}}
+
+Choose your next action. Be systematic and thorough in your search."""
 
         return prompt
+    
+    def _invoke_agent_with_schema(self, prompt: str) -> Optional[AgentAction]:
+        """Invoke the agent with structured output using the AgentAction schema."""
+        start_time = time.time()
+        
+        try:
+            # Try structured output first
+            response = self.model_router.invoke(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="You are a systematic research agent conducting a literature review. Your goal is to find relevant papers by using simple keyword searches, then gathering enough papers for analysis. CRITICAL: Always use simple 1-3 word searches like 'AI agents' or 'multi-agent systems', never use full questions. You must collect the required number of papers before completing. Follow the JSON format exactly.",
+                role=ModelRole.BOSS,
+                task_description="research_coordination",
+                schema=AgentAction
+            )
+            
+            duration = time.time() - start_time
+            
+            # If response is already a Pydantic object, use it directly
+            if isinstance(response, AgentAction):
+                self._add_trace_entry(
+                    "structured_agent_response",
+                    {
+                        "response_type": "pydantic_object",
+                        "command": response.action.command,
+                        "reasoning": response.reasoning
+                    },
+                    model_used="boss_model",
+                    duration_seconds=duration
+                )
+                return response
+            
+            # If response is a string (JSON), try to parse it
+            elif isinstance(response, str):
+                try:
+                    # Try standard JSON parsing first
+                    response_data = json.loads(response)
+                except json.JSONDecodeError:
+                    # Fall back to json_repair for malformed JSON
+                    response_data = json_repair.loads(response)
+                
+                # Create AgentAction object from parsed data
+                agent_action = AgentAction(**response_data)
+                
+                self._add_trace_entry(
+                    "structured_agent_response",
+                    {
+                        "response_type": "parsed_json",
+                        "command": agent_action.action.command,
+                        "reasoning": agent_action.reasoning,
+                        "raw_response": response[:200] + "..." if len(response) > 200 else response
+                    },
+                    model_used="boss_model",
+                    duration_seconds=duration
+                )
+                return agent_action
+                
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(f"Error in structured agent invocation: {e}")
+            self._add_trace_entry(
+                "structured_agent_error",
+                {"error": str(e), "fallback_needed": True},
+                model_used="boss_model",
+                duration_seconds=duration
+            )
+            
+            # Fall back to text-based response
+            try:
+                response = self.model_router.invoke(
+                    messages=[{"role": "user", "content": prompt}],
+                    system_prompt="You are a systematic research agent conducting a literature review. Your goal is to find relevant papers by searching first, then analyzing them. You must search for papers before completing the review.",
+                    role=ModelRole.BOSS,
+                    task_description="research_coordination"
+                )
+                
+                # Try to extract a simple action from text response
+                return self._parse_fallback_response(response)
+                
+            except Exception as fallback_error:
+                logger.error(f"Fallback invocation also failed: {fallback_error}")
+                self._add_trace_entry(
+                    "agent_invocation_failed",
+                    {"structured_error": str(e), "fallback_error": str(fallback_error)}
+                )
+                return None
+        
+        return None
+    
+    def _parse_fallback_response(self, response: str) -> Optional[AgentAction]:
+        """Parse a text response as fallback when structured output fails."""
+        try:
+            # Look for common patterns in the response
+            if "COMPLETE" in response.upper():
+                return AgentAction(
+                    action=CompleteCommand(reason="Fallback parsing detected completion"),
+                    reasoning="Completion detected from text response"
+                )
+            
+            # Look for search queries
+            search_patterns = [
+                r'(?:search|SEARCH|SUMMARY)\s*(?:for\s*)?["\']?([^"\']+)["\']?',
+                r'(?:query|find)\s*["\']?([^"\']+)["\']?',
+            ]
+            
+            for pattern in search_patterns:
+                match = re.search(pattern, response, re.IGNORECASE)
+                if match:
+                    query = match.group(1).strip()
+                    if len(query) > 3:  # Basic validation
+                        return AgentAction(
+                            action=SummaryCommand(query=query),
+                            reasoning="Search query extracted from text response"
+                        )
+            
+            # Look for paper IDs
+            paper_id_pattern = r'(?:paper|PAPER|FULL_TEXT)\s*(?:id\s*)?(\d+)'
+            match = re.search(paper_id_pattern, response, re.IGNORECASE)
+            if match:
+                paper_id = int(match.group(1))
+                return AgentAction(
+                    action=FullTextCommand(paper_id=paper_id),
+                    reasoning="Paper ID extracted from text response"
+                )
+            
+        except Exception as e:
+            logger.error(f"Error in fallback parsing: {e}")
+        
+        return None
     
     def _extract_paper_summary(self, agent_response: str, paper_context: str) -> Optional[LiteratureReviewSummary]:
         """Extract structured summary from agent response about a specific paper."""
@@ -424,89 +703,111 @@ SCORE: [0.0-1.0]"""
                 
                 self._add_trace_entry("iteration_start", {"iteration": self.current_iteration})
                 
-                # Get agent response using boss model
+                # Get agent response using structured output
                 prompt = self._build_agent_prompt(research_question, context)
                 
                 self._report_progress("thinking", iteration_progress + 5, "Boss agent analyzing current state and planning actions")
                 
-                start_time = time.time()
-                agent_response = self.model_router.invoke(
-                    messages=[{"role": "user", "content": prompt}],
-                    system_prompt="You are a diligent PhD candidate conducting a literature review.",
-                    role=ModelRole.BOSS,
-                    task_description="research_coordination"
-                )
-                duration = time.time() - start_time
+                # Use structured output instead of text parsing
+                agent_action = self._invoke_agent_with_schema(prompt)
                 
-                self._add_trace_entry(
-                    "agent_response",
-                    {
-                        "prompt_length": len(prompt),
-                        "response_length": len(agent_response),
-                        "response_preview": agent_response[:200] + "..." if len(agent_response) > 200 else agent_response
-                    },
-                    model_used="boss_model",  # We know this was the boss model
-                    duration_seconds=duration
-                )
-                
-                # Parse and execute commands
-                self._report_progress("parsing", iteration_progress + 10, "Parsing agent commands")
-                commands = self._parse_agent_commands(agent_response)
-                
-                if not commands:
-                    logger.warning("No valid commands found in agent response")
-                    self._report_progress("error", iteration_progress, "No valid commands found, retrying...")
-                    context = "No valid commands detected. Please use the specified command format: ```COMMAND argument```"
+                if not agent_action:
+                    logger.warning("No valid action received from agent")
+                    self._report_progress("error", iteration_progress, "No valid action received, retrying...")
+                    context = "Previous attempt failed to produce a valid action. Please choose one of the available actions."
                     continue
                 
-                # Process each command
+                # Process the structured action
                 command_results = []
-                self._report_progress("executing", iteration_progress + 15, f"Executing {len(commands)} command(s)")
+                cmd_progress = iteration_progress + 15
+                action = agent_action.action
                 
-                for i, (command, arg) in enumerate(commands):
-                    cmd_progress = iteration_progress + 15 + (i / len(commands)) * 25
-                    
-                    if command == "COMPLETE":
-                        logger.info("Agent signaled completion")
+                self._report_progress("executing", iteration_progress + 15, f"Executing {action.command} action")
+                
+                if isinstance(action, CompleteCommand):
+                    # Validate completion - must have enough papers
+                    if len(self.collected_summaries) >= self.num_papers_target:
+                        logger.info(f"Agent signaled completion: {action.reason}")
                         self._report_progress("completing", 95, "Agent signaled completion")
-                        self._add_trace_entry("completion_signaled", {"final_summaries_count": len(self.collected_summaries)})
+                        self._add_trace_entry(
+                            "completion_signaled", 
+                            {
+                                "final_summaries_count": len(self.collected_summaries),
+                                "reason": action.reason,
+                                "reasoning": agent_action.reasoning
+                            }
+                        )
                         break
+                    else:
+                        # Reject premature completion
+                        logger.warning(f"Agent tried to complete with only {len(self.collected_summaries)}/{self.num_papers_target} papers")
+                        context = f"INVALID COMPLETION: You cannot complete with only {len(self.collected_summaries)} papers. You need {self.num_papers_target} papers minimum. Use SUMMARY to search for more papers with different keywords."
+                        self._add_trace_entry(
+                            "premature_completion_rejected",
+                            {
+                                "current_summaries": len(self.collected_summaries),
+                                "required_summaries": self.num_papers_target,
+                                "reason": action.reason
+                            }
+                        )
+                        continue
+                
+                elif isinstance(action, SummaryCommand):
+                    query = action.query
+                    self._report_progress("searching", cmd_progress, f"Searching for: {query}")
+                    result = self._execute_summary_command(query)
+                    command_results.append(f"Search results for '{query}':\n{result}")
                     
-                    elif command == "SUMMARY":
-                        self._report_progress("searching", cmd_progress, f"Searching for: {arg}")
-                        result = self._execute_summary_command(arg)
-                        command_results.append(f"Search results for '{arg}':\n{result}")
-                        
-                        # Try to extract summaries from any papers mentioned
-                        paper_id_matches = re.findall(r'Paper ID:\s*(\d+)', result)
+                    # Check if search found papers
+                    if "No papers found" in result:
+                        self._report_progress("no_results", cmd_progress + 5, f"No papers found for '{query}' - try different keywords")
+                        context = f"Search for '{query}' found no papers. Try different, simpler keywords related to your research topic."
+                    else:
+                        # Extract paper IDs from search results
+                        paper_id_matches = re.findall(r'ID:\s*(\d+)', result)
                         self._report_progress("analyzing", cmd_progress + 5, f"Found {len(paper_id_matches)} potential papers")
                         
+                        papers_added = 0
                         for paper_id_str in paper_id_matches[:3]:  # Limit to prevent overwhelm
                             paper_id = int(paper_id_str)
                             if paper_id not in self.papers_seen:
                                 self.papers_seen.add(paper_id)
-                                self._report_progress("summarizing", cmd_progress + 10, f"Extracting summary for paper {paper_id}")
-                                summary = self._extract_paper_summary(agent_response, result)
-                                if summary and summary.relevance_score >= 0.6:  # Quality threshold
+                                self._report_progress("summarizing", cmd_progress + 10, f"Processing paper {paper_id}")
+                                
+                                # Get paper details for summary
+                                paper = self.db.get_paper_by_id(paper_id)
+                                if paper:
+                                    # Create summary directly from paper data
+                                    summary = LiteratureReviewSummary(
+                                        paper_id=paper_id,
+                                        title=paper.get('title', 'Unknown Title'),
+                                        summary=paper.get('abstract', 'No abstract available')[:400] + ('...' if len(paper.get('abstract', '')) > 400 else ''),
+                                        rationale=f"Found via search query: '{query}'. Relevant to research topic.",
+                                        relevance_score=0.7  # Default relevance score
+                                    )
                                     self.collected_summaries.append(summary)
-                                    logger.info(f"Added summary for paper {paper_id}: {summary.title}")
-                                    current_count = len(self.collected_summaries)
-                                    self._report_progress("collected", cmd_progress + 15, 
-                                                        f"Collected {current_count}/{self.num_papers_target} papers")
-                    
-                    elif command == "FULL_TEXT":
-                        self._report_progress("retrieving", cmd_progress, f"Retrieving full text for paper {arg}")
-                        result = self._execute_full_text_command(arg)
-                        command_results.append(f"Full text for paper {arg}:\n{result[:1000]}{'...' if len(result) > 1000 else ''}")
-                    
-                    elif command == "ADD_PAPER":
-                        self._report_progress("adding", cmd_progress, f"Adding paper: {arg}")
-                        result = self._execute_add_paper_command(arg)
-                        command_results.append(result)
+                                    papers_added += 1
+                                    logger.info(f"Added paper {paper_id}: {summary.title}")
+                        
+                        current_count = len(self.collected_summaries)
+                        if papers_added > 0:
+                            self._report_progress("collected", cmd_progress + 15, 
+                                                f"Collected {current_count}/{self.num_papers_target} papers")
+                            context = f"Successfully added {papers_added} papers from search '{query}'. You now have {current_count}/{self.num_papers_target} papers."
+                        else:
+                            context = f"Found papers for '{query}' but they were already processed. Try a different search query."
                 
-                # Check if we found COMPLETE command
-                if any(cmd[0] == "COMPLETE" for cmd in commands):
-                    break
+                elif isinstance(action, FullTextCommand):
+                    paper_id = str(action.paper_id)
+                    self._report_progress("retrieving", cmd_progress, f"Retrieving full text for paper {paper_id}")
+                    result = self._execute_full_text_command(paper_id)
+                    command_results.append(f"Full text for paper {paper_id}:\n{result[:1000]}{'...' if len(result) > 1000 else ''}")
+                
+                elif isinstance(action, AddPaperCommand):
+                    identifier = action.identifier
+                    self._report_progress("adding", cmd_progress, f"Adding paper: {identifier}")
+                    result = self._execute_add_paper_command(identifier)
+                    command_results.append(result)
                 
                 # Prepare context for next iteration
                 if command_results:
@@ -734,7 +1035,7 @@ def create_research_agent(
     num_papers_target: int = 5,
     max_steps: int = 10,
     enable_pdf_download: bool = True,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[Callable] = None
 ) -> ResearchAgentLoop:
     """
     Factory function to create a configured ResearchAgentLoop instance.
@@ -749,10 +1050,33 @@ def create_research_agent(
     Returns:
         Configured ResearchAgentLoop instance
     """
+    import json
     from .model_router import load_research_agent_model_config
+    from ..inference import SentenceTransformerInference
     
-    # Create search tool
-    search_tool = LocalSearchTool(db, enable_pdf_download=enable_pdf_download)
+    # Get the orchestration config to load the embedding model
+    orchestration_json = db.get_setting("orchestration")
+    if not orchestration_json:
+        raise ValueError("Orchestration config not found")
+    
+    orchestration_config = json.loads(orchestration_json)
+    embedding_model_config = orchestration_config.get('embedding_model')
+    if not embedding_model_config:
+        raise ValueError("Embedding model config not found")
+    
+    # Initialize the embedding model
+    embedding_model = SentenceTransformerInference(
+        embedding_model_config['model_name'], 
+        remote_code=embedding_model_config.get('trust_remote_code', False)
+    )
+    
+    # Create search tool with embedding model and more lenient similarity threshold
+    search_tool = LocalSearchTool(
+        db, 
+        embedding_model, 
+        enable_pdf_download=enable_pdf_download,
+        similarity_threshold=0.2  # More lenient threshold for better recall
+    )
     
     # Load model configuration and create router
     model_config = load_research_agent_model_config(db)

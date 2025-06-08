@@ -7,6 +7,7 @@ from .models import RunStatus, NodeStatus
 from ..theseus_insight import TheseusInsight
 from ..podcast.generator import PodcastGenerator
 from ..data_model import PaperDatabase, Logs
+import json
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -59,15 +60,23 @@ class TaskManager:
                 queue.task_done()
                 break
             func, task_id = item
+            print(f"DEBUG: Worker processing task {task_id} with function {func.__name__}")
             try:
                 await func(task_id)
+                print(f"DEBUG: Worker completed task {task_id}")
+            except Exception as e:
+                print(f"DEBUG: Worker failed task {task_id}: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
                 queue.task_done()
 
     async def enqueue_task(self, func, task_id: str, visualizer: bool = False) -> None:
         """Add a new task to the appropriate processing queue."""
+        print(f"DEBUG: Enqueuing task {task_id} with function {func.__name__}")
         queue = self.visualizer_queue if visualizer or func == self.run_visualizer_task else self.general_task_queue
         await queue.put((func, task_id))
+        print(f"DEBUG: Task {task_id} enqueued successfully")
         
     async def cleanup(self):
         """Clean up all asyncio resources."""
@@ -109,6 +118,7 @@ class TaskManager:
         
     async def create_task(self, task_id: str, task_type: str, config: dict):
         """Create a new task."""
+        print(f"DEBUG: Creating task {task_id} of type {task_type}")
         start_time = datetime.now().isoformat()
         
         # Store task in database
@@ -125,6 +135,7 @@ class TaskManager:
         
         # Initialize WebSocket subscriptions
         self.status_updates[task_id] = []
+        print(f"DEBUG: Task {task_id} created and initialized in status_updates")
         
     def get_task_status(self, task_id: str) -> Optional[Dict]:
         """Get the current status of a task."""
@@ -132,11 +143,15 @@ class TaskManager:
         
     async def subscribe_to_updates(self, task_id: str) -> asyncio.Queue:
         """Subscribe to status updates for a task."""
+        print(f"DEBUG: Attempting to subscribe to task {task_id}")
+        print(f"DEBUG: Current status_updates keys: {list(self.status_updates.keys())}")
         if task_id not in self.status_updates:
+            print(f"DEBUG: Task {task_id} not found in status_updates")
             raise ValueError(f"Task {task_id} not found")
             
         queue = asyncio.Queue()
         self.status_updates[task_id].append(queue)
+        print(f"DEBUG: Successfully subscribed to task {task_id}, queue count: {len(self.status_updates[task_id])}")
         return queue
         
     async def unsubscribe_from_updates(self, task_id: str, queue: asyncio.Queue):
@@ -226,6 +241,7 @@ class TaskManager:
         # Clean up queues for completed/failed tasks
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
             if task_id in self.status_updates:
+                print(f"DEBUG: Cleaning up status_updates for completed/failed task {task_id}")
                 # Properly drain all queues for this task
                 for queue in self.status_updates[task_id]:
                     # Drain any remaining items
@@ -243,6 +259,7 @@ class TaskManager:
                             pass
                 
                 del self.status_updates[task_id]
+                print(f"DEBUG: Removed task {task_id} from status_updates")
 
     def _progress_callback(self, task_id: str):
         """Create a progress callback function for TheseusInsight."""
@@ -817,9 +834,9 @@ class TaskManager:
             raise
 
     async def run_research_agent_task(self, task_id: str):
-        """Run the research agent task with progress tracking."""
+        """Run the enhanced research agent task with LangGraph workflow and streaming support."""
         try:
-            print(f"DEBUG: Starting research agent task {task_id}")
+            print(f"DEBUG: Starting enhanced research agent task {task_id}")
             task = self.db.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
@@ -829,100 +846,301 @@ class TaskManager:
             num_papers_target = config.get("num_papers_target", 5)
             max_steps = config.get("max_steps", 10)
             enable_pdf_download = config.get("enable_pdf_download", True)
+            conversation_history = config.get("conversation_history", [])
+            
+            print(f"DEBUG: Research question: {research_question}")
+            print(f"DEBUG: Config: {config}")
             
             if not research_question:
                 raise ValueError("Research question is required")
             
+            print(f"DEBUG: Updating task status to PROCESSING for {task_id}")
             await self.update_task_status(
                 task_id,
                 TaskStatus.PROCESSING,
-                f"Starting literature review: {research_question}",
+                f"Starting enhanced literature review: {research_question}",
                 progress=5,
-                current_step="initializing_agent",
+                current_step="initializing_langgraph_agent",
             )
+            print(f"DEBUG: Task status updated to PROCESSING for {task_id}")
             
-            # Import research agent here to avoid circular imports
-            from ..agentic_research.agent_loop import create_research_agent
+            # Import enhanced research agent (LangGraph workflow)
+            print(f"DEBUG: Importing enhanced research agent for {task_id}")
+            from ..agentic_research.research_graph import create_research_agent
+            from ..agentic_research.graph_configuration import AgentConfiguration
+            from ..inference.llm import SentenceTransformerInference
+            from langchain_core.messages import HumanMessage, AIMessage
+            print(f"DEBUG: Enhanced research agent imported for {task_id}")
             
-            # Create progress callback function
-            def progress_callback(step: str, progress: float, message: str = ""):
-                """Callback function to handle progress updates from the research agent."""
+            # Create configuration for the LangGraph agent
+            # Try to load configuration from database settings first
+            langgraph_config_json = self.db.get_setting("research_agent_langgraph_config")
+            if langgraph_config_json:
                 try:
-                    # Create async task to update status
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(self.update_task_status(
-                        task_id,
-                        TaskStatus.PROCESSING,
-                        message,
-                        progress=progress,
-                        current_step=step,
-                    ))
-                except Exception as e:
-                    print(f"Error in progress callback: {e}")
+                    config_data = json.loads(langgraph_config_json)
+                    
+                    # Extract configuration parameters
+                    max_research_loops = config_data.get("max_research_loops", max_steps)
+                    initial_search_query_count = config_data.get("initial_search_query_count", 3)
+                    local_search_limit = config_data.get("local_search_limit", num_papers_target)
+                    external_search_limit = config_data.get("external_search_limit", 5)
+                    search_config = config_data.get("search_config", {})
+                    
+                    # Create agent configuration
+                    agent_config = AgentConfiguration(
+                        local_search_limit=local_search_limit,
+                        external_search_limit=external_search_limit,
+                        max_research_loops=max_research_loops,
+                        number_of_initial_queries=initial_search_query_count,
+                        enable_pdf_download=search_config.get("enable_pdf_download", True),
+                        semantic_weight=search_config.get("semantic_weight", 0.6),
+                        keyword_weight=search_config.get("keyword_weight", 0.4),
+                        similarity_threshold=search_config.get("similarity_threshold", 0.3)
+                    )
+                    
+                    print(f"DEBUG: Using LangGraph configuration from database for {task_id}")
+                    
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"DEBUG: Error parsing LangGraph config, using defaults: {e}")
+                    # Fall back to default configuration
+                    agent_config = AgentConfiguration(
+                        local_search_limit=num_papers_target,
+                        external_search_limit=5,
+                        max_research_loops=max_steps,
+                        number_of_initial_queries=3,
+                        enable_pdf_download=enable_pdf_download
+                    )
+            else:
+                print(f"DEBUG: No LangGraph config found, using defaults for {task_id}")
+                # Use default configuration
+                agent_config = AgentConfiguration(
+                    local_search_limit=num_papers_target,
+                    external_search_limit=5,
+                    max_research_loops=max_steps,
+                    number_of_initial_queries=3,
+                    enable_pdf_download=enable_pdf_download
+                )
             
-            # Create research agent with progress callback
+            # Create research agent
+            print(f"DEBUG: Creating enhanced research agent for {task_id}")
+            embedding_model = SentenceTransformerInference()
             agent = create_research_agent(
                 db=self.db,
-                num_papers_target=num_papers_target,
-                max_steps=max_steps,
-                enable_pdf_download=enable_pdf_download,
-                progress_callback=progress_callback
+                embedding_model=embedding_model,
+                config=agent_config
             )
+            print(f"DEBUG: Enhanced research agent created for {task_id}")
             
-            # Run the literature review
-            result = agent.run_literature_review(research_question)
+            # Convert conversation history to LangChain messages if provided
+            messages = []
+            if conversation_history:
+                for msg in conversation_history:
+                    if msg.get("role") == "user":
+                        messages.append(HumanMessage(content=msg["content"]))
+                    elif msg.get("role") == "assistant":
+                        messages.append(AIMessage(content=msg["content"]))
             
-            if result.success:
-                await self.update_task_status(
-                    task_id,
-                    TaskStatus.PROCESSING,
-                    "Literature review completed. Saving results...",
-                    progress=90,
-                    current_step="saving_results",
+            # Set up streaming with progress tracking
+            research_config = {
+                "local_search_limit": num_papers_target,
+                "external_search_limit": 5,
+                "max_research_loops": max_steps,
+                "number_of_initial_queries": 3
+            }
+            
+            # Track progress through streaming
+            sources_gathered = []
+            search_results = []
+            research_loop_count = 0
+            query_count = 0
+            
+            print(f"DEBUG: Starting streaming research for {task_id}")
+            
+            try:
+                # Use the async streaming capability
+                async for chunk in agent.astream(
+                    research_question, 
+                    config=research_config,
+                    conversation_history=messages
+                ):
+                    print(f"DEBUG: Received chunk for {task_id}: {chunk}")
+                    
+                    # Process different types of updates
+                    for node_name, node_data in chunk.items():
+                        if node_name == "generate_query":
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Generated {len(node_data.get('query_list', []))} search queries",
+                                progress=15,
+                                current_step="query_generation",
+                            )
+                            query_count = len(node_data.get('query_list', []))
+                            
+                        elif node_name == "local_research":
+                            current_progress = 20 + (query_count * 5)  # Progress based on queries
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Searching local database: {node_data.get('search_query', [''])[0]}",
+                                progress=min(current_progress, 40),
+                                current_step="local_search",
+                            )
+                            
+                            # Collect sources
+                            if node_data.get('sources_gathered'):
+                                sources_gathered.extend(node_data['sources_gathered'])
+                            if node_data.get('web_research_result'):
+                                search_results.extend(node_data['web_research_result'])
+                                
+                        elif node_name == "external_research":
+                            current_progress = 50 + (research_loop_count * 10)
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Searching external sources: {node_data.get('search_query', [''])[0]}",
+                                progress=min(current_progress, 70),
+                                current_step="external_search",
+                            )
+                            
+                            # Collect sources
+                            if node_data.get('sources_gathered'):
+                                sources_gathered.extend(node_data['sources_gathered'])
+                            if node_data.get('web_research_result'):
+                                search_results.extend(node_data['web_research_result'])
+                                
+                        elif node_name == "reflection":
+                            research_loop_count = node_data.get('research_loop_count', 0)
+                            is_sufficient = node_data.get('is_sufficient', False)
+                            
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Analyzing findings (iteration {research_loop_count})" + 
+                                (" - Research complete" if is_sufficient else " - Continuing research"),
+                                progress=75 + (research_loop_count * 5),
+                                current_step="reflection",
+                            )
+                            
+                        elif node_name == "finalize_answer":
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                "Generating final research summary...",
+                                progress=90,
+                                current_step="finalizing",
+                            )
+                
+                # Get the final result
+                print(f"DEBUG: Streaming completed for {task_id}, getting final result")
+                
+                # Run the agent one more time to get the complete result
+                result = await agent.arun(
+                    research_question,
+                    config=research_config,
+                    conversation_history=messages
                 )
                 
-                # Save results to database
-                review_id = agent.save_results(result)
+                print(f"DEBUG: Final result received for {task_id}")
                 
-                await self.update_task_status(
-                    task_id,
-                    TaskStatus.COMPLETED,
-                    f"Literature review completed successfully! Found {len(result.summaries)} papers in {result.total_iterations} iterations.",
-                    progress=100,
-                    current_step="review_complete",
-                    result={
-                        "review_id": review_id,
-                        "research_question": result.research_question,
-                        "papers_found": len(result.summaries),
-                        "iterations_used": result.total_iterations,
-                        "success": result.success,
-                        "summaries": [
-                            {
-                                "paper_id": s.paper_id,
-                                "title": s.title,
-                                "summary": s.summary,
-                                "rationale": s.rationale,
-                                "relevance_score": s.relevance_score
-                            }
-                            for s in result.summaries
-                        ],
-                        "trace_entries_count": len(result.trace_entries)
-                    },
+                # Extract final message and sources
+                final_message = result.get('messages', [])[-1] if result.get('messages') else None
+                final_sources = result.get('sources_gathered', [])
+                
+                if final_message and hasattr(final_message, 'content'):
+                    # Create a simplified literature review result
+                    # This is a temporary structure - in a full implementation, 
+                    # you might want to parse the final message to extract paper summaries
+                    
+                    await self.update_task_status(
+                        task_id,
+                        TaskStatus.PROCESSING,
+                        "Saving enhanced research results...",
+                        progress=95,
+                        current_step="saving_results",
+                    )
+                    
+                    # For now, create a simplified review entry
+                    # In a full implementation, you'd parse the LangGraph output to extract structured summaries
+                    review_data = {
+                        "research_question": research_question,
+                        "summary_json": "[]",  # Placeholder - would need parsing
+                        "trace_json": "[]",    # Placeholder - would need trace extraction
+                        "report_text": final_message.content,
+                        "total_papers": len(final_sources),
+                        "sources_count": len(final_sources)
+                    }
+                    
+                    # Save to database
+                    review_id = self.db.insert_literature_review(**review_data)
+                    
+                    await self.update_task_status(
+                        task_id,
+                        TaskStatus.COMPLETED,
+                        f"Enhanced literature review completed! Generated comprehensive research summary with {len(final_sources)} sources.",
+                        progress=100,
+                        current_step="enhanced_review_complete",
+                        result={
+                            "review_id": review_id,
+                            "research_question": research_question,
+                            "sources_found": len(final_sources),
+                            "research_loops": research_loop_count,
+                            "success": True,
+                            "summary_length": len(final_message.content),
+                            "enhanced_workflow": True,
+                            "conversation_context": len(messages) > 0,
+                            "final_sources": final_sources[:10]  # Include first 10 sources
+                        },
+                    )
+                    
+                    print(f"DEBUG: Enhanced research agent task {task_id} completed successfully")
+                    
+                else:
+                    raise ValueError("No final message received from research agent")
+                    
+            except Exception as stream_error:
+                print(f"DEBUG: Error during streaming for {task_id}: {stream_error}")
+                # Fall back to non-streaming mode
+                print(f"DEBUG: Falling back to non-streaming mode for {task_id}")
+                
+                result = await agent.arun(
+                    research_question,
+                    config=research_config,
+                    conversation_history=messages
                 )
-            else:
-                await self.update_task_status(
-                    task_id,
-                    TaskStatus.FAILED,
-                    f"Literature review failed: {result.error or 'Unknown error'}",
-                    error=result.error,
-                    current_step="review_failed",
-                    result={
-                        "papers_found": len(result.summaries),
-                        "iterations_used": result.total_iterations,
-                        "success": result.success,
-                        "error": result.error
-                    },
-                )
+                
+                final_message = result.get('messages', [])[-1] if result.get('messages') else None
+                final_sources = result.get('sources_gathered', [])
+                
+                if final_message and hasattr(final_message, 'content'):
+                    review_data = {
+                        "research_question": research_question,
+                        "summary_json": "[]",
+                        "trace_json": "[]",
+                        "report_text": final_message.content,
+                        "total_papers": len(final_sources),
+                        "sources_count": len(final_sources)
+                    }
+                    
+                    review_id = self.db.insert_literature_review(**review_data)
+                    
+                    await self.update_task_status(
+                        task_id,
+                        TaskStatus.COMPLETED,
+                        f"Literature review completed (fallback mode). Generated research summary with {len(final_sources)} sources.",
+                        progress=100,
+                        current_step="review_complete_fallback",
+                        result={
+                            "review_id": review_id,
+                            "research_question": research_question,
+                            "sources_found": len(final_sources),
+                            "success": True,
+                            "enhanced_workflow": True,
+                            "fallback_mode": True
+                        },
+                    )
+                else:
+                    raise ValueError("No valid result received from research agent")
                 
         except Exception as e:
             import traceback
@@ -930,9 +1148,9 @@ class TaskManager:
             await self.update_task_status(
                 task_id,
                 TaskStatus.FAILED,
-                f"Research agent task failed: {str(e)}",
+                f"Enhanced research agent task failed: {str(e)}",
                 error=str(e),
-                current_step="task_failed",
+                current_step="enhanced_task_failed",
             )
             raise
 

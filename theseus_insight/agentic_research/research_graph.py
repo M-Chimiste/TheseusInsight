@@ -700,13 +700,103 @@ Please respond with any additional details that would help me conduct more targe
             sources_gathered = state.get("sources_gathered", [])
             search_results = state.get("web_research_result", [])
             
+            # Enhanced full text processing using existing PDF infrastructure
+            enhanced_insights = []
+            full_text_processed_count = 0
+            
+            # Process papers with full text OR attempt PDF download and processing
+            configurable = AgentConfiguration.from_runnable_config(config)
+            
+            for source in sources_gathered:
+                paper_processed = False
+                
+                # Case 1: Local paper with existing full text
+                if (source.get("has_full_text") and 
+                    source.get("paper_id") and 
+                    source.get("source_type") == "local"):
+                    
+                    try:
+                        paper = self.db.get_paper_by_id(source["paper_id"])
+                        if paper and paper.get('text'):
+                            processed_content = self._process_full_text_with_existing_tools(
+                                paper, research_topic
+                            )
+                            if processed_content:
+                                enhanced_insights.append(processed_content)
+                                full_text_processed_count += 1
+                                paper_processed = True
+                                logger.info(f"Enhanced full text processing for paper {source['paper_id']}")
+                    except Exception as e:
+                        logger.error(f"Error in full text processing for paper {source.get('paper_id')}: {e}")
+                
+                # Case 2: Paper with PDF URL - attempt PDF download and processing
+                if (not paper_processed and 
+                    configurable.enable_pdf_download):
+                    
+                    # Look for PDF URLs in multiple places
+                    pdf_url = None
+                    
+                    # First, check for explicit pdf_url field (from external search)
+                    if source.get("pdf_url"):
+                        pdf_url = source["pdf_url"]
+                        logger.info(f"Found explicit PDF URL: {pdf_url}")
+                    
+                    # For local papers, check if they have a URL field that might be a PDF
+                    elif (source.get("source_type") == "local" and 
+                          source.get("value") and 
+                          (source["value"].endswith('.pdf') or 'arxiv.org' in source["value"])):
+                        pdf_url = source["value"]
+                        logger.info(f"Found local paper PDF URL: {pdf_url}")
+                    
+                    # For ArXiv papers, convert to PDF URL if needed
+                    elif source.get("value") and 'arxiv.org' in source["value"]:
+                        if '.pdf' not in source["value"]:
+                            # Convert ArXiv abstract URL to PDF URL
+                            arxiv_id = source["value"].split('/')[-1]
+                            pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+                        else:
+                            pdf_url = source["value"]
+                        logger.info(f"ArXiv PDF URL: {pdf_url}")
+                    
+                    # Process PDF if we found a valid URL
+                    if pdf_url:
+                        try:
+                            logger.info(f"Attempting PDF download and processing for: {source.get('title', 'Unknown')[:50]}...")
+                            
+                            # Download and process PDF from URL
+                            processed_content = self._download_and_process_pdf_from_url(
+                                pdf_url, 
+                                source,
+                                research_topic
+                            )
+                            
+                            if processed_content:
+                                enhanced_insights.append(processed_content)
+                                full_text_processed_count += 1
+                                logger.info(f"Successfully processed PDF from URL: {pdf_url}")
+                                
+                                # If this is a local paper, update the database with the processed text
+                                if source.get("paper_id") and source.get("source_type") == "local":
+                                    # The _download_and_process_pdf_from_url method should handle DB updates
+                                    pass
+                            
+                        except Exception as e:
+                            logger.error(f"Error downloading/processing PDF from {pdf_url}: {e}")
+            
+            # Combine traditional search results with enhanced full text insights
             if search_results:
                 # Get search queries for the combine function
                 search_queries = state.get("search_query", [])
                 combined_results = combine_search_results(search_results, search_queries)
-                research_insights = generate_research_insights([combined_results])
+                traditional_insights = generate_research_insights([combined_results])
+                
+                # Merge traditional and enhanced insights
+                if enhanced_insights:
+                    research_insights = f"{traditional_insights}\n\n## Enhanced Full Text Analysis\n\n" + "\n\n---\n\n".join(enhanced_insights)
+                else:
+                    research_insights = traditional_insights
             else:
-                research_insights = ""
+                research_insights = "\n\n---\n\n".join(enhanced_insights) if enhanced_insights else ""
             
             # Check if we have access to full text papers - this is key for quality
             full_text_count = 0
@@ -736,12 +826,16 @@ Please respond with any additional details that would help me conduct more targe
             
             logger.info(f"Research content analysis: {full_text_count} full-text papers, {abstract_only_count} abstract-only papers")
             
-            # Update the answer instructions with paper access information
+            # Update the answer instructions with enhanced paper access information
             paper_access_note = ""
             if full_text_count > 0:
-                paper_access_note = f"\n\nNote: This analysis includes {full_text_count} full-text papers and {abstract_only_count} abstract-only papers."
+                enhanced_note = f" (with {full_text_processed_count} receiving enhanced analysis)" if full_text_processed_count > 0 else ""
+                paper_access_note = f"\n\nNote: This analysis includes {full_text_count} full-text papers{enhanced_note} and {abstract_only_count} abstract-only papers."
             elif abstract_only_count > 0:
                 paper_access_note = f"\n\nNote: This analysis is based on {abstract_only_count} paper abstracts. For more detailed analysis, full-text access would be beneficial."
+            
+            if full_text_processed_count > 0:
+                paper_access_note += f"\n\n**Enhanced Processing**: {full_text_processed_count} papers were processed with intelligent section extraction using SpacyLayoutDocProcessor and FlatMarkdownParser."
             
             # Enhanced answer instructions with paper access context
             enhanced_instructions = answer_instructions.format(
@@ -802,6 +896,263 @@ Please respond with any additional details that would help me conduct more targe
                 "messages": [*state["messages"], error_message],
                 "sources_gathered": state.get("sources_gathered", [])
             }
+    
+    def _download_and_process_pdf_from_url(
+        self, 
+        pdf_url: str, 
+        source: Dict[str, Any],
+        research_query: str
+    ) -> str:
+        """
+        Download PDF from URL and process it using robust PDF processing with multiple fallbacks.
+        
+        Args:
+            pdf_url: URL to the PDF file
+            source: Source metadata dictionary
+            research_query: The research question for context
+            
+        Returns:
+            Processed and summarized content from the PDF
+        """
+        import tempfile
+        import os
+        import requests
+        
+        temp_pdf_path = None
+        try:
+            from ..pdf.processing import SpacyLayoutDocProcessor
+            from ..pdf.parsers import FlatMarkdownParser
+            
+            # Create temporary file for PDF download
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+                temp_pdf_path = temp_file.name
+                
+                logger.info(f"Downloading PDF from {pdf_url}...")
+                
+                # Download PDF with timeout and proper headers
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                    'Accept': 'application/pdf,*/*',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
+                response = requests.get(pdf_url, timeout=60, headers=headers, stream=True)
+                response.raise_for_status()
+                
+                # Check content type
+                content_type = response.headers.get('content-type', '').lower()
+                if 'pdf' not in content_type and 'application/octet-stream' not in content_type:
+                    logger.warning(f"URL may not be a PDF (Content-Type: {content_type})")
+                
+                # Write PDF content
+                for chunk in response.iter_content(chunk_size=8192):
+                    temp_file.write(chunk)
+            
+            # Validate the downloaded file is actually a PDF
+            try:
+                with open(temp_pdf_path, 'rb') as f:
+                    header = f.read(8)
+                    if not header.startswith(b'%PDF'):
+                        logger.warning(f"Downloaded file may not be a valid PDF (header: {header[:20]})")
+                        return f"**{source.get('title', 'Unknown')}** - Downloaded file is not a valid PDF"
+            except Exception as e:
+                logger.warning(f"Could not validate PDF header: {e}")
+            
+            # Use existing SpacyLayoutDocProcessor (disable figures to avoid Docling issues)
+            logger.info(f"Processing PDF content using SpacyLayoutDocProcessor...")
+            
+            pdf_processor = SpacyLayoutDocProcessor(
+                language="en",
+                save_text=False,
+                export_tables=False,
+                export_figures=False,  # Disable figures to avoid Docling issues
+                remove_md_image_tags=True
+            )
+            
+            # Process the PDF
+            result = pdf_processor.process_document(temp_pdf_path)
+            markdown_text = result.get('processed_data', '')
+            
+            if not markdown_text or len(markdown_text.strip()) < 200:
+                return f"**{source.get('title', 'Unknown')}** - Failed to extract sufficient text from PDF (length: {len(markdown_text) if markdown_text else 0})"
+            
+            logger.info(f"Successfully extracted {len(markdown_text)} chars of markdown from PDF")
+            
+            # Use FlatMarkdownParser to chunk the content intelligently
+            parser = FlatMarkdownParser(
+                markdown_text, 
+                max_tokens=8000,  # Reasonable chunk size for analysis
+                remove_tables=True
+            )
+            
+            chunks = parser.get_parsed_data()
+            
+            if not chunks:
+                return f"**{source.get('title', 'Unknown')}** - Failed to parse extracted text into chunks"
+            
+            # Find most relevant chunks based on research query
+            relevant_chunks = self._find_relevant_chunks(chunks, research_query)
+            
+            # Create enhanced summary with PDF source indication
+            summary_parts = [
+                f"**Paper: {source.get('title', 'Unknown Title')} [PDF PROCESSED]**",
+                f"**Authors: {source.get('authors', 'Unknown')}**" if source.get('authors') else "",
+                f"**Year: {source.get('year', 'Unknown')}**" if source.get('year') else "",
+                f"**Source: {pdf_url}**",
+                "",
+                f"**Full Text Analysis from PDF (Query: {research_query})**",
+                f"*Processed {len(chunks)} content chunks, showing {len(relevant_chunks[:3])} most relevant*",
+                "",
+                *relevant_chunks[:3]  # Top 3 most relevant chunks
+            ]
+            
+            processed_summary = '\n'.join(filter(None, summary_parts))
+            
+            # If this is a local paper, update the database with the full text
+            if source.get("paper_id") and source.get("source_type") == "local":
+                try:
+                    full_text = '\n'.join(chunks)  # Store all chunks as full text
+                    self.db.update_paper_text(source["paper_id"], full_text)
+                    logger.info(f"Updated database with full text for paper {source['paper_id']}")
+                except Exception as e:
+                    logger.warning(f"Failed to update database with full text: {e}")
+            
+            logger.info(f"Generated enhanced PDF summary ({len(processed_summary)} chars) from {len(chunks)} chunks")
+            return processed_summary
+                    
+        except requests.RequestException as e:
+            logger.error(f"Failed to download PDF from {pdf_url}: {e}")
+            return f"**{source.get('title', 'Unknown')}** - PDF download failed: {str(e)}"
+        except Exception as e:
+            logger.error(f"Error processing PDF from {pdf_url}: {e}")
+            return f"**{source.get('title', 'Unknown')}** - PDF processing error: {str(e)}"
+        finally:
+            # Clean up temporary file
+            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                try:
+                    os.unlink(temp_pdf_path)
+                    logger.info(f"Cleaned up temporary PDF file")
+                except Exception as e:
+                    logger.warning(f"Could not clean up temporary file: {e}")
+    
+    def _process_full_text_with_existing_tools(
+        self, 
+        paper: Dict[str, Any], 
+        research_query: str
+    ) -> str:
+        """
+        Process a full text paper using existing SpacyLayoutDocProcessor and FlatMarkdownParser.
+        
+        Args:
+            paper: Paper dictionary with full text content
+            research_query: The research question for context
+            
+        Returns:
+            Processed and summarized content
+        """
+        try:
+            from ..pdf.parsers import FlatMarkdownParser
+            
+            full_text = paper.get('text', '')
+            if not full_text or len(full_text) < 500:
+                return f"**{paper.get('title', 'Unknown')}** - Limited content available"
+            
+            logger.info(f"Processing full text for: {paper.get('title', 'Unknown')[:50]}... ({len(full_text)} chars)")
+            
+            # Use existing FlatMarkdownParser to intelligently chunk the content
+            parser = FlatMarkdownParser(
+                full_text, 
+                max_tokens=8000,  # Smaller chunks for focused analysis
+                remove_tables=True
+            )
+            
+            # Get parsed chunks
+            chunks = parser.get_parsed_data()
+            
+            if not chunks:
+                return f"**{paper.get('title', 'Unknown')}** - Processing failed"
+            
+            # Find most relevant chunks based on research query
+            relevant_chunks = self._find_relevant_chunks(chunks, research_query)
+            
+            # Create enhanced summary
+            summary_parts = [
+                f"**Paper: {paper.get('title', 'Unknown Title')}**",
+                f"**Authors: {paper.get('authors', 'Unknown')}**" if paper.get('authors') else "",
+                f"**Year: {paper.get('year', 'Unknown')}**" if paper.get('year') else "",
+                "",
+                f"**Full Text Analysis (Query: {research_query})**",
+                "",
+                *relevant_chunks[:3]  # Top 3 most relevant chunks
+            ]
+            
+            result = '\n'.join(filter(None, summary_parts))
+            logger.info(f"Generated enhanced summary ({len(result)} chars) from {len(chunks)} chunks")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error processing full text for paper {paper.get('id')}: {e}")
+            return f"**{paper.get('title', 'Unknown')}** - Processing error: {str(e)}"
+    
+    def _find_relevant_chunks(self, chunks: List[str], research_query: str) -> List[str]:
+        """
+        Find the most relevant chunks based on keyword matching and content analysis.
+        
+        Args:
+            chunks: List of text chunks from FlatMarkdownParser
+            research_query: The research question
+            
+        Returns:
+            List of relevant chunks, scored and sorted by relevance
+        """
+        try:
+            # Extract key terms from research query
+            query_terms = set(research_query.lower().split())
+            query_terms.update([
+                'abstract', 'conclusion', 'results', 'findings', 
+                'methodology', 'approach', 'analysis', 'discussion'
+            ])
+            
+            scored_chunks = []
+            
+            for chunk in chunks:
+                if len(chunk.strip()) < 100:  # Skip very short chunks
+                    continue
+                    
+                chunk_lower = chunk.lower()
+                
+                # Score based on keyword matches
+                score = 0
+                for term in query_terms:
+                    if term in chunk_lower:
+                        score += chunk_lower.count(term)
+                
+                # Boost score for important sections
+                if any(section in chunk_lower for section in ['abstract', 'conclusion', 'summary']):
+                    score += 10
+                elif any(section in chunk_lower for section in ['results', 'findings', 'analysis']):
+                    score += 7
+                elif any(section in chunk_lower for section in ['methodology', 'methods', 'approach']):
+                    score += 5
+                
+                # Boost score for chunks with research-relevant terms
+                research_terms = ['research', 'study', 'experiment', 'data', 'analysis', 'significant']
+                for term in research_terms:
+                    if term in chunk_lower:
+                        score += 2
+                
+                if score > 0:
+                    scored_chunks.append((chunk, score))
+            
+            # Sort by score and return top chunks
+            scored_chunks.sort(key=lambda x: x[1], reverse=True)
+            relevant_chunks = [chunk for chunk, score in scored_chunks[:5]]  # Top 5 chunks
+            
+            logger.info(f"Selected {len(relevant_chunks)} relevant chunks from {len(chunks)} total chunks")
+            return relevant_chunks
+            
+        except Exception as e:
+            logger.error(f"Error finding relevant chunks: {e}")
+            return chunks[:3]  # Fallback to first 3 chunks
     
     def _convert_short_urls_to_markdown_links(self, content: str, sources_gathered: List[Dict]) -> str:
         """

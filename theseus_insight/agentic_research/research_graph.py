@@ -95,6 +95,7 @@ class ResearchAgent:
         builder.add_node("generate_query", self._generate_query)
         builder.add_node("local_research", self._local_research)
         builder.add_node("external_research", self._external_research)
+        builder.add_node("sequential_external_research", self._sequential_external_research)
         builder.add_node("reflection", self._reflection)
         builder.add_node("finalize_answer", self._finalize_answer)
         
@@ -112,11 +113,14 @@ class ResearchAgent:
         builder.add_edge("local_research", "reflection")
         builder.add_edge("external_research", "reflection")
         
+        # After sequential external research, reflect on findings
+        builder.add_edge("sequential_external_research", "reflection")
+        
         # Evaluate if we need more research or can finalize
         builder.add_conditional_edges(
             "reflection", 
             self._evaluate_research, 
-            ["external_research", "finalize_answer"]
+            ["sequential_external_research", "finalize_answer"]
         )
         
         # End after finalizing
@@ -344,16 +348,8 @@ class ResearchAgent:
             
             if should_continue:
                 logger.info(f"Continuing research with {len(state['follow_up_queries'])} follow-up queries")
-                return [
-                    Send(
-                        "external_research",
-                        {
-                            "search_query": follow_up_query,
-                            "id": state["number_of_ran_queries"] + int(idx),
-                        },
-                    )
-                    for idx, follow_up_query in enumerate(state["follow_up_queries"])
-                ]
+                # Route to sequential external research instead of parallel
+                return "sequential_external_research"
             else:
                 logger.info("Research deemed sufficient, finalizing answer")
                 return "finalize_answer"
@@ -362,59 +358,170 @@ class ResearchAgent:
             logger.error(f"Error in research evaluation: {e}")
             return "finalize_answer"
     
-    def _finalize_answer(self, state: OverallState, config: RunnableConfig):
-        """Generate enhanced final research summary with proper citations and source management."""
+    def _sequential_external_research(self, state: OverallState, config: RunnableConfig) -> OverallState:
+        """Perform sequential external searches to avoid overwhelming APIs."""
         try:
-            # Combine all research results
-            combined_summaries = combine_search_results(
-                state["web_research_result"],
-                state["search_query"]
-            )
+            configurable = AgentConfiguration.from_runnable_config(config)
             
-            # Format the prompt
-            current_date = get_current_date()
-            formatted_prompt = answer_instructions.format(
-                current_date=current_date,
-                research_topic=get_research_topic(state["messages"]),
-                summaries=combined_summaries,
+            # Get follow-up queries from reflection state
+            follow_up_queries = state.get("follow_up_queries", [])
+            if not follow_up_queries:
+                logger.warning("No follow-up queries found for sequential external research")
+                return state
+            
+            logger.info(f"Starting sequential external research for {len(follow_up_queries)} queries")
+            
+            # Collect all results from sequential searches
+            all_sources_gathered = []
+            all_search_results = []
+            all_search_queries = []
+            
+            # Process each query sequentially with delay
+            for idx, query in enumerate(follow_up_queries):
+                logger.info(f"External search {idx + 1}/{len(follow_up_queries)} for query: {query}")
+                
+                # Add a configurable delay between requests to be respectful to APIs
+                if idx > 0:
+                    import time
+                    time.sleep(configurable.external_search_delay)
+                
+                try:
+                    # Search using enhanced ExternalSearchTool
+                    result = self.external_tool.find_papers_by_str(
+                        query, 
+                        limit=configurable.external_search_limit
+                    )
+                    
+                    # Track sources with short URLs for citation management
+                    sources_gathered = []
+                    if "papers found" in result.lower() or "EXTERNAL PAPER" in result:
+                        # Extract paper information and create source entries
+                        citations = extract_citations_from_summary(result)
+                        for citation in citations:
+                            short_url = self._generate_short_url(citation.get("url", ""))
+                            sources_gathered.append({
+                                "short_url": short_url,
+                                "value": citation.get("url", ""),
+                                "title": citation.get("title", ""),
+                                "source_type": "external"
+                            })
+                            # Replace long URLs in result with short URLs for cleaner presentation
+                            if citation.get("url"):
+                                result = result.replace(citation["url"], short_url)
+                    
+                    # Collect results
+                    all_sources_gathered.extend(sources_gathered)
+                    all_search_results.append(result)
+                    all_search_queries.append(query)
+                    
+                    logger.info(f"External search {idx + 1} completed with {len(sources_gathered)} sources")
+                    
+                except Exception as e:
+                    logger.error(f"Error in external search {idx + 1} for query '{query}': {e}")
+                    all_search_results.append(f"External search failed for query: {query} - {str(e)}")
+                    all_search_queries.append(query)
+            
+            logger.info(f"Sequential external research completed with {len(all_sources_gathered)} total sources")
+            
+            # Return updated state with all collected results
+            return {
+                **state,
+                "sources_gathered": state.get("sources_gathered", []) + all_sources_gathered,
+                "web_research_result": state.get("web_research_result", []) + all_search_results,
+                "search_query": state.get("search_query", []) + all_search_queries,
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in sequential external research: {e}")
+            return {
+                **state,
+                "web_research_result": state.get("web_research_result", []) + [f"Sequential external search failed: {str(e)}"],
+            }
+    
+    def _finalize_answer(self, state: OverallState, config: RunnableConfig):
+        """Generate final comprehensive research summary with enhanced paper analysis."""
+        try:
+            configurable = AgentConfiguration.from_runnable_config(config)
+            
+            # Get research topic and sources
+            research_topic = get_research_topic(state["messages"])
+            research_insights = ""
+            
+            # Process gathered sources to extract insights
+            sources_gathered = state.get("sources_gathered", [])
+            search_results = state.get("web_research_result", [])
+            
+            if search_results:
+                # Get search queries for the combine function
+                search_queries = state.get("search_query", [])
+                combined_results = combine_search_results(search_results, search_queries)
+                research_insights = generate_research_insights([combined_results])
+            
+            # Check if we have access to full text papers - this is key for quality
+            full_text_count = 0
+            abstract_only_count = 0
+            
+            # Analyze what type of paper content we have access to
+            for source in sources_gathered:
+                if source.get("source_type") == "local":
+                    # For local papers, check if full text is available
+                    try:
+                        paper_id = source.get("paper_id") or source.get("id")
+                        if paper_id:
+                            # Try to get full text - this will tell us if it's available
+                            full_text_result = self.local_tool.retrieve_full_text(str(paper_id))
+                            if "FULL TEXT RETRIEVED" in full_text_result:
+                                full_text_count += 1
+                                logger.info(f"Full text available for local paper {paper_id}: {source.get('title', 'Unknown')}")
+                            else:
+                                abstract_only_count += 1
+                                logger.warning(f"Only abstract available for paper {paper_id}: {source.get('title', 'Unknown')}")
+                    except Exception as e:
+                        logger.error(f"Error checking full text availability: {e}")
+                        abstract_only_count += 1
+                else:
+                    # For external papers, they typically only have abstracts unless explicitly downloaded
+                    abstract_only_count += 1
+            
+            logger.info(f"Research content analysis: {full_text_count} full-text papers, {abstract_only_count} abstract-only papers")
+            
+            # Update the answer instructions with paper access information
+            paper_access_note = ""
+            if full_text_count > 0:
+                paper_access_note = f"\n\nNote: This analysis includes {full_text_count} full-text papers and {abstract_only_count} abstract-only papers."
+            elif abstract_only_count > 0:
+                paper_access_note = f"\n\nNote: This analysis is based on {abstract_only_count} paper abstracts. For more detailed analysis, full-text access would be beneficial."
+            
+            # Enhanced answer instructions with paper access context
+            enhanced_instructions = answer_instructions.format(
+                current_date=get_current_date(),
+                research_topic=research_topic,
+                summaries=research_insights + paper_access_note
             )
             
             # Generate final answer
             llm = self.model_router.get_model("finalize_answer")
-            result = llm.invoke([], formatted_prompt, node_name="finalize_answer")
+            response = llm.invoke(state["messages"], enhanced_instructions, node_name="finalize_answer")
             
-            # Enhanced source management - replace short URLs with original URLs
-            unique_sources = []
-            final_content = result.content
-            
-            for source in state.get("sources_gathered", []):
-                if source["short_url"] in final_content:
-                    # Replace short URL with original URL
-                    final_content = final_content.replace(
-                        source["short_url"], 
-                        source["value"]
-                    )
-                    # Add to unique sources if not already present
-                    if source not in unique_sources:
-                        unique_sources.append(source)
-            
-            # Also check our internal URL mapping
-            for short_url, original_url in self._url_mapping.items():
-                if short_url in final_content:
-                    final_content = final_content.replace(short_url, original_url)
-            
-            logger.info(f"Final answer generated with {len(unique_sources)} unique sources")
-            
-            return {
-                "messages": [AIMessage(content=final_content)],
-                "sources_gathered": unique_sources,
+            final_state = {
+                **state,
+                "messages": [*state["messages"], response],
+                "sources_gathered": sources_gathered,
+                "search_results": search_results,
+                "full_text_papers": full_text_count,
+                "abstract_only_papers": abstract_only_count
             }
             
+            logger.info("Final research summary generated successfully")
+            return final_state
+            
         except Exception as e:
-            logger.error(f"Error in finalizing answer: {e}")
+            logger.error(f"Error in finalize_answer: {e}")
+            error_message = AIMessage(content=f"Error generating research summary: {str(e)}")
             return {
-                "messages": [AIMessage(content="I apologize, but there was an error generating the final research summary.")],
-                "sources_gathered": [],
+                **state,
+                "messages": [*state["messages"], error_message],
+                "sources_gathered": state.get("sources_gathered", [])
             }
     
     def reset_sources(self):

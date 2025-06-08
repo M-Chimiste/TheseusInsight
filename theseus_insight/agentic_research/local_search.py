@@ -149,17 +149,26 @@ class LocalSearchTool(BaseSearchTool):
                     
                     paper_info.append(f"  Abstract: {abstract_preview}")
                 
-                # Add availability status
+                # Add availability status with enhanced logging
                 has_full_text = bool(paper.get('text'))
                 has_url = bool(paper.get('url'))
                 availability = []
+                
                 if has_full_text:
                     availability.append("full-text")
+                    print(f"DEBUG: Paper {paper['id']} has full text ({len(paper.get('text', ''))} chars)")
+                else:
+                    print(f"DEBUG: Paper {paper['id']} has NO full text, only abstract ({len(paper.get('abstract', ''))} chars)")
+                    
                 if has_url:
                     availability.append("PDF-available" if self.enable_pdf_download else "URL-only")
-                
+                    
                 if availability:
                     paper_info.append(f"  Content: {', '.join(availability)}")
+                    
+                # Add a note about how to access full text for this paper
+                if not has_full_text and has_url and self.enable_pdf_download:
+                    paper_info.append(f"  Note: Use retrieve_full_text({paper['id']}) to download and process PDF")
                 
                 formatted_papers.append('\n'.join(paper_info))
             

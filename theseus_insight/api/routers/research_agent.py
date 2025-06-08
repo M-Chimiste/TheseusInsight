@@ -297,6 +297,74 @@ async def get_research_library(
     )
     return await search_research_library(request)
 
+@router.get("/debug/paper-access")
+async def debug_paper_access():
+    """Debug endpoint to check paper access capabilities and status."""
+    try:
+        from ...agentic_research.local_search import LocalSearchTool
+        from ...inference.llm import SentenceTransformerInference
+        
+        # Create a temporary LocalSearchTool to check capabilities
+        try:
+            embedding_model = SentenceTransformerInference(
+                model_name='Alibaba-NLP/gte-modernbert-base',
+                remote_code=True
+            )
+            search_tool = LocalSearchTool(
+                db=db,
+                embedding_model=embedding_model,
+                enable_pdf_download=True
+            )
+            
+            # Get search statistics
+            stats = search_tool.get_search_stats()
+            
+            # Test a paper with full text access
+            all_papers = db.fetch_all_papers()[:10]  # Get first 10 papers
+            
+            test_results = []
+            for paper in all_papers:
+                paper_info = {
+                    "id": paper.get("id"),
+                    "title": paper.get("title", "Unknown")[:50] + "...",
+                    "has_url": bool(paper.get("url")),
+                    "has_full_text": bool(paper.get("text")),
+                    "abstract_length": len(paper.get("abstract", "")),
+                    "full_text_length": len(paper.get("text", "")) if paper.get("text") else 0
+                }
+                
+                # Test retrieve_full_text if we have a paper ID
+                if paper.get("id"):
+                    try:
+                        result = search_tool.retrieve_full_text(str(paper["id"]))
+                        paper_info["retrieve_test"] = "SUCCESS" if "FULL TEXT RETRIEVED" in result else "ABSTRACT_ONLY"
+                        paper_info["retrieve_result_length"] = len(result)
+                    except Exception as e:
+                        paper_info["retrieve_test"] = f"ERROR: {str(e)}"
+                        paper_info["retrieve_result_length"] = 0
+                
+                test_results.append(paper_info)
+            
+            return {
+                "database_stats": stats,
+                "paper_samples": test_results,
+                "total_papers_tested": len(test_results),
+                "papers_with_full_text": len([p for p in test_results if p["has_full_text"]]),
+                "papers_with_urls": len([p for p in test_results if p["has_url"]]),
+                "retrieve_success_count": len([p for p in test_results if p.get("retrieve_test") == "SUCCESS"]),
+                "pdf_processing_available": stats.get("pdf_processor_available", False),
+                "pdf_download_enabled": stats.get("pdf_download_enabled", False)
+            }
+            
+        except Exception as tool_error:
+            return {
+                "error": f"Error creating search tool: {str(tool_error)}",
+                "database_papers_count": len(db.fetch_all_papers()) if hasattr(db, 'fetch_all_papers') else "Unknown"
+            }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in debug endpoint: {str(e)}")
+
 @router.delete("/reviews/{review_id}")
 async def delete_literature_review(review_id: int):
     """Delete a specific literature review by ID."""

@@ -33,9 +33,13 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ScienceIcon from '@mui/icons-material/Science';
+import CloseIcon from '@mui/icons-material/Close';
 import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
 import { useLayout } from '../contexts/LayoutContext';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import CollapsibleContent from '../components/CollapsibleContent';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -91,7 +95,34 @@ const ResearchLibrary: React.FC = () => {
   const [itemToDelete, setItemToDelete] = useState<ResearchLibraryItem | null>(null);
   const [deleting, setDeleting] = useState<boolean>(false);
 
+  // Detail view state
+  const [detailDialogOpen, setDetailDialogOpen] = useState<boolean>(false);
+  const [selectedItem, setSelectedItem] = useState<ResearchLibraryItem | null>(null);
+
   const loader = useRef<HTMLDivElement>(null);
+
+  // Helper function to extract and process thinking content
+  const processThinkingContent = (content: string) => {
+    if (!content) return { cleanContent: '', thinkingContent: null };
+    
+    // Look for <think> and </think> tags
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/gi;
+    const matches = content.match(thinkRegex);
+    
+    if (matches) {
+      // Extract thinking content (remove the tags)
+      const thinkingContent = matches.map(match => 
+        match.replace(/<\/?think>/gi, '').trim()
+      ).join('\n\n');
+      
+      // Remove thinking content from the main content
+      const cleanContent = content.replace(thinkRegex, '').trim();
+      
+      return { cleanContent, thinkingContent };
+    }
+    
+    return { cleanContent: content, thinkingContent: null };
+  };
 
   const fetchLibraryItems = useCallback(async (page: number, size: number, isInitialLoad: boolean = false) => {
     if (!hasNextPage && !isInitialLoad) return;
@@ -219,6 +250,33 @@ const ResearchLibrary: React.FC = () => {
   const handleDeleteClick = (item: ResearchLibraryItem) => {
     setItemToDelete(item);
     setDeleteDialogOpen(true);
+  };
+
+  const openDetailView = async (item: ResearchLibraryItem) => {
+    try {
+      // Fetch full details for this review
+      const response = await fetch(`/api/research-agent/reviews/${item.id}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch review details');
+      }
+      const fullReview = await response.json();
+      
+      // Merge the full data with the item
+      const enrichedItem = {
+        ...item,
+        report_text: fullReview.report_text,
+        activity_log: fullReview.activity_log || []
+      };
+      
+      setSelectedItem(enrichedItem);
+      setDetailDialogOpen(true);
+    } catch (err) {
+      console.error("Error fetching review details:", err);
+      setError('Failed to load review details. Please try again.');
+      // Still show the dialog with basic data
+      setSelectedItem(item);
+      setDetailDialogOpen(true);
+    }
   };
 
   const handleDeleteConfirm = async () => {
@@ -443,18 +501,29 @@ const ResearchLibrary: React.FC = () => {
                       display: 'flex',
                       flexDirection: 'column',
                       position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease-in-out',
                       '&:hover': {
                         elevation: 4,
-                        backgroundColor: alpha(theme.palette.primary.main, 0.02)
+                        backgroundColor: alpha(theme.palette.primary.main, 0.02),
+                        transform: 'translateY(-2px)'
                       }
                     }}
+                    onClick={() => openDetailView(item)}
                   >
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                       <Typography variant="h6" sx={{ fontWeight: 600, flex: 1, fontSize: '1rem' }}>
                         {item.short_summary}
                       </Typography>
                       <Tooltip title="Delete Review">
-                        <IconButton size="small" color="error" onClick={() => handleDeleteClick(item)}>
+                        <IconButton 
+                          size="small" 
+                          color="error" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteClick(item);
+                          }}
+                        >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -497,7 +566,21 @@ const ResearchLibrary: React.FC = () => {
           ) : (
             <Box sx={{ mb: 3 }}>
               {allItems.map((item) => (
-                <Paper key={item.id} elevation={1} sx={{ p: 2, mb: 2 }}>
+                <Paper 
+                  key={item.id} 
+                  elevation={1} 
+                  sx={{ 
+                    p: 2, 
+                    mb: 2,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease-in-out',
+                    '&:hover': {
+                      elevation: 3,
+                      backgroundColor: alpha(theme.palette.primary.main, 0.02)
+                    }
+                  }}
+                  onClick={() => openDetailView(item)}
+                >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <Box sx={{ flex: 1 }}>
                       <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
@@ -521,7 +604,13 @@ const ResearchLibrary: React.FC = () => {
                     </Box>
                     <Box sx={{ display: 'flex', gap: 1, ml: 2 }}>
                       <Tooltip title="Delete Review">
-                        <IconButton color="error" onClick={() => handleDeleteClick(item)}>
+                        <IconButton 
+                          color="error" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteClick(item);
+                          }}
+                        >
                           <DeleteIcon />
                         </IconButton>
                       </Tooltip>
@@ -556,6 +645,282 @@ const ResearchLibrary: React.FC = () => {
             </Alert>
           )}
         </Box>
+
+        {/* Research Detail Dialog */}
+        <Dialog
+          open={detailDialogOpen}
+          onClose={() => setDetailDialogOpen(false)}
+          maxWidth="lg"
+          fullWidth
+          keepMounted={false}
+          aria-labelledby="research-detail-dialog-title"
+        >
+          <DialogTitle id="research-detail-dialog-title" sx={{ pb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <ScienceIcon color="primary" />
+                <Typography variant="h5" component="h2" sx={{ fontWeight: 'bold' }}>
+                  Research Details
+                </Typography>
+              </Box>
+              <IconButton
+                onClick={() => setDetailDialogOpen(false)}
+                aria-label="Close dialog"
+              >
+                <CloseIcon />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          
+          <DialogContent sx={{ pt: 0 }}>
+            {selectedItem && (
+              <Box>
+                {/* Research Question */}
+                <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Research Question
+                  </Typography>
+                  <Typography variant="body1" sx={{ lineHeight: 1.6 }}>
+                    {selectedItem.research_question}
+                  </Typography>
+                </Paper>
+
+                {/* Summary */}
+                <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Summary
+                  </Typography>
+                  <Typography variant="body1" sx={{ lineHeight: 1.6 }}>
+                    {selectedItem.short_summary}
+                  </Typography>
+                </Paper>
+
+                {/* Themes and Metadata */}
+                <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Research Metadata
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        <strong>Sources Found:</strong>
+                      </Typography>
+                      <Typography variant="body1" sx={{ mb: 2 }}>
+                        {selectedItem.sources_count} sources
+                      </Typography>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        <strong>Created:</strong>
+                      </Typography>
+                      <Typography variant="body1" sx={{ mb: 2 }}>
+                        {new Date(selectedItem.created_ts).toLocaleString()}
+                      </Typography>
+                    </Grid>
+                    {selectedItem.themes && selectedItem.themes.length > 0 && (
+                      <Grid size={{ xs: 12 }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                          <strong>Key Themes:</strong>
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {selectedItem.themes.map((theme, index) => (
+                            <Chip key={index} label={theme} color="primary" variant="outlined" />
+                          ))}
+                        </Box>
+                      </Grid>
+                    )}
+                    <Grid size={{ xs: 12 }}>
+                      <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                        {selectedItem.has_report && (
+                          <Chip label="Full Report Available" color="success" />
+                        )}
+                        <Chip label={`${selectedItem.sources_count} Sources`} variant="outlined" />
+                      </Box>
+                    </Grid>
+                  </Grid>
+                </Paper>
+
+                                 {/* Full Report */}
+                 {selectedItem.report_text && selectedItem.report_text.trim() && (() => {
+                   const { cleanContent, thinkingContent } = processThinkingContent(selectedItem.report_text);
+                   return (
+                     <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                       <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                         Full Research Report
+                       </Typography>
+                       
+                       {/* Main report content without thinking */}
+                       {cleanContent && (
+                         <Box 
+                           sx={{ 
+                             '& h1, & h2, & h3, & h4, & h5, & h6': {
+                               fontWeight: 'bold',
+                               margin: '16px 0 8px 0',
+                               '&:first-of-type': { marginTop: 0 }
+                             },
+                             '& h1': { fontSize: '1.5rem' },
+                             '& h2': { fontSize: '1.25rem' },
+                             '& h3': { fontSize: '1.1rem' },
+                             '& p': {
+                               margin: '8px 0',
+                               lineHeight: 1.6
+                             },
+                             '& ul, & ol': {
+                               margin: '8px 0',
+                               paddingLeft: '24px'
+                             },
+                             '& li': {
+                               margin: '4px 0'
+                             },
+                             '& code': {
+                               backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                               padding: '2px 4px',
+                               borderRadius: '4px',
+                               fontFamily: 'monospace',
+                               fontSize: '0.9em'
+                             },
+                             '& pre': {
+                               backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                               padding: '12px',
+                               borderRadius: '4px',
+                               overflow: 'auto',
+                               fontFamily: 'monospace'
+                             },
+                             '& blockquote': {
+                               borderLeft: '4px solid',
+                               borderColor: 'primary.main',
+                               paddingLeft: '16px',
+                               margin: '16px 0',
+                               fontStyle: 'italic'
+                             },
+                             mb: thinkingContent ? 2 : 0
+                           }}
+                         >
+                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                             {cleanContent}
+                           </ReactMarkdown>
+                         </Box>
+                       )}
+                       
+                       {/* Thinking content in collapsible section */}
+                       {thinkingContent && (
+                         <CollapsibleContent
+                           content={thinkingContent}
+                           type="thinking"
+                           defaultExpanded={false}
+                         />
+                       )}
+                     </Paper>
+                   );
+                 })()}
+
+                {/* Activity Log */}
+                {selectedItem.activity_log && selectedItem.activity_log.length > 0 && (
+                  <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
+                    <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                      Research Activity Log
+                    </Typography>
+                    <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+                      {selectedItem.activity_log.map((activity, index) => (
+                        <Box key={index} sx={{ mb: 2, pb: 2, borderBottom: index < selectedItem.activity_log!.length - 1 ? 1 : 0, borderColor: 'divider' }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                            {activity.step_name || activity.action || `Step ${index + 1}`}
+                          </Typography>
+                                                     {activity.message && (() => {
+                             const { cleanContent, thinkingContent } = processThinkingContent(activity.message);
+                             return (
+                               <Box sx={{ mb: 1 }}>
+                                 {cleanContent && (
+                                   <Typography variant="body2" color="text.secondary" sx={{ mb: thinkingContent ? 1 : 0 }}>
+                                     {cleanContent}
+                                   </Typography>
+                                 )}
+                                 {thinkingContent && (
+                                   <CollapsibleContent
+                                     content={thinkingContent}
+                                     type="thinking"
+                                     defaultExpanded={false}
+                                   />
+                                 )}
+                               </Box>
+                             );
+                           })()}
+                                                     {activity.data && (
+                             <Box sx={{ ml: 2 }}>
+                               {activity.data.thinking && (() => {
+                                 const { cleanContent, thinkingContent } = processThinkingContent(activity.data.thinking);
+                                 return (
+                                   <Box>
+                                     {cleanContent && (
+                                       <Typography variant="body2" sx={{ mb: 1, lineHeight: 1.6 }}>
+                                         {cleanContent}
+                                       </Typography>
+                                     )}
+                                     {thinkingContent && (
+                                       <CollapsibleContent
+                                         content={thinkingContent}
+                                         type="thinking"
+                                         defaultExpanded={false}
+                                       />
+                                     )}
+                                   </Box>
+                                 );
+                               })()}
+                               {activity.data.queries && (
+                                 <Box sx={{ mb: 1 }}>
+                                   <Typography variant="caption" color="text.secondary">
+                                     <strong>Queries:</strong> {Array.isArray(activity.data.queries) ? activity.data.queries.join(', ') : activity.data.queries}
+                                   </Typography>
+                                 </Box>
+                               )}
+                               {activity.data.sources_found && (
+                                 <Box sx={{ mb: 1 }}>
+                                   <Typography variant="caption" color="text.secondary">
+                                     <strong>Sources Found:</strong> {activity.data.sources_found}
+                                   </Typography>
+                                 </Box>
+                               )}
+                               {activity.data.total_sources && (
+                                 <Box sx={{ mb: 1 }}>
+                                   <Typography variant="caption" color="text.secondary">
+                                     <strong>Total Sources:</strong> {activity.data.total_sources}
+                                   </Typography>
+                                 </Box>
+                               )}
+                             </Box>
+                           )}
+                          {activity.timestamp && (
+                            <Typography variant="caption" color="text.secondary">
+                              {new Date(activity.timestamp).toLocaleString()}
+                            </Typography>
+                          )}
+                        </Box>
+                      ))}
+                    </Box>
+                  </Paper>
+                )}
+              </Box>
+            )}
+          </DialogContent>
+
+          <DialogActions>
+            <Button onClick={() => setDetailDialogOpen(false)}>
+              Close
+            </Button>
+            {selectedItem && (
+              <Button
+                onClick={() => {
+                  setDetailDialogOpen(false);
+                  handleDeleteClick(selectedItem);
+                }}
+                color="error"
+                startIcon={<DeleteIcon />}
+              >
+                Delete
+              </Button>
+            )}
+          </DialogActions>
+        </Dialog>
 
         {/* Delete Confirmation Dialog */}
         <Dialog

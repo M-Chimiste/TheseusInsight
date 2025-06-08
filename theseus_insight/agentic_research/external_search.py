@@ -27,7 +27,7 @@ class SemanticScholarSearch:
 
     def __init__(
         self,
-        max_retries: int = 3,
+        max_retries: int = 5,
         backoff_factor: float = 1.5,
         session: Optional[requests.Session] = None,
     ):
@@ -47,7 +47,7 @@ class SemanticScholarSearch:
         self,
         query: str,
         *,
-        limit: int = 10,
+        limit: int = 100,
         offset: int = 0,
         require_pdf: bool = False,  # Changed default to False for better coverage
         fields: Optional[List[str]] = None,

@@ -336,7 +336,8 @@ class ResearchAgentModelConfigApi(BaseModel):
             "semantic_weight": 0.6,
             "keyword_weight": 0.4,
             "similarity_threshold": 0.3,
-            "enable_pdf_download": True
+            "enable_pdf_download": True,
+            "external_search_delay": 2.0
         },
         description="Search strategy parameters for hybrid local/external search"
     )

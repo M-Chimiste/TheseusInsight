@@ -69,6 +69,11 @@ class AgentConfiguration(BaseModel):
         metadata={"description": "Minimum similarity threshold for search results."},
     )
 
+    external_search_delay: float = Field(
+        default=2.0,
+        metadata={"description": "Delay in seconds between sequential external searches to avoid overwhelming APIs."},
+    )
+
     @classmethod
     def from_runnable_config(
         cls, config: Optional[RunnableConfig] = None

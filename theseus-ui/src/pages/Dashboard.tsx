@@ -10,6 +10,7 @@ import PodcastsIcon from '@mui/icons-material/Podcasts';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import ScienceIcon from '@mui/icons-material/Science';
 import CollectionsBookmarkIcon from '@mui/icons-material/CollectionsBookmark';
+import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';
 
 interface NavCardItem {
   title: string;
@@ -19,12 +20,8 @@ interface NavCardItem {
 }
 
 const navItems: NavCardItem[] = [
-  {
-    title: 'Research Agent',
-    description: 'Automated literature reviews with AI-generated reports.',
-    icon: <ScienceIcon fontSize="large" color="primary" />,
-    path: '/research-agent',
-  },
+  
+  
   {
     title: 'Newsletter',
     description: 'Generate research newsletters based on criteria.',
@@ -44,16 +41,28 @@ const navItems: NavCardItem[] = [
     path: '/papers',
   },
   {
-    title: 'Run History',
-    description: 'View logs and history of past pipeline runs.',
-    icon: <HistoryIcon fontSize="large" color="primary" />,
-    path: '/run-history',
+    title: 'Research Agent',
+    description: 'Automated literature reviews with AI-generated reports.',
+    icon: <ScienceIcon fontSize="large" color="primary" />,
+    path: '/research-agent',
+  },
+  {
+    title: 'Research Library',
+    description: 'Browse and review historical research papers.',
+    icon: <LocalLibraryIcon fontSize="large" color="primary" />,
+    path: '/research-library',
   },
   {
     title: 'Podcast History',
     description: 'Browse and review previously generated podcasts.',
     icon: <PodcastsIcon fontSize="large" color="primary" />,
     path: '/podcast-history',
+  },
+  {
+    title: 'Run History',
+    description: 'View logs and history of past pipeline runs.',
+    icon: <HistoryIcon fontSize="large" color="primary" />,
+    path: '/run-history',
   },
   {
     title: 'Audio Visualizer',

@@ -896,7 +896,8 @@ class TaskManager:
                         enable_pdf_download=search_config.get("enable_pdf_download", True),
                         semantic_weight=search_config.get("semantic_weight", 0.6),
                         keyword_weight=search_config.get("keyword_weight", 0.4),
-                        similarity_threshold=search_config.get("similarity_threshold", 0.3)
+                        similarity_threshold=search_config.get("similarity_threshold", 0.3),
+                        external_search_delay=search_config.get("external_search_delay", 2.0)
                     )
                     
                     print(f"DEBUG: Using LangGraph configuration from database for {task_id}")
@@ -909,7 +910,8 @@ class TaskManager:
                         external_search_limit=5,
                         max_research_loops=max_steps,
                         number_of_initial_queries=3,
-                        enable_pdf_download=enable_pdf_download
+                        enable_pdf_download=enable_pdf_download,
+                        external_search_delay=2.0
                     )
             else:
                 print(f"DEBUG: No LangGraph config found, using defaults for {task_id}")
@@ -919,7 +921,8 @@ class TaskManager:
                     external_search_limit=5,
                     max_research_loops=max_steps,
                     number_of_initial_queries=3,
-                    enable_pdf_download=enable_pdf_download
+                    enable_pdf_download=enable_pdf_download,
+                    external_search_delay=2.0
                 )
             
             # Create research agent with properly configured embedding model
@@ -1023,9 +1026,19 @@ class TaskManager:
                                 current_step="local_search",
                             )
                             
-                            # Collect sources
+                            # Collect sources and debug paper access
                             if node_data.get('sources_gathered'):
-                                sources_gathered.extend(node_data['sources_gathered'])
+                                new_sources = node_data['sources_gathered']
+                                sources_gathered.extend(new_sources)
+                                
+                                # Debug: Check what papers are being found and if they have full text
+                                print(f"DEBUG: Local search found {len(new_sources)} papers for {task_id}")
+                                for i, source in enumerate(new_sources[:3]):  # Log first 3 for debugging
+                                    print(f"  Paper {i+1}: {source.get('title', 'No title')}")
+                                    print(f"    Type: {source.get('source_type', 'unknown')}")
+                                    if source.get('value'):
+                                        print(f"    URL/Value: {source['value'][:100]}...")
+                                    
                             if node_data.get('web_research_result'):
                                 search_results.extend(node_data['web_research_result'])
                             
@@ -1063,6 +1076,32 @@ class TaskManager:
                                 "step": "external_research",
                                 "action": f"Searched external sources for '{search_query}' - found {sources_count} sources",
                                 "data": {"query": search_query, "sources_found": sources_count}
+                            })
+                            
+                        elif node_name == "sequential_external_research":
+                            current_progress = 50 + (research_loop_count * 10)
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                "Running sequential external searches (respectful to APIs)...",
+                                progress=min(current_progress, 70),
+                                current_step="sequential_external_search",
+                            )
+                            
+                            # Collect sources
+                            if node_data.get('sources_gathered'):
+                                sources_gathered.extend(node_data['sources_gathered'])
+                            if node_data.get('web_research_result'):
+                                search_results.extend(node_data['web_research_result'])
+                            
+                            # Record activity for all queries processed
+                            queries = node_data.get('search_query', [])
+                            total_sources = len(node_data.get('sources_gathered', []))
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "sequential_external_research",
+                                "action": f"Searched external sources for {len(queries)} queries sequentially - found {total_sources} sources",
+                                "data": {"queries": queries, "sources_found": total_sources}
                             })
                                 
                         elif node_name == "reflection":
@@ -1103,6 +1142,13 @@ class TaskManager:
                             # Extract the final message from the finalize_answer node
                             if node_data.get('messages'):
                                 final_message = node_data['messages'][-1] if node_data['messages'] else None
+                                
+                                # Check if the final message contains an error
+                                if final_message and hasattr(final_message, 'content'):
+                                    if "Error generating research summary:" in final_message.content:
+                                        print(f"DEBUG: Error detected in finalize_answer for {task_id}: {final_message.content}")
+                                        raise ValueError(f"Research finalization failed: {final_message.content}")
+                                
                                 print(f"DEBUG: Extracted final message from finalize_answer for {task_id}")
                             
                             # Update sources if available
@@ -1144,6 +1190,11 @@ class TaskManager:
                 final_sources = sources_gathered
                 
                 if final_message and hasattr(final_message, 'content'):
+                    # Check if the final message contains an error
+                    if "Error generating research summary:" in final_message.content:
+                        print(f"DEBUG: Error detected in final message for {task_id}: {final_message.content}")
+                        raise ValueError(f"Research failed: {final_message.content}")
+                    
                     # Create a simplified literature review result
                     # This is a temporary structure - in a full implementation, 
                     # you might want to parse the final message to extract paper summaries
@@ -1156,8 +1207,40 @@ class TaskManager:
                         current_step="saving_results",
                     )
                     
-                    # For now, create a simplified review entry
-                    # In a full implementation, you'd parse the LangGraph output to extract structured summaries
+                    # Extract structured paper information from sources and report
+                    print(f"DEBUG: Extracting paper summaries from {len(sources_gathered)} sources for {task_id}")
+                    
+                    # Create structured summaries from sources_gathered
+                    structured_summaries = []
+                    for i, source in enumerate(sources_gathered):
+                        try:
+                            # Create a structured summary for each source
+                            summary_entry = {
+                                "paper_id": i + 1,  # Use index + 1 as paper_id
+                                "title": source.get("title", f"Paper {i + 1}"),
+                                "summary": f"Research source referenced in comprehensive analysis. {source.get('value', '')}",
+                                "rationale": f"Source identified during research process with relevance to: {research_question}",
+                                "relevance_score": 0.85 if source.get("source_type") == "local" else 0.75  # Higher score for local papers
+                            }
+                            structured_summaries.append(summary_entry)
+                        except Exception as e:
+                            print(f"DEBUG: Error creating summary for source {i}: {e}")
+                    
+                    # Convert structured summaries to JSON
+                    summary_json = json.dumps(structured_summaries)
+                    print(f"DEBUG: Created {len(structured_summaries)} structured summaries for {task_id}")
+                    
+                    # Create trace information
+                    trace_data = [
+                        {
+                            "step": "paper_discovery",
+                            "papers_found": len(sources_gathered),
+                            "local_sources": len([s for s in sources_gathered if s.get("source_type") == "local"]),
+                            "external_sources": len([s for s in sources_gathered if s.get("source_type") == "external"]),
+                            "research_loops": research_loop_count
+                        }
+                    ]
+                    trace_json = json.dumps(trace_data)
                     
                     # Generate short summary for research library
                     short_summary = enhance_summary_with_context(
@@ -1168,11 +1251,11 @@ class TaskManager:
                     # Convert activity log to JSON
                     activity_log_json = json.dumps(activity_log)
                     
-                    # Save to database (only pass parameters that the method accepts)
+                    # Save to database with proper paper count
                     review_id = self.db.insert_literature_review(
                         research_question=research_question,
-                        summary_json="[]",  # Placeholder - would need parsing
-                        trace_json="[]",    # Placeholder - would need trace extraction
+                        summary_json=summary_json,
+                        trace_json=trace_json,
                         report_text=final_message.content,
                         short_summary=short_summary,
                         activity_log=activity_log_json
@@ -1233,11 +1316,30 @@ class TaskManager:
                     }]
                     activity_log_json = json.dumps(fallback_activity)
                     
-                    # Save to database (only pass parameters that the method accepts)
+                    # Create basic structured summaries for fallback mode
+                    fallback_summaries = []
+                    if len(final_sources) > 0:
+                        for i, source in enumerate(final_sources[:10]):  # Limit to first 10 sources
+                            try:
+                                summary_entry = {
+                                    "paper_id": i + 1,
+                                    "title": source.get("title", f"Fallback Paper {i + 1}"),
+                                    "summary": f"Research source from fallback mode. {source.get('value', '')}",
+                                    "rationale": f"Source identified during fallback research for: {research_question}",
+                                    "relevance_score": 0.70  # Default score for fallback mode
+                                }
+                                fallback_summaries.append(summary_entry)
+                            except Exception as e:
+                                print(f"DEBUG: Error creating fallback summary for source {i}: {e}")
+                    
+                    fallback_summary_json = json.dumps(fallback_summaries)
+                    fallback_trace_json = json.dumps([{"step": "fallback_research", "papers_found": len(final_sources)}])
+                    
+                    # Save to database with fallback data
                     review_id = self.db.insert_literature_review(
                         research_question=research_question,
-                        summary_json="[]",
-                        trace_json="[]",
+                        summary_json=fallback_summary_json,
+                        trace_json=fallback_trace_json,
                         report_text=final_message.content,
                         short_summary=short_summary,
                         activity_log=activity_log_json

@@ -40,6 +40,30 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { useResearchAgent } from '../hooks/useResearchAgent';
 import { useLayout } from '../contexts/LayoutContext';
+import CollapsibleContent from '../components/CollapsibleContent';
+
+// Helper function to extract and process thinking content
+const processThinkingContent = (content: string) => {
+  if (!content) return { cleanContent: '', thinkingContent: null };
+  
+  // Look for <think> and </think> tags
+  const thinkRegex = /<think>([\s\S]*?)<\/think>/gi;
+  const matches = content.match(thinkRegex);
+  
+  if (matches) {
+    // Extract thinking content (remove the tags)
+    const thinkingContent = matches.map(match => 
+      match.replace(/<\/?think>/gi, '').trim()
+    ).join('\n\n');
+    
+    // Remove thinking content from the main content
+    const cleanContent = content.replace(thinkRegex, '').trim();
+    
+    return { cleanContent, thinkingContent };
+  }
+  
+  return { cleanContent: content, thinkingContent: null };
+};
 
 // Types based on the new LangGraph implementation
 interface ProcessedEvent {
@@ -221,86 +245,106 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
             <Box sx={{ flex: 1 }}>
-              <Paper
-                variant="outlined"
-                sx={{
-                  p: 2,
-                  borderRadius: 3,
-                  borderBottomLeftRadius: 1,
-                  backgroundColor: alpha(theme.palette.background.paper, 0.8),
-                }}
-              >
-                <ReactMarkdown
-                  components={{
-                    h1: ({ children }) => <Typography variant="h5" gutterBottom>{children}</Typography>,
-                    h2: ({ children }) => <Typography variant="h6" gutterBottom>{children}</Typography>,
-                    h3: ({ children }) => <Typography variant="subtitle1" gutterBottom>{children}</Typography>,
-                    p: ({ children }) => <Typography variant="body1" paragraph>{children}</Typography>,
-                    a: ({ children, href }) => (
-                      <Chip 
-                        label={children} 
-                        component="a" 
-                        href={href} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        clickable 
-                        size="small" 
-                        sx={{ mx: 0.5 }}
-                      />
-                    ),
-                    ul: ({ children }) => <Box component="ul" sx={{ pl: 2, mb: 2 }}>{children}</Box>,
-                    ol: ({ children }) => <Box component="ol" sx={{ pl: 2, mb: 2 }}>{children}</Box>,
-                    li: ({ children }) => <Typography component="li" variant="body1">{children}</Typography>,
-                    blockquote: ({ children }) => (
-                      <Box 
-                        sx={{ 
-                          borderLeft: 4, 
-                          borderColor: theme.palette.divider, 
-                          pl: 2, 
-                          py: 1, 
-                          my: 2,
-                          fontStyle: 'italic',
-                          backgroundColor: alpha(theme.palette.action.hover, 0.3)
-                        }}
-                      >
-                        {children}
-                      </Box>
-                    ),
-                    code: ({ children }) => (
-                      <Typography 
-                        component="code" 
-                        sx={{ 
-                          backgroundColor: alpha(theme.palette.action.hover, 0.5),
-                          px: 0.5,
-                          py: 0.25,
-                          borderRadius: 0.5,
-                          fontFamily: 'monospace',
-                          fontSize: '0.875rem'
-                        }}
-                      >
-                        {children}
-                      </Typography>
-                    ),
-                    pre: ({ children }) => (
+              {(() => {
+                const { cleanContent, thinkingContent } = processThinkingContent(message.content);
+                return (
+                  <Box>
+                    {/* Main message content without thinking */}
+                    {cleanContent && (
                       <Paper
                         variant="outlined"
                         sx={{
                           p: 2,
-                          my: 2,
-                          backgroundColor: alpha(theme.palette.action.hover, 0.1),
-                          overflow: 'auto',
-                          fontFamily: 'monospace',
-                          fontSize: '0.875rem'
+                          borderRadius: 3,
+                          borderBottomLeftRadius: 1,
+                          backgroundColor: alpha(theme.palette.background.paper, 0.8),
+                          mb: thinkingContent ? 2 : 0
                         }}
                       >
-                        {children}
+                        <ReactMarkdown
+                          components={{
+                            h1: ({ children }) => <Typography variant="h5" gutterBottom>{children}</Typography>,
+                            h2: ({ children }) => <Typography variant="h6" gutterBottom>{children}</Typography>,
+                            h3: ({ children }) => <Typography variant="subtitle1" gutterBottom>{children}</Typography>,
+                            p: ({ children }) => <Typography variant="body1" paragraph>{children}</Typography>,
+                            a: ({ children, href }) => (
+                              <Chip 
+                                label={children} 
+                                component="a" 
+                                href={href} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                clickable 
+                                size="small" 
+                                sx={{ mx: 0.5 }}
+                              />
+                            ),
+                            ul: ({ children }) => <Box component="ul" sx={{ pl: 2, mb: 2 }}>{children}</Box>,
+                            ol: ({ children }) => <Box component="ol" sx={{ pl: 2, mb: 2 }}>{children}</Box>,
+                            li: ({ children }) => <Typography component="li" variant="body1">{children}</Typography>,
+                            blockquote: ({ children }) => (
+                              <Box 
+                                sx={{ 
+                                  borderLeft: 4, 
+                                  borderColor: theme.palette.divider, 
+                                  pl: 2, 
+                                  py: 1, 
+                                  my: 2,
+                                  fontStyle: 'italic',
+                                  backgroundColor: alpha(theme.palette.action.hover, 0.3)
+                                }}
+                              >
+                                {children}
+                              </Box>
+                            ),
+                            code: ({ children }) => (
+                              <Typography 
+                                component="code" 
+                                sx={{ 
+                                  backgroundColor: alpha(theme.palette.action.hover, 0.5),
+                                  px: 0.5,
+                                  py: 0.25,
+                                  borderRadius: 0.5,
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.875rem'
+                                }}
+                              >
+                                {children}
+                              </Typography>
+                            ),
+                            pre: ({ children }) => (
+                              <Paper
+                                variant="outlined"
+                                sx={{
+                                  p: 2,
+                                  my: 2,
+                                  backgroundColor: alpha(theme.palette.action.hover, 0.1),
+                                  overflow: 'auto',
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.875rem'
+                                }}
+                              >
+                                {children}
+                              </Paper>
+                            ),
+                          }}
+                        >
+                          {cleanContent}
+                        </ReactMarkdown>
                       </Paper>
-                    ),
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
-              </Paper>
+                    )}
+                    
+                    {/* Thinking content in collapsible section */}
+                    {thinkingContent && (
+                      <CollapsibleContent
+                        content={thinkingContent}
+                        type="thinking"
+                        defaultExpanded={false}
+                      />
+                    )}
+                  </Box>
+                );
+              })()}
               <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
                 <Tooltip title={copied ? "Copied!" : "Copy message"}>
                   <IconButton size="small" onClick={handleCopy}>

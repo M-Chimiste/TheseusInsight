@@ -300,28 +300,71 @@ Please respond with any additional details that would help me conduct more targe
             
             logger.info(f"Local search for query: {state['search_query']}")
             
-            # Search local database using the enhanced LocalSearchTool
+            # Get raw results first for better source extraction
+            raw_papers = self.local_tool.search_local_only(
+                state["search_query"],
+                limit=configurable.local_search_limit
+            )
+            
+            # Generate formatted result for LLM consumption
             result = self.local_tool.find_papers_by_str(
                 state["search_query"], 
                 limit=configurable.local_search_limit
             )
             
-            # Track sources with short URLs for citation management
+            # Enhanced source tracking with complete metadata and automatic full text processing
             sources_gathered = []
-            if "papers found" in result.lower():
-                # Extract paper information and create source entries
-                citations = extract_citations_from_summary(result)
-                for citation in citations:
-                    short_url = self._generate_short_url(citation.get("url", ""))
-                    sources_gathered.append({
-                        "short_url": short_url,
-                        "value": citation.get("url", ""),
-                        "title": citation.get("title", ""),
-                        "source_type": "local"
-                    })
-                    # Replace long URLs in result with short URLs for cleaner presentation
-                    if citation.get("url"):
-                        result = result.replace(citation["url"], short_url)
+            for paper in raw_papers:
+                # Create short URL for citation tracking
+                paper_url = paper.get('url', '') or f"paper_id_{paper.get('id', 'unknown')}"
+                short_url = self._generate_short_url(paper_url)
+                
+                # Attempt to get full text if enabled and not already available
+                paper_full_text = paper.get('text', '')
+                full_text_attempted = False
+                
+                if (configurable.enable_pdf_download and 
+                    not paper_full_text and 
+                    paper.get('url') and 
+                    paper.get('id')):
+                    
+                    try:
+                        logger.info(f"Attempting full text retrieval for paper {paper['id']}: {paper.get('title', 'Unknown')[:50]}...")
+                        full_text_result = self.local_tool.retrieve_full_text(str(paper['id']))
+                        full_text_attempted = True
+                        
+                        # Check if we successfully got full text
+                        if "FULL TEXT RETRIEVED" in full_text_result:
+                            # Re-fetch the paper to get updated text
+                            updated_paper = self.db.get_paper_by_id(paper['id'])
+                            if updated_paper and updated_paper.get('text'):
+                                paper_full_text = updated_paper['text']
+                                logger.info(f"Successfully retrieved full text for paper {paper['id']} ({len(paper_full_text)} chars)")
+                        else:
+                            logger.warning(f"Full text retrieval failed for paper {paper['id']}")
+                    except Exception as e:
+                        logger.error(f"Error during full text retrieval for paper {paper['id']}: {e}")
+                
+                # Store comprehensive source metadata
+                source_entry = {
+                    "short_url": short_url,
+                    "value": paper_url,
+                    "title": paper.get('title', 'Unknown Title').strip(),
+                    "source_type": "local",
+                    "paper_id": paper.get('id'),
+                    "authors": paper.get('authors', []),
+                    "year": paper.get('year'),
+                    "abstract": paper.get('abstract', ''),
+                    "has_full_text": bool(paper_full_text),
+                    "full_text_length": len(paper_full_text) if paper_full_text else 0,
+                    "full_text_attempted": full_text_attempted,
+                    "relevance_score": paper.get('hybrid_score', 0)
+                }
+                sources_gathered.append(source_entry)
+                
+                # Replace URLs in result text with short URLs for cleaner presentation
+                if paper_url and paper_url in result:
+                    result = result.replace(paper_url, short_url)
             
             logger.info(f"Local search completed with {len(sources_gathered)} sources")
             
@@ -346,28 +389,57 @@ Please respond with any additional details that would help me conduct more targe
             
             logger.info(f"External search for query: {state['search_query']}")
             
-            # Search using enhanced ExternalSearchTool
+            # Get raw results first for better source extraction
+            raw_papers = self.external_tool.search_and_rank(
+                state["search_query"],
+                limit=configurable.external_search_limit
+            )
+            
+            # Generate formatted result for LLM consumption
             result = self.external_tool.find_papers_by_str(
                 state["search_query"], 
                 limit=configurable.external_search_limit
             )
             
-            # Track sources with short URLs for citation management
+            # Enhanced source tracking with complete metadata
             sources_gathered = []
-            if "papers found" in result.lower():
-                # Extract paper information and create source entries
-                citations = extract_citations_from_summary(result)
-                for citation in citations:
-                    short_url = self._generate_short_url(citation.get("url", ""))
-                    sources_gathered.append({
-                        "short_url": short_url,
-                        "value": citation.get("url", ""),
-                        "title": citation.get("title", ""),
-                        "source_type": "external"
-                    })
-                    # Replace long URLs in result with short URLs for cleaner presentation
-                    if citation.get("url"):
-                        result = result.replace(citation["url"], short_url)
+            for paper in raw_papers:
+                # Prioritize Semantic Scholar URL, fallback to PDF URL
+                paper_url = paper.get('url', '') or paper.get('pdf_url', '')
+                if not paper_url:
+                    continue  # Skip papers without accessible URLs
+                
+                # Create short URL for citation tracking
+                short_url = self._generate_short_url(paper_url)
+                
+                # Clean up authors for display
+                authors = paper.get('authors_str', '') or ', '.join([
+                    author.get('name', '') for author in paper.get('authors', [])
+                    if isinstance(author, dict) and author.get('name')
+                ][:3])  # Limit to first 3 authors
+                
+                # Store comprehensive source metadata
+                source_entry = {
+                    "short_url": short_url,
+                    "value": paper_url,
+                    "title": paper.get('title', 'Unknown Title').strip(),
+                    "source_type": "external",
+                    "authors": authors,
+                    "year": paper.get('year'),
+                    "abstract": paper.get('abstract', ''),
+                    "venue": paper.get('venue'),
+                    "citation_count": paper.get('citationCount'),
+                    "is_open_access": paper.get('isOpenAccess', False),
+                    "pdf_url": paper.get('pdf_url'),
+                    "external_ranking_score": paper.get('external_ranking_score', 0)
+                }
+                sources_gathered.append(source_entry)
+                
+                # Replace URLs in result text with short URLs for cleaner presentation
+                if paper_url in result:
+                    result = result.replace(paper_url, short_url)
+                if paper.get('pdf_url') and paper['pdf_url'] in result:
+                    result = result.replace(paper['pdf_url'], short_url)
             
             logger.info(f"External search completed with {len(sources_gathered)} sources")
             
@@ -509,28 +581,82 @@ Please respond with any additional details that would help me conduct more targe
                     time.sleep(configurable.external_search_delay)
                 
                 try:
-                    # Search using enhanced ExternalSearchTool
+                    # Get raw results first for better source extraction
+                    raw_papers = self.external_tool.search_and_rank(
+                        query,
+                        limit=configurable.external_search_limit
+                    )
+                    
+                    # Generate formatted result for LLM consumption
                     result = self.external_tool.find_papers_by_str(
                         query, 
                         limit=configurable.external_search_limit
                     )
                     
-                    # Track sources with short URLs for citation management
+                    # Enhanced source tracking with complete metadata
                     sources_gathered = []
-                    if "papers found" in result.lower() or "EXTERNAL PAPER" in result:
-                        # Extract paper information and create source entries
-                        citations = extract_citations_from_summary(result)
-                        for citation in citations:
-                            short_url = self._generate_short_url(citation.get("url", ""))
-                            sources_gathered.append({
-                                "short_url": short_url,
-                                "value": citation.get("url", ""),
-                                "title": citation.get("title", ""),
-                                "source_type": "external"
-                            })
-                            # Replace long URLs in result with short URLs for cleaner presentation
-                            if citation.get("url"):
-                                result = result.replace(citation["url"], short_url)
+                    for paper in raw_papers:
+                        # Prioritize Semantic Scholar URL, fallback to PDF URL
+                        paper_url = paper.get('url', '') or paper.get('pdf_url', '')
+                        if not paper_url:
+                            continue  # Skip papers without accessible URLs
+                        
+                        # Create short URL for citation tracking
+                        short_url = self._generate_short_url(paper_url)
+                        
+                        # Clean up authors for display
+                        authors = paper.get('authors_str', '') or ', '.join([
+                            author.get('name', '') for author in paper.get('authors', [])
+                            if isinstance(author, dict) and author.get('name')
+                        ][:3])  # Limit to first 3 authors
+                        
+                        # Attempt to get full text if PDF download is enabled and we have a PDF URL
+                        has_full_text = False
+                        full_text_attempted = False
+                        pdf_url = paper.get('pdf_url', '')
+                        
+                        if (configurable.enable_pdf_download and 
+                            pdf_url and 
+                            pdf_url.endswith('.pdf')):
+                            
+                            try:
+                                logger.info(f"Attempting full text retrieval for external paper: {paper.get('title', 'Unknown')[:50]}...")
+                                full_text_result = self.external_tool.retrieve_full_text(pdf_url)
+                                full_text_attempted = True
+                                
+                                # Check if we successfully got full text
+                                if "EXTERNAL PDF CONTENT RETRIEVED" in full_text_result:
+                                    has_full_text = True
+                                    logger.info(f"Successfully retrieved external full text from {pdf_url}")
+                                else:
+                                    logger.warning(f"External full text retrieval failed for {pdf_url}")
+                            except Exception as e:
+                                logger.error(f"Error during external full text retrieval: {e}")
+                        
+                        # Store comprehensive source metadata
+                        source_entry = {
+                            "short_url": short_url,
+                            "value": paper_url,
+                            "title": paper.get('title', 'Unknown Title').strip(),
+                            "source_type": "external",
+                            "authors": authors,
+                            "year": paper.get('year'),
+                            "abstract": paper.get('abstract', ''),
+                            "venue": paper.get('venue'),
+                            "citation_count": paper.get('citationCount'),
+                            "is_open_access": paper.get('isOpenAccess', False),
+                            "pdf_url": pdf_url,
+                            "has_full_text": has_full_text,
+                            "full_text_attempted": full_text_attempted,
+                            "external_ranking_score": paper.get('external_ranking_score', 0)
+                        }
+                        sources_gathered.append(source_entry)
+                        
+                        # Replace URLs in result text with short URLs for cleaner presentation
+                        if paper_url in result:
+                            result = result.replace(paper_url, short_url)
+                        if paper.get('pdf_url') and paper['pdf_url'] in result:
+                            result = result.replace(paper['pdf_url'], short_url)
                     
                     # Collect results
                     all_sources_gathered.extend(sources_gathered)
@@ -570,7 +696,7 @@ Please respond with any additional details that would help me conduct more targe
             research_topic = get_research_topic(state["messages"])
             research_insights = ""
             
-            # Process gathered sources to extract insights
+            # Process gathered sources to extract insights with enhanced full text processing
             sources_gathered = state.get("sources_gathered", [])
             search_results = state.get("web_research_result", [])
             
@@ -579,6 +705,8 @@ Please respond with any additional details that would help me conduct more targe
                 search_queries = state.get("search_query", [])
                 combined_results = combine_search_results(search_results, search_queries)
                 research_insights = generate_research_insights([combined_results])
+            else:
+                research_insights = ""
             
             # Check if we have access to full text papers - this is key for quality
             full_text_count = 0
@@ -644,10 +772,15 @@ Please respond with any additional details that would help me conduct more targe
             
             # Convert response to proper LangChain AIMessage
             if hasattr(response, 'content'):
-                ai_message = AIMessage(content=response.content)
+                content = response.content
             else:
                 # Fallback for string responses
-                ai_message = AIMessage(content=str(response))
+                content = str(response)
+            
+            # POST-PROCESS: Convert short URL placeholders to clickable markdown links
+            enhanced_content = self._convert_short_urls_to_markdown_links(content, sources_gathered)
+            
+            ai_message = AIMessage(content=enhanced_content)
             
             final_state = {
                 **state,
@@ -670,6 +803,167 @@ Please respond with any additional details that would help me conduct more targe
                 "sources_gathered": state.get("sources_gathered", [])
             }
     
+    def _convert_short_urls_to_markdown_links(self, content: str, sources_gathered: List[Dict]) -> str:
+        """
+        Convert short URL placeholders to numbered hyperlinks with proper references section.
+        
+        Args:
+            content: The research summary content with short URL placeholders
+            sources_gathered: List of source dictionaries with metadata
+            
+        Returns:
+            Enhanced content with numbered hyperlinks and full references section
+        """
+        import re
+        
+        # Create a mapping from short URLs to full source information
+        source_mapping = {}
+        reference_counter = 0
+        
+        for source in sources_gathered:
+            short_url = source.get("short_url", "")
+            if short_url:
+                reference_counter += 1
+                
+                # Clean up title for display
+                title = source.get("title", "").strip()
+                if not title or title == "Unknown" or title == "Unknown Title":
+                    title = f"Research Source {reference_counter}"
+                
+                # Truncate very long titles
+                if len(title) > 80:
+                    title = title[:77] + "..."
+                
+                url = source.get("value", "").strip()
+                source_type = source.get("source_type", "unknown")
+                
+                # Get additional metadata for reference formatting
+                authors = source.get("authors", "")
+                year = source.get("year", "")
+                venue = source.get("venue", "")
+                
+                source_mapping[short_url] = {
+                    "number": reference_counter,
+                    "title": title,
+                    "url": url,
+                    "type": source_type,
+                    "authors": authors,
+                    "year": year,
+                    "venue": venue
+                }
+        
+        # Find all short URL placeholders in the content
+        short_url_pattern = r'\[source_\d+\]'
+        short_urls = re.findall(short_url_pattern, content)
+        
+        enhanced_content = content
+        
+        # Replace each short URL with a numbered hyperlink
+        for short_url in short_urls:
+            if short_url in source_mapping:
+                source_info = source_mapping[short_url]
+                number = source_info["number"]
+                url = source_info["url"]
+                
+                if url:
+                    # Create numbered hyperlink
+                    numbered_link = f"[{number}]({url})"
+                    enhanced_content = enhanced_content.replace(short_url, numbered_link)
+                else:
+                    # If no URL available, just show the number in bold
+                    enhanced_content = enhanced_content.replace(short_url, f"**[{number}]**")
+        
+        # Build or enhance the References section
+        references_lines = ["\n## References\n"]
+        
+        # Sort sources by their reference number
+        sorted_sources = sorted(source_mapping.values(), key=lambda x: x["number"])
+        
+        for source_info in sorted_sources:
+            number = source_info["number"]
+            title = source_info["title"]
+            url = source_info["url"]
+            source_type = source_info["type"]
+            authors = source_info["authors"]
+            year = source_info["year"]
+            venue = source_info["venue"]
+            
+            # Build reference entry
+            reference_parts = []
+            
+            # Add title (as hyperlink if URL available)
+            if url:
+                reference_parts.append(f"[{title}]({url})")
+            else:
+                reference_parts.append(f"**{title}**")
+            
+            # Add authors and year if available
+            citation_parts = []
+            if authors:
+                # Clean up authors for citation format
+                if isinstance(authors, list):
+                    author_str = ", ".join(authors[:3])  # Limit to first 3 authors
+                    if len(authors) > 3:
+                        author_str += " et al."
+                else:
+                    author_str = str(authors)
+                    if "," in author_str:
+                        # Truncate to first 3 authors if comma-separated
+                        author_list = [a.strip() for a in author_str.split(",")]
+                        if len(author_list) > 3:
+                            author_str = ", ".join(author_list[:3]) + " et al."
+                
+                citation_parts.append(author_str)
+            
+            if year:
+                citation_parts.append(f"({year})")
+            
+            if citation_parts:
+                reference_parts.append(" - " + " ".join(citation_parts))
+            
+            # Add venue and source type metadata
+            metadata_parts = []
+            if venue:
+                venue_display = venue[:40] + "..." if len(venue) > 40 else venue
+                metadata_parts.append(f"*{venue_display}*")
+            
+            if source_type != "unknown":
+                metadata_parts.append(f"{source_type.title()} Source")
+            
+            if metadata_parts:
+                reference_parts.append(f" | {' | '.join(metadata_parts)}")
+            
+            # Format the complete reference
+            reference_line = f"{number}. {''.join(reference_parts)}"
+            references_lines.append(reference_line)
+        
+        # Remove any existing References section and add our new one
+        if "## References" in enhanced_content:
+            # Find and remove existing references section
+            lines = enhanced_content.split('\n')
+            filtered_lines = []
+            in_references = False
+            
+            for line in lines:
+                if line.strip() == "## References":
+                    in_references = True
+                    continue
+                elif in_references and line.startswith('##'):
+                    # Found next section, stop filtering
+                    in_references = False
+                    filtered_lines.append(line)
+                elif not in_references:
+                    filtered_lines.append(line)
+                # Skip lines that are in references section
+            
+            enhanced_content = '\n'.join(filtered_lines)
+        
+        # Add our new references section
+        enhanced_content += '\n'.join(references_lines)
+        
+        logger.info(f"Enhanced content with {len(sorted_sources)} numbered reference links")
+        return enhanced_content
+
     def reset_sources(self):
         """Reset source tracking for new conversations."""
         self._source_counter = 0

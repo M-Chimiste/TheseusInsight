@@ -125,13 +125,16 @@ Instructions:
 - The current date is {current_date}.
 - You are synthesizing research findings from multiple academic sources.
 - Generate a well-structured research summary that addresses the user's research question.
-- Include all relevant citations and sources from the summaries.
+- **Include all relevant citations and sources from the summaries using the exact short URL format provided (e.g., [source_1], [source_2])**
+- **Important**: Use the short URL placeholders exactly as they appear in the summaries - do NOT convert them to full URLs or modify them
 - Organize findings thematically and highlight key insights, methodologies, and conclusions.
 - Maintain academic tone and precision.
 - Identify any limitations or gaps in the current research landscape.
+- End your response with a dedicated "## References" section that lists all sources used in your analysis
+- In the References section, include the short URL placeholders which will be converted to clickable links
 
 Research Context:
 - {research_topic}
 
 Literature Summaries:
-{summaries}""" 
+{summaries}"""

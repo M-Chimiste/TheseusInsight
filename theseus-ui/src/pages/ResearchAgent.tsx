@@ -409,6 +409,20 @@ const ResearchAgent: React.FC = () => {
       try {
         const status = JSON.parse(event.data);
         
+        // Handle query refinement waiting - show clarifying questions as AI message
+        if (status.currentStep === 'query_refinement_waiting' && status.message) {
+          const aiMessage: ConversationMessage = {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: status.message
+          };
+          
+          setMessages(prev => [...prev, aiMessage]);
+          setIsLoading(false); // Allow user to respond
+          setLiveActivity([]);
+          return; // Don't process as regular status update
+        }
+        
         // Process different types of updates from our existing research agent
         if (status.message) {
           // Convert our existing progress messages to ProcessedEvent format
@@ -446,6 +460,24 @@ const ResearchAgent: React.FC = () => {
           setError(status.error || 'Research failed');
           setIsLoading(false);
           setLiveActivity([]);
+        }
+        
+        // Debug logging to understand the status structure
+        console.log('WebSocket status received:', {
+          overallStatus: status.overallStatus,
+          hasResult: !!status.result,
+          currentStep: status.currentStep,
+          message: status.message,
+          resultKeys: status.result ? Object.keys(status.result) : null
+        });
+        
+        // Log when we detect completion
+        if (status.overallStatus === 'completed') {
+          console.log('🎉 COMPLETION DETECTED:', {
+            hasResult: !!status.result,
+            reportTextExists: !!(status.result && status.result.report_text),
+            reportTextLength: status.result && status.result.report_text ? status.result.report_text.length : 0
+          });
         }
       } catch (err) {
         console.error('Error parsing WebSocket message:', err);
@@ -503,8 +535,9 @@ const ResearchAgent: React.FC = () => {
           break;
       }
 
-      // Convert messages to conversation history
-      const conversation_history = messages.map(msg => ({
+      // Convert messages to conversation history (including the new user message)
+      const allMessages = [...messages, userMessage];
+      const conversation_history = allMessages.map(msg => ({
         role: msg.type === 'human' ? 'user' : 'assistant',
         content: msg.content
       }));

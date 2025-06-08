@@ -15,14 +15,16 @@ from .graph_state import (
     QueryGenerationState, 
     ReflectionState,
     WebSearchState,
+    QueryRefinementState,
 )
 from .graph_prompts import (
     answer_instructions,
     get_current_date,
     query_writer_instructions,
     reflection_instructions,
+    query_refinement_instructions,
 )
-from .graph_schemas import Reflection, SearchQueryList
+from .graph_schemas import Reflection, SearchQueryList, QueryRefinement
 from .graph_utils import (
     get_research_topic, 
     format_paper_results,
@@ -92,6 +94,7 @@ class ResearchAgent:
         builder = StateGraph(OverallState, config_schema=AgentConfiguration)
         
         # Define the nodes
+        builder.add_node("query_refinement", self._query_refinement)
         builder.add_node("generate_query", self._generate_query)
         builder.add_node("local_research", self._local_research)
         builder.add_node("external_research", self._external_research)
@@ -99,8 +102,15 @@ class ResearchAgent:
         builder.add_node("reflection", self._reflection)
         builder.add_node("finalize_answer", self._finalize_answer)
         
-        # Set the entry point
-        builder.add_edge(START, "generate_query")
+        # Set the entry point to query refinement
+        builder.add_edge(START, "query_refinement")
+        
+        # Add routing from query refinement
+        builder.add_conditional_edges(
+            "query_refinement",
+            self._route_after_refinement,
+            {END: END, "generate_query": "generate_query"}
+        )
         
         # Add conditional edges with enhanced routing
         builder.add_conditional_edges(
@@ -127,6 +137,109 @@ class ResearchAgent:
         builder.add_edge("finalize_answer", END)
         
         return builder.compile(name="enhanced-research-agent")
+    
+    def _query_refinement(self, state: OverallState, config: RunnableConfig) -> QueryRefinementState:
+        """Analyze the research question and determine if clarification is needed."""
+        try:
+            # Check if we've already asked for clarification by looking for AI clarification messages
+            has_asked_clarification = False
+            for message in state["messages"]:
+                if (message.type == "ai" and 
+                    "I'd like to better understand your research needs" in message.content):
+                    has_asked_clarification = True
+                    break
+            
+            # If we've already asked clarification and user has responded, proceed
+            if has_asked_clarification and len(state["messages"]) >= 2:
+                # User has responded to clarification, use the full conversation context
+                research_question = get_research_topic(state["messages"])
+                return {
+                    "needs_clarification": False,
+                    "clarifying_questions": [],
+                    "refined_query": research_question,
+                    "original_query": research_question
+                }
+            
+            # For the initial query only, analyze if clarification is needed
+            if not has_asked_clarification:
+                # Get the initial research question from the first user message
+                initial_question = ""
+                for message in state["messages"]:
+                    if message.type == "human":
+                        initial_question = message.content
+                        break
+                
+                # Get the model for query refinement
+                llm = self.model_router.get_model("query_refinement")
+                
+                # Format the prompt
+                current_date = get_current_date()
+                formatted_prompt = query_refinement_instructions.format(
+                    current_date=current_date,
+                    research_question=initial_question
+                )
+                
+                # Generate refinement analysis using structured output
+                result = llm.invoke([], formatted_prompt, schema=QueryRefinement, node_name="query_refinement")
+                
+                logger.info(f"Query refinement analysis: needs_clarification={result.needs_clarification}")
+                
+                if result.needs_clarification:
+                    # Add clarifying questions as an AI message for the user to respond to
+                    questions_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(result.clarifying_questions)])
+                    clarification_msg = f"""I'd like to better understand your research needs to provide more focused results. Could you help clarify:
+
+{questions_text}
+
+Please respond with any additional details that would help me conduct more targeted research for you."""
+                    
+                    # Add the clarification message to the conversation
+                    state["messages"].append(AIMessage(content=clarification_msg))
+                    
+                    return {
+                        "needs_clarification": True,
+                        "clarifying_questions": result.clarifying_questions,
+                        "refined_query": "",
+                        "original_query": initial_question
+                    }
+                else:
+                    # Query is clear, continue with the refined version
+                    return {
+                        "needs_clarification": False,
+                        "clarifying_questions": [],
+                        "refined_query": result.refined_query,
+                        "original_query": initial_question
+                    }
+            
+            # Fallback: proceed without refinement
+            research_question = get_research_topic(state["messages"])
+            return {
+                "needs_clarification": False,
+                "clarifying_questions": [],
+                "refined_query": research_question,
+                "original_query": research_question
+            }
+                
+        except Exception as e:
+            logger.error(f"Error in query refinement: {e}")
+            # Fallback: proceed without refinement
+            research_question = get_research_topic(state["messages"])
+            return {
+                "needs_clarification": False,
+                "clarifying_questions": [],
+                "refined_query": research_question,
+                "original_query": research_question
+            }
+    
+    def _route_after_refinement(self, state: QueryRefinementState) -> str:
+        """Route based on whether clarification is needed."""
+        if state.get("needs_clarification", False):
+            # Needs clarification - this will cause the workflow to pause and wait for user input
+            # The task manager will handle restarting the workflow when user responds
+            return END
+        else:
+            # Proceed to query generation
+            return "generate_query"
     
     def _generate_query(self, state: OverallState, config: RunnableConfig) -> QueryGenerationState:
         """Generate initial search queries based on the research question."""
@@ -365,9 +478,19 @@ class ResearchAgent:
             
             # Get follow-up queries from reflection state
             follow_up_queries = state.get("follow_up_queries", [])
+            logger.info(f"DEBUG: Sequential external research received state keys: {list(state.keys())}")
+            logger.info(f"DEBUG: Follow-up queries found: {follow_up_queries}")
+            
             if not follow_up_queries:
                 logger.warning("No follow-up queries found for sequential external research")
-                return state
+                # Check if we have original queries to fall back to for external search
+                search_queries = state.get("search_query", [])
+                if search_queries:
+                    logger.info(f"DEBUG: Using original search queries for external search: {search_queries}")
+                    follow_up_queries = search_queries
+                else:
+                    logger.warning("No search queries available at all")
+                    return state
             
             logger.info(f"Starting sequential external research for {len(follow_up_queries)} queries")
             
@@ -501,11 +624,34 @@ class ResearchAgent:
             
             # Generate final answer
             llm = self.model_router.get_model("finalize_answer")
-            response = llm.invoke(state["messages"], enhanced_instructions, node_name="finalize_answer")
+            
+            # Convert LangChain messages to the format expected by the model router
+            formatted_messages = []
+            for msg in state["messages"]:
+                if hasattr(msg, 'type') and hasattr(msg, 'content'):
+                    # LangChain message format
+                    role = "user" if msg.type == "human" else "assistant"
+                    formatted_messages.append({"role": role, "content": msg.content})
+                elif isinstance(msg, dict) and "role" in msg and "content" in msg:
+                    # Already in correct format
+                    formatted_messages.append(msg)
+                else:
+                    # Fallback - try to extract content
+                    content = getattr(msg, 'content', str(msg))
+                    formatted_messages.append({"role": "user", "content": content})
+            
+            response = llm.invoke(formatted_messages, enhanced_instructions, node_name="finalize_answer")
+            
+            # Convert response to proper LangChain AIMessage
+            if hasattr(response, 'content'):
+                ai_message = AIMessage(content=response.content)
+            else:
+                # Fallback for string responses
+                ai_message = AIMessage(content=str(response))
             
             final_state = {
                 **state,
-                "messages": [*state["messages"], response],
+                "messages": [*state["messages"], ai_message],
                 "sources_gathered": sources_gathered,
                 "search_results": search_results,
                 "full_text_papers": full_text_count,

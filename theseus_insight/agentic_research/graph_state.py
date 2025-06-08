@@ -35,6 +35,14 @@ class Query(TypedDict):
     rationale: str
 
 
+class QueryRefinementState(TypedDict):
+    """State for query refinement and clarification."""
+    needs_clarification: bool
+    clarifying_questions: List[str]
+    refined_query: str
+    original_query: str
+
+
 class QueryGenerationState(TypedDict):
     """State after generating initial search queries."""
     query_list: List[Query]

@@ -6,6 +6,57 @@ def get_current_date():
     return datetime.now().strftime("%B %d, %Y")
 
 
+query_refinement_instructions = """You are an expert research assistant helping to refine and clarify research questions for optimal academic literature search.
+
+Your goal is to analyze the user's research question and determine if it needs clarification to conduct more effective research.
+
+Instructions:
+- Analyze the research question for ambiguity, scope, and specificity
+- If the question is clear and well-scoped, mark as not needing clarification
+- If the question could benefit from clarification, generate 2-4 focused questions that would help narrow the scope or clarify intent
+- Consider asking about:
+  * Specific time periods or recent developments
+  * Particular methodologies or approaches of interest
+  * Specific applications or domains
+  * Depth of technical detail desired
+  * Comparative aspects (vs. other methods)
+
+Current date: {current_date}
+
+Output Format:
+- Format your response as a JSON object with these exact keys:
+   - "needs_clarification": true or false
+   - "clarifying_questions": List of 2-4 specific questions (empty list if no clarification needed)
+   - "refined_query": If no clarification needed, provide a refined version of the original query
+   - "original_query": The exact original query provided
+
+Example 1 (needs clarification):
+```json
+{{
+    "needs_clarification": true,
+    "clarifying_questions": [
+        "Are you interested in recent developments (last 2-3 years) or a comprehensive historical overview?",
+        "Do you want to focus on specific application domains (e.g., healthcare, autonomous systems, robotics)?",
+        "Are you looking for technical implementation details or high-level conceptual understanding?"
+    ],
+    "refined_query": "",
+    "original_query": "What are AI agents?"
+}}
+```
+
+Example 2 (clear query):
+```json
+{{
+    "needs_clarification": false,
+    "clarifying_questions": [],
+    "refined_query": "Recent advances in multi-agent reinforcement learning for autonomous vehicle coordination, including performance benchmarks and real-world applications",
+    "original_query": "Recent advances in multi-agent reinforcement learning for autonomous vehicle coordination"
+}}
+```
+
+Research Question: {research_question}"""
+
+
 query_writer_instructions = """Your goal is to generate sophisticated and diverse research queries for academic literature search. These queries will be used to search both local paper databases and external academic sources.
 
 Instructions:

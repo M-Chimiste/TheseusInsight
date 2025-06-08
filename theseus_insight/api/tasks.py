@@ -213,19 +213,26 @@ class TaskManager:
             nodes=[
                 NodeStatus(
                     nodeId="main",
-                    status=status,
+                    status=status.value,
                     message=message,
                     progress=final_progress,
                     timestamp=timestamp,
                 )
             ],
-            overallStatus=status,
+            overallStatus=status.value,
             currentStep=current_step,
             progress=final_progress,
             message=message,
             result=result,
             error=error,
         )
+        
+        # Debug logging for completion status
+        if status == TaskStatus.COMPLETED:
+            print(f"DEBUG: Sending completion status for {task_id}")
+            print(f"  overallStatus: {status_obj.overallStatus}")
+            print(f"  result keys: {list(result.keys()) if result else 'None'}")
+            print(f"  message: {message[:100]}..." if message else "No message")
         
         # Log to the logs table as well
         final_status = status_obj.overallStatus
@@ -239,28 +246,37 @@ class TaskManager:
             for queue in self.status_updates[task_id]:
                 await queue.put(status_obj)
                 
-        # Clean up queues for completed/failed tasks
+        # Clean up queues for completed/failed tasks (with delay to ensure message delivery)
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
             if task_id in self.status_updates:
-                print(f"DEBUG: Cleaning up status_updates for completed/failed task {task_id}")
-                # Properly drain all queues for this task
-                for queue in self.status_updates[task_id]:
-                    # Drain any remaining items
-                    while not queue.empty():
-                        try:
-                            queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                    
-                    # For Python 3.9+, try to close the queue
-                    if hasattr(queue, '_close'):
-                        try:
-                            queue._close()
-                        except Exception:
-                            pass
+                print(f"DEBUG: Scheduling cleanup for completed/failed task {task_id}")
                 
-                del self.status_updates[task_id]
-                print(f"DEBUG: Removed task {task_id} from status_updates")
+                # Schedule cleanup after a short delay to ensure WebSocket message delivery
+                async def delayed_cleanup():
+                    await asyncio.sleep(0.5)  # Give WebSocket time to send the message
+                    if task_id in self.status_updates:
+                        print(f"DEBUG: Cleaning up status_updates for completed/failed task {task_id}")
+                        # Properly drain all queues for this task
+                        for queue in self.status_updates[task_id]:
+                            # Drain any remaining items
+                            while not queue.empty():
+                                try:
+                                    queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            
+                            # For Python 3.9+, try to close the queue
+                            if hasattr(queue, '_close'):
+                                try:
+                                    queue._close()
+                                except Exception:
+                                    pass
+                        
+                        del self.status_updates[task_id]
+                        print(f"DEBUG: Removed task {task_id} from status_updates")
+                
+                # Schedule the cleanup to run in the background
+                asyncio.create_task(delayed_cleanup())
 
     def _progress_callback(self, task_id: str):
         """Create a progress callback function for TheseusInsight."""
@@ -998,7 +1014,66 @@ class TaskManager:
                     
                     # Process different types of updates
                     for node_name, node_data in chunk.items():
-                        if node_name == "generate_query":
+                        if node_name == "query_refinement":
+                            needs_clarification = node_data.get('needs_clarification', False)
+                            
+                            if needs_clarification:
+                                # Format the clarifying questions for display
+                                questions = node_data.get('clarifying_questions', [])
+                                questions_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
+                                
+                                clarification_message = f"""I'd like to better understand your research needs to provide more focused results. Could you help clarify:
+
+{questions_text}
+
+Please respond with any additional details that would help me conduct more targeted research for you."""
+                                
+                                # Send the clarifying questions as the status message
+                                await self.update_task_status(
+                                    task_id,
+                                    TaskStatus.PROCESSING,
+                                    clarification_message,
+                                    progress=10,
+                                    current_step="query_refinement_waiting",
+                                )
+                                
+                                # Record activity
+                                activity_log.append({
+                                    "timestamp": datetime.now().isoformat(),
+                                    "step": "query_refinement",
+                                    "action": "Requested clarification from user",
+                                    "data": {
+                                        "clarifying_questions": questions,
+                                        "original_query": node_data.get('original_query', '')
+                                    }
+                                })
+                                
+                                # The workflow will end here, waiting for user response
+                                # The user will need to continue the conversation
+                                print(f"DEBUG: Query refinement requested clarification for {task_id}")
+                                return  # Exit the task, user needs to respond
+                            else:
+                                # Query is clear, continue with research
+                                await self.update_task_status(
+                                    task_id,
+                                    TaskStatus.PROCESSING,
+                                    "Research question is clear, proceeding with search...",
+                                    progress=10,
+                                    current_step="query_refinement_complete",
+                                )
+                                
+                                # Record activity
+                                activity_log.append({
+                                    "timestamp": datetime.now().isoformat(),
+                                    "step": "query_refinement",
+                                    "action": "Query is clear, no clarification needed",
+                                    "data": {
+                                        "refined_query": node_data.get('refined_query', ''),
+                                        "original_query": node_data.get('original_query', '')
+                                    }
+                                })
+                                
+                        elif node_name == "generate_query":
                             await self.update_task_status(
                                 task_id,
                                 TaskStatus.PROCESSING,

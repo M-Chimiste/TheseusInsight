@@ -1,5 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, List
+import asyncio
 
 from ..tasks import task_manager, TaskStatus
 
@@ -149,8 +150,10 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
                 
             await websocket.send_json(status.dict())
             
-            # If task is completed or failed, close connection
+            # If task is completed or failed, close connection (with small delay to ensure message delivery)
             if status.overallStatus in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                print(f"DEBUG: WebSocket sending completion status for task {task_id}, closing after delay")
+                await asyncio.sleep(0.1)  # Small delay to ensure message is sent
                 break
                 
     except WebSocketDisconnect:

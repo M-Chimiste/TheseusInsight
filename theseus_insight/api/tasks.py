@@ -7,6 +7,7 @@ from .models import RunStatus, NodeStatus
 from ..theseus_insight import TheseusInsight
 from ..podcast.generator import PodcastGenerator
 from ..data_model import PaperDatabase, Logs
+from ..utils.summary_generator import generate_short_summary, extract_key_themes, enhance_summary_with_context
 import json
 
 class TaskStatus(str, Enum):
@@ -921,9 +922,34 @@ class TaskManager:
                     enable_pdf_download=enable_pdf_download
                 )
             
-            # Create research agent
+            # Create research agent with properly configured embedding model
             print(f"DEBUG: Creating enhanced research agent for {task_id}")
-            embedding_model = SentenceTransformerInference()
+            
+            # Get embedding model configuration from database/orchestration settings
+            try:
+                orchestration_json = self.db.get_setting("orchestration")
+                if orchestration_json:
+                    orchestration_config = json.loads(orchestration_json)
+                    embedding_config = orchestration_config.get('embedding_model', {})
+                    model_name = embedding_config.get('model_name', 'Alibaba-NLP/gte-modernbert-base')
+                    trust_remote_code = embedding_config.get('trust_remote_code', True)
+                    print(f"DEBUG: Using configured embedding model: {model_name}")
+                else:
+                    model_name = 'Alibaba-NLP/gte-modernbert-base'
+                    trust_remote_code = True
+                    print(f"DEBUG: Using default embedding model: {model_name}")
+                
+                embedding_model = SentenceTransformerInference(
+                    model_name=model_name,
+                    remote_code=trust_remote_code
+                )
+            except Exception as e:
+                print(f"DEBUG: Error loading embedding model config, using default: {e}")
+                embedding_model = SentenceTransformerInference(
+                    model_name='Alibaba-NLP/gte-modernbert-base',
+                    remote_code=True
+                )
+            
             agent = create_research_agent(
                 db=self.db,
                 embedding_model=embedding_model,
@@ -948,11 +974,13 @@ class TaskManager:
                 "number_of_initial_queries": 3
             }
             
-            # Track progress through streaming
+                                # Track progress through streaming
             sources_gathered = []
             search_results = []
             research_loop_count = 0
             query_count = 0
+            final_message = None
+            activity_log = []  # Track activity for research library
             
             print(f"DEBUG: Starting streaming research for {task_id}")
             
@@ -977,6 +1005,14 @@ class TaskManager:
                             )
                             query_count = len(node_data.get('query_list', []))
                             
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "query_generation",
+                                "action": f"Generated {query_count} search queries",
+                                "data": {"queries": node_data.get('query_list', [])}
+                            })
+                            
                         elif node_name == "local_research":
                             current_progress = 20 + (query_count * 5)  # Progress based on queries
                             await self.update_task_status(
@@ -992,6 +1028,16 @@ class TaskManager:
                                 sources_gathered.extend(node_data['sources_gathered'])
                             if node_data.get('web_research_result'):
                                 search_results.extend(node_data['web_research_result'])
+                            
+                            # Record activity
+                            search_query = node_data.get('search_query', [''])[0]
+                            sources_count = len(node_data.get('sources_gathered', []))
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "local_research",
+                                "action": f"Searched local database for '{search_query}' - found {sources_count} sources",
+                                "data": {"query": search_query, "sources_found": sources_count}
+                            })
                                 
                         elif node_name == "external_research":
                             current_progress = 50 + (research_loop_count * 10)
@@ -1008,6 +1054,16 @@ class TaskManager:
                                 sources_gathered.extend(node_data['sources_gathered'])
                             if node_data.get('web_research_result'):
                                 search_results.extend(node_data['web_research_result'])
+                            
+                            # Record activity
+                            search_query = node_data.get('search_query', [''])[0]
+                            sources_count = len(node_data.get('sources_gathered', []))
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "external_research",
+                                "action": f"Searched external sources for '{search_query}' - found {sources_count} sources",
+                                "data": {"query": search_query, "sources_found": sources_count}
+                            })
                                 
                         elif node_name == "reflection":
                             research_loop_count = node_data.get('research_loop_count', 0)
@@ -1022,6 +1078,19 @@ class TaskManager:
                                 current_step="reflection",
                             )
                             
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "reflection",
+                                "action": f"Iteration {research_loop_count} - {'Research complete' if is_sufficient else 'Continuing research'}",
+                                "data": {
+                                    "iteration": research_loop_count,
+                                    "is_sufficient": is_sufficient,
+                                    "knowledge_gap": node_data.get('knowledge_gap', ''),
+                                    "follow_up_queries": node_data.get('follow_up_queries', [])
+                                }
+                            })
+                            
                         elif node_name == "finalize_answer":
                             await self.update_task_status(
                                 task_id,
@@ -1030,22 +1099,49 @@ class TaskManager:
                                 progress=90,
                                 current_step="finalizing",
                             )
+                            
+                            # Extract the final message from the finalize_answer node
+                            if node_data.get('messages'):
+                                final_message = node_data['messages'][-1] if node_data['messages'] else None
+                                print(f"DEBUG: Extracted final message from finalize_answer for {task_id}")
+                            
+                            # Update sources if available
+                            if node_data.get('sources_gathered'):
+                                sources_gathered.extend(node_data['sources_gathered'])
+                            
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "finalize_answer",
+                                "action": "Generated final research summary",
+                                "data": {
+                                    "total_sources": len(sources_gathered),
+                                    "research_iterations": research_loop_count
+                                }
+                            })
                 
-                # Get the final result
-                print(f"DEBUG: Streaming completed for {task_id}, getting final result")
+                # Check if we got the final result from streaming
+                print(f"DEBUG: Streaming completed for {task_id}, processing final result")
                 
-                # Run the agent one more time to get the complete result
-                result = await agent.arun(
-                    research_question,
-                    config=research_config,
-                    conversation_history=messages
-                )
+                # If we didn't get the final message from streaming, try to run agent again
+                if not final_message:
+                    print(f"DEBUG: No final message from streaming, running agent.arun() for {task_id}")
+                    try:
+                        result = await agent.arun(
+                            research_question,
+                            config=research_config,
+                            conversation_history=messages
+                        )
+                        final_message = result.get('messages', [])[-1] if result.get('messages') else None
+                        if result.get('sources_gathered'):
+                            sources_gathered.extend(result['sources_gathered'])
+                        print(f"DEBUG: Final result from arun() received for {task_id}")
+                    except Exception as arun_error:
+                        print(f"DEBUG: arun() failed for {task_id}: {arun_error}")
+                else:
+                    print(f"DEBUG: Using final message from streaming for {task_id}")
                 
-                print(f"DEBUG: Final result received for {task_id}")
-                
-                # Extract final message and sources
-                final_message = result.get('messages', [])[-1] if result.get('messages') else None
-                final_sources = result.get('sources_gathered', [])
+                final_sources = sources_gathered
                 
                 if final_message and hasattr(final_message, 'content'):
                     # Create a simplified literature review result
@@ -1062,17 +1158,25 @@ class TaskManager:
                     
                     # For now, create a simplified review entry
                     # In a full implementation, you'd parse the LangGraph output to extract structured summaries
-                    review_data = {
-                        "research_question": research_question,
-                        "summary_json": "[]",  # Placeholder - would need parsing
-                        "trace_json": "[]",    # Placeholder - would need trace extraction
-                        "report_text": final_message.content,
-                        "total_papers": len(final_sources),
-                        "sources_count": len(final_sources)
-                    }
                     
-                    # Save to database
-                    review_id = self.db.insert_literature_review(**review_data)
+                    # Generate short summary for research library
+                    short_summary = enhance_summary_with_context(
+                        research_question, 
+                        extract_key_themes(research_question)
+                    )
+                    
+                    # Convert activity log to JSON
+                    activity_log_json = json.dumps(activity_log)
+                    
+                    # Save to database (only pass parameters that the method accepts)
+                    review_id = self.db.insert_literature_review(
+                        research_question=research_question,
+                        summary_json="[]",  # Placeholder - would need parsing
+                        trace_json="[]",    # Placeholder - would need trace extraction
+                        report_text=final_message.content,
+                        short_summary=short_summary,
+                        activity_log=activity_log_json
+                    )
                     
                     await self.update_task_status(
                         task_id,
@@ -1083,6 +1187,7 @@ class TaskManager:
                         result={
                             "review_id": review_id,
                             "research_question": research_question,
+                            "report_text": final_message.content,  # Include the actual report
                             "sources_found": len(final_sources),
                             "research_loops": research_loop_count,
                             "success": True,
@@ -1113,16 +1218,30 @@ class TaskManager:
                 final_sources = result.get('sources_gathered', [])
                 
                 if final_message and hasattr(final_message, 'content'):
-                    review_data = {
-                        "research_question": research_question,
-                        "summary_json": "[]",
-                        "trace_json": "[]",
-                        "report_text": final_message.content,
-                        "total_papers": len(final_sources),
-                        "sources_count": len(final_sources)
-                    }
+                    # Generate short summary for research library
+                    short_summary = enhance_summary_with_context(
+                        research_question, 
+                        extract_key_themes(research_question)
+                    )
                     
-                    review_id = self.db.insert_literature_review(**review_data)
+                    # Create basic activity log for fallback mode
+                    fallback_activity = [{
+                        "timestamp": datetime.now().isoformat(),
+                        "step": "fallback_research",
+                        "action": "Completed research in fallback mode",
+                        "data": {"total_sources": len(final_sources)}
+                    }]
+                    activity_log_json = json.dumps(fallback_activity)
+                    
+                    # Save to database (only pass parameters that the method accepts)
+                    review_id = self.db.insert_literature_review(
+                        research_question=research_question,
+                        summary_json="[]",
+                        trace_json="[]",
+                        report_text=final_message.content,
+                        short_summary=short_summary,
+                        activity_log=activity_log_json
+                    )
                     
                     await self.update_task_status(
                         task_id,
@@ -1133,6 +1252,7 @@ class TaskManager:
                         result={
                             "review_id": review_id,
                             "research_question": research_question,
+                            "report_text": final_message.content,  # Include the actual report
                             "sources_found": len(final_sources),
                             "success": True,
                             "enhanced_workflow": True,

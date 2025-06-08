@@ -5,10 +5,12 @@ import uuid
 
 from ..dependencies import db
 from ..tasks import task_manager, TaskStatus
+from ...utils.summary_generator import extract_key_themes
 from ..models import (
     ResearchAgentRunRequest, ResearchAgentRunResponse,
     ResearchAgentModelConfigApi, LiteratureReviewResult,
-    LiteratureReviewSummary
+    LiteratureReviewSummary, ResearchLibrarySearchRequest,
+    ResearchLibraryResponse, ResearchLibraryItem
 )
 
 router = APIRouter(prefix="/api/research-agent", tags=["research-agent"])
@@ -26,31 +28,13 @@ async def get_research_agent_model_config():
             except (json.JSONDecodeError, ValueError):
                 pass
         
-        # Fall back to legacy configuration
+        # Fall back to unified router configuration
         try:
-            from ...agentic_research.model_router import load_research_agent_model_config
-            legacy_config = load_research_agent_model_config(db)
+            from ...agentic_research.unified_model_router import load_unified_router
+            router = load_unified_router(db)
+            config_data = router.get_configuration()
             
-            # Convert legacy to new format for the API response
-            return ResearchAgentModelConfigApi(
-                boss_model=legacy_config.boss_model,
-                worker_models=legacy_config.worker_models,
-                default_worker=legacy_config.default_worker,
-                max_retries=legacy_config.max_retries,
-                timeout_seconds=legacy_config.timeout_seconds,
-                # Default LangGraph values
-                reasoning_model=legacy_config.boss_model,  # Map boss to reasoning
-                max_research_loops=10,
-                initial_search_query_count=3,
-                local_search_limit=10,
-                external_search_limit=5,
-                search_config={
-                    "semantic_weight": 0.6,
-                    "keyword_weight": 0.4,
-                    "similarity_threshold": 0.3,
-                    "enable_pdf_download": True
-                }
-            )
+            return ResearchAgentModelConfigApi(**config_data)
         except Exception:
             # Return default configuration
             return ResearchAgentModelConfigApi(
@@ -78,30 +62,14 @@ async def get_research_agent_model_config():
 
 @router.put("/model-config")
 async def update_research_agent_model_config(config: ResearchAgentModelConfigApi):
-    """Update research agent model configuration supporting both legacy and LangGraph formats."""
+    """Update research agent model configuration using unified router."""
     try:
-        # Store the new LangGraph configuration in the database
-        config_json = config.json()
-        db.set_setting("research_agent_langgraph_config", config_json)
+        from ...agentic_research.unified_model_router import load_unified_router
         
-        # For backward compatibility, also update legacy configuration if legacy fields are provided
-        if config.boss_model or config.worker_models:
-            try:
-                from ...agentic_research.model_router import ResearchAgentModelConfig, save_research_agent_model_config
-                
-                # Convert API model to internal legacy config
-                legacy_config = ResearchAgentModelConfig({
-                    "boss_model": config.boss_model.dict() if config.boss_model else {},
-                    "worker_models": {k: v.dict() for k, v in config.worker_models.items()} if config.worker_models else {},
-                    "default_worker": config.default_worker or "summary",
-                    "max_retries": config.max_retries or 3,
-                    "timeout_seconds": config.timeout_seconds or 30
-                })
-                
-                # Save legacy format
-                save_research_agent_model_config(db, legacy_config)
-            except Exception as legacy_error:
-                print(f"Warning: Could not save legacy config format: {legacy_error}")
+        # Load the unified router and save configuration
+        router = load_unified_router(db)
+        config_dict = config.dict(exclude_none=True)
+        router.save_configuration(config_dict)
         
         return {"status": "success", "message": "Research agent model configuration updated successfully"}
     except Exception as e:
@@ -125,20 +93,12 @@ async def run_research_agent(request: ResearchAgentRunRequest, background_tasks:
         
         # Apply model config override if provided
         if request.model_config_override:
-            # Import locally to avoid circular imports
-            from ...agentic_research.model_router import ResearchAgentModelConfig, save_research_agent_model_config
+            from ...agentic_research.unified_model_router import load_unified_router
             
-            # Convert and save override config
-            override_config = ResearchAgentModelConfig({
-                "boss_model": request.model_config_override.boss_model.dict(),
-                "worker_models": {k: v.dict() for k, v in request.model_config_override.worker_models.items()},
-                "default_worker": request.model_config_override.default_worker,
-                "max_retries": request.model_config_override.max_retries,
-                "timeout_seconds": request.model_config_override.timeout_seconds
-            })
-            
-            # Save override (temporarily)
-            save_research_agent_model_config(db, override_config)
+            # Save override configuration using unified router
+            router = load_unified_router(db)
+            override_dict = request.model_config_override.dict(exclude_none=True)
+            router.save_configuration(override_dict)
         
         # Create task in database
         await task_manager.create_task(
@@ -193,6 +153,14 @@ async def get_literature_review(review_id: int):
             for s in summaries_data
         ]
         
+        # Parse activity log
+        activity_data = []
+        if review.get("activity_log"):
+            try:
+                activity_data = json.loads(review["activity_log"])
+            except (json.JSONDecodeError, TypeError):
+                activity_data = []
+
         return LiteratureReviewResult(
             id=review["id"],
             research_question=review["research_question"],
@@ -200,7 +168,9 @@ async def get_literature_review(review_id: int):
             created_ts=review["created_ts"],
             total_papers=len(summaries),
             trace_log=trace_data,
-            report_text=review.get("report_text")
+            report_text=review.get("report_text"),
+            short_summary=review.get("short_summary"),
+            activity_log=activity_data
         )
         
     except HTTPException:
@@ -231,6 +201,14 @@ async def get_recent_literature_reviews(limit: int = Query(10, gt=0, le=100)):
                 for s in summaries_data
             ]
             
+            # Parse activity log for this review
+            activity_data = []
+            if review.get("activity_log"):
+                try:
+                    activity_data = json.loads(review["activity_log"])
+                except (json.JSONDecodeError, TypeError):
+                    activity_data = []
+
             results.append(LiteratureReviewResult(
                 id=review["id"],
                 research_question=review["research_question"],
@@ -238,10 +216,98 @@ async def get_recent_literature_reviews(limit: int = Query(10, gt=0, le=100)):
                 created_ts=review["created_ts"],
                 total_papers=len(summaries),
                 trace_log=trace_data,
-                report_text=review.get("report_text")
+                report_text=review.get("report_text"),
+                short_summary=review.get("short_summary"),
+                activity_log=activity_data
             ))
         
         return results
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting literature reviews: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error getting literature reviews: {str(e)}")
+
+@router.post("/library/search", response_model=ResearchLibraryResponse)
+async def search_research_library(request: ResearchLibrarySearchRequest):
+    """Search the research library with filtering and pagination."""
+    try:
+        results = db.search_research_library(
+            query=request.query,
+            page=request.page,
+            page_size=request.page_size,
+            from_date=request.from_date,
+            to_date=request.to_date
+        )
+        
+        # Transform results to match the API model
+        library_items = []
+        for result in results['results']:
+            # Parse activity log to count sources
+            try:
+                activity_log = json.loads(result['activity_log']) if result['activity_log'] else []
+                sources_count = 0
+                for activity in activity_log:
+                    if activity.get('data', {}).get('sources_found'):
+                        sources_count += activity['data']['sources_found']
+                    elif activity.get('data', {}).get('total_sources'):
+                        sources_count = max(sources_count, activity['data']['total_sources'])
+            except (json.JSONDecodeError, TypeError):
+                sources_count = 0
+            
+            # Extract themes from research question
+            themes = extract_key_themes(result['research_question'])
+            
+            library_items.append(ResearchLibraryItem(
+                id=result['id'],
+                research_question=result['research_question'],
+                short_summary=result['short_summary'] or result['research_question'][:50] + "...",
+                created_ts=result['created_ts'],
+                sources_count=sources_count,
+                has_report=bool(result.get('report_text')),
+                themes=themes
+            ))
+        
+        return ResearchLibraryResponse(
+            results=library_items,
+            total_count=results['total_count'],
+            total_pages=results['total_pages'],
+            current_page=results['current_page'],
+            page_size=results['page_size'],
+            has_next=results['has_next'],
+            has_previous=results['has_previous']
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching research library: {str(e)}")
+
+@router.get("/library", response_model=ResearchLibraryResponse)
+async def get_research_library(
+    query: str = Query(None, description="Search query"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    from_date: str = Query(None, description="From date (YYYY-MM-DD)"),
+    to_date: str = Query(None, description="To date (YYYY-MM-DD)")
+):
+    """Get research library entries with optional filtering."""
+    request = ResearchLibrarySearchRequest(
+        query=query,
+        page=page,
+        page_size=page_size,
+        from_date=from_date,
+        to_date=to_date
+    )
+    return await search_research_library(request)
+
+@router.delete("/reviews/{review_id}")
+async def delete_literature_review(review_id: int):
+    """Delete a specific literature review by ID."""
+    try:
+        success = db.delete_literature_review(review_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Literature review {review_id} not found")
+        
+        return {"status": "success", "message": f"Literature review {review_id} deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting literature review: {str(e)}") 

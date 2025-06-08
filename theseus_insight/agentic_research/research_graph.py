@@ -30,7 +30,7 @@ from .graph_utils import (
     generate_research_insights,
     combine_search_results
 )
-from .graph_model_router import load_model_router
+from .unified_model_router import load_unified_router
 from .local_search import LocalSearchTool
 from .external_search import ExternalSearchTool
 from ..data_model.data_handling import PaperDatabase
@@ -70,8 +70,8 @@ class ResearchAgent:
             enable_pdf_download=self.config.enable_pdf_download
         )
         
-        # Load model router
-        self.model_router = load_model_router(db)
+        # Load unified model router
+        self.model_router = load_unified_router(db)
         
         # Build the graph
         self.graph = self._build_graph()
@@ -156,7 +156,7 @@ class ResearchAgent:
             )
             
             # Generate queries using structured output
-            result = llm.invoke([], formatted_prompt, schema=SearchQueryList)
+            result = llm.invoke([], formatted_prompt, schema=SearchQueryList, node_name="generate_query")
             logger.info(f"Generated {len(result.query)} search queries")
             return {"query_list": result.query}
             
@@ -299,7 +299,7 @@ class ResearchAgent:
             
             # Get reflection from model
             llm = self.model_router.get_model("reflection")
-            result = llm.invoke([], formatted_prompt, schema=Reflection)
+            result = llm.invoke([], formatted_prompt, schema=Reflection, node_name="reflection")
             
             logger.info(f"Reflection completed - Research loop {state['research_loop_count']}, "
                        f"Sufficient: {result.is_sufficient}, "
@@ -381,7 +381,7 @@ class ResearchAgent:
             
             # Generate final answer
             llm = self.model_router.get_model("finalize_answer")
-            result = llm.invoke([], formatted_prompt)
+            result = llm.invoke([], formatted_prompt, node_name="finalize_answer")
             
             # Enhanced source management - replace short URLs with original URLs
             unique_sources = []

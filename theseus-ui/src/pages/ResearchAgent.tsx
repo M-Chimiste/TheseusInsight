@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -13,9 +14,6 @@ import {
   Snackbar,
   CircularProgress,
   Chip,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   MenuItem,
   Select,
   FormControl,
@@ -41,6 +39,7 @@ import {
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import { useResearchAgent } from '../hooks/useResearchAgent';
+import { useLayout } from '../contexts/LayoutContext';
 
 // Types based on the new LangGraph implementation
 interface ProcessedEvent {
@@ -319,6 +318,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
 // Main Research Agent Component
 const ResearchAgent: React.FC = () => {
+  const navigate = useNavigate();
+  const { currentDrawerWidth } = useLayout();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [effort, setEffort] = useState<'low' | 'medium' | 'high'>('medium');
@@ -522,9 +523,22 @@ const ResearchAgent: React.FC = () => {
   };
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {/* Fixed Header */}
+      <Box 
+        sx={{ 
+          position: 'fixed',
+          top: '84px', // Account for main app header height
+          left: `${currentDrawerWidth}px`, // Dynamic sidebar width
+          right: 0,
+          zIndex: 1100,
+          p: 3, 
+          borderBottom: 1, 
+          borderColor: 'divider',
+          backgroundColor: 'background.paper',
+          transition: 'left 0.3s', // Smooth transition when sidebar toggles
+        }}
+      >
         <Typography 
           variant="h4" 
           component="h1" 
@@ -539,13 +553,20 @@ const ResearchAgent: React.FC = () => {
         </Typography>
       </Box>
 
-      {/* Main Content */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Scrollable Main Content */}
+      <Box 
+        sx={{ 
+          flex: 1, 
+          overflow: 'auto',
+          pt: '120px', // Add top padding to account for fixed header (84px app header + ~36px component header)
+          pb: '200px' // Add padding to ensure content isn't hidden behind fixed input
+        }}
+      >
         {messages.length === 0 ? (
           // Welcome Screen
           <Box 
             sx={{ 
-              flex: 1, 
+              height: '100%',
               display: 'flex', 
               flexDirection: 'column', 
               alignItems: 'center', 
@@ -565,7 +586,7 @@ const ResearchAgent: React.FC = () => {
           </Box>
         ) : (
           // Chat Messages
-          <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+          <Box sx={{ p: 3 }}>
             <Box sx={{ maxWidth: 800, mx: 'auto' }}>
               {messages.map((message, index) => {
                 const isLast = index === messages.length - 1;
@@ -601,113 +622,118 @@ const ResearchAgent: React.FC = () => {
             </Box>
           </Box>
         )}
+      </Box>
 
-        {/* Input Form */}
-        <Box sx={{ p: 3, borderTop: 1, borderColor: 'divider' }}>
-          <Box sx={{ maxWidth: 800, mx: 'auto' }}>
-            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-              <TextField
-                fullWidth
-                multiline
-                maxRows={4}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="What research question would you like me to investigate?"
-                disabled={isLoading}
-                variant="outlined"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
-                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                  <FormControl size="small" sx={{ minWidth: 120 }}>
-                    <InputLabel>Effort</InputLabel>
-                    <Select
-                      value={effort}
-                      label="Effort"
-                      onChange={(e) => setEffort(e.target.value as 'low' | 'medium' | 'high')}
-                      disabled={isLoading}
-                    >
-                      <MenuItem value="low">Low</MenuItem>
-                      <MenuItem value="medium">Medium</MenuItem>
-                      <MenuItem value="high">High</MenuItem>
-                    </Select>
-                  </FormControl>
-                  
-                  <Tooltip title="Refresh recent reviews">
-                    <IconButton onClick={fetchRecentReviews} disabled={isLoading}>
-                      <RefreshIcon />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
+      {/* Fixed Input Form at Bottom */}
+      <Box 
+        sx={{ 
+          position: 'fixed',
+          bottom: 0,
+          left: `${currentDrawerWidth}px`, // Dynamic sidebar width
+          right: 0,
+          p: 3, 
+          borderTop: 1, 
+          borderColor: 'divider',
+          backgroundColor: 'background.paper',
+          zIndex: 1000,
+          transition: 'left 0.3s', // Smooth transition when sidebar toggles
+        }}
+      >
+        <Box sx={{ maxWidth: 800, mx: 'auto' }}>
+          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+            <TextField
+              fullWidth
+              multiline
+              maxRows={4}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="What research question would you like me to investigate?"
+              disabled={isLoading}
+              variant="outlined"
+              sx={{ mb: 2 }}
+            />
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <InputLabel>Effort</InputLabel>
+                  <Select
+                    value={effort}
+                    label="Effort"
+                    onChange={(e) => setEffort(e.target.value as 'low' | 'medium' | 'high')}
+                    disabled={isLoading}
+                  >
+                    <MenuItem value="low">Low</MenuItem>
+                    <MenuItem value="medium">Medium</MenuItem>
+                    <MenuItem value="high">High</MenuItem>
+                  </Select>
+                </FormControl>
                 
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  {messages.length > 0 && (
-                    <Button
-                      variant="outlined"
-                      onClick={handleNewSearch}
-                      startIcon={<SmartIcon />}
-                      disabled={isLoading}
-                    >
-                      New Search
-                    </Button>
-                  )}
-                  
-                  {isLoading ? (
-                    <Button
-                      variant="contained"
-                      color="error"
-                      onClick={handleCancel}
-                      startIcon={<StopIcon />}
-                    >
-                      Stop
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="contained"
-                      onClick={() => handleSubmit(inputValue, effort)}
-                      disabled={!inputValue.trim()}
-                      startIcon={<SendIcon />}
-                    >
-                      Search
-                    </Button>
-                  )}
-                </Box>
+                <Tooltip title="Refresh recent reviews">
+                  <IconButton onClick={fetchRecentReviews} disabled={isLoading}>
+                    <RefreshIcon />
+                  </IconButton>
+                </Tooltip>
               </Box>
-            </Paper>
+              
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {messages.length > 0 && (
+                  <Button
+                    variant="outlined"
+                    onClick={handleNewSearch}
+                    startIcon={<SmartIcon />}
+                    disabled={isLoading}
+                  >
+                    New Search
+                  </Button>
+                )}
+                
+                {isLoading ? (
+                  <Button
+                    variant="contained"
+                    color="error"
+                    onClick={handleCancel}
+                    startIcon={<StopIcon />}
+                  >
+                    Stop
+                  </Button>
+                ) : (
+                  <Button
+                    variant="contained"
+                    onClick={() => handleSubmit(inputValue, effort)}
+                    disabled={!inputValue.trim()}
+                    startIcon={<SendIcon />}
+                  >
+                    Search
+                  </Button>
+                )}
+              </Box>
+            </Box>
+          </Paper>
 
-            {/* Recent Reviews */}
-            {recentReviews.length > 0 && (
-              <Accordion>
-                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                  <Typography variant="subtitle1">Recent Reviews ({recentReviews.length})</Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {recentReviews.slice(0, 5).map((review) => (
-                      <Chip
-                        key={review.id}
-                        label={`${review.research_question} (${review.total_papers} papers)`}
-                        variant="outlined"
-                        size="small"
-                        onClick={() => {
-                          // Load this review as a conversation
-                          const reviewMessage: ConversationMessage = {
-                            id: review.id.toString(),
-                            type: 'ai',
-                            content: review.report_text || 'No report available.'
-                          };
-                          setMessages([reviewMessage]);
-                        }}
-                        sx={{ alignSelf: 'flex-start' }}
-                      />
-                    ))}
-                  </Box>
-                </AccordionDetails>
-              </Accordion>
-            )}
-          </Box>
+          {/* Research Library Link */}
+          {recentReviews.length > 0 && (
+            <Paper variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
+                <ScienceIcon sx={{ fontSize: 20, color: 'primary.main' }} />
+                <Typography variant="subtitle1" color="primary">
+                  Research Library ({recentReviews.length} studies)
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Browse and search your historical research
+              </Typography>
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<ScienceIcon />}
+                onClick={() => navigate('/research-library')}
+              >
+                View Research Library
+              </Button>
+            </Paper>
+          )}
         </Box>
       </Box>
 

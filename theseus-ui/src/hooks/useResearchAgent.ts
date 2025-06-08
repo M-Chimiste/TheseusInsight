@@ -17,6 +17,8 @@ export interface LiteratureReviewResult {
   total_papers: number;
   trace_log: any[];
   report_text?: string;
+  short_summary?: string;
+  activity_log?: any[];
 }
 
 export interface ResearchAgentProgress {

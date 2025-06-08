@@ -6,7 +6,7 @@ import os
 from ..models import (
     OrchestrationConfig, ArxivCategoriesConfig, ModelProvider,
     ResearchInterests, EmailRecipients, VisualizerSettings,
-    ModelConfig, TTSModelConfig, ResearchAgentModelConfigApi
+    ModelConfig, TTSModelConfig
 )
 from ..dependencies import db, CREDENTIAL_KEYS
 from ...utils.path_resolver import get_config_path, config_file_exists
@@ -399,43 +399,4 @@ async def update_credentials(data: Dict[str, str]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/research-agent-model-config", response_model=ResearchAgentModelConfigApi)
-async def get_research_agent_model_config():
-    """Get research agent model configuration."""
-    try:
-        # Import locally to avoid circular imports
-        from ...agentic_research.model_router import load_research_agent_model_config
-        config = load_research_agent_model_config(db)
-        
-        return ResearchAgentModelConfigApi(
-            boss_model=config.boss_model,
-            worker_models=config.worker_models,
-            default_worker=config.default_worker,
-            max_retries=config.max_retries,
-            timeout_seconds=config.timeout_seconds
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting research agent model config: {str(e)}")
-
-@router.put("/research-agent-model-config")
-async def update_research_agent_model_config(config: ResearchAgentModelConfigApi):
-    """Update research agent model configuration."""
-    try:
-        # Import locally to avoid circular imports
-        from ...agentic_research.model_router import ResearchAgentModelConfig, save_research_agent_model_config
-        
-        # Convert API model to internal config
-        internal_config = ResearchAgentModelConfig({
-            "boss_model": config.boss_model.dict(),
-            "worker_models": {k: v.dict() for k, v in config.worker_models.items()},
-            "default_worker": config.default_worker,
-            "max_retries": config.max_retries,
-            "timeout_seconds": config.timeout_seconds
-        })
-        
-        # Save to database
-        save_research_agent_model_config(db, internal_config)
-        
-        return {"status": "success", "message": "Research agent model configuration updated successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error updating research agent model config: {str(e)}") 
+ 

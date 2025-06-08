@@ -218,6 +218,8 @@ class PaperDatabase:
                 "summary_json TEXT NOT NULL,"
                 "trace_json TEXT NOT NULL,"
                 "report_text TEXT,"
+                "short_summary TEXT,"  # Few-word summary of the research
+                "activity_log TEXT,"   # JSON array of the research activity timeline
                 "created_ts TEXT DEFAULT CURRENT_TIMESTAMP"
                 ")"
             )
@@ -225,6 +227,20 @@ class PaperDatabase:
             # Add report_text column to existing lit_reviews table if it doesn't exist
             try:
                 cursor.execute("ALTER TABLE lit_reviews ADD COLUMN report_text TEXT")
+            except Exception:
+                # Column likely already exists, ignore
+                pass
+            
+            # Add short_summary column for research library functionality
+            try:
+                cursor.execute("ALTER TABLE lit_reviews ADD COLUMN short_summary TEXT")
+            except Exception:
+                # Column likely already exists, ignore
+                pass
+                
+            # Add activity_log column for research library functionality  
+            try:
+                cursor.execute("ALTER TABLE lit_reviews ADD COLUMN activity_log TEXT")
             except Exception:
                 # Column likely already exists, ignore
                 pass
@@ -622,7 +638,16 @@ class PaperDatabase:
                 continue
             if emb_list is None:
                 continue
-            score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+            try:
+                emb_array = np.array(emb_list, dtype=float)
+                # Check for dimension mismatch before computing similarity
+                if query_vec.shape[0] != emb_array.shape[0]:
+                    print(f"WARNING: Vector dimension mismatch: query={query_vec.shape[0]}, paper={emb_array.shape[0]}, skipping paper ID {row[0]}")
+                    continue
+                score = float(cosine_similarity(query_vec, emb_array))
+            except Exception as e:
+                print(f"WARNING: Error computing similarity for paper ID {row[0]}: {e}")
+                continue
             if score >= similarity_threshold:
                 date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
                 date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
@@ -814,7 +839,16 @@ class PaperDatabase:
                 continue
             if emb_list is None:
                 continue
-            score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+            try:
+                emb_array = np.array(emb_list, dtype=float)
+                # Check for dimension mismatch before computing similarity
+                if query_vec.shape[0] != emb_array.shape[0]:
+                    print(f"WARNING: Vector dimension mismatch: query={query_vec.shape[0]}, paper={emb_array.shape[0]}, skipping paper ID {row[0]}")
+                    continue
+                score = float(cosine_similarity(query_vec, emb_array))
+            except Exception as e:
+                print(f"WARNING: Error computing similarity for paper ID {row[0]}: {e}")
+                continue
             if score >= similarity_threshold:
                 date_str = row[3].strftime('%Y-%m-%d') if hasattr(row[3], 'strftime') else str(row[3])
                 date_run_str = row[4].strftime('%Y-%m-%d') if hasattr(row[4], 'strftime') else str(row[4])
@@ -1339,7 +1373,16 @@ class PaperDatabase:
                     continue
                 if emb_list is None:
                     continue
-                score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+                try:
+                    emb_array = np.array(emb_list, dtype=float)
+                    # Check for dimension mismatch before computing similarity
+                    if query_vec.shape[0] != emb_array.shape[0]:
+                        print(f"WARNING: Vector dimension mismatch: query={query_vec.shape[0]}, paper={emb_array.shape[0]}, skipping paper ID {row[0]}")
+                        continue
+                    score = float(cosine_similarity(query_vec, emb_array))
+                except Exception as e:
+                    print(f"WARNING: Error computing similarity for paper ID {row[0]}: {e}")
+                    continue
                 if score < similarity_threshold:
                     continue
 
@@ -1452,7 +1495,16 @@ class PaperDatabase:
                     continue
                 if emb_list is None:
                     continue
-                score = float(cosine_similarity(query_vec, np.array(emb_list, dtype=float)))
+                try:
+                    emb_array = np.array(emb_list, dtype=float)
+                    # Check for dimension mismatch before computing similarity
+                    if query_vec.shape[0] != emb_array.shape[0]:
+                        print(f"WARNING: Vector dimension mismatch: query={query_vec.shape[0]}, paper={emb_array.shape[0]}, skipping paper ID {row[0]}")
+                        continue
+                    score = float(cosine_similarity(query_vec, emb_array))
+                except Exception as e:
+                    print(f"WARNING: Error computing similarity for paper ID {row[0]}: {e}")
+                    continue
                 if score < similarity_threshold:
                     continue
 
@@ -1596,12 +1648,14 @@ class PaperDatabase:
                 }
             return None
 
-    def insert_literature_review(self, research_question: str, summary_json: str, trace_json: str, report_text: str = None) -> int:
+    def insert_literature_review(self, research_question: str, summary_json: str, trace_json: str, 
+                                 report_text: str = None, short_summary: str = None, 
+                                 activity_log: str = None) -> int:
         """Insert a literature review result and return the ID."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "INSERT INTO lit_reviews (research_question, summary_json, trace_json, report_text, created_ts) VALUES (?, ?, ?, ?, ?)",
-                (research_question, summary_json, trace_json, report_text, datetime.datetime.now().isoformat())
+                "INSERT INTO lit_reviews (research_question, summary_json, trace_json, report_text, short_summary, activity_log, created_ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (research_question, summary_json, trace_json, report_text, short_summary, activity_log, datetime.datetime.now().isoformat())
             )
             return cursor.lastrowid
 
@@ -1609,7 +1663,7 @@ class PaperDatabase:
         """Get a literature review by ID."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "SELECT id, research_question, summary_json, trace_json, report_text, created_ts FROM lit_reviews WHERE id = ?",
+                "SELECT id, research_question, summary_json, trace_json, report_text, short_summary, activity_log, created_ts FROM lit_reviews WHERE id = ?",
                 (review_id,)
             )
             row = cursor.fetchone()
@@ -1620,7 +1674,9 @@ class PaperDatabase:
                     'summary_json': row[2],
                     'trace_json': row[3],
                     'report_text': row[4],
-                    'created_ts': row[5]
+                    'short_summary': row[5],
+                    'activity_log': row[6],
+                    'created_ts': row[7]
                 }
             return None
 
@@ -1628,7 +1684,7 @@ class PaperDatabase:
         """Get recent literature reviews."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "SELECT id, research_question, summary_json, trace_json, report_text, created_ts FROM lit_reviews "
+                "SELECT id, research_question, summary_json, trace_json, report_text, short_summary, activity_log, created_ts FROM lit_reviews "
                 "ORDER BY created_ts DESC LIMIT ?",
                 (limit,)
             )
@@ -1640,7 +1696,9 @@ class PaperDatabase:
                     'summary_json': row[2],
                     'trace_json': row[3],
                     'report_text': row[4],
-                    'created_ts': row[5]
+                    'short_summary': row[5],
+                    'activity_log': row[6],
+                    'created_ts': row[7]
                 }
                 for row in rows
             ]
@@ -1649,7 +1707,7 @@ class PaperDatabase:
         """Fetch all literature reviews for export/migration purposes."""
         with self.get_cursor() as cursor:
             cursor.execute(
-                "SELECT id, research_question, summary_json, trace_json, report_text, created_ts FROM lit_reviews "
+                "SELECT id, research_question, summary_json, trace_json, report_text, short_summary, activity_log, created_ts FROM lit_reviews "
                 "ORDER BY created_ts ASC"
             )
             rows = cursor.fetchall()
@@ -1660,10 +1718,96 @@ class PaperDatabase:
                     'summary_json': row[2],
                     'trace_json': row[3],
                     'report_text': row[4],
-                    'created_ts': row[5]
+                    'short_summary': row[5],
+                    'activity_log': row[6],
+                    'created_ts': row[7]
                 }
                 for row in rows
             ]
+
+    def delete_literature_review(self, review_id: int) -> bool:
+        """Delete a literature review by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM lit_reviews WHERE id = ?", (review_id,))
+            return cursor.rowcount > 0
+
+    def search_research_library(self, query: str = None, page: int = 1, page_size: int = 20, 
+                                from_date: str = None, to_date: str = None) -> dict:
+        """
+        Search the research library with filtering and pagination.
+        
+        Args:
+            query (str): Search query to match against research questions, summaries, and report text
+            page (int): Page number (1-based)
+            page_size (int): Number of results per page
+            from_date (str): Filter results from this date (YYYY-MM-DD)
+            to_date (str): Filter results to this date (YYYY-MM-DD)
+            
+        Returns:
+            dict: Paginated results with metadata
+        """
+        conditions = []
+        params = []
+        
+        # Search query
+        if query:
+            conditions.append(
+                "(research_question LIKE ? OR short_summary LIKE ? OR report_text LIKE ?)"
+            )
+            search_param = f"%{query}%"
+            params.extend([search_param, search_param, search_param])
+        
+        # Date filtering
+        if from_date:
+            conditions.append("date(created_ts) >= ?")
+            params.append(from_date)
+            
+        if to_date:
+            conditions.append("date(created_ts) <= ?")
+            params.append(to_date)
+        
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        
+        # Count total results
+        with self.get_cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM lit_reviews{where_clause}", params)
+            total_count = cursor.fetchone()[0]
+        
+        # Get paginated results
+        offset = (page - 1) * page_size
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"SELECT id, research_question, summary_json, trace_json, report_text, short_summary, activity_log, created_ts "
+                f"FROM lit_reviews{where_clause} "
+                f"ORDER BY created_ts DESC LIMIT ? OFFSET ?",
+                params + [page_size, offset]
+            )
+            rows = cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            results.append({
+                'id': row[0],
+                'research_question': row[1],
+                'summary_json': row[2],
+                'trace_json': row[3],
+                'report_text': row[4],
+                'short_summary': row[5],
+                'activity_log': row[6],
+                'created_ts': row[7]
+            })
+        
+        total_pages = (total_count + page_size - 1) // page_size
+        
+        return {
+            'results': results,
+            'total_count': total_count,
+            'total_pages': total_pages,
+            'current_page': page,
+            'page_size': page_size,
+            'has_next': page < total_pages,
+            'has_previous': page > 1
+        }
 
     # Model Catalog CRUD Operations
     def insert_model_catalog_entry(self, alias: str, model_string: str, provider_name: str, 

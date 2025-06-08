@@ -14,7 +14,7 @@ Instructions:
 - Don't produce more than {number_queries} queries.
 - Queries should be diverse, if the topic is broad, generate more than 1 query.
 - Don't generate multiple similar queries, 1 is enough.
-- Query should ensure that the most current research is gathered. The current date is {current_date}.
+- Query should ensure that the most current research is gathered. The current date is {current_date}. If the user asks for a specific date or time period adopt your queries to the user's request.
 - Focus on academic and technical terminology relevant to the research domain.
 
 Format: 

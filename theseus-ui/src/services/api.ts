@@ -140,9 +140,9 @@ export const researchAgentApi = {
   getRecentReviews: (limit: number = 10) => 
     api.get('/research-agent/reviews', { params: { limit } }),
   getModelConfig: () => 
-    api.get('/settings/research-agent-model-config'),
+    api.get('/research-agent/model-config'),
   updateModelConfig: (config: any) => 
-    api.put('/settings/research-agent-model-config', config),
+    api.put('/research-agent/model-config', config),
 };
 
 // Model Catalog API

@@ -15,22 +15,23 @@ import {
   Alert,
   Tooltip,
 } from '@mui/material';
-import {
-  Settings as SettingsIcon,
-  Article as ArticleIcon,
-  Podcasts as PodcastIcon,
-  Brightness4 as DarkModeIcon,
-  Brightness7 as LightModeIcon,
-  Movie as MovieIcon,
-  History as HistoryIcon,
-  ListAlt as ListAltIcon,
-  MenuBook as MenuBookIcon,
-  Dashboard as DashboardIcon,
-  Menu as MenuIcon,
-  ChevronLeft as ChevronLeftIcon,
-  Science as ScienceIcon,
-  CollectionsBookmark as CollectionsBookmarkIcon,
-} from '@mui/icons-material';
+  import {
+    Settings as SettingsIcon,
+    Article as ArticleIcon,
+    Podcasts as PodcastIcon,
+    Brightness4 as DarkModeIcon,
+    Brightness7 as LightModeIcon,
+    Movie as MovieIcon,
+    History as HistoryIcon,
+    ListAlt as ListAltIcon,
+    MenuBook as MenuBookIcon,
+    Dashboard as DashboardIcon,
+    Menu as MenuIcon,
+    ChevronLeft as ChevronLeftIcon,
+    Science as ScienceIcon,
+    CollectionsBookmark as CollectionsBookmarkIcon,
+    LocalLibrary as LocalLibraryIcon,
+  } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
 import { useLayout } from '../contexts/LayoutContext';
@@ -80,6 +81,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
     { text: 'Model Catalog', icon: <CollectionsBookmarkIcon />, path: '/model-catalog' },
     { text: 'Research Agent', icon: <ScienceIcon />, path: '/research-agent' },
+    { text: 'Research Library', icon: <LocalLibraryIcon />, path: '/research-library' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },

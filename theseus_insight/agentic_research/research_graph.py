@@ -389,22 +389,24 @@ Please respond with any additional details that would help me conduct more targe
             
             logger.info(f"External search for query: {state['search_query']}")
             
-            # Get raw results first for better source extraction
+            # Get raw results first for better source extraction (using ArXiv)
             raw_papers = self.external_tool.search_and_rank(
                 state["search_query"],
-                limit=configurable.external_search_limit
+                limit=configurable.external_search_limit,
+                provider="arxiv"
             )
             
             # Generate formatted result for LLM consumption
             result = self.external_tool.find_papers_by_str(
                 state["search_query"], 
-                limit=configurable.external_search_limit
+                limit=configurable.external_search_limit,
+                provider="arxiv"
             )
             
-            # Enhanced source tracking with complete metadata
+            # Enhanced source tracking with complete metadata (ArXiv-optimized)
             sources_gathered = []
             for paper in raw_papers:
-                # Prioritize Semantic Scholar URL, fallback to PDF URL
+                # For ArXiv papers, use the direct PDF URL
                 paper_url = paper.get('url', '') or paper.get('pdf_url', '')
                 if not paper_url:
                     continue  # Skip papers without accessible URLs
@@ -412,25 +414,38 @@ Please respond with any additional details that would help me conduct more targe
                 # Create short URL for citation tracking
                 short_url = self._generate_short_url(paper_url)
                 
-                # Clean up authors for display
-                authors = paper.get('authors_str', '') or ', '.join([
-                    author.get('name', '') for author in paper.get('authors', [])
-                    if isinstance(author, dict) and author.get('name')
-                ][:3])  # Limit to first 3 authors
+                # Clean up authors for display (ArXiv format)
+                authors = paper.get('authors_str', '')
+                if not authors and paper.get('authors'):
+                    if isinstance(paper['authors'], list):
+                        authors = ', '.join(paper['authors'][:3])  # Limit to first 3 authors
+                        if len(paper['authors']) > 3:
+                            authors += ' et al.'
+                    else:
+                        authors = str(paper['authors'])
                 
-                # Store comprehensive source metadata
+                # Extract year from ArXiv published date
+                paper_year = paper.get('year')
+                if not paper_year and paper.get('published'):
+                    try:
+                        paper_year = int(paper.get('published', '1900')[:4])
+                    except (ValueError, TypeError):
+                        paper_year = None
+                
+                # Store comprehensive source metadata (ArXiv-specific)
                 source_entry = {
                     "short_url": short_url,
                     "value": paper_url,
                     "title": paper.get('title', 'Unknown Title').strip(),
                     "source_type": "external",
+                    "source_provider": "arxiv",
                     "authors": authors,
-                    "year": paper.get('year'),
+                    "year": paper_year,
+                    "published_date": paper.get('published'),
                     "abstract": paper.get('abstract', ''),
-                    "venue": paper.get('venue'),
-                    "citation_count": paper.get('citationCount'),
-                    "is_open_access": paper.get('isOpenAccess', False),
-                    "pdf_url": paper.get('pdf_url'),
+                    "venue": "arXiv preprint",  # ArXiv papers are preprints
+                    "is_open_access": True,  # All ArXiv papers are open access
+                    "pdf_url": paper_url,  # ArXiv URLs are direct PDF links
                     "external_ranking_score": paper.get('external_ranking_score', 0)
                 }
                 sources_gathered.append(source_entry)
@@ -581,22 +596,24 @@ Please respond with any additional details that would help me conduct more targe
                     time.sleep(configurable.external_search_delay)
                 
                 try:
-                    # Get raw results first for better source extraction
+                    # Get raw results first for better source extraction (using ArXiv)
                     raw_papers = self.external_tool.search_and_rank(
                         query,
-                        limit=configurable.external_search_limit
+                        limit=configurable.external_search_limit,
+                        provider="arxiv"
                     )
                     
                     # Generate formatted result for LLM consumption
                     result = self.external_tool.find_papers_by_str(
                         query, 
-                        limit=configurable.external_search_limit
+                        limit=configurable.external_search_limit,
+                        provider="arxiv"
                     )
                     
-                    # Enhanced source tracking with complete metadata
+                    # Enhanced source tracking with complete metadata (ArXiv-optimized)
                     sources_gathered = []
                     for paper in raw_papers:
-                        # Prioritize Semantic Scholar URL, fallback to PDF URL
+                        # For ArXiv papers, use the direct PDF URL
                         paper_url = paper.get('url', '') or paper.get('pdf_url', '')
                         if not paper_url:
                             continue  # Skip papers without accessible URLs
@@ -604,11 +621,15 @@ Please respond with any additional details that would help me conduct more targe
                         # Create short URL for citation tracking
                         short_url = self._generate_short_url(paper_url)
                         
-                        # Clean up authors for display
-                        authors = paper.get('authors_str', '') or ', '.join([
-                            author.get('name', '') for author in paper.get('authors', [])
-                            if isinstance(author, dict) and author.get('name')
-                        ][:3])  # Limit to first 3 authors
+                        # Clean up authors for display (ArXiv format)
+                        authors = paper.get('authors_str', '')
+                        if not authors and paper.get('authors'):
+                            if isinstance(paper['authors'], list):
+                                authors = ', '.join(paper['authors'][:3])  # Limit to first 3 authors
+                                if len(paper['authors']) > 3:
+                                    authors += ' et al.'
+                            else:
+                                authors = str(paper['authors'])
                         
                         # Attempt to get full text if PDF download is enabled and we have a PDF URL
                         has_full_text = False
@@ -633,18 +654,27 @@ Please respond with any additional details that would help me conduct more targe
                             except Exception as e:
                                 logger.error(f"Error during external full text retrieval: {e}")
                         
-                        # Store comprehensive source metadata
+                        # Extract year from ArXiv published date
+                        paper_year = paper.get('year')
+                        if not paper_year and paper.get('published'):
+                            try:
+                                paper_year = int(paper.get('published', '1900')[:4])
+                            except (ValueError, TypeError):
+                                paper_year = None
+                        
+                        # Store comprehensive source metadata (ArXiv-specific)
                         source_entry = {
                             "short_url": short_url,
                             "value": paper_url,
                             "title": paper.get('title', 'Unknown Title').strip(),
                             "source_type": "external",
+                            "source_provider": "arxiv",
                             "authors": authors,
-                            "year": paper.get('year'),
+                            "year": paper_year,
+                            "published_date": paper.get('published'),
                             "abstract": paper.get('abstract', ''),
-                            "venue": paper.get('venue'),
-                            "citation_count": paper.get('citationCount'),
-                            "is_open_access": paper.get('isOpenAccess', False),
+                            "venue": "arXiv preprint",  # ArXiv papers are preprints
+                            "is_open_access": True,  # All ArXiv papers are open access
                             "pdf_url": pdf_url,
                             "has_full_text": has_full_text,
                             "full_text_attempted": full_text_attempted,

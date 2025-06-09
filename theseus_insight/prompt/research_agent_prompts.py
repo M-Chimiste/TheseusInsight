@@ -34,7 +34,7 @@ Output Format:
 
 Example 1 (needs clarification):
 ```json
-{{
+{
     "needs_clarification": true,
     "clarifying_questions": [
         "Are you interested in recent developments (last 2-3 years) or a comprehensive historical overview?",
@@ -43,17 +43,17 @@ Example 1 (needs clarification):
     ],
     "refined_query": "",
     "original_query": "What are AI agents?"
-}}
+}
 ```
 
 Example 2 (clear query):
 ```json
-{{
+{
     "needs_clarification": false,
     "clarifying_questions": [],
     "refined_query": "Recent advances in multi-agent reinforcement learning for autonomous vehicle coordination, including performance benchmarks and real-world applications",
     "original_query": "Recent advances in multi-agent reinforcement learning for autonomous vehicle coordination"
-}}
+}
 ```
 
 Research Question: {{research_question}}"""
@@ -61,37 +61,44 @@ Research Question: {{research_question}}"""
 
 @prompt
 def query_writer_instructions(current_date: str, research_topic: str, number_queries: int):
-    """Your goal is to generate sophisticated and diverse research queries for academic literature search. These queries will be used to search both local paper databases and external academic sources.
+    """Your goal is to generate sophisticated and diverse research queries for academic literature search. These queries will be used to search both local paper databases and external academic sources like ArXiv.
 
 Instructions:
-- Always prefer a single search query, only add another query if the original question requests multiple aspects or elements and one query is not enough.
-- Each query should focus on one specific aspect of the original research question.
-- Don't produce more than {{number_queries}} queries.
-- Queries should be diverse, if the topic is broad, generate more than 1 query.
-- Don't generate multiple similar queries, 1 is enough.
-- Query should ensure that the most current research is gathered. The current date is {{current_date}}. If the user asks for a specific date or time period adopt your queries to the user's request.
-- Focus on academic and technical terminology relevant to the research domain.
+- Generate focused, academic search queries that use precise technical terminology
+- Each query should be 3-8 words and target specific concepts, methods, or aspects
+- Break down broad topics into specific, searchable components
+- Use domain-specific keywords that researchers would use in paper titles and abstracts
+- For broad topics, generate {{number_queries}} diverse queries covering different angles
+- Prioritize recent research when relevant (current date: {{current_date}})
+- Focus on technical terms, methodologies, and specific applications
+
+Query Design Guidelines:
+- Use academic terminology (e.g., "neural networks" not "AI", "optimization" not "improvement")
+- Target specific methods, algorithms, or frameworks
+- Include application domains when relevant
+- Avoid conversational language or full sentences
+- Make queries specific enough to find relevant research papers
 
 Format: 
-- Format your response as a JSON object with ALL three of these exact keys:
-   - "rationale": Brief explanation of why these queries are relevant
-   - "query": A list of search queries
+- Format your response as a JSON object with these exact keys:
+   - "rationale": Brief explanation of the search strategy
+   - "query": A list of focused search queries (max {{number_queries}})
 
 Example:
 
 Research Topic: Machine learning approaches for protein folding prediction
 ```json
-{{
-    "rationale": "To comprehensively analyze machine learning approaches for protein folding prediction, we need to cover both traditional computational methods and recent deep learning advances. These queries target different aspects: foundational algorithms, state-of-the-art neural networks like AlphaFold, and comparative performance studies.",
-    "query": ["machine learning protein folding prediction algorithms", "AlphaFold deep learning protein structure", "comparative analysis protein folding prediction methods"]
-}}
+{
+    "rationale": "Breaking down protein folding prediction into specific ML approaches: deep learning methods, traditional algorithms, and performance evaluation to ensure comprehensive coverage of the research landscape.",
+    "query": ["deep learning protein folding prediction", "AlphaFold transformer neural networks", "protein structure prediction algorithms"]
+}
 ```
 
 Research Topic: {{research_topic}}"""
     pass
 
 @prompt
-def reflection_instructions(research_topic: str, summaries: str):
+def reflection_instructions(current_date: str, research_topic: str, summaries: str):
     """You are an expert research assistant analyzing research summaries about "{{research_topic}}".
 
 Instructions:
@@ -112,11 +119,11 @@ Output Format:
 
 Example:
 ```json
-{{
+{
     "is_sufficient": false,
     "knowledge_gap": "The summary lacks information about performance benchmarks and comparative evaluation metrics for different approaches",
     "follow_up_queries": ["performance evaluation metrics protein folding prediction methods", "benchmark datasets protein structure prediction comparison"]
-}}
+}
 ```
 
 Reflect carefully on the Research Summaries to identify knowledge gaps and produce follow-up queries. Then, produce your output following this JSON format:

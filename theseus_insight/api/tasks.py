@@ -256,7 +256,16 @@ class TaskManager:
                     await asyncio.sleep(0.5)  # Give WebSocket time to send the message
                     if task_id in self.status_updates:
                         print(f"DEBUG: Cleaning up status_updates for completed/failed task {task_id}")
-                        # Properly drain all queues for this task
+                        for queue in self.status_updates[task_id]:
+                            # Notify any waiting websocket handlers to exit
+                            try:
+                                queue.put_nowait(None)
+                            except asyncio.QueueFull:
+                                pass
+
+                        # Allow consumers to process the sentinel values
+                        await asyncio.sleep(0.1)
+
                         for queue in self.status_updates[task_id]:
                             # Drain any remaining items
                             while not queue.empty():
@@ -264,14 +273,13 @@ class TaskManager:
                                     queue.get_nowait()
                                 except asyncio.QueueEmpty:
                                     break
-                            
-                            # For Python 3.9+, try to close the queue
+
                             if hasattr(queue, '_close'):
                                 try:
                                     queue._close()
                                 except Exception:
                                     pass
-                        
+
                         del self.status_updates[task_id]
                         print(f"DEBUG: Removed task {task_id} from status_updates")
                 

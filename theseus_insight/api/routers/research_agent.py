@@ -93,12 +93,17 @@ async def run_research_agent(request: ResearchAgentRunRequest, background_tasks:
         # Generate unique task ID
         task_id = str(uuid.uuid4())
         
+        # Get current research agent configuration to read PDF download setting
+        current_config = _get_research_agent_config()
+        search_config = current_config.get("search_config", {})
+        enable_pdf_download = search_config.get("enable_pdf_download", True)
+        
         # Prepare enhanced task configuration with additive effort parameters
         config = {
             "research_question": request.research_question,
             "papers_bonus": request.papers_bonus,
             "loops_bonus": request.loops_bonus,
-            "enable_pdf_download": True,  # Enable by default
+            "enable_pdf_download": enable_pdf_download,  # Use actual setting from config
             "conversation_history": [msg.dict() for msg in request.conversation_history],  # Support multi-turn conversations
         }
         
@@ -107,6 +112,11 @@ async def run_research_agent(request: ResearchAgentRunRequest, background_tasks:
             # Save override configuration directly to database
             override_dict = request.model_config_override.dict(exclude_none=True)
             _save_research_agent_config(override_dict)
+            
+            # Also update our config to reflect the override
+            override_search_config = override_dict.get("search_config", {})
+            if "enable_pdf_download" in override_search_config:
+                config["enable_pdf_download"] = override_search_config["enable_pdf_download"]
         
         # Create task in database
         await task_manager.create_task(
@@ -321,6 +331,11 @@ async def debug_paper_access():
         # Create a temporary LocalSearchTool to check capabilities
         if local_search_available:
             try:
+                # Get the current research agent configuration to read actual PDF download setting
+                current_config = _get_research_agent_config()
+                search_config = current_config.get("search_config", {})
+                pdf_download_setting = search_config.get("enable_pdf_download", True)
+                
                 embedding_model = SentenceTransformerInference(
                     model_name='Alibaba-NLP/gte-modernbert-base',
                     remote_code=True
@@ -328,7 +343,7 @@ async def debug_paper_access():
                 search_tool = LocalSearchTool(
                     db=db,
                     embedding_model=embedding_model,
-                    enable_pdf_download=True
+                    enable_pdf_download=pdf_download_setting  # Use actual setting
                 )
                 
                 # Get search statistics
@@ -368,7 +383,12 @@ async def debug_paper_access():
                     "papers_with_urls": len([p for p in test_results if p["has_url"]]),
                     "retrieve_success_count": len([p for p in test_results if p.get("retrieve_test") == "SUCCESS"]),
                     "pdf_processing_available": stats.get("pdf_processor_available", False),
-                    "pdf_download_enabled": stats.get("pdf_download_enabled", False)
+                    "pdf_download_enabled": stats.get("pdf_download_enabled", False),
+                    "current_pdf_config": {
+                        "config_setting": pdf_download_setting,
+                        "search_tool_setting": search_tool.enable_pdf_download,
+                        "configuration_source": "research_agent_langgraph_config" if current_config else "default"
+                    }
                 }
                 
             except Exception as tool_error:

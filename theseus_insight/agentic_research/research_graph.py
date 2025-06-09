@@ -599,16 +599,20 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
                 logger.warning("No judged sources available for PDF processing")
                 return state
             
+            # Check if PDF downloads are disabled globally
+            if not configurable.enable_pdf_download:
+                logger.info("📄 PDF downloads disabled in configuration - using abstracts only")
+                return {**state, "judged_sources": judged_sources}
+            
             # Count papers that need PDF processing
             papers_needing_pdfs = []
             for source in judged_sources:
-                if (configurable.enable_pdf_download and 
-                    not source.get("has_full_text") and 
+                if (not source.get("has_full_text") and 
                     (source.get("paper_id") or source.get("pdf_url"))):
                     papers_needing_pdfs.append(source)
             
             if not papers_needing_pdfs:
-                logger.info("No papers require PDF processing - all already have full text or PDFs unavailable")
+                logger.info("📄 No papers require PDF processing - all already have full text or PDFs unavailable")
                 return {**state, "judged_sources": judged_sources}
             
             logger.info(f"📄 Starting PDF downloads for {len(papers_needing_pdfs)} papers...")
@@ -621,61 +625,70 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
             for i, source in enumerate(judged_sources):
                 enhanced_source = dict(source)  # Copy the source
                 
-                # Only process PDFs if enabled and paper doesn't already have full text
-                if (configurable.enable_pdf_download and 
-                    not source.get("has_full_text") and 
-                    source.get("paper_id") and 
-                    source.get("value")):
+                # Only process PDFs if paper doesn't already have full text
+                if not source.get("has_full_text"):
                     
-                    download_count += 1
-                    paper_title = source.get('title', 'Unknown')[:50]
-                    logger.info(f"📥 Downloading PDF {download_count}/{len(papers_needing_pdfs)}: {paper_title}...")
-                    
-                    try:
-                        logger.info(f"Processing PDF for relevant paper {source['paper_id']}: {paper_title}...")
-                        full_text_result = self.local_tool.retrieve_full_text(str(source['paper_id']))
-                        enhanced_source["full_text_attempted"] = True
+                    # Local papers with paper_id
+                    if (source.get("paper_id") and source.get("value") and 
+                        source.get("source_type") == "local"):
                         
-                        # Check if we successfully got full text
-                        if "FULL TEXT RETRIEVED" in full_text_result:
-                            # Re-fetch the paper to get updated text
-                            updated_paper = self.db.get_paper_by_id(source['paper_id'])
-                            if updated_paper and updated_paper.get('text'):
-                                enhanced_source["has_full_text"] = True
-                                enhanced_source["full_text_length"] = len(updated_paper['text'])
-                                success_count += 1
-                                logger.info(f"✅ PDF {download_count}/{len(papers_needing_pdfs)} downloaded successfully: {paper_title} ({len(updated_paper['text'])} chars)")
-                        else:
-                            logger.warning(f"❌ PDF download failed for paper {source['paper_id']}: {paper_title}")
-                    except Exception as e:
-                        logger.error(f"❌ Error during PDF processing for paper {source.get('paper_id')}: {e}")
-                        enhanced_source["full_text_attempted"] = True
+                        download_count += 1
+                        paper_title = source.get('title', 'Unknown')[:50]
+                        logger.info(f"📥 Downloading PDF {download_count}/{len(papers_needing_pdfs)}: {paper_title}...")
                         
-                elif (configurable.enable_pdf_download and 
-                      not source.get("has_full_text") and 
-                      source.get("pdf_url") and 
-                      source.get("source_type") == "external"):
+                        try:
+                            logger.info(f"Processing PDF for relevant paper {source['paper_id']}: {paper_title}...")
+                            full_text_result = self.local_tool.retrieve_full_text(str(source['paper_id']))
+                            enhanced_source["full_text_attempted"] = True
+                            
+                            # Check if we successfully got full text
+                            if "FULL TEXT RETRIEVED" in full_text_result:
+                                # Re-fetch the paper to get updated text
+                                updated_paper = self.db.get_paper_by_id(source['paper_id'])
+                                if updated_paper and updated_paper.get('text'):
+                                    enhanced_source["has_full_text"] = True
+                                    enhanced_source["full_text_length"] = len(updated_paper['text'])
+                                    success_count += 1
+                                    logger.info(f"✅ PDF {download_count}/{len(papers_needing_pdfs)} downloaded successfully: {paper_title} ({len(updated_paper['text'])} chars)")
+                                else:
+                                    logger.warning(f"❌ PDF download failed for paper {source['paper_id']}: {paper_title} - no text retrieved")
+                                    enhanced_source["pdf_download_failed"] = True
+                            else:
+                                logger.warning(f"❌ PDF download failed for paper {source['paper_id']}: {paper_title} - using abstract only")
+                                enhanced_source["pdf_download_failed"] = True
+                        except Exception as e:
+                            logger.error(f"❌ Error during PDF processing for paper {source.get('paper_id')}: {e}")
+                            enhanced_source["full_text_attempted"] = True
+                            enhanced_source["pdf_download_failed"] = True
+                            # Continue processing - this is not a fatal error
                     
-                    # Handle external PDFs (ArXiv)
-                    download_count += 1
-                    paper_title = source.get('title', 'Unknown')[:50]
-                    pdf_url = source.get("pdf_url")
-                    logger.info(f"📥 Downloading external PDF {download_count}/{len(papers_needing_pdfs)}: {paper_title}...")
-                    
-                    try:
-                        logger.info(f"Processing external PDF from {pdf_url}: {paper_title}...")
-                        # Here you could add external PDF processing logic
-                        enhanced_source["full_text_attempted"] = True
-                        # For now, mark as attempted but not successful since we don't have external PDF processing
-                        logger.info(f"🔄 External PDF marked for future processing: {paper_title}")
-                    except Exception as e:
-                        logger.error(f"❌ Error during external PDF processing for {pdf_url}: {e}")
-                        enhanced_source["full_text_attempted"] = True
+                    # External papers with PDF URLs        
+                    elif (source.get("pdf_url") and source.get("source_type") == "external"):
+                        download_count += 1
+                        paper_title = source.get('title', 'Unknown')[:50]
+                        pdf_url = source.get("pdf_url")
+                        logger.info(f"📥 Downloading external PDF {download_count}/{len(papers_needing_pdfs)}: {paper_title}...")
+                        
+                        try:
+                            logger.info(f"Processing external PDF from {pdf_url}: {paper_title}...")
+                            # Here you could add external PDF processing logic
+                            enhanced_source["full_text_attempted"] = True
+                            enhanced_source["pdf_download_failed"] = True  # Mark as failed since we don't have external PDF processing yet
+                            logger.info(f"🔄 External PDF marked for future processing: {paper_title} - using abstract only")
+                        except Exception as e:
+                            logger.error(f"❌ Error during external PDF processing for {pdf_url}: {e}")
+                            enhanced_source["full_text_attempted"] = True
+                            enhanced_source["pdf_download_failed"] = True
+                            # Continue processing - this is not a fatal error
                 
                 enhanced_sources.append(enhanced_source)
             
             if download_count > 0:
-                logger.info(f"📄 PDF processing completed: {success_count}/{download_count} successful downloads")
+                failed_count = download_count - success_count
+                if failed_count > 0:
+                    logger.info(f"📄 PDF processing completed: {success_count}/{download_count} successful downloads, {failed_count} failed (using abstracts)")
+                else:
+                    logger.info(f"📄 PDF processing completed: {success_count}/{download_count} successful downloads")
             else:
                 logger.info(f"📄 PDF processing completed: All {len(judged_sources)} papers already had full text")
             
@@ -687,7 +700,8 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
             
         except Exception as e:
             logger.error(f"Error in PDF processing: {e}")
-            # Return state unchanged if there's an error
+            # Return state unchanged if there's an error - don't fail the entire research
+            logger.warning("Continuing research with abstracts only due to PDF processing error")
             return state
     
     def _compile_outline(self, state: OverallState, config: RunnableConfig) -> OutlineState:
@@ -881,101 +895,130 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
                 "web_research_result": [f"Sequential local search failed: {str(e)}"],
             }
     
-    def _external_research(self, state: WebSearchState, config: RunnableConfig) -> OverallState:
-        """Perform enhanced external search using Semantic Scholar with source tracking."""
+    def _external_research(self, state: OverallState, config: RunnableConfig) -> OverallState:
+        """Perform enhanced external search using ArXiv with source tracking."""
         try:
             configurable = AgentConfiguration.from_runnable_config(config)
             
-            search_query = state["search_query"]
-            logger.info(f"🌐 Starting external ArXiv search for: '{search_query}'")
+            # Get the list of queries to search (same as local research)
+            query_list = state.get("query_list", [])
+            logger.info(f"🌐 Starting external ArXiv search for {len(query_list)} queries...")
             
-            # Get raw results first for better source extraction (using ArXiv)
-            logger.info(f"📡 Querying ArXiv API...")
-            raw_papers = self.external_tool.search_and_rank(
-                search_query,
-                limit=configurable.external_search_limit,
-                provider="arxiv"
-            )
+            all_sources_gathered = []
+            all_search_queries = []
+            all_web_results = []
             
-            if not raw_papers:
-                logger.info(f"❌ No external papers found for query: '{search_query}'")
-            else:
-                logger.info(f"✅ Found {len(raw_papers)} external papers for query: '{search_query}'")
-            
-            # Generate formatted result for LLM consumption
-            result = self.external_tool.find_papers_by_str(
-                search_query, 
-                limit=configurable.external_search_limit,
-                provider="arxiv"
-            )
-            
-            # Enhanced source tracking with complete metadata (ArXiv-optimized)
-            sources_gathered = []
-            for i, paper in enumerate(raw_papers):
-                # For ArXiv papers, use the direct PDF URL
-                paper_url = paper.get('url', '') or paper.get('pdf_url', '')
-                if not paper_url:
-                    continue  # Skip papers without accessible URLs
+            # Process each query sequentially
+            for i, query in enumerate(query_list):
+                # Extract query string if it's a dict, otherwise use as-is
+                query_str = query.get("query", query) if isinstance(query, dict) else query
+                logger.info(f"📡 External search {i+1}/{len(query_list)}: '{query_str}'")
                 
-                # Create short URL for citation tracking
-                short_url = self._generate_short_url(paper_url)
+                # Get raw results first for better source extraction (using ArXiv)
+                raw_papers = self.external_tool.search_and_rank(
+                    query_str,
+                    limit=configurable.external_search_limit,
+                    provider="arxiv"
+                )
                 
-                # Clean up authors for display (ArXiv format)
-                authors = paper.get('authors_str', '')
-                if not authors and paper.get('authors'):
-                    if isinstance(paper['authors'], list):
-                        authors = ', '.join(paper['authors'][:3])  # Limit to first 3 authors
-                        if len(paper['authors']) > 3:
-                            authors += ' et al.'
-                    else:
-                        authors = str(paper['authors'])
+                # Log when no results are found but continue with the workflow
+                if not raw_papers:
+                    logger.info(f"❌ No external papers found for query: '{query_str}'")
+                else:
+                    logger.info(f"✅ Found {len(raw_papers)} external papers for query: '{query_str}'")
                 
-                # Extract year from ArXiv published date
-                paper_year = paper.get('year')
-                if not paper_year and paper.get('published'):
-                    try:
-                        paper_year = int(paper.get('published', '1900')[:4])
-                    except (ValueError, TypeError):
-                        paper_year = None
+                # Generate formatted result for LLM consumption
+                result = self.external_tool.find_papers_by_str(
+                    query_str, 
+                    limit=configurable.external_search_limit,
+                    provider="arxiv"
+                )
                 
-                # Store comprehensive source metadata (ArXiv-specific)
-                source_entry = {
-                    "short_url": short_url,
-                    "value": paper_url,
-                    "title": paper.get('title', 'Unknown Title').strip(),
-                    "source_type": "external",
-                    "source_provider": "arxiv",
-                    "authors": authors,
-                    "year": paper_year,
-                    "published_date": paper.get('published'),
-                    "abstract": paper.get('abstract', ''),
-                    "venue": "arXiv preprint",  # ArXiv papers are preprints
-                    "is_open_access": True,  # All ArXiv papers are open access
-                    "pdf_url": paper_url,  # ArXiv URLs are direct PDF links
-                    "external_ranking_score": paper.get('external_ranking_score', 0)
-                }
-                sources_gathered.append(source_entry)
+                # Enhanced source tracking with complete metadata (ArXiv-optimized)
+                query_sources = []
+                for paper in raw_papers:
+                    # For ArXiv papers, use the direct PDF URL
+                    paper_url = paper.get('url', '') or paper.get('pdf_url', '')
+                    if not paper_url:
+                        continue  # Skip papers without accessible URLs
+                    
+                    # Create short URL for citation tracking
+                    short_url = self._generate_short_url(paper_url)
+                    
+                    # Clean up authors for display (ArXiv format)
+                    authors = paper.get('authors_str', '')
+                    if not authors and paper.get('authors'):
+                        if isinstance(paper['authors'], list):
+                            authors = ', '.join(paper['authors'][:3])  # Limit to first 3 authors
+                            if len(paper['authors']) > 3:
+                                authors += ' et al.'
+                        else:
+                            authors = str(paper['authors'])
+                    
+                    # Extract year from ArXiv published date
+                    paper_year = paper.get('year')
+                    if not paper_year and paper.get('published'):
+                        try:
+                            paper_year = int(paper.get('published', '1900')[:4])
+                        except (ValueError, TypeError):
+                            paper_year = None
+                    
+                    # Store comprehensive source metadata (ArXiv-specific)
+                    source_entry = {
+                        "short_url": short_url,
+                        "value": paper_url,
+                        "title": paper.get('title', 'Unknown Title').strip(),
+                        "source_type": "external",
+                        "source_provider": "arxiv",
+                        "authors": authors,
+                        "year": paper_year,
+                        "published_date": paper.get('published'),
+                        "abstract": paper.get('abstract', ''),
+                        "venue": "arXiv preprint",  # ArXiv papers are preprints
+                        "is_open_access": True,  # All ArXiv papers are open access
+                        "pdf_url": paper_url,  # ArXiv URLs are direct PDF links
+                        "external_ranking_score": paper.get('external_ranking_score', 0)
+                    }
+                    query_sources.append(source_entry)
+                    
+                    # Replace URLs in result text with short URLs for cleaner presentation
+                    if paper_url in result:
+                        result = result.replace(paper_url, short_url)
+                    if paper.get('pdf_url') and paper['pdf_url'] in result:
+                        result = result.replace(paper['pdf_url'], short_url)
                 
-                # Replace URLs in result text with short URLs for cleaner presentation
-                if paper_url in result:
-                    result = result.replace(paper_url, short_url)
-                if paper.get('pdf_url') and paper['pdf_url'] in result:
-                    result = result.replace(paper['pdf_url'], short_url)
+                # Add this query's results to the aggregated results
+                all_sources_gathered.extend(query_sources)
+                all_search_queries.append(query_str)
+                all_web_results.append(result)
+                
+                logger.info(f"📊 External query {i+1} completed: {len(query_sources)} papers added")
             
-            logger.info(f"🌐 External ArXiv search completed: {len(sources_gathered)} papers processed")
+            logger.info(f"🌐 External ArXiv search completed: {len(all_sources_gathered)} total papers found")
             
-            return {
-                "sources_gathered": sources_gathered,
-                "search_query": [search_query],
-                "web_research_result": [result],
+            # Debug logging for aggregated results
+            for i, source in enumerate(all_sources_gathered[:5]):  # Show first 5
+                logger.info(f"EXTERNAL SEARCH DEBUG: Source {i+1}: {source.get('title', 'Unknown')[:50]}... (Provider: {source.get('source_provider', 'none')})")
+            if len(all_sources_gathered) > 5:
+                logger.info(f"EXTERNAL SEARCH DEBUG: ... and {len(all_sources_gathered) - 5} more sources")
+            
+            return_state = {
+                "sources_gathered": all_sources_gathered,
+                "search_query": all_search_queries,
+                "web_research_result": all_web_results,
             }
+            
+            logger.info(f"EXTERNAL SEARCH DEBUG: Returning state with {len(all_sources_gathered)} sources_gathered")
+            
+            return return_state
             
         except Exception as e:
             logger.error(f"❌ Error in external research: {e}")
+            query_list = state.get("query_list", [])
             return {
                 "sources_gathered": [],
-                "search_query": [state["search_query"]],
-                "web_research_result": [f"External search failed for query: {state['search_query']}"],
+                "search_query": [str(query) for query in query_list],
+                "web_research_result": [f"External search failed for queries: {query_list}"],
             }
     
     def _reflection(self, state: OverallState, config: RunnableConfig) -> ReflectionState:
@@ -1079,8 +1122,8 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
             
             if should_continue:
                 logger.info(f"Continuing research with {len(state['follow_up_queries'])} follow-up queries")
-                # Route to sequential external research instead of parallel
-                return "sequential_external_research"
+                # Route to follow_up_research instead of non-existent sequential_external_research
+                return "follow_up_research"
             else:
                 logger.info("Research deemed sufficient, finalizing answer")
                 return "finalize_answer"
@@ -1368,17 +1411,39 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
                             )
                             
                             if processed_content:
-                                enhanced_insights.append(processed_content)
-                                full_text_processed_count += 1
-                                logger.info(f"Successfully processed PDF from URL: {pdf_url}")
-                                
-                                # If this is a local paper, update the database with the processed text
-                                if source.get("paper_id") and source.get("source_type") == "local":
-                                    # The _download_and_process_pdf_from_url method should handle DB updates
-                                    pass
-                            
+                                # Check if this is a failure message (contains "PDF download failed" or "PDF processing error")
+                                if ("PDF download failed" in processed_content or 
+                                    "PDF processing error" in processed_content):
+                                    logger.warning(f"PDF processing failed for {source.get('title', 'Unknown')[:50]}, using abstract fallback")
+                                    # Create abstract-only fallback
+                                    abstract_fallback = self._create_abstract_fallback(source, research_topic)
+                                    if abstract_fallback:
+                                        enhanced_insights.append(abstract_fallback)
+                                else:
+                                    enhanced_insights.append(processed_content)
+                                    full_text_processed_count += 1
+                                    logger.info(f"Successfully processed PDF from URL: {pdf_url}")
+                                    
+                                    # If this is a local paper, update the database with the processed text
+                                    if source.get("paper_id") and source.get("source_type") == "local":
+                                        # The _download_and_process_pdf_from_url method should handle DB updates
+                                        pass
+                            else:
+                                # No processed content returned, create abstract fallback
+                                logger.warning(f"No content returned from PDF processing for {source.get('title', 'Unknown')[:50]}, using abstract")
+                                abstract_fallback = self._create_abstract_fallback(source, research_topic)
+                                if abstract_fallback:
+                                    enhanced_insights.append(abstract_fallback)
                         except Exception as e:
                             logger.error(f"Error downloading/processing PDF from {pdf_url}: {e}")
+                            # Continue with abstract-only processing - this is not a fatal error
+                            logger.info(f"Continuing with abstract-only analysis for: {source.get('title', 'Unknown')[:50]}...")
+                            # Create abstract fallback for this failed PDF
+                            abstract_fallback = self._create_abstract_fallback(source, research_topic)
+                            if abstract_fallback:
+                                enhanced_insights.append(abstract_fallback)
+                elif not configurable.enable_pdf_download:
+                    logger.debug(f"PDF downloads disabled - skipping PDF processing for: {source.get('title', 'Unknown')[:50]}...")
             
             # Combine traditional search results with enhanced full text insights
             if search_results:
@@ -1759,6 +1824,50 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
         except Exception as e:
             logger.error(f"Error finding relevant chunks: {e}")
             return chunks[:3]  # Fallback to first 3 chunks
+    
+    def _create_abstract_fallback(self, source: Dict[str, Any], research_query: str) -> str:
+        """
+        Create a fallback content analysis using only the abstract when PDF processing fails.
+        
+        Args:
+            source: Source metadata dictionary
+            research_query: The research question for context
+            
+        Returns:
+            Abstract-based analysis content
+        """
+        try:
+            title = source.get('title', 'Unknown Title')
+            abstract = source.get('abstract', '')
+            authors = source.get('authors', 'Unknown')
+            year = source.get('year', 'Unknown')
+            
+            if not abstract or len(abstract.strip()) < 50:
+                return None  # Don't create fallback if we don't have sufficient abstract
+            
+            # Create abstract-only analysis
+            summary_parts = [
+                f"**Paper: {title} [ABSTRACT ONLY]**",
+                f"**Authors: {authors}**" if authors != 'Unknown' else "",
+                f"**Year: {year}**" if year != 'Unknown' else "",
+                "",
+                f"**Abstract Analysis (Query: {research_query})**",
+                f"*PDF processing failed or disabled - analysis based on abstract only*",
+                "",
+                f"**Abstract:** {abstract}",
+                "",
+                f"**Relevance to '{research_query}':** This paper appears relevant based on its abstract, " +
+                f"which discusses concepts related to the research query. Full text analysis would provide " +
+                f"more detailed insights into methodologies, results, and conclusions."
+            ]
+            
+            result = '\n'.join(filter(None, summary_parts))
+            logger.info(f"Generated abstract-only fallback for: {title[:50]}... ({len(abstract)} char abstract)")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error creating abstract fallback: {e}")
+            return None
     
     def _convert_short_urls_to_markdown_links(self, content: str, sources_gathered: List[Dict]) -> str:
         """

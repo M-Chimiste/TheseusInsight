@@ -90,21 +90,27 @@ const formatStatusTitle = (status: string): string => {
   // Handle specific status mappings for better UX
   const statusMappings: Record<string, string> = {
     'query_refinement': 'Query refinement',
+    'query_refinement_complete': 'Query refinement complete',
+    'query_generation': 'Query generation',
     'generate_query': 'Query generation',
     'local_research': 'Local database search',
+    'local_search': 'Local database search',
     'external_research': 'External search (ArXiv)',
+    'external_search': 'External search (ArXiv)',
     'judge_all_papers': 'Judging paper relevance (local + external)',
     'process_pdfs': 'PDF processing',
     'compile_outline': 'Compiling research outline',
     'reflection': 'Reflection and gap analysis',
     'follow_up_research': 'Follow-up research (local + external)',
     'finalize_answer': 'Finalizing answer',
+    'finalizing': 'Finalizing answer',
     'query_refinement_waiting': 'Awaiting clarification',
     'pdf_download': 'Downloading PDFs',
     'pdf_processing': 'Processing PDF content',
     'full_text_analysis': 'Analyzing full text',
     'arxiv_search': 'ArXiv API search',
-    'database_search': 'Database search'
+    'database_search': 'Database search',
+    'saving_results': 'Saving research results'
   };
   
   // Check for exact match first
@@ -421,12 +427,81 @@ const ResearchAgent: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [websocket, setWebsocket] = useState<WebSocket | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const {
     recentReviews,
     fetchRecentReviews,
   } = useResearchAgent();
+
+  // Check for active research agent tasks on mount
+  useEffect(() => {
+    const checkForActiveTask = async () => {
+      try {
+        const response = await fetch('/api/tasks/active?task_types=research_agent');
+        if (response.ok) {
+          const data = await response.json();
+          const activeTasks = data.active_tasks || [];
+          
+          // Find the most recent active research agent task
+          const activeResearchTask = activeTasks.find((task: any) => 
+            task.type === 'research_agent' && 
+            (task.status === 'processing' || task.status === 'pending')
+          );
+          
+          if (activeResearchTask) {
+            console.log('Found active research task:', activeResearchTask.id);
+            setActiveTaskId(activeResearchTask.id);
+            
+            // Try to restore conversation state from localStorage
+            const savedState = localStorage.getItem(`research-agent-task-${activeResearchTask.id}`);
+            if (savedState) {
+              try {
+                const parsedState = JSON.parse(savedState);
+                setMessages(parsedState.messages || []);
+                setLiveActivity(parsedState.liveActivity || []);
+                setHistoricalActivities(parsedState.historicalActivities || {});
+                setIsLoading(true);
+                setSuccess('Reconnected to ongoing research task');
+                console.log('Restored conversation state from localStorage');
+              } catch (e) {
+                console.error('Failed to parse saved state:', e);
+              }
+            } else {
+              // No saved state, but we have an active task - show loading
+              setIsLoading(true);
+              setLiveActivity([{
+                title: 'Reconnecting to research task',
+                data: 'Restoring connection to ongoing research...'
+              }]);
+              setSuccess('Reconnected to ongoing research task');
+            }
+            
+            // Reconnect to the WebSocket
+            connectWebSocket(activeResearchTask.id);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to check for active tasks:', error);
+      }
+    };
+
+    checkForActiveTask();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save conversation state to localStorage when it changes
+  useEffect(() => {
+    if (activeTaskId && (messages.length > 0 || liveActivity.length > 0)) {
+      const stateToSave = {
+        messages,
+        liveActivity,
+        historicalActivities,
+        lastUpdated: new Date().toISOString()
+      };
+      localStorage.setItem(`research-agent-task-${activeTaskId}`, JSON.stringify(stateToSave));
+    }
+  }, [activeTaskId, messages, liveActivity, historicalActivities]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -493,7 +568,13 @@ const ResearchAgent: React.FC = () => {
             }
           } else if (rawStep === 'process_pdfs' && typeof eventData === 'string') {
             // Enhanced PDF processing status
-            if (eventData.includes('📄 Starting PDF downloads')) {
+            if (eventData.includes('PDF processing: Disabled')) {
+              enhancedData = `${eventData} - Configuration setting prevents PDF downloads`;
+            } else if (eventData.includes('No PDFs to download')) {
+              enhancedData = `${eventData} - All papers already have full text available`;
+            } else if (eventData.includes('successful downloads for')) {
+              enhancedData = `${eventData} - Full text content processing`;
+            } else if (eventData.includes('📄 Starting PDF downloads')) {
               enhancedData = `${eventData} - Beginning PDF downloads for relevant papers`;
             } else if (eventData.includes('📥 Downloading PDF')) {
               enhancedData = `${eventData} - Fetching full text content`;
@@ -503,8 +584,6 @@ const ResearchAgent: React.FC = () => {
               enhancedData = `${eventData} - Will use abstract only`;
             } else if (eventData.includes('📄 PDF processing completed:')) {
               enhancedData = `${eventData} - PDF downloads finished`;
-            } else if (eventData.includes('No papers require PDF processing')) {
-              enhancedData = `${eventData} - All papers already have full text`;
             }
           } else if (rawStep === 'local_research' && typeof eventData === 'string') {
             // Enhanced local research status
@@ -590,10 +669,26 @@ const ResearchAgent: React.FC = () => {
           setIsLoading(false);
           setLiveActivity([]);
           setSuccess('Research completed successfully!');
+          
+          // Clean up active task state on completion
+          setActiveTaskId(prevActiveTaskId => {
+            if (prevActiveTaskId) {
+              localStorage.removeItem(`research-agent-task-${prevActiveTaskId}`);
+            }
+            return null;
+          });
         } else if (status.overallStatus === 'failed') {
           setError(status.error || 'Research failed');
           setIsLoading(false);
           setLiveActivity([]);
+          
+          // Clean up active task state on failure
+          setActiveTaskId(prevActiveTaskId => {
+            if (prevActiveTaskId) {
+              localStorage.removeItem(`research-agent-task-${prevActiveTaskId}`);
+            }
+            return null;
+          });
         }
         
         // Debug logging to understand the status structure
@@ -629,14 +724,19 @@ const ResearchAgent: React.FC = () => {
     };
 
     setWebsocket(ws);
-  }, [websocket, liveActivity]);
+  }, [websocket]);
 
   const handleSubmit = async (submittedInputValue: string, selectedEffort: string) => {
     if (!submittedInputValue.trim() || isLoading) return;
 
-    // Clear any previous errors
+    // Clear any previous errors and active task state
     setError(null);
     setLiveActivity([]);
+    
+    // Clean up any previous task state in localStorage
+    if (activeTaskId) {
+      localStorage.removeItem(`research-agent-task-${activeTaskId}`);
+    }
 
     // Add user message
     const userMessage: ConversationMessage = {
@@ -700,6 +800,9 @@ const ResearchAgent: React.FC = () => {
 
       const result = await response.json();
       
+      // Set the new active task ID
+      setActiveTaskId(result.task_id);
+      
       // Connect to WebSocket for progress updates
       connectWebSocket(result.task_id);
 
@@ -716,12 +819,25 @@ const ResearchAgent: React.FC = () => {
     }
     setIsLoading(false);
     setLiveActivity([]);
+    
+    // Clean up active task state
+    if (activeTaskId) {
+      localStorage.removeItem(`research-agent-task-${activeTaskId}`);
+      setActiveTaskId(null);
+    }
   };
 
   const handleNewSearch = () => {
     if (websocket) {
       websocket.close();
     }
+    
+    // Clean up active task state
+    if (activeTaskId) {
+      localStorage.removeItem(`research-agent-task-${activeTaskId}`);
+      setActiveTaskId(null);
+    }
+    
     setMessages([]);
     setLiveActivity([]);
     setHistoricalActivities({});
@@ -826,7 +942,10 @@ const ResearchAgent: React.FC = () => {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 2 }}>
                       <CircularProgress size={20} />
                       <Typography variant="body2" color="text.secondary">
-                        Processing your request...
+                        {activeTaskId && messages.length === 0 
+                          ? 'Reconnecting to ongoing research...' 
+                          : 'Processing your request...'
+                        }
                       </Typography>
                     </Box>
                   )}

@@ -1052,65 +1052,42 @@ class TaskManager:
                             else:
                                 print(f"DEBUG: Skipping {node_name} - node_data is None")
                                 continue
-                            
+                        
+                        # Query refinement callback
                         if node_name == "query_refinement":
                             needs_clarification = node_data.get('needs_clarification', False)
+                            refined_query = node_data.get('refined_query', '')
                             
                             if needs_clarification:
-                                # Format the clarifying questions for display
-                                questions = node_data.get('clarifying_questions', [])
-                                questions_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-                                
-                                clarification_message = f"""I'd like to better understand your research needs to provide more focused results. Could you help clarify:
-
-{questions_text}
-
-Please respond with any additional details that would help me conduct more targeted research for you."""
-                                
-                                # Send the clarifying questions as the status message
                                 await self.update_task_status(
                                     task_id,
                                     TaskStatus.PROCESSING,
-                                    clarification_message,
-                                    progress=10,
+                                    "Waiting for user clarification",
+                                    progress=5,
                                     current_step="query_refinement_waiting",
                                 )
-                                
-                                # Record activity
-                                activity_log.append({
-                                    "timestamp": datetime.now().isoformat(),
-                                    "step": "query_refinement",
-                                    "action": "Requested clarification from user",
-                                    "data": {
-                                        "clarifying_questions": questions,
-                                        "original_query": node_data.get('original_query', '')
-                                    }
-                                })
-                                
-                                # The workflow will end here, waiting for user response
-                                # The user will need to continue the conversation
-                                print(f"DEBUG: Query refinement requested clarification for {task_id}")
-                                return  # Exit the task, user needs to respond
                             else:
-                                # Query is clear, continue with research
                                 await self.update_task_status(
                                     task_id,
                                     TaskStatus.PROCESSING,
-                                    "Research question is clear, proceeding with search...",
+                                    f"Query refined: {refined_query[:50]}..." if len(refined_query) > 50 else refined_query,
                                     progress=10,
-                                    current_step="query_refinement_complete",
+                                    current_step="query_refinement",
                                 )
-                                
-                                # Record activity
-                                activity_log.append({
-                                    "timestamp": datetime.now().isoformat(),
-                                    "step": "query_refinement",
-                                    "action": "Query is clear, no clarification needed",
-                                    "data": {
-                                        "refined_query": node_data.get('refined_query', ''),
-                                        "original_query": node_data.get('original_query', '')
-                                    }
-                                })
+                            
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "query_refinement",
+                                "action": "Analyzed research question for clarity" + (" - awaiting clarification" if needs_clarification else " - proceeding"),
+                                "data": {
+                                    "needs_clarification": needs_clarification,
+                                    "refined_query": refined_query,
+                                    "original_query": node_data.get('original_query', '')
+                                }
+                            })
+                            
+
                                 
                         elif node_name == "generate_query":
                             # Debug query generation results
@@ -1230,7 +1207,7 @@ Please respond with any additional details that would help me conduct more targe
                                 }
                             })
                         
-                        elif node_name == "judge_papers":
+                        elif node_name == "judge_all_papers":
                             judged_count = len(node_data.get('judged_papers', []))
                             rejected_count = len(node_data.get('rejected_papers', []))
                             total_papers = judged_count + rejected_count
@@ -1240,18 +1217,65 @@ Please respond with any additional details that would help me conduct more targe
                                 TaskStatus.PROCESSING,
                                 f"Judging paper relevance: {judged_count} relevant, {rejected_count} rejected (total: {total_papers})",
                                 progress=45,
-                                current_step="judge_papers",
+                                current_step="judge_all_papers",
                             )
                             
                             # Record activity
                             activity_log.append({
                                 "timestamp": datetime.now().isoformat(),
-                                "step": "judge_papers",
+                                "step": "judge_all_papers",
                                 "action": f"Evaluated {total_papers} papers for relevance - {judged_count} passed, {rejected_count} filtered out",
                                 "data": {
                                     "papers_evaluated": total_papers,
                                     "relevant_papers": judged_count,
                                     "rejected_papers": rejected_count
+                                }
+                            })
+                        
+                        elif node_name == "process_pdfs":
+                            # Enhanced PDF processing status
+                            enhanced_sources = node_data.get('judged_sources', [])
+                            pdf_processed_count = 0
+                            pdf_successful_count = 0
+                            
+                            for source in enhanced_sources:
+                                if source.get('full_text_attempted'):
+                                    pdf_processed_count += 1
+                                if source.get('has_full_text'):
+                                    pdf_successful_count += 1
+                            
+                            # Check if PDF downloading is enabled in the configuration
+                            if enable_pdf_download:
+                                # PDF downloading is enabled - show actual statistics
+                                if pdf_processed_count > 0:
+                                    status_message = f"PDF processing: {pdf_successful_count}/{pdf_processed_count} successful downloads for {len(enhanced_sources)} relevant papers"
+                                    action_message = f"PDF processing completed - {pdf_successful_count} successful, {pdf_processed_count - pdf_successful_count} failed"
+                                else:
+                                    status_message = f"PDF processing: No PDFs to download for {len(enhanced_sources)} relevant papers (all already have full text)"
+                                    action_message = f"PDF processing completed - {len(enhanced_sources)} papers already have full text"
+                            else:
+                                # PDF downloading is disabled - show clear message
+                                status_message = f"PDF processing: Disabled (using abstracts only for {len(enhanced_sources)} relevant papers)"
+                                action_message = f"PDF processing skipped - PDF downloading disabled, using abstracts for {len(enhanced_sources)} papers"
+                            
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                status_message,
+                                progress=46,
+                                current_step="process_pdfs",
+                            )
+                            
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "process_pdfs",
+                                "action": action_message,
+                                "data": {
+                                    "relevant_papers": len(enhanced_sources),
+                                    "pdfs_attempted": pdf_processed_count,
+                                    "pdfs_successful": pdf_successful_count,
+                                    "pdf_download_enabled": enable_pdf_download
                                 }
                             })
                         
@@ -1371,6 +1395,36 @@ Please respond with any additional details that would help me conduct more targe
                                     "is_sufficient": is_sufficient,
                                     "knowledge_gap": node_data.get('knowledge_gap', ''),
                                     "follow_up_queries": node_data.get('follow_up_queries', [])
+                                }
+                            })
+                        
+                        elif node_name == "follow_up_research":
+                            follow_up_queries = node_data.get('follow_up_queries', [])
+                            new_sources_count = len(node_data.get('sources_gathered', []))
+                            
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Follow-up research: {new_sources_count} additional papers found from {len(follow_up_queries)} refined queries",
+                                progress=78 + (research_loop_count * 5),
+                                current_step="follow_up_research",
+                            )
+                            
+                            # Collect sources from follow-up research
+                            if node_data.get('sources_gathered'):
+                                sources_gathered.extend(node_data['sources_gathered'])
+                            if node_data.get('web_research_result'):
+                                search_results.extend(node_data['web_research_result'])
+                            
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "follow_up_research",
+                                "action": f"Conducted follow-up research with {len(follow_up_queries)} refined queries - found {new_sources_count} additional sources",
+                                "data": {
+                                    "follow_up_queries": follow_up_queries,
+                                    "new_sources_found": new_sources_count,
+                                    "iteration": research_loop_count
                                 }
                             })
                             

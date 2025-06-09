@@ -11,6 +11,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Quickstart](#quickstart)
 - [Features](#features)
 - [Architecture and Modules](#architecture-and-modules)
+- [Agentic Deep Research](#agentic-deep-research)
 - [Installation](#installation)
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
@@ -23,6 +24,8 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
   - [Script Management](#script-management)
   - [Visualizer Generation](#visualizer-generation)
   - [Similarity Search](#similarity-search)
+    - [Research Agent](#research-agent)
+  - [Model Catalog](#model-catalog)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
@@ -70,6 +73,8 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **Real‑time progress** streaming over WebSockets for long running tasks.
 - **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
+- **Agentic Deep Research** LangGraph-based research agent for automated literature reviews with local-first search and streaming reports.
+- **Model Catalog** central store of LLM configurations with filtering and favorites.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers.
@@ -87,6 +92,7 @@ theseus_insight/
       model_providers.py  # Model provider management
       runs_and_tasks.py   # Task management and status
       logs.py             # Logging and task history
+      model_catalog.py   # Model catalog management
       newsletters_and_podcasts.py  # Content generation
       actions.py          # Visualizer pipeline actions
       database.py         # Import/export functionality
@@ -101,6 +107,7 @@ theseus_insight/
   inference/             # LLM and TTS wrappers
   pdf/                   # PDF parsing helpers
   podcast/               # Podcast and visualiser generation
+  agentic_research/       # LangGraph-based research agent
   main.py                # FastAPI entrypoint and app configuration
   theseus_insight.py     # Pipeline orchestrator
 ```
@@ -118,6 +125,8 @@ The FastAPI backend uses a modular router architecture for better maintainabilit
 
 ---
 
+## Agentic Deep Research
+Theseus Insight now ships with a LangGraph-based research agent capable of performing deep literature reviews. The agent begins with your local database and expands to external sources when necessary, streaming progress updates in real time. Final results are returned as a rich markdown report.
 ## Installation
 
 ### Automated Installation (Recommended)
@@ -435,6 +444,19 @@ cp -r ./data/* /Volumes/nyx/theseus_insight_data/app_data/
 - **`GET /api/papers/without-embeddings`** – list papers missing embeddings.
 - **`POST /api/papers/{paper_id}/update-embedding`** – generate embedding for a paper.
 - **`GET /api/papers/{paper_id}/similar`** – find papers similar to an existing one.
+
+### Research Agent
+- **`POST /api/research-agent/run`** – start a literature review with streaming progress.
+- **`GET /api/research-agent/reviews`** – list recent literature reviews.
+- **`GET /api/research-agent/reviews/{review_id}`** – retrieve a specific review and markdown report.
+### Model Catalog
+- **`POST /api/model-catalog`** – create a model entry.
+- **`GET /api/model-catalog`** – list or search the catalog.
+- **`GET /api/model-catalog/{model_id}`** – retrieve a model.
+- **`PUT /api/model-catalog/{model_id}`** – update a model.
+- **`DELETE /api/model-catalog/{model_id}`** – delete a model.
+- **`GET /api/model-catalog/by-provider/{provider_name}`** – models by provider.
+- **`POST /api/model-catalog/{model_id}/favorite`** – toggle favorite status.
 
 #### Hybrid Search Functionality
 Theseus Insight features advanced hybrid search capabilities that combine the precision of BM25-style keyword ranking with the contextual understanding of semantic similarity. This provides significantly enhanced search accuracy compared to traditional keyword-only or semantic-only approaches.

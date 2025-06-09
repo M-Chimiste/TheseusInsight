@@ -39,7 +39,9 @@ class UnifiedModelRouter:
         self.default_models = {
             "generate_query": "hermes3",
             "reflection": "hermes3", 
-            "finalize_answer": "hermes3"
+            "finalize_answer": "hermes3",
+            "judge_papers": "hermes3",
+            "outline": "hermes3"
         }
     
     def get_model(self, node_name: str) -> 'UnifiedLLMWrapper':
@@ -61,7 +63,9 @@ class UnifiedModelRouter:
                 node_model_mapping = {
                     "generate_query": "query_generator_model",
                     "reflection": "reflection_model",
-                    "finalize_answer": "answer_model"
+                    "finalize_answer": "answer_model",
+                    "judge_papers": "judge_model",
+                    "outline": "reasoning_model"  # Use reasoning model for outline by default
                 }
                 
                 config_key = node_model_mapping.get(node_name)
@@ -120,6 +124,7 @@ class UnifiedModelRouter:
             "query_generator_model": None,  # Falls back to reasoning_model if not specified
             "reflection_model": None,       # Falls back to reasoning_model if not specified  
             "answer_model": None,           # Falls back to reasoning_model if not specified
+            "judge_model": None,            # Falls back to reasoning_model if not specified
             "max_research_loops": 10,
             "initial_search_query_count": 3,
             "local_search_limit": 10,

@@ -21,3 +21,15 @@ class Reflection(BaseModel):
     is_sufficient: bool = Field(description="Whether the current research is sufficient")
     knowledge_gap: str = Field(description="Description of what information is missing")
     follow_up_queries: List[str] = Field(description="Specific follow-up queries to address gaps") 
+
+
+class RelevanceRubric(BaseModel):
+    """Schema for relevance rubric output."""
+    relevant: bool = Field(description="Whether the paper is relevant to the research query")
+    score: int = Field(description="Score of the relevance rubric")
+    rationale: str = Field(description="Explanation of the relevance rubric")
+
+
+class ResearchOutline(BaseModel):
+    """Schema for research outline generation."""
+    outline: str = Field(description="The updated research outline in markdown format")

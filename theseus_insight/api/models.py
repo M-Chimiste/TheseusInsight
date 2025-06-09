@@ -323,6 +323,7 @@ class ResearchAgentModelConfigApi(BaseModel):
     query_generator_model: Optional[ModelConfig] = Field(None, description="Model for generating search queries")
     reflection_model: Optional[ModelConfig] = Field(None, description="Model for reflecting on search results")
     answer_model: Optional[ModelConfig] = Field(None, description="Model for final answer generation")
+    judge_model: Optional[ModelConfig] = Field(None, description="Model for judging paper relevance before PDF download")
     
     # Research workflow configuration
     max_research_loops: Optional[int] = Field(10, ge=1, le=50, description="Maximum research iteration loops")
@@ -375,8 +376,8 @@ class ConversationMessage(BaseModel):
 class ResearchAgentRunRequest(BaseModel):
     """Request model for starting an enhanced research agent run with LangGraph workflow (FR-18)."""
     research_question: str = Field(..., min_length=10, description="Research question to investigate")
-    num_papers_target: int = Field(5, ge=1, le=20, description="Target number of papers to collect")
-    max_steps: int = Field(10, ge=1, le=50, description="Maximum agent iteration steps")
+    papers_bonus: int = Field(0, ge=0, le=20, description="Additional papers to add to base configuration")
+    loops_bonus: int = Field(0, ge=0, le=20, description="Additional research loops to add to base configuration")
     model_config_override: Optional[ResearchAgentModelConfigApi] = Field(
         None, description="Optional model configuration override"
     )

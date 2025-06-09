@@ -872,6 +872,8 @@ class TaskManager:
             max_steps = config.get("max_steps", 10)
             enable_pdf_download = config.get("enable_pdf_download", True)
             conversation_history = config.get("conversation_history", [])
+            papers_bonus = config.get("papers_bonus", 0)  # Extract effort bonuses from task config
+            loops_bonus = config.get("loops_bonus", 0)
             
             print(f"DEBUG: Research question: {research_question}")
             print(f"DEBUG: Config: {config}")
@@ -929,22 +931,32 @@ class TaskManager:
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"DEBUG: Error parsing LangGraph config, using defaults: {e}")
                     # Fall back to default configuration
+                    max_research_loops = max_steps
+                    initial_search_query_count = 3  # Default fallback
+                    local_search_limit = num_papers_target
+                    external_search_limit = 5
+                    
                     agent_config = AgentConfiguration(
-                        local_search_limit=num_papers_target,
-                        external_search_limit=5,
-                        max_research_loops=max_steps,
-                        number_of_initial_queries=3,
+                        local_search_limit=local_search_limit,
+                        external_search_limit=external_search_limit,
+                        max_research_loops=max_research_loops,
+                        number_of_initial_queries=initial_search_query_count,
                         enable_pdf_download=enable_pdf_download,
                         external_search_delay=2.0
                     )
             else:
                 print(f"DEBUG: No LangGraph config found, using defaults for {task_id}")
                 # Use default configuration
+                max_research_loops = max_steps
+                initial_search_query_count = 3  # Default if no config
+                local_search_limit = num_papers_target
+                external_search_limit = 5
+                
                 agent_config = AgentConfiguration(
-                    local_search_limit=num_papers_target,
-                    external_search_limit=5,
-                    max_research_loops=max_steps,
-                    number_of_initial_queries=3,
+                    local_search_limit=local_search_limit,
+                    external_search_limit=external_search_limit,
+                    max_research_loops=max_research_loops,
+                    number_of_initial_queries=initial_search_query_count,
                     enable_pdf_download=enable_pdf_download,
                     external_search_delay=2.0
                 )
@@ -996,9 +1008,11 @@ class TaskManager:
             # Set up streaming with progress tracking
             research_config = {
                 "local_search_limit": num_papers_target,
-                "external_search_limit": 5,
+                "external_search_limit": external_search_limit,
                 "max_research_loops": max_steps,
-                "number_of_initial_queries": 3
+                "number_of_initial_queries": initial_search_query_count,  # Use configured value, not hardcoded
+                "papers_bonus": papers_bonus,
+                "loops_bonus": loops_bonus
             }
             
                                 # Track progress through streaming
@@ -1022,6 +1036,23 @@ class TaskManager:
                     
                     # Process different types of updates
                     for node_name, node_data in chunk.items():
+                        # Skip processing if node_data is None
+                        if node_data is None:
+                            # CRITICAL: generate_query should NEVER return None as it's the foundation of research
+                            if node_name == "generate_query":
+                                error_msg = f"CRITICAL ERROR: generate_query returned None for task {task_id}! This breaks the entire research pipeline."
+                                print(error_msg)
+                                await self.update_task_status(
+                                    task_id,
+                                    TaskStatus.FAILED,
+                                    error_msg,
+                                    error=error_msg
+                                )
+                                return
+                            else:
+                                print(f"DEBUG: Skipping {node_name} - node_data is None")
+                                continue
+                            
                         if node_name == "query_refinement":
                             needs_clarification = node_data.get('needs_clarification', False)
                             
@@ -1082,83 +1113,213 @@ Please respond with any additional details that would help me conduct more targe
                                 })
                                 
                         elif node_name == "generate_query":
+                            # Debug query generation results
+                            query_list = node_data.get('query_list', [])
+                            query_count = len(query_list)
+                            
+                            print(f"DEBUG: generate_query results for {task_id}:")
+                            print(f"  Raw node_data: {node_data}")
+                            print(f"  Query list length: {query_count}")
+                            if query_list:
+                                for i, query in enumerate(query_list[:3]):  # Show first 3
+                                    print(f"  Query {i+1}: {query}")
+                            
+                            if query_count == 0:
+                                error_msg = f"ERROR: generate_query returned empty query_list for task {task_id}!"
+                                print(error_msg)
+                                await self.update_task_status(
+                                    task_id,
+                                    TaskStatus.FAILED,
+                                    error_msg,
+                                    error=error_msg
+                                )
+                                return
+                                
                             await self.update_task_status(
                                 task_id,
                                 TaskStatus.PROCESSING,
-                                f"Generated {len(node_data.get('query_list', []))} search queries",
+                                f"Generated {query_count} search queries",
                                 progress=15,
                                 current_step="query_generation",
                             )
-                            query_count = len(node_data.get('query_list', []))
                             
                             # Record activity
                             activity_log.append({
                                 "timestamp": datetime.now().isoformat(),
                                 "step": "query_generation",
                                 "action": f"Generated {query_count} search queries",
-                                "data": {"queries": node_data.get('query_list', [])}
+                                "data": {"queries": query_list}
                             })
                             
                         elif node_name == "local_research":
                             current_progress = 20 + (query_count * 5)  # Progress based on queries
-                            await self.update_task_status(
-                                task_id,
-                                TaskStatus.PROCESSING,
-                                f"Searching local database: {node_data.get('search_query', [''])[0]}",
-                                progress=min(current_progress, 40),
-                                current_step="local_search",
-                            )
                             
                             # Collect sources and debug paper access
                             if node_data.get('sources_gathered'):
                                 new_sources = node_data['sources_gathered']
                                 sources_gathered.extend(new_sources)
                                 
+                                # Count papers with PDF/full text processing
+                                full_text_count = 0
+                                pdf_attempted_count = 0
+                                for source in new_sources:
+                                    if source.get('has_full_text'):
+                                        full_text_count += 1
+                                    if source.get('full_text_attempted'):
+                                        pdf_attempted_count += 1
+                                
+                                # Enhanced status message with PDF processing info
+                                pdf_info = ""
+                                if pdf_attempted_count > 0:
+                                    pdf_info = f", {pdf_attempted_count} PDFs processed"
+                                if full_text_count > 0:
+                                    pdf_info += f", {full_text_count} with full text"
+                                
+                                # Update progress message if PDF processing occurred - safe access to search_query
+                                search_queries = node_data.get('search_query', [])
+                                search_query = search_queries[0] if search_queries else 'unknown query'
+                                enhanced_message = f"Local search: {len(new_sources)} papers found{pdf_info}"
+                                
+                                await self.update_task_status(
+                                    task_id,
+                                    TaskStatus.PROCESSING,
+                                    enhanced_message,
+                                    progress=min(current_progress, 40),
+                                    current_step="local_search",
+                                )
+                                
                                 # Debug: Check what papers are being found and if they have full text
                                 print(f"DEBUG: Local search found {len(new_sources)} papers for {task_id}")
                                 for i, source in enumerate(new_sources[:3]):  # Log first 3 for debugging
                                     print(f"  Paper {i+1}: {source.get('title', 'No title')}")
                                     print(f"    Type: {source.get('source_type', 'unknown')}")
+                                    print(f"    Has full text: {source.get('has_full_text', False)}")
+                                    print(f"    PDF attempted: {source.get('full_text_attempted', False)}")
                                     if source.get('value'):
                                         print(f"    URL/Value: {source['value'][:100]}...")
                                     
                             if node_data.get('web_research_result'):
                                 search_results.extend(node_data['web_research_result'])
                             
-                            # Record activity
-                            search_query = node_data.get('search_query', [''])[0]
+                            # Record activity with PDF processing info - safe access to search_query
+                            search_queries = node_data.get('search_query', [])
+                            search_query = search_queries[0] if search_queries else 'unknown query'
                             sources_count = len(node_data.get('sources_gathered', []))
+                            
+                            # Count PDF processing statistics
+                            pdf_stats = {"attempted": 0, "successful": 0}
+                            if node_data.get('sources_gathered'):
+                                for source in node_data['sources_gathered']:
+                                    if source.get('full_text_attempted'):
+                                        pdf_stats["attempted"] += 1
+                                    if source.get('has_full_text'):
+                                        pdf_stats["successful"] += 1
+                            
+                            action_text = f"Searched local database for '{search_query}' - found {sources_count} sources"
+                            if pdf_stats["attempted"] > 0:
+                                action_text += f", processed {pdf_stats['attempted']} PDFs ({pdf_stats['successful']} successful)"
+                            
                             activity_log.append({
                                 "timestamp": datetime.now().isoformat(),
                                 "step": "local_research",
-                                "action": f"Searched local database for '{search_query}' - found {sources_count} sources",
-                                "data": {"query": search_query, "sources_found": sources_count}
+                                "action": action_text,
+                                "data": {
+                                    "query": search_query, 
+                                    "sources_found": sources_count,
+                                    "pdf_processing": pdf_stats
+                                }
+                            })
+                        
+                        elif node_name == "judge_papers":
+                            judged_count = len(node_data.get('judged_papers', []))
+                            rejected_count = len(node_data.get('rejected_papers', []))
+                            total_papers = judged_count + rejected_count
+                            
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Judging paper relevance: {judged_count} relevant, {rejected_count} rejected (total: {total_papers})",
+                                progress=45,
+                                current_step="judge_papers",
+                            )
+                            
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "judge_papers",
+                                "action": f"Evaluated {total_papers} papers for relevance - {judged_count} passed, {rejected_count} filtered out",
+                                "data": {
+                                    "papers_evaluated": total_papers,
+                                    "relevant_papers": judged_count,
+                                    "rejected_papers": rejected_count
+                                }
+                            })
+                        
+                        elif node_name == "compile_outline":
+                            outline_length = len(node_data.get('outline', ''))
+                            paper_contexts = len(node_data.get('paper_contexts', []))
+                            
+                            await self.update_task_status(
+                                task_id,
+                                TaskStatus.PROCESSING,
+                                f"Compiling research outline from {paper_contexts} relevant papers",
+                                progress=48,
+                                current_step="compile_outline",
+                            )
+                            
+                            # Record activity
+                            activity_log.append({
+                                "timestamp": datetime.now().isoformat(),
+                                "step": "compile_outline",
+                                "action": f"Compiled research outline ({outline_length} chars) from {paper_contexts} papers",
+                                "data": {
+                                    "outline_length": outline_length,
+                                    "source_papers": paper_contexts
+                                }
                             })
                                 
                         elif node_name == "external_research":
                             current_progress = 50 + (research_loop_count * 10)
+                            
+                            # Collect sources and check for PDF processing
+                            pdf_downloads = 0
+                            if node_data.get('sources_gathered'):
+                                sources_gathered.extend(node_data['sources_gathered'])
+                                # Count external PDF processing
+                                for source in node_data['sources_gathered']:
+                                    if source.get('full_text_attempted') or source.get('has_full_text'):
+                                        pdf_downloads += 1
+                            if node_data.get('web_research_result'):
+                                search_results.extend(node_data['web_research_result'])
+                            
+                            # Enhanced status message with PDF info - safe access to search_query
+                            search_queries = node_data.get('search_query', [])
+                            search_query = search_queries[0] if search_queries else 'unknown query'
+                            sources_count = len(node_data.get('sources_gathered', []))
+                            pdf_info = f" (downloaded {pdf_downloads} PDFs)" if pdf_downloads > 0 else ""
+                            
                             await self.update_task_status(
                                 task_id,
                                 TaskStatus.PROCESSING,
-                                f"Searching external sources: {node_data.get('search_query', [''])[0]}",
+                                f"External search: {sources_count} papers found{pdf_info}",
                                 progress=min(current_progress, 70),
                                 current_step="external_search",
                             )
                             
-                            # Collect sources
-                            if node_data.get('sources_gathered'):
-                                sources_gathered.extend(node_data['sources_gathered'])
-                            if node_data.get('web_research_result'):
-                                search_results.extend(node_data['web_research_result'])
-                            
                             # Record activity
-                            search_query = node_data.get('search_query', [''])[0]
-                            sources_count = len(node_data.get('sources_gathered', []))
+                            action_text = f"Searched external sources for '{search_query}' - found {sources_count} sources"
+                            if pdf_downloads > 0:
+                                action_text += f", downloaded {pdf_downloads} PDFs"
+                            
                             activity_log.append({
                                 "timestamp": datetime.now().isoformat(),
                                 "step": "external_research",
-                                "action": f"Searched external sources for '{search_query}' - found {sources_count} sources",
-                                "data": {"query": search_query, "sources_found": sources_count}
+                                "action": action_text,
+                                "data": {
+                                    "query": search_query, 
+                                    "sources_found": sources_count,
+                                    "pdf_downloads": pdf_downloads
+                                }
                             })
                             
                         elif node_name == "sequential_external_research":

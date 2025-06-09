@@ -363,7 +363,13 @@ class LocalSearchTool(BaseSearchTool):
             try:
                 # Process the PDF using SpacyLayoutDocProcessor
                 print(f"Processing PDF content for paper {paper_id}...")
-                result = self.pdf_processor.process_document(temp_pdf_path)
+                
+                # Suppress torch warnings during PDF processing
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+                    result = self.pdf_processor.process_document(temp_pdf_path)
+                    
                 markdown_text = result.get('processed_data', '')
                 
                 if not markdown_text:

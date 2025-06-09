@@ -17,3 +17,4 @@ from .system_prompts import (NEWSLETTER_SYSTEM_PROMPT,
                              PODCAST_SUMMARY_SYSTEM_PROMPT)
 from .templates import *
 from .podcast_prompts import *
+from .research_agent_prompts import *

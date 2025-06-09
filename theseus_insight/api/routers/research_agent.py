@@ -44,6 +44,7 @@ def _get_research_agent_config():
         "query_generator_model": None,  # Falls back to reasoning_model if not specified
         "reflection_model": None,       # Falls back to reasoning_model if not specified  
         "answer_model": None,           # Falls back to reasoning_model if not specified
+        "judge_model": None,            # Falls back to reasoning_model if not specified
         "max_research_loops": 10,
         "initial_search_query_count": 3,
         "local_search_limit": 10,
@@ -92,11 +93,11 @@ async def run_research_agent(request: ResearchAgentRunRequest, background_tasks:
         # Generate unique task ID
         task_id = str(uuid.uuid4())
         
-        # Prepare enhanced task configuration
+        # Prepare enhanced task configuration with additive effort parameters
         config = {
             "research_question": request.research_question,
-            "num_papers_target": request.num_papers_target,
-            "max_steps": request.max_steps,
+            "papers_bonus": request.papers_bonus,
+            "loops_bonus": request.loops_bonus,
             "enable_pdf_download": True,  # Enable by default
             "conversation_history": [msg.dict() for msg in request.conversation_history],  # Support multi-turn conversations
         }

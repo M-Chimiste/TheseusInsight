@@ -29,6 +29,7 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   ContentCopy as CopyIcon,
+  ContentCopy,
   Check as CheckIcon,
   Refresh as RefreshIcon,
   Timeline as TimelineIcon,
@@ -82,6 +83,43 @@ interface ActivityTimelineProps {
   isLoading: boolean;
 }
 
+// Helper function to convert snake_case/kebab-case to sentence case
+const formatStatusTitle = (status: string): string => {
+  if (!status) return 'Processing';
+  
+  // Handle specific status mappings for better UX
+  const statusMappings: Record<string, string> = {
+    'query_refinement': 'Query refinement',
+    'generate_query': 'Query generation',
+    'local_research': 'Local database search',
+    'external_research': 'External search (ArXiv)',
+    'judge_all_papers': 'Judging paper relevance (local + external)',
+    'process_pdfs': 'PDF processing',
+    'compile_outline': 'Compiling research outline',
+    'reflection': 'Reflection and gap analysis',
+    'follow_up_research': 'Follow-up research (local + external)',
+    'finalize_answer': 'Finalizing answer',
+    'query_refinement_waiting': 'Awaiting clarification',
+    'pdf_download': 'Downloading PDFs',
+    'pdf_processing': 'Processing PDF content',
+    'full_text_analysis': 'Analyzing full text',
+    'arxiv_search': 'ArXiv API search',
+    'database_search': 'Database search'
+  };
+  
+  // Check for exact match first
+  if (statusMappings[status]) {
+    return statusMappings[status];
+  }
+  
+  // Convert snake_case/kebab-case to sentence case
+  return status
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 // Activity Timeline Component
 const ActivityTimeline: React.FC<ActivityTimelineProps> = ({ processedEvents, isLoading }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -89,12 +127,22 @@ const ActivityTimeline: React.FC<ActivityTimelineProps> = ({ processedEvents, is
 
   const getEventIcon = (title: string) => {
     const titleLower = title.toLowerCase();
-    if (titleLower.includes('generating') || titleLower.includes('query')) {
+    if (titleLower.includes('query') || titleLower.includes('generating') || titleLower.includes('refinement')) {
       return <SearchIcon sx={{ fontSize: 16, color: theme.palette.primary.main }} />;
-    } else if (titleLower.includes('research') || titleLower.includes('search')) {
+    } else if (titleLower.includes('pdf') || titleLower.includes('download')) {
+      return <ContentCopy sx={{ fontSize: 16, color: theme.palette.warning.main }} />;
+    } else if (titleLower.includes('judg') || titleLower.includes('relevance')) {
+      return <SmartIcon sx={{ fontSize: 16, color: theme.palette.info.main }} />;
+    } else if (titleLower.includes('arxiv') || titleLower.includes('external')) {
       return <ScienceIcon sx={{ fontSize: 16, color: theme.palette.secondary.main }} />;
-    } else if (titleLower.includes('reflection') || titleLower.includes('thinking')) {
+    } else if (titleLower.includes('database') || titleLower.includes('local')) {
+      return <SearchIcon sx={{ fontSize: 16, color: theme.palette.primary.main }} />;
+    } else if (titleLower.includes('outline') || titleLower.includes('compil')) {
+      return <CreateIcon sx={{ fontSize: 16, color: theme.palette.warning.main }} />;
+    } else if (titleLower.includes('reflection') || titleLower.includes('thinking') || titleLower.includes('gap')) {
       return <PsychologyIcon sx={{ fontSize: 16, color: theme.palette.warning.main }} />;
+    } else if (titleLower.includes('follow-up') || titleLower.includes('follow_up')) {
+      return <RefreshIcon sx={{ fontSize: 16, color: theme.palette.primary.main }} />;
     } else if (titleLower.includes('finalizing') || titleLower.includes('answer')) {
       return <CreateIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />;
     }
@@ -366,7 +414,7 @@ const ResearchAgent: React.FC = () => {
   const { currentDrawerWidth } = useLayout();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [effort, setEffort] = useState<'low' | 'medium' | 'high'>('medium');
+  const [effort, setEffort] = useState<'default' | 'moderate' | 'medium' | 'high'>('default');
   const [isLoading, setIsLoading] = useState(false);
   const [liveActivity, setLiveActivity] = useState<ProcessedEvent[]>([]);
   const [historicalActivities, setHistoricalActivities] = useState<Record<string, ProcessedEvent[]>>({});
@@ -425,13 +473,99 @@ const ResearchAgent: React.FC = () => {
         
         // Process different types of updates from our existing research agent
         if (status.message) {
-          // Convert our existing progress messages to ProcessedEvent format
-          const eventTitle = status.currentStep || 'Research Progress';
-          const eventData = status.message;
+          // Convert our existing progress messages to ProcessedEvent format with better formatting
+          const rawStep = status.currentStep || 'processing';
+          const eventTitle = formatStatusTitle(rawStep);
+          let eventData = status.message;
+          
+          // Enhanced message formatting for specific steps
+          let enhancedData = eventData;
+          if (rawStep === 'judge_all_papers' && typeof eventData === 'string') {
+            // Add more context for combined paper judging
+            if (eventData.includes('0 relevant, 0 rejected (total: 0)')) {
+              enhancedData = `${eventData} - ⚠️ No papers received for judging. Check parallel research completion...`;
+            } else if (eventData.includes('Judging relevance for')) {
+              enhancedData = `${eventData} - Filtering papers from local database and external sources`;
+            } else if (eventData.includes('Local papers to judge:') || eventData.includes('External papers to judge:')) {
+              enhancedData = `${eventData} - Analyzing papers from both sources`;
+            } else if (eventData.includes('Paper relevance judging completed:')) {
+              enhancedData = `${eventData} - Ready for PDF processing`;
+            }
+          } else if (rawStep === 'process_pdfs' && typeof eventData === 'string') {
+            // Enhanced PDF processing status
+            if (eventData.includes('📄 Starting PDF downloads')) {
+              enhancedData = `${eventData} - Beginning PDF downloads for relevant papers`;
+            } else if (eventData.includes('📥 Downloading PDF')) {
+              enhancedData = `${eventData} - Fetching full text content`;
+            } else if (eventData.includes('✅ PDF') && eventData.includes('downloaded successfully')) {
+              enhancedData = `${eventData} - Full text extracted`;
+            } else if (eventData.includes('❌ PDF download failed')) {
+              enhancedData = `${eventData} - Will use abstract only`;
+            } else if (eventData.includes('📄 PDF processing completed:')) {
+              enhancedData = `${eventData} - PDF downloads finished`;
+            } else if (eventData.includes('No papers require PDF processing')) {
+              enhancedData = `${eventData} - All papers already have full text`;
+            }
+          } else if (rawStep === 'local_research' && typeof eventData === 'string') {
+            // Enhanced local research status
+            if (eventData.includes('🔍 Starting local database search')) {
+              enhancedData = `${eventData} - Searching paper database with generated queries`;
+            } else if (eventData.includes('📚 Local search') && eventData.includes('/')) {
+              enhancedData = `${eventData} - Running database query`;
+            } else if (eventData.includes('✅ Found') && eventData.includes('local papers')) {
+              enhancedData = `${eventData} - Papers retrieved from database`;
+            } else if (eventData.includes('❌ No local papers found')) {
+              enhancedData = `${eventData} - No matches in database`;
+            } else if (eventData.includes('🔍 Local database search completed')) {
+              enhancedData = `${eventData} - Database search finished`;
+            }
+          } else if (rawStep === 'external_research' && typeof eventData === 'string') {
+            // Enhanced external research status
+            if (eventData.includes('🌐 Starting external ArXiv search')) {
+              enhancedData = `${eventData} - Querying ArXiv repository`;
+            } else if (eventData.includes('📡 Querying ArXiv API')) {
+              enhancedData = `${eventData} - Fetching latest papers from ArXiv`;
+            } else if (eventData.includes('✅ Found') && eventData.includes('external papers')) {
+              enhancedData = `${eventData} - Papers retrieved from ArXiv`;
+            } else if (eventData.includes('❌ No external papers found')) {
+              enhancedData = `${eventData} - No matches in ArXiv`;
+            } else if (eventData.includes('🌐 External ArXiv search completed')) {
+              enhancedData = `${eventData} - ArXiv search finished`;
+            }
+          } else if (rawStep === 'reflection' && typeof eventData === 'string') {
+            // Enhanced reflection status
+            if (eventData.includes('🤔 Starting reflection analysis')) {
+              enhancedData = `${eventData} - Analyzing research completeness`;
+            } else if (eventData.includes('📊 Analyzing') && eventData.includes('relevant papers')) {
+              enhancedData = `${eventData} - Reviewing collected evidence`;
+            } else if (eventData.includes('🧠 Running LLM reflection')) {
+              enhancedData = `${eventData} - Identifying research gaps`;
+            } else if (eventData.includes('🤔 Reflection completed')) {
+              enhancedData = `${eventData} - Gap analysis finished`;
+            } else if (eventData.includes('📝 Follow-up query')) {
+              enhancedData = `${eventData} - Generated for additional research`;
+            }
+          } else if (rawStep === 'follow_up_research' && typeof eventData === 'string') {
+            // Enhanced follow-up research status
+            if (eventData.includes('Starting follow-up research')) {
+              enhancedData = `${eventData} - Searching both sources with refined queries`;
+            } else if (eventData.includes('Local search for:')) {
+              enhancedData = `${eventData} - Checking database for missing papers`;
+            } else if (eventData.includes('External search for:')) {
+              enhancedData = `${eventData} - Checking ArXiv for recent papers`;
+            } else if (eventData.includes('completed:') && eventData.includes('local +') && eventData.includes('external')) {
+              enhancedData = `${eventData} - Combined results from both sources`;
+            } else if (eventData.includes('Follow-up research completed')) {
+              enhancedData = `${eventData} - Additional research finished`;
+            }
+          } else if ((rawStep.includes('pdf') || eventData.includes('PDF')) && typeof eventData === 'string') {
+            // General PDF-related messages
+            enhancedData = `${eventData} - Processing full text content`;
+          }
           
           const processedEvent: ProcessedEvent = {
             title: eventTitle,
-            data: eventData
+            data: enhancedData
           };
           
           setLiveActivity(prev => [...prev, processedEvent]);
@@ -516,22 +650,26 @@ const ResearchAgent: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // Convert effort to our API parameters
-      let num_papers_target = 5;
-      let max_steps = 10;
+      // Convert effort to additive parameters (will be added to base settings)
+      let papers_bonus = 0;
+      let loops_bonus = 0;
       
       switch (selectedEffort) {
-        case 'low':
-          num_papers_target = 3;
-          max_steps = 5;
+        case 'default':
+          papers_bonus = 0;
+          loops_bonus = 0;
+          break;
+        case 'moderate':
+          papers_bonus = 2;
+          loops_bonus = 2;
           break;
         case 'medium':
-          num_papers_target = 5;
-          max_steps = 10;
+          papers_bonus = 5;
+          loops_bonus = 5;
           break;
         case 'high':
-          num_papers_target = 10;
-          max_steps = 20;
+          papers_bonus = 10;
+          loops_bonus = 10;
           break;
       }
 
@@ -550,8 +688,8 @@ const ResearchAgent: React.FC = () => {
         },
         body: JSON.stringify({
           research_question: submittedInputValue,
-          num_papers_target,
-          max_steps,
+          papers_bonus,
+          loops_bonus,
           conversation_history
         }),
       });
@@ -738,10 +876,11 @@ const ResearchAgent: React.FC = () => {
                   <Select
                     value={effort}
                     label="Effort"
-                    onChange={(e) => setEffort(e.target.value as 'low' | 'medium' | 'high')}
+                    onChange={(e) => setEffort(e.target.value as 'default' | 'moderate' | 'medium' | 'high')}
                     disabled={isLoading}
                   >
-                    <MenuItem value="low">Low</MenuItem>
+                    <MenuItem value="default">Default</MenuItem>
+                    <MenuItem value="moderate">Moderate</MenuItem>
                     <MenuItem value="medium">Medium</MenuItem>
                     <MenuItem value="high">High</MenuItem>
                   </Select>

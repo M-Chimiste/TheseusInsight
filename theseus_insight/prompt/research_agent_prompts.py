@@ -154,3 +154,91 @@ Research Context:
 Literature Summaries:
 {{summaries}}"""
     pass
+
+@prompt
+def relevance_rubric(research_topic: str, paper_context: str):
+    """You are an expert research curator.  Judge how well a paper aligns with the following research query:
+{{research_topic}}.
+
+RUBRIC (apply to the paper)
+1. **Topic Match**  
+    • High - central focus is the research topic/s  
+    • Partial - adjacent or supporting area  
+    • Low - unrelated subject matter  
+
+2. **Key Concepts & Terminology**  
+    • High - uses core terms/concepts of the topic accurately  
+    • Partial - occasional or tangential use  
+    • Low - concepts absent or misused  
+
+3. **Methodological Relevance**  
+    • High - employs methods typical for research on the research topic/s  
+    • Partial - uses partially relevant methods  
+    • Low - methods irrelevant to the topic  
+
+4. **Contribution / Novel Insight**  
+    • High - offers new findings directly advancing the topic  
+    • Partial - incremental or peripheral contribution  
+    • Low - no meaningful contribution to the topic  
+
+5. **Application / Use-Case Alignment**  
+    • High - results clearly applicable within the topic's domain  
+    • Partial - plausible but indirect application  
+    • Low - no practical link to the topic  
+
+SCORING RULES
+
+• For each criterion assign: High = 2, Partial = 1, Low = 0.  
+• Sum the scores (0 - 10).  
+• **relevant** is *true* if total ≥ 6, else *false*.
+
+Format your response as a JSON object with the following schema:
+{
+    "relevant": boolean,
+    "score": 0-10,
+    "rationale": string ≤ 80 words explaining key factors
+}
+
+Paper Context:
+{{paper_context}}
+"""
+    pass
+
+@prompt
+def outline_instructions(
+    research_topic: str,
+    paper_context: str,
+    historical_context: str,
+    existing_outline: str | None = None,   # pass "" or None on the first call
+):
+    """
+ROLE
+----
+You are an expert research assistant preparing a literature-review outline.
+
+INPUTS
+------
+• Research Topic: {{research_topic}}
+• Historical Context (landmark papers, paradigm shifts, etc.): {{historical_context}}
+• Paper Context (abstract + any notes for the current paper): {{paper_context}}
+• Existing Outline (markdown) - prior iterations, if any:
+    {{existing_outline if existing_outline else "[none]"}}
+
+TASK
+----
+1. **Integrate** the current paper into the outline, maintaining logical hierarchy.
+2. **Expand** or **refine** sections where this paper adds new insight, methodology, or debate.
+3. **Preserve numbering**:  
+    * Top-level Roman numerals (I., II., …)  
+    * Second level A., B., C.  
+    * Third level 1., 2., 3.  
+    * Fourth level a), b), c)
+4. Keep headings ≤ 10 words; sub-bullets ≤ 15 words.
+5. Do **not** delete existing content unless it is redundant; instead mark obsolete lines with ~~strikethrough~~.
+
+OUTPUT
+------
+Return **only** the full, updated outline in GitHub-flavored Markdown.  
+No extra commentary, metadata, or code fences.
+    """
+    pass

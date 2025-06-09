@@ -1030,6 +1030,120 @@ const Settings: React.FC = () => {
                 </AccordionDetails>
               </Accordion>
 
+              {/* Judge Model */}
+              <Accordion>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle1">
+                    Judge Model {config.judge_model ? '(Configured)' : '(Using Reasoning Model)'}
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Specialized model for judging paper relevance before PDF download to save time on irrelevant papers.
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                    <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <ModelNameAutocomplete
+                        label="Judge Model Name"
+                        value={config.judge_model?.model_name || ''}
+                        onChange={value => {
+                          if (!config.judge_model) {
+                            handleModelConfigChange('research_agent_model_config', 'judge_model', {
+                              model_name: value,
+                              model_type: reasoningModel.model_type || 'gemini',
+                              max_new_tokens: reasoningModel.max_new_tokens || 4096,
+                              temperature: reasoningModel.temperature || 0.1,
+                              num_ctx: reasoningModel.num_ctx || 131072
+                            });
+                          } else {
+                            handleModelConfigChange('research_agent_model_config', 'judge_model.model_name', value);
+                          }
+                        }}
+                        onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'judge_model')}
+                        modelCatalogData={modelCatalogData}
+                      />
+                      <FormControl fullWidth>
+                        <InputLabel>Model Type (Provider)</InputLabel>
+                        <Select
+                          value={config.judge_model?.model_type || ''}
+                          label="Model Type (Provider)"
+                          onChange={e => {
+                            if (!config.judge_model) {
+                              handleModelConfigChange('research_agent_model_config', 'judge_model', {
+                                model_name: reasoningModel.model_name || 'gemini-2.0-flash',
+                                model_type: e.target.value,
+                                max_new_tokens: reasoningModel.max_new_tokens || 4096,
+                                temperature: reasoningModel.temperature || 0.1,
+                                num_ctx: reasoningModel.num_ctx || 131072
+                              });
+                            } else {
+                              handleModelConfigChange('research_agent_model_config', 'judge_model.model_type', e.target.value);
+                            }
+                          }}
+                        >
+                          {(modelProviders || []).map((provider: any) => (
+                            <MenuItem key={provider.id} value={provider.name}>
+                              {provider.name}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                    <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <TextField
+                        fullWidth
+                        label="Max New Tokens"
+                        type="number"
+                        value={config.judge_model?.max_new_tokens || ''}
+                        onChange={e => {
+                          const value = Number(e.target.value);
+                          if (!config.judge_model) {
+                            handleModelConfigChange('research_agent_model_config', 'judge_model', {
+                              model_name: reasoningModel.model_name || 'gemini-2.0-flash',
+                              model_type: reasoningModel.model_type || 'gemini',
+                              max_new_tokens: value,
+                              temperature: reasoningModel.temperature || 0.1,
+                              num_ctx: reasoningModel.num_ctx || 131072
+                            });
+                          } else {
+                            handleModelConfigChange('research_agent_model_config', 'judge_model.max_new_tokens', value);
+                          }
+                        }}
+                      />
+                      <TextField
+                        fullWidth
+                        label="Temperature"
+                        type="number"
+                        inputProps={{ step: '0.1' }}
+                        value={config.judge_model?.temperature || ''}
+                        onChange={e => {
+                          const value = parseFloat(e.target.value);
+                          if (!config.judge_model) {
+                            handleModelConfigChange('research_agent_model_config', 'judge_model', {
+                              model_name: reasoningModel.model_name || 'gemini-2.0-flash',
+                              model_type: reasoningModel.model_type || 'gemini',
+                              max_new_tokens: reasoningModel.max_new_tokens || 4096,
+                              temperature: value,
+                              num_ctx: reasoningModel.num_ctx || 131072
+                            });
+                          } else {
+                            handleModelConfigChange('research_agent_model_config', 'judge_model.temperature', value);
+                          }
+                        }}
+                      />
+                    </Box>
+                  </Box>
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    sx={{ mt: 2 }}
+                    onClick={() => handleModelConfigChange('research_agent_model_config', 'judge_model', null)}
+                  >
+                    Clear (Use Reasoning Model)
+                  </Button>
+                </AccordionDetails>
+              </Accordion>
+
               {/* Answer Model */}
               <Accordion>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>

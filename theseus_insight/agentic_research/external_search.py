@@ -431,7 +431,13 @@ class ExternalSearchTool(BaseSearchTool):
             print(f"Downloading external PDF from {url}...")
             
             print(f"Processing external PDF content...")
-            result = self.pdf_processor.process_document(url)
+            
+            # Suppress torch warnings during PDF processing
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+                result = self.pdf_processor.process_document(url)
+                
             markdown_text = result.get("processed_data", "")
             
             if not markdown_text:

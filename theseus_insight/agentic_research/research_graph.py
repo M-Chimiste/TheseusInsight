@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send
 
 from .graph_configuration import AgentConfiguration
 from .graph_state import (
@@ -16,6 +15,8 @@ from .graph_state import (
     ReflectionState,
     WebSearchState,
     QueryRefinementState,
+    JudgeState,
+    OutlineState,
 )
 from ..prompt.research_agent_prompts import (
     answer_instructions,
@@ -23,16 +24,23 @@ from ..prompt.research_agent_prompts import (
     query_writer_instructions,
     reflection_instructions,
     query_refinement_instructions,
+    relevance_rubric,
+    outline_instructions
 )
-from .graph_schemas import Reflection, SearchQueryList, QueryRefinement
+from .graph_schemas import (Reflection,
+                            SearchQueryList, 
+                            QueryRefinement, 
+                            RelevanceRubric,
+                            ResearchOutline,
+)
 from .graph_utils import (
     get_research_topic, 
     format_paper_results,
     extract_citations_from_summary,
     generate_research_insights,
-    combine_search_results
+    combine_search_results,
 )
-from .unified_model_router import load_unified_router
+from .unified_model_router import load_unified_router, UnifiedModelRouter
 from .local_search import LocalSearchTool
 from .external_search import ExternalSearchTool
 from ..data_model.data_handling import PaperDatabase
@@ -89,6 +97,8 @@ class ResearchAgent:
         self._url_mapping[short_url] = original_url
         return short_url
     
+
+    
     def _build_graph(self) -> StateGraph:
         """Build and compile the enhanced LangGraph workflow."""
         builder = StateGraph(OverallState, config_schema=AgentConfiguration)
@@ -98,8 +108,11 @@ class ResearchAgent:
         builder.add_node("generate_query", self._generate_query)
         builder.add_node("local_research", self._local_research)
         builder.add_node("external_research", self._external_research)
-        builder.add_node("sequential_external_research", self._sequential_external_research)
+        builder.add_node("judge_all_papers", self._judge_all_papers)  # Combined judging for local + external
+        builder.add_node("process_pdfs", self._process_pdfs)
+        builder.add_node("compile_outline", self._compile_outline)
         builder.add_node("reflection", self._reflection)
+        builder.add_node("follow_up_research", self._follow_up_research)  # Both local + external with new queries
         builder.add_node("finalize_answer", self._finalize_answer)
         
         # Set the entry point to query refinement
@@ -112,25 +125,31 @@ class ResearchAgent:
             {END: END, "generate_query": "generate_query"}
         )
         
-        # Add conditional edges with enhanced routing
-        builder.add_conditional_edges(
-            "generate_query", 
-            self._continue_to_local_research, 
-            ["local_research"]
-        )
+        # After query generation, do BOTH local and external research in parallel
+        builder.add_edge("generate_query", "local_research")
+        builder.add_edge("generate_query", "external_research")
         
-        # After local research, reflect on findings
-        builder.add_edge("local_research", "reflection")
-        builder.add_edge("external_research", "reflection")
+        # After both research types complete, judge ALL papers together
+        builder.add_edge("local_research", "judge_all_papers")
+        builder.add_edge("external_research", "judge_all_papers")
         
-        # After sequential external research, reflect on findings
-        builder.add_edge("sequential_external_research", "reflection")
+        # After judging, process PDFs for relevant papers only
+        builder.add_edge("judge_all_papers", "process_pdfs")
+        
+        # After PDF processing, compile/update the research outline
+        builder.add_edge("process_pdfs", "compile_outline")
+        
+        # After outline compilation, reflect on findings
+        builder.add_edge("compile_outline", "reflection")
+        
+        # After follow-up research, judge new papers and reflect again
+        builder.add_edge("follow_up_research", "judge_all_papers")
         
         # Evaluate if we need more research or can finalize
         builder.add_conditional_edges(
             "reflection", 
             self._evaluate_research, 
-            ["sequential_external_research", "finalize_answer"]
+            ["follow_up_research", "finalize_answer"]
         )
         
         # End after finalizing
@@ -243,143 +262,623 @@ Please respond with any additional details that would help me conduct more targe
     
     def _generate_query(self, state: OverallState, config: RunnableConfig) -> QueryGenerationState:
         """Generate initial search queries based on the research question."""
+        # Ensure we ALWAYS return a valid state, no matter what happens
+        def create_fallback_state(topic: str = "research query") -> QueryGenerationState:
+            fallback_result = {"query_list": [{"query": topic, "rationale": "Fallback query due to error in query generation"}]}
+            logger.warning(f"EMERGENCY FALLBACK ACTIVATED: Returning {fallback_result}")
+            return fallback_result
+        
         try:
-            configurable = AgentConfiguration.from_runnable_config(config)
+            logger.info("=== GENERATE QUERY DEBUG START ===")
+            logger.info(f"Received state keys: {list(state.keys())}")
+            
+            # Robust configuration handling
+            try:
+                configurable = AgentConfiguration.from_runnable_config(config)
+            except Exception as config_error:
+                logger.error(f"Error loading configuration: {config_error}")
+                configurable = AgentConfiguration()  # Use defaults
             
             # Set initial query count if not provided
             if state.get("initial_search_query_count") is None:
                 state["initial_search_query_count"] = configurable.number_of_initial_queries
             
-            # Get the model for query generation
-            llm = self.model_router.get_model("generate_query")
+            logger.info(f"Query count: {state['initial_search_query_count']}")
             
-            # Format the prompt with conversation context
-            current_date = get_current_date()
-            research_topic = get_research_topic(state["messages"])
+            # Robust research topic extraction
+            try:
+                research_topic = get_research_topic(state["messages"])
+                logger.info(f"Research topic extracted: {research_topic}")
+            except Exception as topic_error:
+                logger.error(f"Error extracting research topic: {topic_error}")
+                # Try to get first human message as fallback
+                research_topic = "research query"
+                for msg in state.get("messages", []):
+                    if hasattr(msg, 'type') and msg.type == "human":
+                        research_topic = msg.content
+                        break
+                logger.info(f"Using fallback research topic: {research_topic}")
+            
+            # Get the model for query generation with error handling
+            try:
+                llm = self.model_router.get_model("generate_query")
+                logger.info(f"LLM model obtained: {type(llm)}")
+            except Exception as model_error:
+                logger.error(f"Error getting LLM model: {model_error}")
+                # Return fallback immediately if we can't get a model
+                return create_fallback_state(research_topic)
             
             # Handle conversation continuity
-            if len(state["messages"]) > 1:
-                # Multi-turn conversation - include context
-                conversation_context = "\n".join([
-                    f"{'User' if msg.type == 'human' else 'Assistant'}: {msg.content}"
-                    for msg in state["messages"][:-1]
-                ])
-                research_topic = f"Context: {conversation_context}\n\nCurrent question: {research_topic}"
+            enhanced_topic = research_topic
+            try:
+                if len(state.get("messages", [])) > 1:
+                    # Multi-turn conversation - include context
+                    conversation_context = "\n".join([
+                        f"{'User' if getattr(msg, 'type', None) == 'human' else 'Assistant'}: {getattr(msg, 'content', str(msg))}"
+                        for msg in state["messages"][:-1]
+                    ])
+                    enhanced_topic = f"Context: {conversation_context}\n\nCurrent question: {research_topic}"
+            except Exception as context_error:
+                logger.warning(f"Error building conversation context: {context_error}")
+                # Continue with basic topic
             
-            formatted_prompt = query_writer_instructions(
-                current_date=current_date,
-                research_topic=research_topic,
-                number_queries=state["initial_search_query_count"],
-            )
+            # Enhanced prompt for broader, more effective search queries
+            try:
+                current_date = get_current_date()
+                formatted_prompt = query_writer_instructions(
+                    current_date=current_date,
+                    research_topic=enhanced_topic,
+                    number_queries=state["initial_search_query_count"],
+                )
+                
+                # Add guidance for effective academic search queries
+                enhanced_prompt = formatted_prompt + """
+
+IMPORTANT: Generate search queries that are effective for finding relevant papers in an academic database.
+- Use terminology that researchers commonly use in their paper titles and abstracts
+- Include synonyms and alternative phrasings for key concepts
+- Balance specificity with breadth to capture relevant literature
+- Consider different ways researchers might describe the same concepts
+- Think about the actual language used in academic publications within this field
+"""
+                logger.info(f"About to call LLM with prompt length: {len(enhanced_prompt)}")
+            except Exception as prompt_error:
+                logger.error(f"Error creating prompt: {prompt_error}")
+                return create_fallback_state(research_topic)
             
-            # Generate queries using structured output
-            result = llm.invoke([], formatted_prompt, schema=SearchQueryList, node_name="generate_query")
-            logger.info(f"Generated {len(result.query)} search queries")
-            return {"query_list": result.query}
+            # Generate queries using structured output with comprehensive error handling
+            try:
+                result = llm.invoke([], enhanced_prompt, schema=SearchQueryList, node_name="generate_query")
+                logger.info(f"LLM call successful, result type: {type(result)}")
+                logger.info(f"Result has query attribute: {hasattr(result, 'query') if result else 'Result is None'}")
+                
+                if result and hasattr(result, 'query') and result.query:
+                    raw_query_list = result.query
+                    logger.info(f"Generated {len(raw_query_list)} search queries")
+                    
+                    # Validate and transform to correct format
+                    if isinstance(raw_query_list, list) and len(raw_query_list) > 0:
+                        # Transform from List[str] to List[Query] format
+                        formatted_query_list = []
+                        rationale = getattr(result, 'rationale', 'Generated search query for research')
+                        
+                        for i, query_str in enumerate(raw_query_list):
+                            if isinstance(query_str, str) and query_str.strip():
+                                formatted_query_list.append({
+                                    "query": query_str.strip(),
+                                    "rationale": f"{rationale} (Query {i+1})"
+                                })
+                                logger.info(f"QUERY DEBUG: Query {i+1}: {query_str.strip()}")
+                        
+                        if formatted_query_list:
+                            return_state = {"query_list": formatted_query_list}
+                            logger.info(f"=== GENERATE QUERY DEBUG END (SUCCESS) ===")
+                            return return_state
+                        else:
+                            logger.error("No valid queries after formatting")
+                            raise ValueError("No valid queries in list")
+                    else:
+                        logger.error(f"Query list is invalid: {raw_query_list}")
+                        raise ValueError("Invalid query list format")
+                else:
+                    logger.error(f"Result does not have expected query attribute or is empty: {result}")
+                    raise ValueError("LLM result missing query list")
+                    
+            except Exception as llm_error:
+                logger.error(f"LLM invocation failed: {llm_error}")
+                # Continue to fallback logic
+                raise llm_error
             
         except Exception as e:
             logger.error(f"Error in query generation: {e}")
-            # Fallback to simple query extraction
-            research_topic = get_research_topic(state["messages"])
-            return {"query_list": [research_topic]}
-    
-    def _continue_to_local_research(self, state: QueryGenerationState):
-        """Spawn a local search node for each generated query with enhanced parallel execution."""
-        queries = state["query_list"]
-        logger.info(f"Starting local research for {len(queries)} queries")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            
+            # Robust fallback logic
+            try:
+                # Try to extract research topic again
+                fallback_topic = get_research_topic(state.get("messages", []))
+                if not fallback_topic or fallback_topic.strip() == "":
+                    # Try getting first human message
+                    for msg in state.get("messages", []):
+                        if hasattr(msg, 'type') and msg.type == "human" and hasattr(msg, 'content'):
+                            fallback_topic = msg.content
+                            break
+                    
+                    if not fallback_topic:
+                        fallback_topic = "research query"
+                
+                fallback_state = create_fallback_state(fallback_topic)
+                logger.warning(f"=== QUERY GENERATION FAILED - Using fallback query: {fallback_topic} ===")
+                logger.info(f"=== GENERATE QUERY DEBUG END (FALLBACK) ===")
+                return fallback_state
+                
+            except Exception as fallback_error:
+                logger.error(f"Even fallback failed: {fallback_error}")
+                # Ultimate fallback - guaranteed to work
+                ultimate_fallback = create_fallback_state("research query")
+                logger.warning(f"=== QUERY GENERATION COMPLETELY FAILED - Using ultimate fallback ===")
+                logger.info(f"=== GENERATE QUERY DEBUG END (ULTIMATE FALLBACK) ===")
+                return ultimate_fallback
         
-        return [
-            Send("local_research", {"search_query": query, "id": int(idx)})
-            for idx, query in enumerate(queries)
-        ]
+        # This should NEVER be reached, but adding as absolute final safety net
+        logger.critical("CRITICAL ERROR: _generate_query reached end without returning - this should be impossible!")
+        emergency_result = create_fallback_state("emergency fallback query")
+        logger.critical(f"EMERGENCY RETURN: {emergency_result}")
+        return emergency_result
     
-    def _local_research(self, state: WebSearchState, config: RunnableConfig) -> OverallState:
-        """Perform enhanced search over the local paper database with source tracking."""
+    def _judge_all_papers(self, state: OverallState, config: RunnableConfig) -> JudgeState:
+        """Judge the relevance of ALL papers (both local and external) before downloading PDFs."""
         try:
             configurable = AgentConfiguration.from_runnable_config(config)
             
-            logger.info(f"Local search for query: {state['search_query']}")
+            # COMPREHENSIVE DEBUGGING: Understand state aggregation
+            logger.info(f"=== JUDGE ALL PAPERS DEBUG START ===")
+            logger.info(f"Received state keys: {list(state.keys())}")
             
-            # Get raw results first for better source extraction
-            raw_papers = self.local_tool.search_local_only(
-                state["search_query"],
-                limit=configurable.local_search_limit
-            )
+            # Check all relevant state fields
+            sources_gathered = state.get("sources_gathered", [])
+            search_queries = state.get("search_query", [])
+            web_results = state.get("web_research_result", [])
             
-            # Generate formatted result for LLM consumption
-            result = self.local_tool.find_papers_by_str(
-                state["search_query"], 
-                limit=configurable.local_search_limit
-            )
+            logger.info(f"sources_gathered: type={type(sources_gathered)}, length={len(sources_gathered) if sources_gathered else 0}")
+            logger.info(f"search_query: type={type(search_queries)}, length={len(search_queries) if search_queries else 0}")
+            logger.info(f"web_research_result: type={type(web_results)}, length={len(web_results) if web_results else 0}")
             
-            # Enhanced source tracking with complete metadata and automatic full text processing
-            sources_gathered = []
-            for paper in raw_papers:
-                # Create short URL for citation tracking
-                paper_url = paper.get('url', '') or f"paper_id_{paper.get('id', 'unknown')}"
-                short_url = self._generate_short_url(paper_url)
+            # Separate local and external sources for analysis
+            local_sources = [s for s in sources_gathered if s.get("source_type") == "local"]
+            external_sources = [s for s in sources_gathered if s.get("source_type") == "external"]
+            
+            logger.info(f"Local papers to judge: {len(local_sources)}")
+            logger.info(f"External papers to judge: {len(external_sources)}")
+            
+            # Log source details if any exist
+            if sources_gathered:
+                logger.info(f"Found {len(sources_gathered)} total sources to judge:")
+                for i, source in enumerate(sources_gathered[:5]):  # Log first 5
+                    logger.info(f"  Source {i+1}: {source.get('title', 'Unknown')[:50]}... (ID: {source.get('paper_id', 'none')}, Type: {source.get('source_type', 'unknown')})")
+                if len(sources_gathered) > 5:
+                    logger.info(f"  ... and {len(sources_gathered) - 5} more sources")
+            else:
+                logger.info("❌ NO SOURCES FOUND - This indicates state aggregation failed!")
+                # Check if any web results suggest papers were found
+                papers_mentioned_in_results = 0
+                for result in web_results:
+                    if "PAPER " in result:
+                        papers_mentioned_in_results += result.count("PAPER ")
+                logger.info(f"However, web_research_result mentions {papers_mentioned_in_results} papers")
                 
-                # Attempt to get full text if enabled and not already available
-                paper_full_text = paper.get('text', '')
-                full_text_attempted = False
+                # Return early with empty state but warn about the issue
+                logger.warning("Judge all papers cannot proceed without sources - check LangGraph state aggregation!")
+                logger.info(f"=== JUDGE ALL PAPERS DEBUG END ===")
+                return {
+                    "judged_papers": [],
+                    "rejected_papers": [],
+                    "judged_sources": []
+                }
+            
+            research_topic = get_research_topic(state["messages"])
+            logger.info(f"Research topic: {research_topic}")
+            logger.info(f"=== JUDGE ALL PAPERS DEBUG END ===")
+            
+            logger.info(f"Judging relevance for {len(sources_gathered)} papers (local + external)")
+            
+            # Get the judge model
+            llm = self.model_router.get_model("judge_papers")
+            
+            judged_papers = []
+            rejected_papers = []
+            
+            for source in sources_gathered:
+                try:
+                    # Create paper context from available metadata
+                    paper_context_parts = []
+                    
+                    if source.get("title"):
+                        paper_context_parts.append(f"Title: {source['title']}")
+                    
+                    if source.get("abstract"):
+                        paper_context_parts.append(f"Abstract: {source['abstract']}")
+                    
+                    if source.get("authors"):
+                        authors_str = source["authors"] if isinstance(source["authors"], str) else ", ".join(source["authors"][:3])
+                        paper_context_parts.append(f"Authors: {authors_str}")
+                    
+                    if source.get("year"):
+                        paper_context_parts.append(f"Year: {source['year']}")
+                    
+                    if source.get("venue"):
+                        paper_context_parts.append(f"Venue: {source['venue']}")
+                    
+                    # Add source type for context
+                    source_type = source.get("source_type", "unknown")
+                    paper_context_parts.append(f"Source: {source_type}")
+                    
+                    paper_context = "\n\n".join(paper_context_parts)
+                    
+                    if not paper_context.strip():
+                        # Skip papers without sufficient context
+                        rejected_papers.append({
+                            **source,
+                            "judge_reason": "Insufficient metadata for relevance assessment"
+                        })
+                        continue
+                    
+                    # Format the relevance rubric prompt
+                    formatted_prompt = relevance_rubric(
+                        research_topic=research_topic,
+                        paper_context=paper_context
+                    )
+                    
+                    # Get relevance judgment using structured output
+                    result = llm.invoke([], formatted_prompt, schema=RelevanceRubric, node_name="judge_all_papers")
+                    
+                    # Add judgment metadata to source
+                    judged_source = {
+                        **source,
+                        "relevance_score": result.score,
+                        "relevance_rationale": result.rationale,
+                        "is_relevant": result.relevant
+                    }
+                    
+                    if result.relevant:
+                        judged_papers.append(judged_source)
+                        logger.info(f"RELEVANT {source_type.upper()} (score: {result.score}): {source.get('title', 'Unknown')[:50]}...")
+                    else:
+                        rejected_papers.append(judged_source)
+                        logger.info(f"REJECTED {source_type.upper()} (score: {result.score}): {source.get('title', 'Unknown')[:50]}...")
                 
+                except Exception as e:
+                    logger.error(f"Error judging paper relevance: {e}")
+                    # Include paper anyway but mark the error
+                    judged_papers.append({
+                        **source,
+                        "relevance_score": 5,  # Neutral score
+                        "relevance_rationale": f"Judgment failed: {str(e)}",
+                        "is_relevant": True  # Default to relevant if judgment fails
+                    })
+            
+            # Log final counts by source type
+            judged_local = [p for p in judged_papers if p.get("source_type") == "local"]
+            judged_external = [p for p in judged_papers if p.get("source_type") == "external"]
+            rejected_local = [p for p in rejected_papers if p.get("source_type") == "local"]
+            rejected_external = [p for p in rejected_papers if p.get("source_type") == "external"]
+            
+            logger.info(f"Paper relevance judging completed:")
+            logger.info(f"  Local: {len(judged_local)} relevant, {len(rejected_local)} rejected")
+            logger.info(f"  External: {len(judged_external)} relevant, {len(rejected_external)} rejected")
+            logger.info(f"  Total: {len(judged_papers)} relevant, {len(rejected_papers)} rejected")
+            
+            return {
+                "judged_papers": judged_papers,
+                "rejected_papers": rejected_papers,
+                "judged_sources": judged_papers  # Update the overall state with relevant papers only
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in paper judging: {e}")
+            # Fallback: include all papers
+            sources_gathered = state.get("sources_gathered", [])
+            return {
+                "judged_papers": sources_gathered,
+                "rejected_papers": [],
+                "judged_sources": sources_gathered
+            }
+    
+    def _process_pdfs(self, state: OverallState, config: RunnableConfig) -> OverallState:
+        """Process PDFs for judged relevant papers only with detailed progress updates."""
+        try:
+            configurable = AgentConfiguration.from_runnable_config(config)
+            
+            # Get the judged sources (only relevant papers)
+            judged_sources = state.get("judged_sources", [])
+            logger.info(f"Starting PDF processing for {len(judged_sources)} relevant papers")
+            
+            if not judged_sources:
+                logger.warning("No judged sources available for PDF processing")
+                return state
+            
+            # Count papers that need PDF processing
+            papers_needing_pdfs = []
+            for source in judged_sources:
                 if (configurable.enable_pdf_download and 
-                    not paper_full_text and 
-                    paper.get('url') and 
-                    paper.get('id')):
+                    not source.get("has_full_text") and 
+                    (source.get("paper_id") or source.get("pdf_url"))):
+                    papers_needing_pdfs.append(source)
+            
+            if not papers_needing_pdfs:
+                logger.info("No papers require PDF processing - all already have full text or PDFs unavailable")
+                return {**state, "judged_sources": judged_sources}
+            
+            logger.info(f"📄 Starting PDF downloads for {len(papers_needing_pdfs)} papers...")
+            
+            # Process PDFs for relevant papers only
+            enhanced_sources = []
+            download_count = 0
+            success_count = 0
+            
+            for i, source in enumerate(judged_sources):
+                enhanced_source = dict(source)  # Copy the source
+                
+                # Only process PDFs if enabled and paper doesn't already have full text
+                if (configurable.enable_pdf_download and 
+                    not source.get("has_full_text") and 
+                    source.get("paper_id") and 
+                    source.get("value")):
+                    
+                    download_count += 1
+                    paper_title = source.get('title', 'Unknown')[:50]
+                    logger.info(f"📥 Downloading PDF {download_count}/{len(papers_needing_pdfs)}: {paper_title}...")
                     
                     try:
-                        logger.info(f"Attempting full text retrieval for paper {paper['id']}: {paper.get('title', 'Unknown')[:50]}...")
-                        full_text_result = self.local_tool.retrieve_full_text(str(paper['id']))
-                        full_text_attempted = True
+                        logger.info(f"Processing PDF for relevant paper {source['paper_id']}: {paper_title}...")
+                        full_text_result = self.local_tool.retrieve_full_text(str(source['paper_id']))
+                        enhanced_source["full_text_attempted"] = True
                         
                         # Check if we successfully got full text
                         if "FULL TEXT RETRIEVED" in full_text_result:
                             # Re-fetch the paper to get updated text
-                            updated_paper = self.db.get_paper_by_id(paper['id'])
+                            updated_paper = self.db.get_paper_by_id(source['paper_id'])
                             if updated_paper and updated_paper.get('text'):
-                                paper_full_text = updated_paper['text']
-                                logger.info(f"Successfully retrieved full text for paper {paper['id']} ({len(paper_full_text)} chars)")
+                                enhanced_source["has_full_text"] = True
+                                enhanced_source["full_text_length"] = len(updated_paper['text'])
+                                success_count += 1
+                                logger.info(f"✅ PDF {download_count}/{len(papers_needing_pdfs)} downloaded successfully: {paper_title} ({len(updated_paper['text'])} chars)")
                         else:
-                            logger.warning(f"Full text retrieval failed for paper {paper['id']}")
+                            logger.warning(f"❌ PDF download failed for paper {source['paper_id']}: {paper_title}")
                     except Exception as e:
-                        logger.error(f"Error during full text retrieval for paper {paper['id']}: {e}")
+                        logger.error(f"❌ Error during PDF processing for paper {source.get('paper_id')}: {e}")
+                        enhanced_source["full_text_attempted"] = True
+                        
+                elif (configurable.enable_pdf_download and 
+                      not source.get("has_full_text") and 
+                      source.get("pdf_url") and 
+                      source.get("source_type") == "external"):
+                    
+                    # Handle external PDFs (ArXiv)
+                    download_count += 1
+                    paper_title = source.get('title', 'Unknown')[:50]
+                    pdf_url = source.get("pdf_url")
+                    logger.info(f"📥 Downloading external PDF {download_count}/{len(papers_needing_pdfs)}: {paper_title}...")
+                    
+                    try:
+                        logger.info(f"Processing external PDF from {pdf_url}: {paper_title}...")
+                        # Here you could add external PDF processing logic
+                        enhanced_source["full_text_attempted"] = True
+                        # For now, mark as attempted but not successful since we don't have external PDF processing
+                        logger.info(f"🔄 External PDF marked for future processing: {paper_title}")
+                    except Exception as e:
+                        logger.error(f"❌ Error during external PDF processing for {pdf_url}: {e}")
+                        enhanced_source["full_text_attempted"] = True
                 
-                # Store comprehensive source metadata
-                source_entry = {
-                    "short_url": short_url,
-                    "value": paper_url,
-                    "title": paper.get('title', 'Unknown Title').strip(),
-                    "source_type": "local",
-                    "paper_id": paper.get('id'),
-                    "authors": paper.get('authors', []),
-                    "year": paper.get('year'),
-                    "abstract": paper.get('abstract', ''),
-                    "has_full_text": bool(paper_full_text),
-                    "full_text_length": len(paper_full_text) if paper_full_text else 0,
-                    "full_text_attempted": full_text_attempted,
-                    "relevance_score": paper.get('hybrid_score', 0)
-                }
-                sources_gathered.append(source_entry)
-                
-                # Replace URLs in result text with short URLs for cleaner presentation
-                if paper_url and paper_url in result:
-                    result = result.replace(paper_url, short_url)
+                enhanced_sources.append(enhanced_source)
             
-            logger.info(f"Local search completed with {len(sources_gathered)} sources")
+            if download_count > 0:
+                logger.info(f"📄 PDF processing completed: {success_count}/{download_count} successful downloads")
+            else:
+                logger.info(f"📄 PDF processing completed: All {len(judged_sources)} papers already had full text")
             
+            # Update the state with enhanced sources
             return {
-                "sources_gathered": sources_gathered,
-                "search_query": [state["search_query"]],
-                "web_research_result": [result],
+                **state,
+                "judged_sources": enhanced_sources
             }
             
         except Exception as e:
-            logger.error(f"Error in local research: {e}")
+            logger.error(f"Error in PDF processing: {e}")
+            # Return state unchanged if there's an error
+            return state
+    
+    def _compile_outline(self, state: OverallState, config: RunnableConfig) -> OutlineState:
+        """Compile and update the research outline based on current findings."""
+        try:
+            configurable = AgentConfiguration.from_runnable_config(config)
+            
+            # Get research topic and current sources
+            research_topic = get_research_topic(state["messages"])
+            judged_sources = state.get("judged_sources", [])
+            existing_outline = state.get("current_outline", "")
+            
+            logger.info(f"Compiling research outline with {len(judged_sources)} sources")
+            
+            # Get the outline model (fallback to reasoning model)
+            llm = self.model_router.get_model("outline")
+            
+            # Create paper contexts for outline generation
+            paper_contexts = []
+            historical_contexts = []
+            
+            for source in judged_sources:
+                # Build paper context
+                context_parts = []
+                if source.get("title"):
+                    context_parts.append(f"Title: {source['title']}")
+                if source.get("abstract"):
+                    context_parts.append(f"Abstract: {source['abstract']}")
+                if source.get("authors"):
+                    authors_str = source["authors"] if isinstance(source["authors"], str) else ", ".join(source["authors"][:3])
+                    context_parts.append(f"Authors: {authors_str}")
+                if source.get("year"):
+                    context_parts.append(f"Year: {source['year']}")
+                if source.get("relevance_rationale"):
+                    context_parts.append(f"Relevance: {source['relevance_rationale']}")
+                
+                paper_context = "\n".join(context_parts)
+                if paper_context.strip():
+                    paper_contexts.append(paper_context)
+                    
+                    # Also add to historical context if it's a significant paper
+                    if source.get("relevance_score", 0) >= 8:
+                        historical_contexts.append(f"{source.get('year', 'Unknown')} - {source.get('title', 'Unknown')}")
+            
+            # Combine paper contexts for outline generation
+            combined_paper_context = "\n\n---\n\n".join(paper_contexts[:10])  # Limit to avoid token overflow
+            historical_context = "; ".join(historical_contexts[:5])  # Key papers only
+            
+            if not combined_paper_context.strip():
+                logger.warning("No sufficient paper context for outline generation")
+                # Return minimal outline
+                return {
+                    "outline": f"# Research Outline: {research_topic}\n\nI. Introduction\nII. Current Findings\nIII. Conclusions",
+                    "paper_contexts": [],
+                    "current_outline": existing_outline  # Keep existing outline
+                }
+            
+            # Format the outline instructions prompt
+            formatted_prompt = outline_instructions(
+                research_topic=research_topic,
+                paper_context=combined_paper_context,
+                historical_context=historical_context or "Limited historical context available",
+                existing_outline=existing_outline
+            )
+            
+            # Generate outline using structured output
+            result = llm.invoke([], formatted_prompt, schema=ResearchOutline, node_name="compile_outline")
+            
+            logger.info(f"Research outline compiled successfully ({len(result.outline)} chars)")
+            
+            return {
+                "outline": result.outline,
+                "paper_contexts": paper_contexts,
+                "current_outline": result.outline  # Update the state with new outline
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in outline compilation: {e}")
+            # Fallback: keep existing outline or create minimal one
+            existing_outline = state.get("current_outline", "")
+            if not existing_outline:
+                research_topic = get_research_topic(state["messages"])
+                existing_outline = f"# Research Outline: {research_topic}\n\nI. Introduction\nII. Literature Review\nIII. Methodology\nIV. Conclusions"
+            
+            return {
+                "outline": existing_outline,
+                "paper_contexts": [],
+                "current_outline": existing_outline
+            }
+    
+
+    
+    def _local_research(self, state: OverallState, config: RunnableConfig) -> OverallState:
+        """Perform enhanced sequential search over the local paper database with source tracking."""
+        try:
+            configurable = AgentConfiguration.from_runnable_config(config)
+            
+            # Get the list of queries to search
+            query_list = state.get("query_list", [])
+            logger.info(f"🔍 Starting local database search for {len(query_list)} queries...")
+            
+            all_sources_gathered = []
+            all_search_queries = []
+            all_web_results = []
+            
+            # Process each query sequentially
+            for i, query in enumerate(query_list):
+                # Extract query string if it's a dict, otherwise use as-is
+                query_str = query.get("query", query) if isinstance(query, dict) else query
+                logger.info(f"📚 Local search {i+1}/{len(query_list)}: '{query_str}'")
+                
+                # Get raw results first for better source extraction
+                raw_papers = self.local_tool.search_local_only(
+                    query_str,
+                    limit=configurable.local_search_limit
+                )
+                
+                # Log when no results are found but continue with the workflow
+                if not raw_papers:
+                    logger.info(f"❌ No local papers found for query: '{query_str}'")
+                else:
+                    logger.info(f"✅ Found {len(raw_papers)} local papers for query: '{query_str}'")
+                
+                # Generate formatted result for LLM consumption
+                result = self.local_tool.find_papers_by_str(
+                    query_str, 
+                    limit=configurable.local_search_limit
+                )
+                
+                # Enhanced source tracking with complete metadata
+                query_sources = []
+                for paper in raw_papers:
+                    # Create short URL for citation tracking
+                    paper_url = paper.get('url', '') or f"paper_id_{paper.get('id', 'unknown')}"
+                    short_url = self._generate_short_url(paper_url)
+                    
+                    # Do NOT attempt PDF processing here - save that for after judging
+                    paper_full_text = paper.get('text', '')
+                    
+                    # Store comprehensive source metadata for judging (based on title/abstract only)
+                    source_entry = {
+                        "short_url": short_url,
+                        "value": paper_url,
+                        "title": paper.get('title', 'Unknown Title').strip(),
+                        "source_type": "local",
+                        "paper_id": paper.get('id'),
+                        "authors": paper.get('authors', []),
+                        "year": paper.get('year'),
+                        "abstract": paper.get('abstract', ''),
+                        "has_full_text": bool(paper_full_text),
+                        "full_text_length": len(paper_full_text) if paper_full_text else 0,
+                        "full_text_attempted": False,  # No PDF processing at this stage
+                        "relevance_score": paper.get('hybrid_score', 0)
+                    }
+                    query_sources.append(source_entry)
+                    
+                    # Replace URLs in result text with short URLs for cleaner presentation
+                    if paper_url and paper_url in result:
+                        result = result.replace(paper_url, short_url)
+                
+                # Add this query's results to the aggregated results
+                all_sources_gathered.extend(query_sources)
+                all_search_queries.append(query_str)
+                all_web_results.append(result)
+                
+                logger.info(f"📊 Local query {i+1} completed: {len(query_sources)} papers added")
+            
+            logger.info(f"🔍 Local database search completed: {len(all_sources_gathered)} total papers found")
+            
+            # Debug logging for aggregated results
+            for i, source in enumerate(all_sources_gathered[:5]):  # Show first 5
+                logger.info(f"SEQUENTIAL SEARCH DEBUG: Source {i+1}: {source.get('title', 'Unknown')[:50]}... (ID: {source.get('paper_id', 'none')})")
+            if len(all_sources_gathered) > 5:
+                logger.info(f"SEQUENTIAL SEARCH DEBUG: ... and {len(all_sources_gathered) - 5} more sources")
+            
+            return_state = {
+                "sources_gathered": all_sources_gathered,
+                "search_query": all_search_queries,
+                "web_research_result": all_web_results,
+            }
+            
+            logger.info(f"SEQUENTIAL SEARCH DEBUG: Returning state with {len(all_sources_gathered)} sources_gathered")
+            
+            return return_state
+            
+        except Exception as e:
+            logger.error(f"Error in sequential local research: {e}")
             return {
                 "sources_gathered": [],
-                "search_query": [state["search_query"]],
-                "web_research_result": [f"Local search failed for query: {state['search_query']}"],
+                "search_query": [],
+                "web_research_result": [f"Sequential local search failed: {str(e)}"],
             }
     
     def _external_research(self, state: WebSearchState, config: RunnableConfig) -> OverallState:
@@ -387,25 +886,32 @@ Please respond with any additional details that would help me conduct more targe
         try:
             configurable = AgentConfiguration.from_runnable_config(config)
             
-            logger.info(f"External search for query: {state['search_query']}")
+            search_query = state["search_query"]
+            logger.info(f"🌐 Starting external ArXiv search for: '{search_query}'")
             
             # Get raw results first for better source extraction (using ArXiv)
+            logger.info(f"📡 Querying ArXiv API...")
             raw_papers = self.external_tool.search_and_rank(
-                state["search_query"],
+                search_query,
                 limit=configurable.external_search_limit,
                 provider="arxiv"
             )
             
+            if not raw_papers:
+                logger.info(f"❌ No external papers found for query: '{search_query}'")
+            else:
+                logger.info(f"✅ Found {len(raw_papers)} external papers for query: '{search_query}'")
+            
             # Generate formatted result for LLM consumption
             result = self.external_tool.find_papers_by_str(
-                state["search_query"], 
+                search_query, 
                 limit=configurable.external_search_limit,
                 provider="arxiv"
             )
             
             # Enhanced source tracking with complete metadata (ArXiv-optimized)
             sources_gathered = []
-            for paper in raw_papers:
+            for i, paper in enumerate(raw_papers):
                 # For ArXiv papers, use the direct PDF URL
                 paper_url = paper.get('url', '') or paper.get('pdf_url', '')
                 if not paper_url:
@@ -456,16 +962,16 @@ Please respond with any additional details that would help me conduct more targe
                 if paper.get('pdf_url') and paper['pdf_url'] in result:
                     result = result.replace(paper['pdf_url'], short_url)
             
-            logger.info(f"External search completed with {len(sources_gathered)} sources")
+            logger.info(f"🌐 External ArXiv search completed: {len(sources_gathered)} papers processed")
             
             return {
                 "sources_gathered": sources_gathered,
-                "search_query": [state["search_query"]],
+                "search_query": [search_query],
                 "web_research_result": [result],
             }
             
         except Exception as e:
-            logger.error(f"Error in external research: {e}")
+            logger.error(f"❌ Error in external research: {e}")
             return {
                 "sources_gathered": [],
                 "search_query": [state["search_query"]],
@@ -479,46 +985,71 @@ Please respond with any additional details that would help me conduct more targe
             
             # Increment research loop count
             state["research_loop_count"] = state.get("research_loop_count", 0) + 1
+            current_loop = state["research_loop_count"]
+            
+            logger.info(f"🤔 Starting reflection analysis (Research Loop {current_loop})...")
             
             # Generate research insights from current findings
-            insights = generate_research_insights(state["web_research_result"])
+            web_results = state["web_research_result"]
+            search_queries = state["search_query"]
+            judged_sources = state.get("judged_sources", [])
+            
+            logger.info(f"📊 Analyzing {len(judged_sources)} relevant papers from {len(search_queries)} queries...")
+            
+            insights = generate_research_insights(web_results)
             
             # Combine and analyze search results
             combined_results = combine_search_results(
-                state["web_research_result"],
-                state["search_query"]
+                web_results,
+                search_queries
             )
             
             # Format the prompt with enhanced context
             current_date = get_current_date()
+            
+            # Include current outline in reflection
+            current_outline = state.get("current_outline", "")
+            outline_context = f"\n\nCurrent Research Outline:\n{current_outline}" if current_outline else ""
+            
             formatted_prompt = reflection_instructions(
                 current_date=current_date,
                 research_topic=get_research_topic(state["messages"]),
-                summaries=combined_results,
+                summaries=combined_results + outline_context,
             )
             
             # Add research insights to prompt
             if insights:
                 formatted_prompt += f"\n\nResearch insights so far:\n{insights}"
             
+            logger.info(f"🧠 Running LLM reflection analysis...")
+            
             # Get reflection from model
             llm = self.model_router.get_model("reflection")
             result = llm.invoke([], formatted_prompt, schema=Reflection, node_name="reflection")
             
-            logger.info(f"Reflection completed - Research loop {state['research_loop_count']}, "
-                       f"Sufficient: {result.is_sufficient}, "
-                       f"Follow-up queries: {len(result.follow_up_queries)}")
+            # Log reflection results
+            gap_info = f" - Gap: {result.knowledge_gap[:100]}..." if result.knowledge_gap else ""
+            follow_up_info = f" - {len(result.follow_up_queries)} follow-up queries generated" if result.follow_up_queries else " - No follow-up queries needed"
+            
+            logger.info(f"🤔 Reflection completed (Loop {current_loop}): Research {'sufficient' if result.is_sufficient else 'needs expansion'}{gap_info}{follow_up_info}")
+            
+            # Log follow-up queries if any
+            if result.follow_up_queries:
+                for i, query in enumerate(result.follow_up_queries[:3]):  # Log first 3
+                    logger.info(f"  📝 Follow-up query {i+1}: {query}")
+                if len(result.follow_up_queries) > 3:
+                    logger.info(f"  📝 ... and {len(result.follow_up_queries) - 3} more follow-up queries")
             
             return {
                 "is_sufficient": result.is_sufficient,
                 "knowledge_gap": result.knowledge_gap,
                 "follow_up_queries": result.follow_up_queries,
-                "research_loop_count": state["research_loop_count"],
-                "number_of_ran_queries": len(state["search_query"]),
+                "research_loop_count": current_loop,
+                "number_of_ran_queries": len(search_queries),
             }
             
         except Exception as e:
-            logger.error(f"Error in reflection: {e}")
+            logger.error(f"❌ Error in reflection: {e}")
             # Fallback to stopping research
             return {
                 "is_sufficient": True,
@@ -558,101 +1089,119 @@ Please respond with any additional details that would help me conduct more targe
             logger.error(f"Error in research evaluation: {e}")
             return "finalize_answer"
     
-    def _sequential_external_research(self, state: OverallState, config: RunnableConfig) -> OverallState:
-        """Perform sequential external searches to avoid overwhelming APIs."""
+    def _follow_up_research(self, state: OverallState, config: RunnableConfig) -> OverallState:
+        """Perform follow-up research using BOTH local and external sources based on reflection feedback."""
         try:
             configurable = AgentConfiguration.from_runnable_config(config)
             
             # Get follow-up queries from reflection state
             follow_up_queries = state.get("follow_up_queries", [])
-            logger.info(f"DEBUG: Sequential external research received state keys: {list(state.keys())}")
             logger.info(f"DEBUG: Follow-up queries found: {follow_up_queries}")
             
             if not follow_up_queries:
-                logger.warning("No follow-up queries found for sequential external research")
-                # Check if we have original queries to fall back to for external search
-                search_queries = state.get("search_query", [])
-                if search_queries:
-                    logger.info(f"DEBUG: Using original search queries for external search: {search_queries}")
-                    follow_up_queries = search_queries
-                else:
-                    logger.warning("No search queries available at all")
-                    return state
+                logger.warning("No follow-up queries found for follow-up research")
+                return state
             
-            logger.info(f"Starting sequential external research for {len(follow_up_queries)} queries")
+            logger.info(f"Starting follow-up research for {len(follow_up_queries)} queries (both local and external)")
             
-            # Collect all results from sequential searches
+            # Collect all results from both local and external searches
             all_sources_gathered = []
             all_search_results = []
             all_search_queries = []
             
-            # Process each query sequentially with delay
+            # Process each query against BOTH local and external sources
             for idx, query in enumerate(follow_up_queries):
-                logger.info(f"External search {idx + 1}/{len(follow_up_queries)} for query: {query}")
+                logger.info(f"Follow-up search {idx + 1}/{len(follow_up_queries)} for query: {query}")
                 
-                # Add a configurable delay between requests to be respectful to APIs
-                if idx > 0:
-                    import time
-                    time.sleep(configurable.external_search_delay)
-                
+                # === LOCAL SEARCH ===
+                logger.info(f"  → Local search for: {query}")
                 try:
-                    # Get raw results first for better source extraction (using ArXiv)
-                    raw_papers = self.external_tool.search_and_rank(
+                    # Search local database
+                    local_raw_papers = self.local_tool.search_local_only(
+                        query,
+                        limit=configurable.local_search_limit
+                    )
+                    
+                    # Generate formatted result for LLM consumption
+                    local_result = self.local_tool.find_papers_by_str(
+                        query, 
+                        limit=configurable.local_search_limit
+                    )
+                    
+                    # Process local papers
+                    local_sources = []
+                    for paper in local_raw_papers:
+                        paper_url = paper.get('url', '') or f"paper_id_{paper.get('id', 'unknown')}"
+                        short_url = self._generate_short_url(paper_url)
+                        paper_full_text = paper.get('text', '')
+                        
+                        source_entry = {
+                            "short_url": short_url,
+                            "value": paper_url,
+                            "title": paper.get('title', 'Unknown Title').strip(),
+                            "source_type": "local",
+                            "paper_id": paper.get('id'),
+                            "authors": paper.get('authors', []),
+                            "year": paper.get('year'),
+                            "abstract": paper.get('abstract', ''),
+                            "has_full_text": bool(paper_full_text),
+                            "full_text_length": len(paper_full_text) if paper_full_text else 0,
+                            "full_text_attempted": False,
+                            "relevance_score": paper.get('hybrid_score', 0)
+                        }
+                        local_sources.append(source_entry)
+                        
+                        # Replace URLs in result text with short URLs
+                        if paper_url and paper_url in local_result:
+                            local_result = local_result.replace(paper_url, short_url)
+                    
+                    logger.info(f"  → Local search found {len(local_sources)} papers")
+                    
+                except Exception as e:
+                    logger.error(f"Error in local follow-up search for '{query}': {e}")
+                    local_sources = []
+                    local_result = f"Local search failed for query: {query} - {str(e)}"
+                
+                # === EXTERNAL SEARCH ===
+                logger.info(f"  → External search for: {query}")
+                try:
+                    # Add delay to be respectful to external APIs
+                    if idx > 0:
+                        import time
+                        time.sleep(configurable.external_search_delay)
+                    
+                    # Search external sources (ArXiv)
+                    external_raw_papers = self.external_tool.search_and_rank(
                         query,
                         limit=configurable.external_search_limit,
                         provider="arxiv"
                     )
                     
                     # Generate formatted result for LLM consumption
-                    result = self.external_tool.find_papers_by_str(
+                    external_result = self.external_tool.find_papers_by_str(
                         query, 
                         limit=configurable.external_search_limit,
                         provider="arxiv"
                     )
                     
-                    # Enhanced source tracking with complete metadata (ArXiv-optimized)
-                    sources_gathered = []
-                    for paper in raw_papers:
-                        # For ArXiv papers, use the direct PDF URL
+                    # Process external papers
+                    external_sources = []
+                    for paper in external_raw_papers:
                         paper_url = paper.get('url', '') or paper.get('pdf_url', '')
                         if not paper_url:
-                            continue  # Skip papers without accessible URLs
+                            continue
                         
-                        # Create short URL for citation tracking
                         short_url = self._generate_short_url(paper_url)
                         
                         # Clean up authors for display (ArXiv format)
                         authors = paper.get('authors_str', '')
                         if not authors and paper.get('authors'):
                             if isinstance(paper['authors'], list):
-                                authors = ', '.join(paper['authors'][:3])  # Limit to first 3 authors
+                                authors = ', '.join(paper['authors'][:3])
                                 if len(paper['authors']) > 3:
                                     authors += ' et al.'
                             else:
                                 authors = str(paper['authors'])
-                        
-                        # Attempt to get full text if PDF download is enabled and we have a PDF URL
-                        has_full_text = False
-                        full_text_attempted = False
-                        pdf_url = paper.get('pdf_url', '')
-                        
-                        if (configurable.enable_pdf_download and 
-                            pdf_url and 
-                            pdf_url.endswith('.pdf')):
-                            
-                            try:
-                                logger.info(f"Attempting full text retrieval for external paper: {paper.get('title', 'Unknown')[:50]}...")
-                                full_text_result = self.external_tool.retrieve_full_text(pdf_url)
-                                full_text_attempted = True
-                                
-                                # Check if we successfully got full text
-                                if "EXTERNAL PDF CONTENT RETRIEVED" in full_text_result:
-                                    has_full_text = True
-                                    logger.info(f"Successfully retrieved external full text from {pdf_url}")
-                                else:
-                                    logger.warning(f"External full text retrieval failed for {pdf_url}")
-                            except Exception as e:
-                                logger.error(f"Error during external full text retrieval: {e}")
                         
                         # Extract year from ArXiv published date
                         paper_year = paper.get('year')
@@ -662,7 +1211,6 @@ Please respond with any additional details that would help me conduct more targe
                             except (ValueError, TypeError):
                                 paper_year = None
                         
-                        # Store comprehensive source metadata (ArXiv-specific)
                         source_entry = {
                             "short_url": short_url,
                             "value": paper_url,
@@ -673,34 +1221,44 @@ Please respond with any additional details that would help me conduct more targe
                             "year": paper_year,
                             "published_date": paper.get('published'),
                             "abstract": paper.get('abstract', ''),
-                            "venue": "arXiv preprint",  # ArXiv papers are preprints
-                            "is_open_access": True,  # All ArXiv papers are open access
-                            "pdf_url": pdf_url,
-                            "has_full_text": has_full_text,
-                            "full_text_attempted": full_text_attempted,
+                            "venue": "arXiv preprint",
+                            "is_open_access": True,
+                            "pdf_url": paper_url,
                             "external_ranking_score": paper.get('external_ranking_score', 0)
                         }
-                        sources_gathered.append(source_entry)
+                        external_sources.append(source_entry)
                         
-                        # Replace URLs in result text with short URLs for cleaner presentation
-                        if paper_url in result:
-                            result = result.replace(paper_url, short_url)
-                        if paper.get('pdf_url') and paper['pdf_url'] in result:
-                            result = result.replace(paper['pdf_url'], short_url)
+                        # Replace URLs in result text with short URLs
+                        if paper_url in external_result:
+                            external_result = external_result.replace(paper_url, short_url)
+                        if paper.get('pdf_url') and paper['pdf_url'] in external_result:
+                            external_result = external_result.replace(paper['pdf_url'], short_url)
                     
-                    # Collect results
-                    all_sources_gathered.extend(sources_gathered)
-                    all_search_results.append(result)
-                    all_search_queries.append(query)
-                    
-                    logger.info(f"External search {idx + 1} completed with {len(sources_gathered)} sources")
+                    logger.info(f"  → External search found {len(external_sources)} papers")
                     
                 except Exception as e:
-                    logger.error(f"Error in external search {idx + 1} for query '{query}': {e}")
-                    all_search_results.append(f"External search failed for query: {query} - {str(e)}")
-                    all_search_queries.append(query)
+                    logger.error(f"Error in external follow-up search for '{query}': {e}")
+                    external_sources = []
+                    external_result = f"External search failed for query: {query} - {str(e)}"
+                
+                # Combine results from both searches
+                query_sources = local_sources + external_sources
+                combined_result = f"### Follow-up Query: {query}\n\n"
+                
+                if local_sources or local_result.strip():
+                    combined_result += f"**Local Database Results:**\n{local_result}\n\n"
+                
+                if external_sources or external_result.strip():
+                    combined_result += f"**External Search Results:**\n{external_result}\n\n"
+                
+                # Add to overall results
+                all_sources_gathered.extend(query_sources)
+                all_search_results.append(combined_result)
+                all_search_queries.append(query)
+                
+                logger.info(f"Follow-up search {idx + 1} completed: {len(local_sources)} local + {len(external_sources)} external = {len(query_sources)} total papers")
             
-            logger.info(f"Sequential external research completed with {len(all_sources_gathered)} total sources")
+            logger.info(f"Follow-up research completed with {len(all_sources_gathered)} total sources from both local and external searches")
             
             # Return updated state with all collected results
             return {
@@ -711,10 +1269,10 @@ Please respond with any additional details that would help me conduct more targe
             }
             
         except Exception as e:
-            logger.error(f"Error in sequential external research: {e}")
+            logger.error(f"Error in follow-up research: {e}")
             return {
                 **state,
-                "web_research_result": state.get("web_research_result", []) + [f"Sequential external search failed: {str(e)}"],
+                "web_research_result": state.get("web_research_result", []) + [f"Follow-up research failed: {str(e)}"],
             }
     
     def _finalize_answer(self, state: OverallState, config: RunnableConfig):
@@ -729,6 +1287,15 @@ Please respond with any additional details that would help me conduct more targe
             # Process gathered sources to extract insights with enhanced full text processing
             sources_gathered = state.get("sources_gathered", [])
             search_results = state.get("web_research_result", [])
+            
+            # Debug logging for source aggregation
+            logger.info(f"SOURCES DEBUG: Found {len(sources_gathered)} sources in state")
+            logger.info(f"SOURCES DEBUG: Found {len(search_results)} search results in state")
+            for i, source in enumerate(sources_gathered):
+                logger.info(f"SOURCES DEBUG: Source {i+1}: {source.get('title', 'Unknown')[:50]}... (type: {source.get('source_type', 'unknown')})")
+            
+            if not sources_gathered:
+                logger.warning("SOURCES DEBUG: No sources found in state! This indicates an issue with source aggregation.")
             
             # Enhanced full text processing using existing PDF infrastructure
             enhanced_insights = []
@@ -867,11 +1434,15 @@ Please respond with any additional details that would help me conduct more targe
             if full_text_processed_count > 0:
                 paper_access_note += f"\n\n**Enhanced Processing**: {full_text_processed_count} papers were processed with intelligent section extraction using SpacyLayoutDocProcessor and FlatMarkdownParser."
             
+            # Include final outline in answer generation
+            current_outline = state.get("current_outline", "")
+            outline_context = f"\n\n## Research Outline\n{current_outline}" if current_outline else ""
+            
             # Enhanced answer instructions with paper access context
             enhanced_instructions = answer_instructions(
                 current_date=get_current_date(),
                 research_topic=research_topic,
-                summaries=research_insights + paper_access_note
+                summaries=research_insights + paper_access_note + outline_context
             )
             
             # Generate final answer
@@ -990,17 +1561,22 @@ Please respond with any additional details that would help me conduct more targe
             # Use existing SpacyLayoutDocProcessor (disable figures to avoid Docling issues)
             logger.info(f"Processing PDF content using SpacyLayoutDocProcessor...")
             
-            pdf_processor = SpacyLayoutDocProcessor(
-                language="en",
-                save_text=False,
-                export_tables=False,
-                export_figures=False,  # Disable figures to avoid Docling issues
-                remove_md_image_tags=True
-            )
-            
-            # Process the PDF
-            result = pdf_processor.process_document(temp_pdf_path)
-            markdown_text = result.get('processed_data', '')
+            # Suppress torch warnings during PDF processing
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+                
+                pdf_processor = SpacyLayoutDocProcessor(
+                    language="en",
+                    save_text=False,
+                    export_tables=False,
+                    export_figures=False,  # Disable figures to avoid Docling issues
+                    remove_md_image_tags=True
+                )
+                
+                # Process the PDF
+                result = pdf_processor.process_document(temp_pdf_path)
+                markdown_text = result.get('processed_data', '')
             
             if not markdown_text or len(markdown_text.strip()) < 200:
                 return f"**{source.get('title', 'Unknown')}** - Failed to extract sufficient text from PDF (length: {len(markdown_text) if markdown_text else 0})"
@@ -1376,10 +1952,39 @@ Please respond with any additional details that would help me conduct more targe
             messages = conversation_history or []
             messages.append(HumanMessage(content=research_question))
             
-            # Set up initial state
+            # Set up initial state with additive effort configuration
+            effort_config = config or {}
+            
+            # Load database configuration to get the actual configured values
+            from .unified_model_router import UnifiedModelRouter
+            router = UnifiedModelRouter(self.db)
+            db_config = router.get_configuration()
+            
+            # Apply additive effort bonuses to base configuration if provided
+            from .graph_configuration import AgentConfiguration
+            base_config = AgentConfiguration()
+            
+            # Start with database configuration values, not hardcoded defaults
+            effort_config["initial_search_query_count"] = db_config.get("initial_search_query_count", base_config.number_of_initial_queries)
+            effort_config["max_research_loops"] = db_config.get("max_research_loops", base_config.max_research_loops)
+            effort_config["local_search_limit"] = db_config.get("local_search_limit", base_config.local_search_limit)
+            effort_config["external_search_limit"] = db_config.get("external_search_limit", base_config.external_search_limit)
+            
+            if effort_config.get("loops_bonus"):
+                effort_config["max_research_loops"] = effort_config["max_research_loops"] + effort_config["loops_bonus"]
+            
+            if effort_config.get("papers_bonus"):
+                # Add bonus papers to both local and external search limits
+                bonus_papers = effort_config["papers_bonus"]
+                local_bonus = max(1, bonus_papers * 2 // 3)  # 67% to local search
+                external_bonus = max(1, bonus_papers // 3)   # 33% to external search
+                
+                effort_config["local_search_limit"] = effort_config["local_search_limit"] + local_bonus
+                effort_config["external_search_limit"] = effort_config["external_search_limit"] + external_bonus
+            
             initial_state = {
                 "messages": messages,
-                **(config or {})
+                **effort_config
             }
             
             # Run the graph
@@ -1421,10 +2026,38 @@ Please respond with any additional details that would help me conduct more targe
             messages = conversation_history or []
             messages.append(HumanMessage(content=research_question))
             
-            # Set up initial state
+            # Set up initial state with additive effort configuration
+            effort_config = config or {}
+            
+            # Load database configuration to get the actual configured values
+            router = UnifiedModelRouter(self.db)
+            db_config = router.get_configuration()
+            
+            # Apply additive effort bonuses to base configuration if provided
+            from .graph_configuration import AgentConfiguration
+            base_config = AgentConfiguration()
+            
+            # Start with database configuration values, not hardcoded defaults
+            effort_config["initial_search_query_count"] = db_config.get("initial_search_query_count", base_config.number_of_initial_queries)
+            effort_config["max_research_loops"] = db_config.get("max_research_loops", base_config.max_research_loops)
+            effort_config["local_search_limit"] = db_config.get("local_search_limit", base_config.local_search_limit)
+            effort_config["external_search_limit"] = db_config.get("external_search_limit", base_config.external_search_limit)
+            
+            if effort_config.get("loops_bonus"):
+                effort_config["max_research_loops"] = effort_config["max_research_loops"] + effort_config["loops_bonus"]
+            
+            if effort_config.get("papers_bonus"):
+                # Add bonus papers to both local and external search limits
+                bonus_papers = effort_config["papers_bonus"]
+                local_bonus = max(1, bonus_papers * 2 // 3)  # 67% to local search
+                external_bonus = max(1, bonus_papers // 3)   # 33% to external search
+                
+                effort_config["local_search_limit"] = effort_config["local_search_limit"] + local_bonus
+                effort_config["external_search_limit"] = effort_config["external_search_limit"] + external_bonus
+            
             initial_state = {
                 "messages": messages,
-                **(config or {})
+                **effort_config
             }
             
             # Run the graph
@@ -1466,10 +2099,38 @@ Please respond with any additional details that would help me conduct more targe
             messages = conversation_history or []
             messages.append(HumanMessage(content=research_question))
             
-            # Set up initial state
+            # Set up initial state with additive effort configuration
+            effort_config = config or {}
+            
+            # Load database configuration to get the actual configured values
+            router = UnifiedModelRouter(self.db)
+            db_config = router.get_configuration()
+            
+            # Apply additive effort bonuses to base configuration if provided
+            from .graph_configuration import AgentConfiguration
+            base_config = AgentConfiguration()
+            
+            # Start with database configuration values, not hardcoded defaults
+            effort_config["initial_search_query_count"] = db_config.get("initial_search_query_count", base_config.number_of_initial_queries)
+            effort_config["max_research_loops"] = db_config.get("max_research_loops", base_config.max_research_loops)
+            effort_config["local_search_limit"] = db_config.get("local_search_limit", base_config.local_search_limit)
+            effort_config["external_search_limit"] = db_config.get("external_search_limit", base_config.external_search_limit)
+            
+            if effort_config.get("loops_bonus"):
+                effort_config["max_research_loops"] = effort_config["max_research_loops"] + effort_config["loops_bonus"]
+            
+            if effort_config.get("papers_bonus"):
+                # Add bonus papers to both local and external search limits
+                bonus_papers = effort_config["papers_bonus"]
+                local_bonus = max(1, bonus_papers * 2 // 3)  # 67% to local search
+                external_bonus = max(1, bonus_papers // 3)   # 33% to external search
+                
+                effort_config["local_search_limit"] = effort_config["local_search_limit"] + local_bonus
+                effort_config["external_search_limit"] = effort_config["external_search_limit"] + external_bonus
+            
             initial_state = {
                 "messages": messages,
-                **(config or {})
+                **effort_config
             }
             
             # Stream the graph execution
@@ -1481,6 +2142,40 @@ Please respond with any additional details that would help me conduct more targe
             yield {
                 "error": f"Research streaming failed: {str(e)}"
             }
+    
+
+    
+    def _are_sources_duplicate(self, source1: Dict[str, Any], source2: Dict[str, Any]) -> bool:
+        """Check if two sources represent the same paper using multiple criteria."""
+        # Check by URL/value
+        if (source1.get("value") and source2.get("value") and 
+            source1["value"] == source2["value"]):
+            return True
+        
+        # Check by title similarity (exact match after normalization)
+        title1 = source1.get("title", "").lower().strip()
+        title2 = source2.get("title", "").lower().strip()
+        if title1 and title2 and title1 == title2:
+            return True
+        
+        # Check for ArXiv papers by extracting ArXiv ID
+        def extract_arxiv_id(url_or_title):
+            if not url_or_title:
+                return None
+            # Look for ArXiv ID pattern (e.g., 2301.12345)
+            import re
+            match = re.search(r'(\d{4}\.\d{4,5})', str(url_or_title))
+            return match.group(1) if match else None
+        
+        arxiv_id1 = extract_arxiv_id(source1.get("value")) or extract_arxiv_id(source1.get("title"))
+        arxiv_id2 = extract_arxiv_id(source2.get("value")) or extract_arxiv_id(source2.get("title"))
+        
+        if arxiv_id1 and arxiv_id2 and arxiv_id1 == arxiv_id2:
+            return True
+        
+        return False
+
+
 
 
 def create_research_agent(

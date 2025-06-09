@@ -126,7 +126,32 @@ The FastAPI backend uses a modular router architecture for better maintainabilit
 ---
 
 ## Agentic Deep Research
-Theseus Insight now ships with a LangGraph-based research agent capable of performing deep literature reviews. The agent begins with your local database and expands to external sources when necessary, streaming progress updates in real time. Final results are returned as a rich markdown report.
+
+Theseus Insight ships with an advanced LangGraph-based research agent that performs comprehensive literature reviews with real-time progress streaming. The agent intelligently combines local database search with external source expansion, filtering papers for relevance, and generating structured research reports.
+
+### Key Features
+- **🔍 Smart Paper Filtering**: LLM-powered relevance judging filters papers before expensive PDF processing
+- **📋 Iterative Research Outlines**: Dynamically builds and refines research outlines as new papers are discovered
+- **📄 Full-Text PDF Processing**: Automatically downloads and processes PDFs with intelligent content extraction
+- **⚡ Real-Time Progress**: Live status updates with sentence-case step names and detailed progress tracking
+- **🎛️ Additive Effort Control**: Effort settings that enhance your base configuration rather than override it
+- **🔄 Multi-Turn Conversations**: Continue research discussions with conversation context preservation
+
+### Enhanced Progress Visibility
+The research agent now provides transparent progress tracking showing:
+- **Paper Discovery**: "Local search: 10 papers found, 5 PDFs processed, 4 with full text"
+- **Relevance Filtering**: "Judging paper relevance: 8 relevant, 3 rejected (total: 11)"
+- **Outline Generation**: "Compiling research outline from 8 relevant papers"
+- **PDF Processing**: Real-time updates on document downloads and text extraction
+
+### Intelligent Effort System
+Choose from additive effort levels that build on your configured base settings:
+- **Default** (+0): Uses your exact base configuration
+- **Moderate** (+2 papers, +2 loops): Light research boost
+- **Medium** (+5 papers, +5 loops): Standard enhancement
+- **High** (+10 papers, +10 loops): Maximum thoroughness
+
+For detailed information, see [docs/research_agent_deep_dive.md](docs/research_agent_deep_dive.md).
 ## Installation
 
 ### Automated Installation (Recommended)
@@ -446,9 +471,13 @@ cp -r ./data/* /Volumes/nyx/theseus_insight_data/app_data/
 - **`GET /api/papers/{paper_id}/similar`** – find papers similar to an existing one.
 
 ### Research Agent
-- **`POST /api/research-agent/run`** – start a literature review with streaming progress.
-- **`GET /api/research-agent/reviews`** – list recent literature reviews.
-- **`GET /api/research-agent/reviews/{review_id}`** – retrieve a specific review and markdown report.
+- **`POST /api/research-agent/run`** – start a literature review with streaming progress and additive effort control.
+- **`GET /api/research-agent/reviews`** – list recent literature reviews with source counts and themes.
+- **`GET /api/research-agent/reviews/{review_id}`** – retrieve a specific review with full markdown report and activity timeline.
+- **`GET /api/research-agent/model-config`** – get current research agent model configuration.
+- **`PUT /api/research-agent/model-config`** – update research agent model settings including judge model configuration.
+- **`POST /api/research-agent/library/search`** – search the research library with filtering and pagination.
+- **`GET /api/research-agent/debug/paper-access`** – debug endpoint for checking PDF processing capabilities.
 ### Model Catalog
 - **`POST /api/model-catalog`** – create a model entry.
 - **`GET /api/model-catalog`** – list or search the catalog.

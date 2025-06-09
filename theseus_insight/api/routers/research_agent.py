@@ -48,11 +48,13 @@ def _get_research_agent_config():
         "initial_search_query_count": 3,
         "local_search_limit": 10,
         "external_search_limit": 5,
+        "external_search_delay": 2.0,  # ArXiv rate limiting: minimum 2 seconds between requests
         "search_config": {
             "semantic_weight": 0.6,
             "keyword_weight": 0.4,
             "similarity_threshold": 0.3,
-            "enable_pdf_download": True
+            "enable_pdf_download": True,
+            "external_search_provider": "arxiv"
         }
     }
 

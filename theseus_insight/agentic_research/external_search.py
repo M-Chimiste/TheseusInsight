@@ -4,8 +4,11 @@ import tempfile
 import os
 from typing import List, Dict, Optional
 import requests
+import xml.etree.ElementTree as ET
 
 from .local_search import BaseSearchTool
+
+
 
 
 class SemanticScholarSearch:
@@ -163,12 +166,50 @@ class SemanticScholarSearch:
         return flat
 
 
+class ArxivSearch:
+    """
+    Simple arXiv API client for searching papers.
+    """
+    BASE_URL = "http://export.arxiv.org/api/query"
+
+    def __init__(self, session: Optional[requests.Session] = None):
+        self.session = session or requests.Session()
+
+    def search(self, query: str, limit: int = 10, offset: int = 0) -> List[Dict]:
+        params = {
+            "search_query": f"all:{query}",
+            "start": offset,
+            "max_results": limit,
+        }
+        resp = self.session.get(self.BASE_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        entries = root.findall("atom:entry", ns)
+        results = []
+        for entry in entries:
+            title = entry.find("atom:title", ns).text.strip()
+            summary = entry.find("atom:summary", ns).text.strip()
+            published = entry.find("atom:published", ns).text[:10]
+            url = entry.find("atom:id", ns).text.strip()
+            authors = [a.find("atom:name", ns).text for a in entry.findall("atom:author", ns)]
+            results.append({
+                "title": title,
+                "abstract": summary,
+                "authors": authors,
+                "url": url,
+                "published": published,
+            })
+        return results
+
+
 class ExternalSearchTool(BaseSearchTool):
     """Enhanced search tool that queries Semantic Scholar with comprehensive PDF processing."""
 
     def __init__(self, enable_pdf_download: bool = True):
         """Create a new tool instance with enhanced capabilities."""
         self.searcher = SemanticScholarSearch()
+        self.arxiv_searcher = ArxivSearch()
         self.enable_pdf_download = enable_pdf_download
         self.pdf_processor = None
         self._init_pdf_processor()
@@ -188,78 +229,115 @@ class ExternalSearchTool(BaseSearchTool):
             print("Warning: PDF processing dependencies not available for external search. PDF download will be disabled.")
             self.enable_pdf_download = False
 
-    def find_papers_by_str(self, query: str, limit: int = 10) -> str:
-        """Search Semantic Scholar and return a formatted summary optimized for LangGraph."""
-        try:
-            papers = self.searcher.search(query, limit=limit)
-        except Exception as e:  # pragma: no cover - network failure handling
-            return f"EXTERNAL SEARCH FAILED for '{query}': {e}\n\nPlease try the search again or use local search only."
+    def find_papers_by_str(self, query: str, limit: int = 10, provider: str = "semantic_scholar") -> str:
+        if provider == "semantic_scholar":
+            try:
+                papers = self.searcher.search(query, limit=limit)
+            except Exception as e:  # pragma: no cover - network failure handling
+                return f"EXTERNAL SEARCH FAILED for '{query}': {e}\n\nPlease try the search again or use local search only."
 
-        if not papers:
-            return f"No papers found in Semantic Scholar for query: '{query}'"
+            if not papers:
+                return f"No papers found in Semantic Scholar for query: '{query}'"
 
-        # Enhanced formatting for agent consumption
-        formatted_papers = []
-        for i, paper in enumerate(papers, 1):
-            paper_info = [
-                f"EXTERNAL PAPER {i}:",
-                f"  Title: {paper.get('title', 'Unknown Title')}",
-                f"  Authors: {paper.get('authors_str', 'Unknown authors')}",
-                f"  Year: {paper.get('year', 'Unknown')}",
-                f"  Venue: {paper.get('venue', 'Unknown venue')}"
-            ]
-            
-            # Add citation metrics if available
-            if paper.get('citationCount') is not None:
-                citations = paper.get('citationCount', 0)
-                influential = paper.get('influentialCitationCount', 0)
-                paper_info.append(f"  Citations: {citations} total, {influential} influential")
-            
-            # Add access information
-            access_info = []
-            if paper.get('isOpenAccess'):
-                access_info.append("Open Access")
-            if paper.get('pdf_url'):
-                access_info.append("PDF available")
-            if access_info:
-                paper_info.append(f"  Access: {', '.join(access_info)}")
-            
-            # Add URLs
-            if paper.get('url'):
-                paper_info.append(f"  Semantic Scholar: {paper['url']}")
-            if paper.get('pdf_url'):
-                paper_info.append(f"  PDF URL: {paper['pdf_url']}")
+            # Enhanced formatting for agent consumption
+            formatted_papers = []
+            for i, paper in enumerate(papers, 1):
+                paper_info = [
+                    f"EXTERNAL PAPER {i}:",
+                    f"  Title: {paper.get('title', 'Unknown Title')}",
+                    f"  Authors: {paper.get('authors_str', 'Unknown authors')}",
+                    f"  Year: {paper.get('year', 'Unknown')}",
+                    f"  Venue: {paper.get('venue', 'Unknown venue')}"
+                ]
                 
-            # Add abstract with smart truncation
-            abstract = paper.get('abstract', '')
-            if abstract:
-                if len(abstract) > 300:
-                    # Find a good break point near 300 characters
-                    truncated = abstract[:300]
-                    last_sentence = truncated.rfind('.')
-                    if last_sentence > 250:  # If we found a sentence end reasonably close
-                        abstract_preview = abstract[:last_sentence + 1] + "..."
+                # Add citation metrics if available
+                if paper.get('citationCount') is not None:
+                    citations = paper.get('citationCount', 0)
+                    influential = paper.get('influentialCitationCount', 0)
+                    paper_info.append(f"  Citations: {citations} total, {influential} influential")
+                
+                # Add access information
+                access_info = []
+                if paper.get('isOpenAccess'):
+                    access_info.append("Open Access")
+                if paper.get('pdf_url'):
+                    access_info.append("PDF available")
+                if access_info:
+                    paper_info.append(f"  Access: {', '.join(access_info)}")
+                
+                # Add URLs
+                if paper.get('url'):
+                    paper_info.append(f"  Semantic Scholar: {paper['url']}")
+                if paper.get('pdf_url'):
+                    paper_info.append(f"  PDF URL: {paper['pdf_url']}")
+                    
+                # Add abstract with smart truncation
+                abstract = paper.get('abstract', '')
+                if abstract:
+                    if len(abstract) > 300:
+                        # Find a good break point near 300 characters
+                        truncated = abstract[:300]
+                        last_sentence = truncated.rfind('.')
+                        if last_sentence > 250:  # If we found a sentence end reasonably close
+                            abstract_preview = abstract[:last_sentence + 1] + "..."
+                        else:
+                            abstract_preview = truncated + "..."
                     else:
-                        abstract_preview = truncated + "..."
+                        abstract_preview = abstract
+                    
+                    paper_info.append(f"  Abstract: {abstract_preview}")
+                
+                formatted_papers.append('\n'.join(paper_info))
+
+            # Create comprehensive result summary
+            result_lines = [
+                f"SEMANTIC SCHOLAR SEARCH RESULTS for '{query}':",
+                f"Found {len(papers)} papers from external sources (showing top {limit}):",
+                "",
+                *formatted_papers,
+                "",
+                f"Source: Semantic Scholar API",
+                f"Query processed at: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            ]
+
+            return '\n'.join(result_lines)
+        elif provider == "arxiv":
+            try:
+                papers = self.arxiv_searcher.search(query, limit=limit)
+            except Exception as e:
+                return f"ARXIV SEARCH FAILED for '{query}': {e}"
+            if not papers:
+                return f"No papers found in arXiv for query: '{query}'"
+
+            formatted_papers = []
+            for i, paper in enumerate(papers, 1):
+                paper_info = [
+                    f"ARXIV PAPER {i}:",
+                    f"  Title: {paper.get('title', 'Unknown Title')}",
+                    f"  Authors: {', '.join(paper.get('authors', [])) or 'Unknown authors'}",
+                    f"  Published: {paper.get('published', 'Unknown')}",
+                ]
+                if paper.get("url"):
+                    paper_info.append(f"  URL: {paper['url']}")
+                abstract = paper.get("abstract", "")
+                if len(abstract) > 300:
+                    preview = abstract[:300]
+                    last_space = preview.rfind(" ")
+                    abstract_preview = preview[:last_space] + "..." if last_space > 0 else preview + "..."
                 else:
                     abstract_preview = abstract
-                
                 paper_info.append(f"  Abstract: {abstract_preview}")
-            
-            formatted_papers.append('\n'.join(paper_info))
+                formatted_papers.append("\n".join(paper_info))
 
-        # Create comprehensive result summary
-        result_lines = [
-            f"SEMANTIC SCHOLAR SEARCH RESULTS for '{query}':",
-            f"Found {len(papers)} papers from external sources (showing top {limit}):",
-            "",
-            *formatted_papers,
-            "",
-            f"Source: Semantic Scholar API",
-            f"Query processed at: {time.strftime('%Y-%m-%d %H:%M:%S')}"
-        ]
-
-        return '\n'.join(result_lines)
+            result_lines = [
+                f"ARXIV SEARCH RESULTS for '{query}':",
+                f"Found {len(papers)} papers on arXiv (showing top {limit}):",
+                "",
+                *formatted_papers,
+            ]
+            return "\n".join(result_lines)
+        else:
+            return f"Search provider '{provider}' not supported."
 
     def retrieve_full_text(self, paper_url: str) -> str:
         """Download and process a PDF from the provided URL."""

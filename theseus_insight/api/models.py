@@ -329,6 +329,7 @@ class ResearchAgentModelConfigApi(BaseModel):
     initial_search_query_count: Optional[int] = Field(3, ge=1, le=10, description="Number of initial search queries")
     local_search_limit: Optional[int] = Field(10, ge=1, le=50, description="Papers per local search operation")
     external_search_limit: Optional[int] = Field(5, ge=1, le=20, description="Papers per external search operation")
+    external_search_delay: Optional[float] = Field(2.0, ge=1.0, le=10.0, description="Delay between external API calls (ArXiv requires minimum 2 seconds)")
     
     # Search strategy configuration
     search_config: Optional[Dict[str, Any]] = Field(
@@ -337,7 +338,7 @@ class ResearchAgentModelConfigApi(BaseModel):
             "keyword_weight": 0.4,
             "similarity_threshold": 0.3,
             "enable_pdf_download": True,
-            "external_search_delay": 2.0
+            "external_search_provider": "arxiv"
         },
         description="Search strategy parameters for hybrid local/external search"
     )

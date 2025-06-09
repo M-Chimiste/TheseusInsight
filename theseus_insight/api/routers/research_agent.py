@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from typing import List
 import json
 import uuid
+import sys
+import os
 
 from ..dependencies import db
 from ..tasks import task_manager, TaskStatus
@@ -13,63 +15,69 @@ from ..models import (
     ResearchLibraryResponse, ResearchLibraryItem
 )
 
+# Add the project root to the path to allow direct imports
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 router = APIRouter(prefix="/api/research-agent", tags=["research-agent"])
+
+def _get_research_agent_config():
+    """Get research agent configuration directly from database."""
+    # Try to get LangGraph configuration first
+    config_json = db.get_setting("research_agent_langgraph_config")
+    if config_json:
+        try:
+            return json.loads(config_json)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    
+    # Return default configuration
+    return {
+        "reasoning_model": {
+            "model_name": "gemini-2.0-flash",
+            "model_type": "gemini",
+            "max_new_tokens": 4096,
+            "temperature": 0.1,
+            "num_ctx": 131072
+        },
+        "query_generator_model": None,  # Falls back to reasoning_model if not specified
+        "reflection_model": None,       # Falls back to reasoning_model if not specified  
+        "answer_model": None,           # Falls back to reasoning_model if not specified
+        "max_research_loops": 10,
+        "initial_search_query_count": 3,
+        "local_search_limit": 10,
+        "external_search_limit": 5,
+        "search_config": {
+            "semantic_weight": 0.6,
+            "keyword_weight": 0.4,
+            "similarity_threshold": 0.3,
+            "enable_pdf_download": True
+        }
+    }
+
+def _save_research_agent_config(config_dict):
+    """Save research agent configuration directly to database."""
+    config_json = json.dumps(config_dict, indent=2)
+    db.set_setting("research_agent_langgraph_config", config_json)
 
 @router.get("/model-config", response_model=ResearchAgentModelConfigApi)
 async def get_research_agent_model_config():
     """Get research agent model configuration supporting both legacy and LangGraph formats."""
     try:
-        # Try to get LangGraph configuration first
-        langgraph_config = db.get_setting("research_agent_langgraph_config")
-        if langgraph_config:
-            try:
-                config_data = json.loads(langgraph_config)
-                return ResearchAgentModelConfigApi(**config_data)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        
-        # Fall back to unified router configuration
-        try:
-            from ...agentic_research.unified_model_router import load_unified_router
-            router = load_unified_router(db)
-            config_data = router.get_configuration()
-            
-            return ResearchAgentModelConfigApi(**config_data)
-        except Exception:
-            # Return default configuration
-            return ResearchAgentModelConfigApi(
-                reasoning_model={
-                    "model_name": "gemini-2.0-flash",
-                    "model_type": "gemini",
-                    "max_new_tokens": 4096,
-                    "temperature": 0.1,
-                    "num_ctx": 131072
-                },
-                max_research_loops=10,
-                initial_search_query_count=3,
-                local_search_limit=10,
-                external_search_limit=5,
-                search_config={
-                    "semantic_weight": 0.6,
-                    "keyword_weight": 0.4,
-                    "similarity_threshold": 0.3,
-                    "enable_pdf_download": True
-                }
-            )
+        config_data = _get_research_agent_config()
+        return ResearchAgentModelConfigApi(**config_data)
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting research agent model config: {str(e)}")
 
 @router.put("/model-config")
 async def update_research_agent_model_config(config: ResearchAgentModelConfigApi):
-    """Update research agent model configuration using unified router."""
+    """Update research agent model configuration using direct database access."""
     try:
-        from ...agentic_research.unified_model_router import load_unified_router
-        
-        # Load the unified router and save configuration
-        router = load_unified_router(db)
+        # Save configuration directly to database
         config_dict = config.dict(exclude_none=True)
-        router.save_configuration(config_dict)
+        _save_research_agent_config(config_dict)
         
         return {"status": "success", "message": "Research agent model configuration updated successfully"}
     except Exception as e:
@@ -93,12 +101,9 @@ async def run_research_agent(request: ResearchAgentRunRequest, background_tasks:
         
         # Apply model config override if provided
         if request.model_config_override:
-            from ...agentic_research.unified_model_router import load_unified_router
-            
-            # Save override configuration using unified router
-            router = load_unified_router(db)
+            # Save override configuration directly to database
             override_dict = request.model_config_override.dict(exclude_none=True)
-            router.save_configuration(override_dict)
+            _save_research_agent_config(override_dict)
         
         # Create task in database
         await task_manager.create_task(
@@ -301,65 +306,95 @@ async def get_research_library(
 async def debug_paper_access():
     """Debug endpoint to check paper access capabilities and status."""
     try:
-        from ...agentic_research.local_search import LocalSearchTool
-        from ...inference.llm import SentenceTransformerInference
+        # Try to import LocalSearchTool, but handle gracefully if langgraph is not available
+        try:
+            from ...agentic_research.local_search import LocalSearchTool
+            from ...inference.llm import SentenceTransformerInference
+            local_search_available = True
+        except ImportError as import_error:
+            local_search_available = False
+            import_error_message = str(import_error)
         
         # Create a temporary LocalSearchTool to check capabilities
-        try:
-            embedding_model = SentenceTransformerInference(
-                model_name='Alibaba-NLP/gte-modernbert-base',
-                remote_code=True
-            )
-            search_tool = LocalSearchTool(
-                db=db,
-                embedding_model=embedding_model,
-                enable_pdf_download=True
-            )
+        if local_search_available:
+            try:
+                embedding_model = SentenceTransformerInference(
+                    model_name='Alibaba-NLP/gte-modernbert-base',
+                    remote_code=True
+                )
+                search_tool = LocalSearchTool(
+                    db=db,
+                    embedding_model=embedding_model,
+                    enable_pdf_download=True
+                )
+                
+                # Get search statistics
+                stats = search_tool.get_search_stats()
+                
+                # Test a paper with full text access
+                all_papers = db.fetch_all_papers()[:10]  # Get first 10 papers
+                
+                test_results = []
+                for paper in all_papers:
+                    paper_info = {
+                        "id": paper.get("id"),
+                        "title": paper.get("title", "Unknown")[:50] + "...",
+                        "has_url": bool(paper.get("url")),
+                        "has_full_text": bool(paper.get("text")),
+                        "abstract_length": len(paper.get("abstract", "")),
+                        "full_text_length": len(paper.get("text", "")) if paper.get("text") else 0
+                    }
+                    
+                    # Test retrieve_full_text if we have a paper ID
+                    if paper.get("id"):
+                        try:
+                            result = search_tool.retrieve_full_text(str(paper["id"]))
+                            paper_info["retrieve_test"] = "SUCCESS" if "FULL TEXT RETRIEVED" in result else "ABSTRACT_ONLY"
+                            paper_info["retrieve_result_length"] = len(result)
+                        except Exception as e:
+                            paper_info["retrieve_test"] = f"ERROR: {str(e)}"
+                            paper_info["retrieve_result_length"] = 0
+                    
+                    test_results.append(paper_info)
+                
+                return {
+                    "database_stats": stats,
+                    "paper_samples": test_results,
+                    "total_papers_tested": len(test_results),
+                    "papers_with_full_text": len([p for p in test_results if p["has_full_text"]]),
+                    "papers_with_urls": len([p for p in test_results if p["has_url"]]),
+                    "retrieve_success_count": len([p for p in test_results if p.get("retrieve_test") == "SUCCESS"]),
+                    "pdf_processing_available": stats.get("pdf_processor_available", False),
+                    "pdf_download_enabled": stats.get("pdf_download_enabled", False)
+                }
+                
+            except Exception as tool_error:
+                return {
+                    "error": f"Error creating search tool: {str(tool_error)}",
+                    "database_papers_count": len(db.fetch_all_papers()) if hasattr(db, 'fetch_all_papers') else "Unknown",
+                    "local_search_available": False
+                }
+        else:
+            # LocalSearchTool not available, provide basic information
+            all_papers = db.fetch_all_papers()[:10] if hasattr(db, 'fetch_all_papers') else []
             
-            # Get search statistics
-            stats = search_tool.get_search_stats()
-            
-            # Test a paper with full text access
-            all_papers = db.fetch_all_papers()[:10]  # Get first 10 papers
-            
-            test_results = []
+            basic_stats = []
             for paper in all_papers:
-                paper_info = {
+                basic_stats.append({
                     "id": paper.get("id"),
                     "title": paper.get("title", "Unknown")[:50] + "...",
                     "has_url": bool(paper.get("url")),
                     "has_full_text": bool(paper.get("text")),
                     "abstract_length": len(paper.get("abstract", "")),
                     "full_text_length": len(paper.get("text", "")) if paper.get("text") else 0
-                }
-                
-                # Test retrieve_full_text if we have a paper ID
-                if paper.get("id"):
-                    try:
-                        result = search_tool.retrieve_full_text(str(paper["id"]))
-                        paper_info["retrieve_test"] = "SUCCESS" if "FULL TEXT RETRIEVED" in result else "ABSTRACT_ONLY"
-                        paper_info["retrieve_result_length"] = len(result)
-                    except Exception as e:
-                        paper_info["retrieve_test"] = f"ERROR: {str(e)}"
-                        paper_info["retrieve_result_length"] = 0
-                
-                test_results.append(paper_info)
+                })
             
             return {
-                "database_stats": stats,
-                "paper_samples": test_results,
-                "total_papers_tested": len(test_results),
-                "papers_with_full_text": len([p for p in test_results if p["has_full_text"]]),
-                "papers_with_urls": len([p for p in test_results if p["has_url"]]),
-                "retrieve_success_count": len([p for p in test_results if p.get("retrieve_test") == "SUCCESS"]),
-                "pdf_processing_available": stats.get("pdf_processor_available", False),
-                "pdf_download_enabled": stats.get("pdf_download_enabled", False)
-            }
-            
-        except Exception as tool_error:
-            return {
-                "error": f"Error creating search tool: {str(tool_error)}",
-                "database_papers_count": len(db.fetch_all_papers()) if hasattr(db, 'fetch_all_papers') else "Unknown"
+                "local_search_available": False,
+                "import_error": import_error_message,
+                "basic_paper_stats": basic_stats,
+                "total_papers_in_db": len(db.fetch_all_papers()) if hasattr(db, 'fetch_all_papers') else "Unknown",
+                "message": "LocalSearchTool not available due to missing dependencies (likely langgraph). Basic stats only."
             }
             
     except Exception as e:

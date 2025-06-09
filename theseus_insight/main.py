@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -6,30 +6,12 @@ from contextlib import asynccontextmanager
 import os
 import pathlib
 import json
-import uuid
 from datetime import datetime, timedelta
-from typing import List
 
 from .api.routers import all_routers, websocket_manager
 from .api.dependencies import db, CREDENTIAL_KEYS
 from .api.tasks import task_manager
 from .api.models import ModelConfig, TTSModelConfig, OrchestrationConfig
-
-from pydantic import BaseModel, Field, ValidationError
-
-from .data_model.data_handling import PaperDatabase
-from .api.models import (
-    Model, ModelCreate, Paper, Run, PaginatedResponse,
-    NewsletterConfig, RunStatus, OrchestrationConfig,
-    VisualizerSettings, ArxivCategoriesConfig, ModelProvider,
-    EmailRecipients, ResearchInterests, ModelConfig, TTSModelConfig,
-    PodcastGenerationParams, PodcastListItemResponse, PodcastDetailResponse,
-    PaperApiResponse, PaginatedPapersResponse, NewsletterRunParams,
-    SimilaritySearchRequest, SimilaritySearchResponse, SimilarPapersRequest, SimilarPapersResponse,
-    HybridSearchRequest, HybridSearchResponse
-)
-from .api.tasks import task_manager, TaskStatus
-from .theseus_insight import TheseusInsight
 from . import theseus_insight as ti_module
 from .utils.path_resolver import get_config_path, config_file_exists
 
@@ -61,6 +43,7 @@ async def lifespan(app_instance: FastAPI):
     print("INFO:     Starting up Theseus Insight API...")
     try:
         # Directory structure is now created during database initialization
+        pass
 
         # Load credentials from DB (encrypted) and apply to environment
         for key in CREDENTIAL_KEYS:
@@ -159,18 +142,11 @@ async def lifespan(app_instance: FastAPI):
         except Exception as e:
             print(f"Warning: Media file cleanup encountered an error: {e}")
             # Continue startup even if cleanup fails
-        
-        # Start task manager workers
-        print("INFO:     Starting task manager workers...")
-        try:
-            await task_manager.start_worker()
-            print("INFO:     Task manager workers started successfully.")
-        except Exception as e:
-            print(f"Error: Failed to start task manager workers: {e}")
-            # Continue startup even if worker startup fails, but log the error
             
     except Exception as e:
         print(f"Error during startup: {e}")
+    # Start background worker for queued tasks
+    await task_manager.start_worker()
     print("INFO:     Theseus Insight API startup complete.")
     yield
     # Shutdown logic
@@ -357,3 +333,5 @@ def cleanup_old_media_files(max_age_days: int = 30):
     except Exception as e:
         print(f"ERROR: Failed to run media file cleanup: {e}")
         # Don't raise the error - we don't want cleanup failure to prevent API startup 
+
+# Agent Endpoints

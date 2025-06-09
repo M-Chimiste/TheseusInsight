@@ -17,7 +17,7 @@ from .graph_state import (
     WebSearchState,
     QueryRefinementState,
 )
-from .graph_prompts import (
+from ..prompt.research_agent_prompts import (
     answer_instructions,
     get_current_date,
     query_writer_instructions,
@@ -174,7 +174,7 @@ class ResearchAgent:
                 
                 # Format the prompt
                 current_date = get_current_date()
-                formatted_prompt = query_refinement_instructions.format(
+                formatted_prompt = query_refinement_instructions(
                     current_date=current_date,
                     research_question=initial_question
                 )
@@ -266,7 +266,7 @@ Please respond with any additional details that would help me conduct more targe
                 ])
                 research_topic = f"Context: {conversation_context}\n\nCurrent question: {research_topic}"
             
-            formatted_prompt = query_writer_instructions.format(
+            formatted_prompt = query_writer_instructions(
                 current_date=current_date,
                 research_topic=research_topic,
                 number_queries=state["initial_search_query_count"],
@@ -476,7 +476,7 @@ Please respond with any additional details that would help me conduct more targe
             
             # Format the prompt with enhanced context
             current_date = get_current_date()
-            formatted_prompt = reflection_instructions.format(
+            formatted_prompt = reflection_instructions(
                 current_date=current_date,
                 research_topic=get_research_topic(state["messages"]),
                 summaries=combined_results,
@@ -838,7 +838,7 @@ Please respond with any additional details that would help me conduct more targe
                 paper_access_note += f"\n\n**Enhanced Processing**: {full_text_processed_count} papers were processed with intelligent section extraction using SpacyLayoutDocProcessor and FlatMarkdownParser."
             
             # Enhanced answer instructions with paper access context
-            enhanced_instructions = answer_instructions.format(
+            enhanced_instructions = answer_instructions(
                 current_date=get_current_date(),
                 research_topic=research_topic,
                 summaries=research_insights + paper_access_note

@@ -30,7 +30,7 @@ class OverallState(TypedDict):
     query_list: Optional[List[Query]]
 
     # State from paper judging and PDF processing
-    judged_sources: Annotated[list, operator.add]
+    judged_sources: Optional[List[Dict[str, Any]]]
     judged_papers: Optional[List[Dict[str, Any]]]
     rejected_papers: Optional[List[Dict[str, Any]]]
     external_judged_papers: Optional[List[Dict[str, Any]]]

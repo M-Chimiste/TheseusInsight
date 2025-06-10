@@ -50,6 +50,7 @@ def _get_research_agent_config():
         "local_search_limit": 10,
         "external_search_limit": 5,
         "external_search_delay": 2.0,  # ArXiv rate limiting: minimum 2 seconds between requests
+        "max_research_context_tokens": 30000,
         "search_config": {
             "semantic_weight": 0.6,
             "keyword_weight": 0.4,

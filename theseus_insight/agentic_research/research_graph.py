@@ -1,6 +1,7 @@
 """LangGraph workflow for the local-first research agent."""
 
 import logging
+import tiktoken
 from pathlib import Path
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
@@ -48,6 +49,29 @@ from ..inference.llm import SentenceTransformerInference
 
 
 logger = logging.getLogger(__name__)
+
+
+def count_tokens(text: str, model_name: str = "gpt-3.5-turbo") -> int:
+    """Counts the number of tokens in a text string using tiktoken.
+
+    Args:
+        text: The text to count tokens for.
+        model_name: The name of the model to use for tokenization.
+                    This helps in using the correct encoding.
+
+    Returns:
+        The number of tokens in the text.
+    """
+    if not text:
+        return 0
+    try:
+        encoding = tiktoken.encoding_for_model(model_name)
+    except KeyError:
+        # If the model_name is not found, use a common default encoding
+        encoding = tiktoken.get_encoding("cl100k_base")
+
+    num_tokens = len(encoding.encode(text))
+    return num_tokens
 
 
 class ResearchAgent:
@@ -1324,193 +1348,145 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
             configurable = AgentConfiguration.from_runnable_config(config)
             
             # Get research topic and sources
-            research_topic = get_research_topic(state["messages"])
-            research_insights = ""
+            research_topic_str = get_research_topic(state["messages"])
             
-            # Process gathered sources to extract insights with enhanced full text processing
-            sources_gathered = state.get("sources_gathered", [])
-            search_results = state.get("web_research_result", [])
-            
-            # Debug logging for source aggregation
-            logger.info(f"SOURCES DEBUG: Found {len(sources_gathered)} sources in state")
-            logger.info(f"SOURCES DEBUG: Found {len(search_results)} search results in state")
-            for i, source in enumerate(sources_gathered):
-                logger.info(f"SOURCES DEBUG: Source {i+1}: {source.get('title', 'Unknown')[:50]}... (type: {source.get('source_type', 'unknown')})")
-            
-            if not sources_gathered:
-                logger.warning("SOURCES DEBUG: No sources found in state! This indicates an issue with source aggregation.")
-            
-            # Enhanced full text processing using existing PDF infrastructure
-            enhanced_insights = []
-            full_text_processed_count = 0
-            
-            # Process papers with full text OR attempt PDF download and processing
+            # Retrieve configuration for token limits
             configurable = AgentConfiguration.from_runnable_config(config)
+            max_tokens_for_context = configurable.max_research_context_tokens
+            logger.info(f"Max tokens for context set to: {max_tokens_for_context}")
+
+            # Get judged sources (these should have been processed by _process_pdfs if applicable)
+            judged_sources = state.get("judged_sources", [])
+            if not judged_sources:
+                logger.warning("No judged_sources found in state for final answer generation.")
+                # Fallback to sources_gathered if judged_sources is empty
+                judged_sources = state.get("sources_gathered", [])
+                if not judged_sources:
+                    logger.error("CRITICAL: No sources available at all in _finalize_answer. Returning error message.")
+                    ai_message = AIMessage(content="I apologize, but I was unable to gather any research sources for your query.")
+                    return {**state, "messages": [*state["messages"], ai_message]}
+
+
+            # Sort sources by relevance score (descending)
+            # Handle cases where relevance_score might be missing or not a number
+            try:
+                sorted_judged_sources = sorted(
+                    judged_sources,
+                    key=lambda x: float(x.get('relevance_score', 0) or 0),
+                    reverse=True
+                )
+            except ValueError:
+                logger.warning("Could not sort judged_sources by relevance_score due to invalid score type. Using original order.")
+                sorted_judged_sources = judged_sources
             
-            for source in sources_gathered:
-                paper_processed = False
+            logger.info(f"Processing {len(sorted_judged_sources)} sources for final context, sorted by relevance.")
+
+            selected_papers_content_list = []
+            current_context_tokens = 0
+            included_paper_count = 0
+
+            # Calculate full_text_count and abstract_only_count from *all* judged_sources *before* token filtering
+            initial_full_text_count = 0
+            initial_abstract_only_count = 0
+            for source_check in judged_sources: # Iterate original judged_sources for accurate initial counts
+                has_text = False
+                if source_check.get("has_full_text"):
+                    if source_check.get("source_type") == "local" and source_check.get("paper_id"):
+                        paper_db_entry_check = self.db.get_paper_by_id(source_check["paper_id"])
+                        if paper_db_entry_check and paper_db_entry_check.get('text'):
+                            initial_full_text_count += 1
+                            has_text = True
+                    # For external, 'has_full_text' might be true if PDF was processed and text stored in 'source_check' directly
+                    elif source_check.get("source_type") == "external" and source_check.get("full_text_content"): # Assuming full_text_content if processed
+                        initial_full_text_count += 1
+                        has_text = True
                 
-                # Case 1: Local paper with existing full text
-                if (source.get("has_full_text") and 
-                    source.get("paper_id") and 
-                    source.get("source_type") == "local"):
-                    
-                    try:
-                        paper = self.db.get_paper_by_id(source["paper_id"])
-                        if paper and paper.get('text'):
-                            processed_content = self._process_full_text_with_existing_tools(
-                                paper, research_topic
-                            )
-                            if processed_content:
-                                enhanced_insights.append(processed_content)
-                                full_text_processed_count += 1
-                                paper_processed = True
-                                logger.info(f"Enhanced full text processing for paper {source['paper_id']}")
-                    except Exception as e:
-                        logger.error(f"Error in full text processing for paper {source.get('paper_id')}: {e}")
-                
-                # Case 2: Paper with PDF URL - attempt PDF download and processing
-                if (not paper_processed and 
-                    configurable.enable_pdf_download):
-                    
-                    # Look for PDF URLs in multiple places
-                    pdf_url = None
-                    
-                    # First, check for explicit pdf_url field (from external search)
-                    if source.get("pdf_url"):
-                        pdf_url = source["pdf_url"]
-                        logger.info(f"Found explicit PDF URL: {pdf_url}")
-                    
-                    # For local papers, check if they have a URL field that might be a PDF
-                    elif (source.get("source_type") == "local" and 
-                          source.get("value") and 
-                          (source["value"].endswith('.pdf') or 'arxiv.org' in source["value"])):
-                        pdf_url = source["value"]
-                        logger.info(f"Found local paper PDF URL: {pdf_url}")
-                    
-                    # For ArXiv papers, convert to PDF URL if needed
-                    elif source.get("value") and 'arxiv.org' in source["value"]:
-                        if '.pdf' not in source["value"]:
-                            # Convert ArXiv abstract URL to PDF URL
-                            arxiv_id = source["value"].split('/')[-1]
-                            pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-                        else:
-                            pdf_url = source["value"]
-                        logger.info(f"ArXiv PDF URL: {pdf_url}")
-                    
-                    # Process PDF if we found a valid URL
-                    if pdf_url:
-                        try:
-                            logger.info(f"Attempting PDF download and processing for: {source.get('title', 'Unknown')[:50]}...")
-                            
-                            # Download and process PDF from URL
-                            processed_content = self._download_and_process_pdf_from_url(
-                                pdf_url, 
-                                source,
-                                research_topic
-                            )
-                            
-                            if processed_content:
-                                # Check if this is a failure message (contains "PDF download failed" or "PDF processing error")
-                                if ("PDF download failed" in processed_content or 
-                                    "PDF processing error" in processed_content):
-                                    logger.warning(f"PDF processing failed for {source.get('title', 'Unknown')[:50]}, using abstract fallback")
-                                    # Create abstract-only fallback
-                                    abstract_fallback = self._create_abstract_fallback(source, research_topic)
-                                    if abstract_fallback:
-                                        enhanced_insights.append(abstract_fallback)
-                                else:
-                                    enhanced_insights.append(processed_content)
-                                    full_text_processed_count += 1
-                                    logger.info(f"Successfully processed PDF from URL: {pdf_url}")
-                                    
-                                    # If this is a local paper, update the database with the processed text
-                                    if source.get("paper_id") and source.get("source_type") == "local":
-                                        # The _download_and_process_pdf_from_url method should handle DB updates
-                                        pass
-                            else:
-                                # No processed content returned, create abstract fallback
-                                logger.warning(f"No content returned from PDF processing for {source.get('title', 'Unknown')[:50]}, using abstract")
-                                abstract_fallback = self._create_abstract_fallback(source, research_topic)
-                                if abstract_fallback:
-                                    enhanced_insights.append(abstract_fallback)
-                        except Exception as e:
-                            logger.error(f"Error downloading/processing PDF from {pdf_url}: {e}")
-                            # Continue with abstract-only processing - this is not a fatal error
-                            logger.info(f"Continuing with abstract-only analysis for: {source.get('title', 'Unknown')[:50]}...")
-                            # Create abstract fallback for this failed PDF
-                            abstract_fallback = self._create_abstract_fallback(source, research_topic)
-                            if abstract_fallback:
-                                enhanced_insights.append(abstract_fallback)
-                elif not configurable.enable_pdf_download:
-                    logger.debug(f"PDF downloads disabled - skipping PDF processing for: {source.get('title', 'Unknown')[:50]}...")
+                if not has_text:
+                    initial_abstract_only_count += 1
             
-            # Combine traditional search results with enhanced full text insights
-            if search_results:
-                # Get search queries for the combine function
-                search_queries = state.get("search_query", [])
-                combined_results = combine_search_results(search_results, search_queries)
-                traditional_insights = generate_research_insights([combined_results])
-                
-                # Merge traditional and enhanced insights
-                if enhanced_insights:
-                    research_insights = f"{traditional_insights}\n\n## Enhanced Full Text Analysis\n\n" + "\n\n---\n\n".join(enhanced_insights)
+            logger.info(f"Initial content availability: {initial_full_text_count} full-text, {initial_abstract_only_count} abstract-only papers.")
+
+            # Iterate through sorted sources to build the context for the LLM
+            final_selection_full_text_count = 0 # Count of full-texts actually included in the context
+
+            for source in sorted_judged_sources:
+                paper_text_content = None
+                content_type_included = "none"
+
+                if source.get("has_full_text"):
+                    if source.get("source_type") == "local" and source.get("paper_id"):
+                        paper_db_entry = self.db.get_paper_by_id(source["paper_id"])
+                        if paper_db_entry and paper_db_entry.get('text'):
+                            paper_text_content = paper_db_entry.get('text')
+                            content_type_included = "full_text_local_db"
+                    # Add logic here if external sources can have 'has_full_text' and store it directly
+                    elif source.get("source_type") == "external" and source.get("full_text_content"): # Hypothetical field
+                         paper_text_content = source.get("full_text_content")
+                         content_type_included = "full_text_external"
+
+
+                if paper_text_content is None and source.get("abstract"):
+                    paper_text_content = source.get("abstract")
+                    content_type_included = "abstract"
+
+                if paper_text_content:
+                    num_tokens = count_tokens(paper_text_content, model_name="gpt-3.5-turbo") # Use a common model for token counting
+
+                    if current_context_tokens + num_tokens <= max_tokens_for_context:
+                        formatted_paper_entry = f"Title: {source.get('title', 'N/A')}\n"
+                        authors = source.get('authors', 'N/A')
+                        if isinstance(authors, list):
+                            authors = ", ".join(authors)
+                        formatted_paper_entry += f"Authors: {authors}\n"
+                        formatted_paper_entry += f"Year: {source.get('year', 'N/A')}\n"
+                        formatted_paper_entry += f"Relevance Score: {source.get('relevance_score', 'N/A')}\n"
+                        formatted_paper_entry += f"Source Type: {source.get('source_type', 'N/A')}\n"
+                        formatted_paper_entry += f"Content Type Included: {content_type_included}\n"
+                        formatted_paper_entry += f"Content:\n{paper_text_content}\n\n---\n"
+
+                        selected_papers_content_list.append(formatted_paper_entry)
+                        current_context_tokens += num_tokens
+                        included_paper_count +=1
+                        if content_type_included.startswith("full_text"):
+                            final_selection_full_text_count +=1
+                        logger.info(f"Included paper '{source.get('title', 'N/A')}' ({content_type_included}, {num_tokens} tokens). Total tokens: {current_context_tokens}/{max_tokens_for_context}")
+                    else:
+                        logger.info(f"Skipping paper '{source.get('title', 'N/A')}' due to token limit. Needed: {num_tokens}, Available: {max_tokens_for_context - current_context_tokens}")
+                        break
                 else:
-                    research_insights = traditional_insights
-            else:
-                research_insights = "\n\n---\n\n".join(enhanced_insights) if enhanced_insights else ""
+                    logger.info(f"Paper '{source.get('title', 'N/A')}' has no content (full text or abstract) to include.")
+
+            final_selected_research_context_str = "\n".join(selected_papers_content_list)
+            logger.info(f"Final context built with {included_paper_count} papers, totaling {current_context_tokens} tokens (limit: {max_tokens_for_context}).")
             
-            # Check if we have access to full text papers - this is key for quality
-            full_text_count = 0
-            abstract_only_count = 0
-            
-            # Analyze what type of paper content we have access to
-            for source in sources_gathered:
-                if source.get("source_type") == "local":
-                    # For local papers, check if full text is available
-                    try:
-                        paper_id = source.get("paper_id") or source.get("id")
-                        if paper_id:
-                            # Try to get full text - this will tell us if it's available
-                            full_text_result = self.local_tool.retrieve_full_text(str(paper_id))
-                            if "FULL TEXT RETRIEVED" in full_text_result:
-                                full_text_count += 1
-                                logger.info(f"Full text available for local paper {paper_id}: {source.get('title', 'Unknown')}")
-                            else:
-                                abstract_only_count += 1
-                                logger.warning(f"Only abstract available for paper {paper_id}: {source.get('title', 'Unknown')}")
-                    except Exception as e:
-                        logger.error(f"Error checking full text availability: {e}")
-                        abstract_only_count += 1
-                else:
-                    # For external papers, they typically only have abstracts unless explicitly downloaded
-                    abstract_only_count += 1
-            
-            logger.info(f"Research content analysis: {full_text_count} full-text papers, {abstract_only_count} abstract-only papers")
-            
-            # Update the answer instructions with enhanced paper access information
+            # Paper access note based on *initial* availability and *final* inclusion
             paper_access_note = ""
-            if full_text_count > 0:
-                enhanced_note = f" (with {full_text_processed_count} receiving enhanced analysis)" if full_text_processed_count > 0 else ""
-                paper_access_note = f"\n\nNote: This analysis includes {full_text_count} full-text papers{enhanced_note} and {abstract_only_count} abstract-only papers."
-            elif abstract_only_count > 0:
-                paper_access_note = f"\n\nNote: This analysis is based on {abstract_only_count} paper abstracts. For more detailed analysis, full-text access would be beneficial."
-            
-            if full_text_processed_count > 0:
-                paper_access_note += f"\n\n**Enhanced Processing**: {full_text_processed_count} papers were processed with intelligent section extraction using SpacyLayoutDocProcessor and FlatMarkdownParser."
-            
+            if initial_full_text_count > 0 or initial_abstract_only_count > 0:
+                paper_access_note = f"\n\nNote: The research found {initial_full_text_count} potentially full-text paper(s) and {initial_abstract_only_count} abstract-only paper(s)."
+                if included_paper_count > 0:
+                    paper_access_note += f" From these, {included_paper_count} paper(s) were selected for the context, including {final_selection_full_text_count} full-text(s), respecting a token limit of {max_tokens_for_context}."
+                else:
+                    paper_access_note += " However, no papers could be included in the final context due to token limits or lack of content."
+            else:
+                paper_access_note = "\n\nNote: No research papers were found or processed for this query."
+
             # Include final outline in answer generation
             current_outline = state.get("current_outline", "")
             outline_context = f"\n\n## Research Outline\n{current_outline}" if current_outline else ""
             
             # Enhanced answer instructions with paper access context
+            # The main content for summarization is now final_selected_research_context_str
+            summaries_for_llm = final_selected_research_context_str + paper_access_note + outline_context
+
             enhanced_instructions = answer_instructions(
                 current_date=get_current_date(),
-                research_topic=research_topic,
-                summaries=research_insights + paper_access_note + outline_context
+                research_topic=research_topic_str,
+                summaries=summaries_for_llm
             )
             
             # Generate final answer
+            sources_gathered = state.get("judged_sources", state.get("sources_gathered", [])) # Use judged_sources if available for citation
+
             llm = self.model_router.get_model("finalize_answer")
             
             # Convert LangChain messages to the format expected by the model router

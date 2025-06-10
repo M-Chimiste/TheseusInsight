@@ -1301,6 +1301,14 @@ const Settings: React.FC = () => {
                 helperText="Papers per external search"
                 inputProps={{ min: 1, max: 20 }}
               />
+              <TextField
+                label="Max Research Context Tokens"
+                type="number"
+                value={config.max_research_context_tokens || 30000}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_context_tokens', Number(e.target.value))}
+                helperText="Max tokens for LLM context in final summary generation."
+                inputProps={{ min: 1000, max: 200000, step: 1000 }}
+              />
             </Box>
           </CardContent>
         </Card>

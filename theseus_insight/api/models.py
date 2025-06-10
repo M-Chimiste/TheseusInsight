@@ -331,6 +331,7 @@ class ResearchAgentModelConfigApi(BaseModel):
     local_search_limit: Optional[int] = Field(10, ge=1, le=50, description="Papers per local search operation")
     external_search_limit: Optional[int] = Field(5, ge=1, le=20, description="Papers per external search operation")
     external_search_delay: Optional[float] = Field(2.0, ge=1.0, le=10.0, description="Delay between external API calls (ArXiv requires minimum 2 seconds)")
+    max_research_context_tokens: Optional[int] = Field(None, description="Maximum tokens for the research context fed to the LLM for final summarization. Defaults to 30000 if not set.", example=30000)
     
     # Search strategy configuration
     search_config: Optional[Dict[str, Any]] = Field(
@@ -358,6 +359,7 @@ class ResearchAgentModelConfigApi(BaseModel):
                 "initial_search_query_count": 3,
                 "local_search_limit": 10,
                 "external_search_limit": 5,
+                "max_research_context_tokens": 30000,
                 "search_config": {
                     "semantic_weight": 0.6,
                     "keyword_weight": 0.4,

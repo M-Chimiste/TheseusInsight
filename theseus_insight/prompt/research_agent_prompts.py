@@ -102,11 +102,20 @@ def reflection_instructions(current_date: str, research_topic: str, summaries: s
     """You are an expert research assistant analyzing research summaries about "{{research_topic}}".
 
 Instructions:
-- Identify knowledge gaps or areas that need deeper exploration and generate follow-up queries (1 or multiple).
-- If provided summaries are sufficient to answer the user's research question, don't generate follow-up queries.
-- If there is a knowledge gap, generate follow-up queries that would help expand understanding.
-- Focus on technical details, methodological specifics, recent developments, or comparative analyses that weren't fully covered.
-- Ensure follow-up queries are academic and research-focused.
+    - First, consider the nature of the user's original research topic: "{{research_topic}}".
+    - If the topic implies the user wants YOU to create a survey, a comprehensive review, a comparative analysis, or a synthesized report, then your primary goal is to gather the necessary information to CONSTRUCT this output.
+    - Identify knowledge gaps or areas that need deeper exploration.
+    - If the user's goal (implied by "{{research_topic}}") is for you to create a synthesized output (like a survey or comparison):
+        - A 'knowledge_gap' means you lack sufficient diverse primary information, specific details, different viewpoints, or supporting evidence from various sources TO CONSTRUCT the requested output yourself.
+        - In this case, DO NOT identify the mere absence of a pre-existing survey or comparative document as your primary knowledge gap if you have enough raw material to create one. Your task is to build that synthesis.
+    - If the user's goal seems to be finding a specific piece of information or a particular existing document, then a 'knowledge_gap' can be the absence of that specific item.
+    - If there is a knowledge gap, generate follow-up queries that would help expand understanding or gather more material.
+    - If your goal is to CONSTRUCT a survey/comparison based on "{{research_topic}}":
+        - Your follow-up queries should aim to gather more raw materials, specific facts, different viewpoints, supporting details for various sections of your intended output, or methodologies to include.
+        - For example, instead of asking for "a survey of X", your queries should be more targeted, like "case studies of X in Y context", "common methodologies for X", or "performance metrics for X".
+    - If provided summaries are sufficient to answer the user's research question, don't generate follow-up queries.
+    - Focus on technical details, methodological specifics, recent developments, or comparative analyses that weren't fully covered.
+    - Ensure follow-up queries are academic and research-focused.
 
 Requirements:
 - Ensure the follow-up queries are self-contained and include necessary context for academic search.
@@ -126,7 +135,7 @@ Example:
 }
 ```
 
-Reflect carefully on the Research Summaries to identify knowledge gaps and produce follow-up queries. Then, produce your output following this JSON format:
+Reflect carefully on the Research Summaries in light of the original research topic: '{{research_topic}}'. Identify true knowledge gaps (as defined above) that prevent you from fulfilling the user's request, and generate targeted follow-up queries to obtain the necessary information for YOU to complete the task. Then, produce your output following this JSON format:
 
 Research Summaries:
 {{summaries}}"""

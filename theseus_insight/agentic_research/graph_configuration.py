@@ -59,6 +59,11 @@ class AgentConfiguration(BaseModel):
         metadata={"description": "Number of papers to return from external search."},
     )
 
+    max_research_context_tokens: int = Field(
+        default=30000,
+        metadata={"description": "Maximum tokens for the research context given to the LLM for final summarization."}
+    )
+
     enable_pdf_download: bool = Field(
         default=True,
         metadata={"description": "Enable automatic PDF download and processing."},

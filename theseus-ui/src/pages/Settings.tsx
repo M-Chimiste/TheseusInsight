@@ -224,6 +224,7 @@ const Settings: React.FC = () => {
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
+  const [editedResearchAgentConfig, setEditedResearchAgentConfig] = useState<any | null>(null);
   
   // Use the database task state hook for persistent state management
   const {
@@ -485,18 +486,21 @@ const Settings: React.FC = () => {
     }
   }, [credentials]);
 
+  useEffect(() => {
+    if (researchAgentModelConfig) {
+      setEditedResearchAgentConfig(JSON.parse(JSON.stringify(researchAgentModelConfig)));
+    }
+  }, [researchAgentModelConfig]);
+
   const handleModelConfigChange = (modelKey: string, field: string, value: any) => {
     // Handle research agent model config separately
     if (modelKey === 'research_agent_model_config') {
-      if (!researchAgentModelConfig) {
-        return;
-      }
-      const newResearchAgentConfig = JSON.parse(JSON.stringify(researchAgentModelConfig)); // Deep copy
+      const newConfig = JSON.parse(JSON.stringify(editedResearchAgentConfig || {}));
       
       // Handle nested paths like "boss_model.model_name" or "worker_models.summary.temperature"
       if (field.includes('.')) {
         const fieldParts = field.split('.');
-        let currentObj = newResearchAgentConfig;
+        let currentObj = newConfig;
         
         // Navigate to the parent object
         for (let i = 0; i < fieldParts.length - 1; i++) {
@@ -509,11 +513,12 @@ const Settings: React.FC = () => {
         // Set the final value
         currentObj[fieldParts[fieldParts.length - 1]] = value;
       } else {
-        newResearchAgentConfig[field] = value;
+        newConfig[field] = value;
       }
       
+      setEditedResearchAgentConfig(newConfig);
       // Optimistically update local state for UI responsiveness
-      queryClient.setQueryData(['researchAgentModelConfig'], newResearchAgentConfig);
+      queryClient.setQueryData(['researchAgentModelConfig'], newConfig);
       return;
     }
     
@@ -593,10 +598,7 @@ const Settings: React.FC = () => {
     // Apply all fields in a single batch update to avoid race conditions
     if (Object.keys(modelData).length > 0) {
       if (modelKey === 'research_agent_model_config') {
-        if (!researchAgentModelConfig) {
-          return;
-        }
-        const newResearchAgentConfig = JSON.parse(JSON.stringify(researchAgentModelConfig)); // Deep copy
+        const newConfig = JSON.parse(JSON.stringify(editedResearchAgentConfig || {}));
         
         // Apply all fields to the config
         Object.entries(modelData).forEach(([field, value]) => {
@@ -604,7 +606,7 @@ const Settings: React.FC = () => {
           
           if (fieldPath.includes('.')) {
             const fieldParts = fieldPath.split('.');
-            let currentObj = newResearchAgentConfig;
+            let currentObj = newConfig;
             
             for (let i = 0; i < fieldParts.length - 1; i++) {
               if (!currentObj[fieldParts[i]]) {
@@ -615,11 +617,11 @@ const Settings: React.FC = () => {
             
             currentObj[fieldParts[fieldParts.length - 1]] = value;
           } else {
-            newResearchAgentConfig[fieldPath] = value;
+            newConfig[fieldPath] = value;
           }
         });
-        
-        queryClient.setQueryData(['researchAgentModelConfig'], newResearchAgentConfig);
+        setEditedResearchAgentConfig(newConfig);
+        queryClient.setQueryData(['researchAgentModelConfig'], newConfig);
       } else {
         if (!orchestrationConfig) {
           return;
@@ -703,16 +705,16 @@ const Settings: React.FC = () => {
   };
 
   const renderResearchAgentModelConfig = (config: any) => {
-    if (!config) return <Typography>Research Agent configuration not available.</Typography>;
+    if (!config) return <Typography>Research Agent configuration not available.</Typography>; // This config is editedResearchAgentConfig
 
     // For the new LangGraph implementation, we focus on the main reasoning model
     // and search/retrieval configuration rather than boss/worker patterns
-    const reasoningModel = config.reasoning_model || config.boss_model || {};
-    const searchConfig = config.search_config || {};
-    const maxResearchLoops = config.max_research_loops || 10;
-    const initialSearchQueryCount = config.initial_search_query_count || 3;
-    const localSearchLimit = config.local_search_limit || 10;
-    const externalSearchLimit = config.external_search_limit || 5;
+    const reasoningModel = (config as any).reasoning_model || (config as any).boss_model || {};
+    const searchConfig = (config as any).search_config || {};
+    const maxResearchLoops = (config as any).max_research_loops || 10;
+    const initialSearchQueryCount = (config as any).initial_search_query_count || 3;
+    const localSearchLimit = (config as any).local_search_limit || 10;
+    const externalSearchLimit = (config as any).external_search_limit || 5;
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -802,7 +804,7 @@ const Settings: React.FC = () => {
               <Accordion>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                   <Typography variant="subtitle1">
-                    Query Generator Model {config.query_generator_model ? '(Configured)' : '(Using Reasoning Model)'}
+                    Query Generator Model {(config as any).query_generator_model ? '(Configured)' : '(Using Reasoning Model)'}
                   </Typography>
                 </AccordionSummary>
                 <AccordionDetails>
@@ -813,9 +815,9 @@ const Settings: React.FC = () => {
                     <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <ModelNameAutocomplete
                         label="Query Generator Model Name"
-                        value={config.query_generator_model?.model_name || ''}
+                        value={(config as any).query_generator_model?.model_name || ''}
                         onChange={value => {
-                          if (!config.query_generator_model) {
+                          if (!(config as any).query_generator_model) {
                             // Initialize with reasoning model defaults if not set
                             handleModelConfigChange('research_agent_model_config', 'query_generator_model', {
                               model_name: value,
@@ -834,10 +836,10 @@ const Settings: React.FC = () => {
                       <FormControl fullWidth>
                         <InputLabel>Model Type (Provider)</InputLabel>
                         <Select
-                          value={config.query_generator_model?.model_type || ''}
+                          value={(config as any).query_generator_model?.model_type || ''}
                           label="Model Type (Provider)"
                           onChange={e => {
-                            if (!config.query_generator_model) {
+                            if (!(config as any).query_generator_model) {
                               // Initialize with reasoning model defaults if not set
                               handleModelConfigChange('research_agent_model_config', 'query_generator_model', {
                                 model_name: reasoningModel.model_name || 'gemini-2.0-flash',
@@ -864,10 +866,10 @@ const Settings: React.FC = () => {
                         fullWidth
                         label="Max New Tokens"
                         type="number"
-                        value={config.query_generator_model?.max_new_tokens || ''}
+                        value={(config as any).query_generator_model?.max_new_tokens || ''}
                         onChange={e => {
                           const value = Number(e.target.value);
-                          if (!config.query_generator_model) {
+                          if (!(config as any).query_generator_model) {
                             // Initialize with reasoning model defaults if not set
                             handleModelConfigChange('research_agent_model_config', 'query_generator_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
@@ -886,10 +888,10 @@ const Settings: React.FC = () => {
                         label="Temperature"
                         type="number"
                         inputProps={{ step: '0.1' }}
-                        value={config.query_generator_model?.temperature || ''}
+                        value={(config as any).query_generator_model?.temperature || ''}
                         onChange={e => {
                           const value = parseFloat(e.target.value);
-                          if (!config.query_generator_model) {
+                          if (!(config as any).query_generator_model) {
                             // Initialize with reasoning model defaults if not set
                             handleModelConfigChange('research_agent_model_config', 'query_generator_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
@@ -920,7 +922,7 @@ const Settings: React.FC = () => {
               <Accordion>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                   <Typography variant="subtitle1">
-                    Reflection Model {config.reflection_model ? '(Configured)' : '(Using Reasoning Model)'}
+                    Reflection Model {(config as any).reflection_model ? '(Configured)' : '(Using Reasoning Model)'}
                   </Typography>
                 </AccordionSummary>
                 <AccordionDetails>
@@ -931,9 +933,9 @@ const Settings: React.FC = () => {
                     <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <ModelNameAutocomplete
                         label="Reflection Model Name"
-                        value={config.reflection_model?.model_name || ''}
+                        value={(config as any).reflection_model?.model_name || ''}
                         onChange={value => {
-                          if (!config.reflection_model) {
+                          if (!(config as any).reflection_model) {
                             handleModelConfigChange('research_agent_model_config', 'reflection_model', {
                               model_name: value,
                               model_type: reasoningModel.model_type || 'gemini',
@@ -951,10 +953,10 @@ const Settings: React.FC = () => {
                       <FormControl fullWidth>
                         <InputLabel>Model Type (Provider)</InputLabel>
                         <Select
-                          value={config.reflection_model?.model_type || ''}
+                          value={(config as any).reflection_model?.model_type || ''}
                           label="Model Type (Provider)"
                           onChange={e => {
-                            if (!config.reflection_model) {
+                            if (!(config as any).reflection_model) {
                               handleModelConfigChange('research_agent_model_config', 'reflection_model', {
                                 model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                                 model_type: e.target.value,
@@ -980,10 +982,10 @@ const Settings: React.FC = () => {
                         fullWidth
                         label="Max New Tokens"
                         type="number"
-                        value={config.reflection_model?.max_new_tokens || ''}
+                        value={(config as any).reflection_model?.max_new_tokens || ''}
                         onChange={e => {
                           const value = Number(e.target.value);
-                          if (!config.reflection_model) {
+                          if (!(config as any).reflection_model) {
                             handleModelConfigChange('research_agent_model_config', 'reflection_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1001,10 +1003,10 @@ const Settings: React.FC = () => {
                         label="Temperature"
                         type="number"
                         inputProps={{ step: '0.1' }}
-                        value={config.reflection_model?.temperature || ''}
+                        value={(config as any).reflection_model?.temperature || ''}
                         onChange={e => {
                           const value = parseFloat(e.target.value);
-                          if (!config.reflection_model) {
+                          if (!(config as any).reflection_model) {
                             handleModelConfigChange('research_agent_model_config', 'reflection_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1034,7 +1036,7 @@ const Settings: React.FC = () => {
               <Accordion>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                   <Typography variant="subtitle1">
-                    Judge Model {config.judge_model ? '(Configured)' : '(Using Reasoning Model)'}
+                    Judge Model {(config as any).judge_model ? '(Configured)' : '(Using Reasoning Model)'}
                   </Typography>
                 </AccordionSummary>
                 <AccordionDetails>
@@ -1045,9 +1047,9 @@ const Settings: React.FC = () => {
                     <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <ModelNameAutocomplete
                         label="Judge Model Name"
-                        value={config.judge_model?.model_name || ''}
+                        value={(config as any).judge_model?.model_name || ''}
                         onChange={value => {
-                          if (!config.judge_model) {
+                          if (!(config as any).judge_model) {
                             handleModelConfigChange('research_agent_model_config', 'judge_model', {
                               model_name: value,
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1065,10 +1067,10 @@ const Settings: React.FC = () => {
                       <FormControl fullWidth>
                         <InputLabel>Model Type (Provider)</InputLabel>
                         <Select
-                          value={config.judge_model?.model_type || ''}
+                          value={(config as any).judge_model?.model_type || ''}
                           label="Model Type (Provider)"
                           onChange={e => {
-                            if (!config.judge_model) {
+                            if (!(config as any).judge_model) {
                               handleModelConfigChange('research_agent_model_config', 'judge_model', {
                                 model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                                 model_type: e.target.value,
@@ -1094,10 +1096,10 @@ const Settings: React.FC = () => {
                         fullWidth
                         label="Max New Tokens"
                         type="number"
-                        value={config.judge_model?.max_new_tokens || ''}
+                        value={(config as any).judge_model?.max_new_tokens || ''}
                         onChange={e => {
                           const value = Number(e.target.value);
-                          if (!config.judge_model) {
+                          if (!(config as any).judge_model) {
                             handleModelConfigChange('research_agent_model_config', 'judge_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1115,10 +1117,10 @@ const Settings: React.FC = () => {
                         label="Temperature"
                         type="number"
                         inputProps={{ step: '0.1' }}
-                        value={config.judge_model?.temperature || ''}
+                        value={(config as any).judge_model?.temperature || ''}
                         onChange={e => {
                           const value = parseFloat(e.target.value);
-                          if (!config.judge_model) {
+                          if (!(config as any).judge_model) {
                             handleModelConfigChange('research_agent_model_config', 'judge_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1148,7 +1150,7 @@ const Settings: React.FC = () => {
               <Accordion>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                   <Typography variant="subtitle1">
-                    Answer Model {config.answer_model ? '(Configured)' : '(Using Reasoning Model)'}
+                    Answer Model {(config as any).answer_model ? '(Configured)' : '(Using Reasoning Model)'}
                   </Typography>
                 </AccordionSummary>
                 <AccordionDetails>
@@ -1159,9 +1161,9 @@ const Settings: React.FC = () => {
                     <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <ModelNameAutocomplete
                         label="Answer Model Name"
-                        value={config.answer_model?.model_name || ''}
+                        value={(config as any).answer_model?.model_name || ''}
                         onChange={value => {
-                          if (!config.answer_model) {
+                          if (!(config as any).answer_model) {
                             handleModelConfigChange('research_agent_model_config', 'answer_model', {
                               model_name: value,
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1179,10 +1181,10 @@ const Settings: React.FC = () => {
                       <FormControl fullWidth>
                         <InputLabel>Model Type (Provider)</InputLabel>
                         <Select
-                          value={config.answer_model?.model_type || ''}
+                          value={(config as any).answer_model?.model_type || ''}
                           label="Model Type (Provider)"
                           onChange={e => {
-                            if (!config.answer_model) {
+                            if (!(config as any).answer_model) {
                               handleModelConfigChange('research_agent_model_config', 'answer_model', {
                                 model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                                 model_type: e.target.value,
@@ -1208,10 +1210,10 @@ const Settings: React.FC = () => {
                         fullWidth
                         label="Max New Tokens"
                         type="number"
-                        value={config.answer_model?.max_new_tokens || ''}
+                        value={(config as any).answer_model?.max_new_tokens || ''}
                         onChange={e => {
                           const value = Number(e.target.value);
-                          if (!config.answer_model) {
+                          if (!(config as any).answer_model) {
                             handleModelConfigChange('research_agent_model_config', 'answer_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1229,10 +1231,10 @@ const Settings: React.FC = () => {
                         label="Temperature"
                         type="number"
                         inputProps={{ step: '0.1' }}
-                        value={config.answer_model?.temperature || ''}
+                        value={(config as any).answer_model?.temperature || ''}
                         onChange={e => {
                           const value = parseFloat(e.target.value);
-                          if (!config.answer_model) {
+                          if (!(config as any).answer_model) {
                             handleModelConfigChange('research_agent_model_config', 'answer_model', {
                               model_name: reasoningModel.model_name || 'gemini-2.0-flash',
                               model_type: reasoningModel.model_type || 'gemini',
@@ -1304,7 +1306,7 @@ const Settings: React.FC = () => {
               <TextField
                 label="Max Research Context Tokens"
                 type="number"
-                value={config.max_research_context_tokens || 30000}
+                value={(config as any).max_research_context_tokens || 30000}
                 onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_context_tokens', Number(e.target.value))}
                 helperText="Max tokens for LLM context in final summary generation."
                 inputProps={{ min: 1000, max: 200000, step: 1000 }}
@@ -1325,7 +1327,7 @@ const Settings: React.FC = () => {
                 label="Semantic Weight"
                 type="number"
                 inputProps={{ step: '0.1', min: 0, max: 1 }}
-                value={searchConfig.semantic_weight || 0.6}
+                value={(searchConfig as any).semantic_weight || 0.6}
                 onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.semantic_weight', parseFloat(e.target.value))}
                 helperText="Weight for semantic similarity"
               />
@@ -1333,7 +1335,7 @@ const Settings: React.FC = () => {
                 label="Keyword Weight"
                 type="number"
                 inputProps={{ step: '0.1', min: 0, max: 1 }}
-                value={searchConfig.keyword_weight || 0.4}
+                value={(searchConfig as any).keyword_weight || 0.4}
                 onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.keyword_weight', parseFloat(e.target.value))}
                 helperText="Weight for keyword matching"
               />
@@ -1341,14 +1343,14 @@ const Settings: React.FC = () => {
                 label="Similarity Threshold"
                 type="number"
                 inputProps={{ step: '0.05', min: 0, max: 1 }}
-                value={searchConfig.similarity_threshold || 0.3}
+                value={(searchConfig as any).similarity_threshold || 0.3}
                 onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.similarity_threshold', parseFloat(e.target.value))}
                 helperText="Minimum similarity score"
               />
               <FormControlLabel
                 control={
                   <Switch
-                    checked={searchConfig.enable_pdf_download !== false}
+                    checked={(searchConfig as any).enable_pdf_download !== false}
                     onChange={e => handleModelConfigChange('research_agent_model_config', 'search_config.enable_pdf_download', e.target.checked)}
                   />
                 }
@@ -1368,7 +1370,7 @@ const Settings: React.FC = () => {
         </Card>
 
         {/* Legacy Configuration Support */}
-        {(config.boss_model || config.worker_models) && (
+        {((config as any).boss_model || (config as any).worker_models) && (
                                 <Card variant="outlined" sx={{ borderColor: 'warning.main', backgroundColor: 'warning.light' }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -1388,7 +1390,7 @@ const Settings: React.FC = () => {
                 onClick={() => {
                   // Convert legacy config to new format
                   const newConfig = {
-                    reasoning_model: config.boss_model || {},
+                    reasoning_model: (config as any).boss_model || {},
                     max_research_loops: 10,
                     initial_search_query_count: 3,
                     local_search_limit: 10,
@@ -1666,9 +1668,9 @@ const Settings: React.FC = () => {
                     {tabDef.label} Settings
                   </Typography>
                   {tabDef.key === 'research_agent_model_config' ? (
-                    researchAgentModelConfig ?
-                      renderModelConfigFields(tabDef.key, researchAgentModelConfig)
-                      : <Typography>Loading configuration for {tabDef.label}...</Typography>
+                    editedResearchAgentConfig ?
+                      renderModelConfigFields(tabDef.key, editedResearchAgentConfig)
+                      : <Typography>Loading configuration...</Typography>
                   ) : (
                     orchestrationConfig && orchestrationConfig[tabDef.key] ?
                       renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
@@ -1679,8 +1681,8 @@ const Settings: React.FC = () => {
                       variant="contained"
                       onClick={() => {
                         if (tabDef.key === 'research_agent_model_config') {
-                          if (researchAgentModelConfig) {
-                            updateResearchAgentModelConfigMutation.mutate(researchAgentModelConfig);
+                          if (editedResearchAgentConfig) {
+                            updateResearchAgentModelConfigMutation.mutate(editedResearchAgentConfig);
                           }
                         } else {
                           if (orchestrationConfig) {
@@ -1694,7 +1696,7 @@ const Settings: React.FC = () => {
                       }}
                       disabled={
                         tabDef.key === 'research_agent_model_config' 
-                          ? updateResearchAgentModelConfigMutation.isPending || !researchAgentModelConfig
+                          ? updateResearchAgentModelConfigMutation.isPending || !editedResearchAgentConfig
                           : updateOrchestrationMutation.isPending || !orchestrationConfig || !orchestrationConfig[tabDef.key]
                       }
                     >

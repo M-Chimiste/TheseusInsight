@@ -74,6 +74,11 @@ class AgentConfiguration(BaseModel):
         metadata={"description": "Delay in seconds between sequential external searches to avoid overwhelming APIs."},
     )
 
+    max_context_tokens: int = Field(
+        default=30000,
+        metadata={"description": "Maximum tokens allowed when building paper context"},
+    )
+
     @classmethod
     def from_runnable_config(
         cls, config: Optional[RunnableConfig] = None

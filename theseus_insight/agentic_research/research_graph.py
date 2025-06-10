@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, AsyncGenerator
+import tiktoken
 
 from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
@@ -722,8 +723,15 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
             # Create paper contexts for outline generation
             paper_contexts = []
             historical_contexts = []
-            
-            for source in judged_sources:
+
+            # Sort papers by relevance_score descending
+            sorted_sources = sorted(judged_sources, key=lambda s: s.get("relevance_score", 0), reverse=True)
+
+            encoding = tiktoken.get_encoding("cl100k_base")
+            token_budget = configurable.max_context_tokens
+            token_count = 0
+
+            for source in sorted_sources:
                 # Build paper context
                 context_parts = []
                 if source.get("title"):
@@ -740,14 +748,19 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
                 
                 paper_context = "\n".join(context_parts)
                 if paper_context.strip():
+                    ctx_tokens = len(encoding.encode(paper_context))
+                    if token_count + ctx_tokens > token_budget:
+                        break
+                    token_count += ctx_tokens
                     paper_contexts.append(paper_context)
-                    
+
                     # Also add to historical context if it's a significant paper
                     if source.get("relevance_score", 0) >= 8:
                         historical_contexts.append(f"{source.get('year', 'Unknown')} - {source.get('title', 'Unknown')}")
             
             # Combine paper contexts for outline generation
-            combined_paper_context = "\n\n---\n\n".join(paper_contexts[:10])  # Limit to avoid token overflow
+            # Paper contexts are already truncated based on token budget
+            combined_paper_context = "\n\n---\n\n".join(paper_contexts)
             historical_context = "; ".join(historical_contexts[:5])  # Key papers only
             
             if not combined_paper_context.strip():
@@ -1459,6 +1472,13 @@ IMPORTANT: Generate search queries that are effective for finding relevant paper
                     research_insights = traditional_insights
             else:
                 research_insights = "\n\n---\n\n".join(enhanced_insights) if enhanced_insights else ""
+
+            # Truncate research insights to respect token budget
+            encoding = tiktoken.get_encoding("cl100k_base")
+            insight_tokens = encoding.encode(research_insights)
+            if len(insight_tokens) > configurable.max_context_tokens:
+                insight_tokens = insight_tokens[:configurable.max_context_tokens]
+                research_insights = encoding.decode(insight_tokens)
             
             # Check if we have access to full text papers - this is key for quality
             full_text_count = 0

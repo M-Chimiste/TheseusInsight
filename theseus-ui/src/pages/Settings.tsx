@@ -713,6 +713,7 @@ const Settings: React.FC = () => {
     const initialSearchQueryCount = config.initial_search_query_count || 3;
     const localSearchLimit = config.local_search_limit || 10;
     const externalSearchLimit = config.external_search_limit || 5;
+    const maxContextTokens = config.max_context_tokens || 30000;
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -1300,6 +1301,14 @@ const Settings: React.FC = () => {
                 onChange={e => handleModelConfigChange('research_agent_model_config', 'external_search_limit', Number(e.target.value))}
                 helperText="Papers per external search"
                 inputProps={{ min: 1, max: 20 }}
+              />
+              <TextField
+                label="Max Context Tokens"
+                type="number"
+                value={maxContextTokens}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_context_tokens', Number(e.target.value))}
+                helperText="Token limit for research context"
+                inputProps={{ min: 1000, max: 200000 }}
               />
             </Box>
           </CardContent>

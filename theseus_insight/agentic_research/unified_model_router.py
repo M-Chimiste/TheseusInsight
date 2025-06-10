@@ -129,6 +129,7 @@ class UnifiedModelRouter:
             "initial_search_query_count": 3,
             "local_search_limit": 10,
             "external_search_limit": 5,
+            "max_context_tokens": 30000,
             "search_config": {
                 "semantic_weight": 0.6,
                 "keyword_weight": 0.4,

@@ -29,8 +29,6 @@ from ..inference.llm import SentenceTransformerInference
 
 logger = logging.getLogger(__name__)
 
-MAX_TOKENS = 15000
-
 
 def count_tokens(text: str) -> int:
     """Very small utility for approximate token counting."""
@@ -44,15 +42,6 @@ def count_tokens(text: str) -> int:
     except KeyError:
         enc = tiktoken.get_encoding("cl100k_base")
     return len(enc.encode(text))
-
-
-def coverage_route(state: OverallState) -> str:
-    """Routing logic after evidence selection."""
-    if not state.is_sufficient:
-        return "query_planner"
-    if count_tokens("\n".join(state.evidence)) > MAX_TOKENS:
-        return "scratchpad_compress"
-    return "answer_generator"
 
 
 class ResearchAgent:
@@ -131,7 +120,10 @@ class ResearchAgent:
         except Exception as e:  # pragma: no cover - llm failure
             logger.error("planner failed: %s", e)
             queries = [question]
-        return {"sub_queries": queries, "research_loop_count": state.research_loop_count}
+        return {
+            "sub_queries": queries,
+            "research_loop_count": state.research_loop_count,
+        }
 
     # ------------------------------------------------------------------
     def _retriever_local(self, state: OverallState, config: RunnableConfig) -> Dict:
@@ -141,13 +133,15 @@ class ResearchAgent:
             for paper in self.local_tool.search_local_only(q, limit=limit):
                 url = paper.get("url") or f"paper_{paper.get('id')}"
                 short = self._generate_short_url(url)
-                results.append({
-                    "short_url": short,
-                    "title": paper.get("title", ""),
-                    "abstract": paper.get("abstract", ""),
-                    "url": url,
-                    "source_type": "local",
-                })
+                results.append(
+                    {
+                        "short_url": short,
+                        "title": paper.get("title", ""),
+                        "abstract": paper.get("abstract", ""),
+                        "url": url,
+                        "source_type": "local",
+                    }
+                )
         state.sources_gathered.extend(results)
         return {
             "sources_gathered": results,
@@ -163,13 +157,15 @@ class ResearchAgent:
             for paper in self.external_tool.search_and_rank(q, limit=limit):
                 url = paper.get("pdf_url") or paper.get("url", "")
                 short = self._generate_short_url(url)
-                results.append({
-                    "short_url": short,
-                    "title": paper.get("title", ""),
-                    "abstract": paper.get("abstract", ""),
-                    "url": url,
-                    "source_type": "external",
-                })
+                results.append(
+                    {
+                        "short_url": short,
+                        "title": paper.get("title", ""),
+                        "abstract": paper.get("abstract", ""),
+                        "url": url,
+                        "source_type": "external",
+                    }
+                )
         state.sources_gathered.extend(results)
         return {
             "sources_gathered": results,
@@ -223,7 +219,9 @@ class ResearchAgent:
             passages.append(snippet)
         summary_text = "\n\n".join(passages)
         llm = self.model_router.get_model("reflection")
-        prompt = evidence_selector_prompt(question=get_research_topic(state.messages), passages=summary_text)
+        prompt = evidence_selector_prompt(
+            question=get_research_topic(state.messages), passages=summary_text
+        )
         try:
             result = llm.invoke(prompt)
             data = json.loads(result)
@@ -242,7 +240,16 @@ class ResearchAgent:
         try:
             llm = self.model_router.get_model("reflection")
             text = "\n\n".join(state.evidence)
-            prompt = scratchpad_compress_prompt(max_tokens=int(self.config.max_research_context_tokens * self.config.compress_to_ratio)) + "\n" + text
+            prompt = (
+                scratchpad_compress_prompt(
+                    max_tokens=int(
+                        self.config.max_research_context_tokens
+                        * self.config.compress_to_ratio
+                    )
+                )
+                + "\n"
+                + text
+            )
             compressed = llm.invoke(prompt)
             state.compressed_notes = compressed
             return {"compressed_notes": compressed}
@@ -264,8 +271,14 @@ class ResearchAgent:
 
     # ------------------------------------------------------------------
     def _compile_outline(self, state: OverallState, config: RunnableConfig) -> Dict:
-        comp_state = self._scratchpad_compress(state, config)
-        return {"outline": comp_state.get("compressed_notes", ""), "paper_contexts": state.evidence}
+        text = "\n\n".join(state.evidence)
+        if count_tokens(text) > self.config.max_research_context_tokens:
+            comp_state = self._scratchpad_compress(state, config)
+            notes = comp_state.get("compressed_notes", "")
+        else:
+            notes = text
+            state.compressed_notes = notes
+        return {"outline": notes, "paper_contexts": state.evidence}
 
     # ------------------------------------------------------------------
     def _reflection(self, state: OverallState, config: RunnableConfig) -> Dict:
@@ -291,7 +304,8 @@ class ResearchAgent:
         external = self._retriever_external(state, config)
         # Merge outputs
         combined = {
-            "sources_gathered": local["sources_gathered"] + external["sources_gathered"],
+            "sources_gathered": local["sources_gathered"]
+            + external["sources_gathered"],
             "search_query": state.sub_queries,
             "web_research_result": [],
         }
@@ -315,8 +329,16 @@ class ResearchAgent:
 
     # ------------------------------------------------------------------
     def _reflection_route(self, state: OverallState) -> str:
-        if not state.is_sufficient and state.research_loop_count < self.config.max_research_loops:
+        if (
+            not state.is_sufficient
+            and state.research_loop_count < self.config.max_research_loops
+        ):
             return "follow_up_research"
+        if (
+            count_tokens("\n".join(state.evidence))
+            > self.config.max_research_context_tokens
+        ):
+            return "compile_outline"
         return "finalize_answer"
 
     # ------------------------------------------------------------------
@@ -338,7 +360,9 @@ class ResearchAgent:
         builder.add_edge(START, "query_refinement")
         builder.add_conditional_edges(
             "query_refinement",
-            lambda s: END if getattr(s, "needs_clarification", False) else "generate_query",
+            lambda s: (
+                END if getattr(s, "needs_clarification", False) else "generate_query"
+            ),
             {END: END, "generate_query": "generate_query"},
         )
 
@@ -347,15 +371,19 @@ class ResearchAgent:
         builder.add_edge("local_research", "judge_all_papers")
         builder.add_edge("external_research", "judge_all_papers")
         builder.add_edge("judge_all_papers", "process_pdfs")
-        builder.add_edge("process_pdfs", "compile_outline")
-        builder.add_edge("compile_outline", "reflection")
+        builder.add_edge("process_pdfs", "reflection")
 
         builder.add_conditional_edges(
             "reflection",
             self._reflection_route,
-            {"follow_up_research": "follow_up_research", "finalize_answer": "finalize_answer"},
+            {
+                "follow_up_research": "follow_up_research",
+                "compile_outline": "compile_outline",
+                "finalize_answer": "finalize_answer",
+            },
         )
 
+        builder.add_edge("compile_outline", "finalize_answer")
         builder.add_edge("follow_up_research", "judge_all_papers")
         builder.add_edge("finalize_answer", END)
 
@@ -400,6 +428,7 @@ class ResearchAgent:
 
 
 # ------------------------------------------------------------------------------
+
 
 def create_research_agent(
     db: PaperDatabase,

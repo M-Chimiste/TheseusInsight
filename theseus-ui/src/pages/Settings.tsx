@@ -1306,10 +1306,30 @@ const Settings: React.FC = () => {
               <TextField
                 label="Max Research Context Tokens"
                 type="number"
-                value={(config as any).max_research_context_tokens || 30000}
-                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_context_tokens', Number(e.target.value))}
-                helperText="Max tokens for LLM context in final summary generation."
+                value={(config as any).max_research_context_tokens || 15000}
+                onChange={e =>
+                  handleModelConfigChange(
+                    'research_agent_model_config',
+                    'max_research_context_tokens',
+                    Number(e.target.value)
+                  )
+                }
+                helperText="Token budget before scratchpad compression"
                 inputProps={{ min: 1000, max: 200000, step: 1000 }}
+              />
+              <TextField
+                label="Scratchpad Compression Ratio"
+                type="number"
+                value={(config as any).compress_to_ratio ?? 0.2}
+                onChange={e =>
+                  handleModelConfigChange(
+                    'research_agent_model_config',
+                    'compress_to_ratio',
+                    parseFloat(e.target.value)
+                  )
+                }
+                helperText="Fraction of tokens to keep when compressing notes"
+                inputProps={{ step: 0.05, min: 0.05, max: 1 }}
               />
             </Box>
           </CardContent>

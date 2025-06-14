@@ -18,6 +18,10 @@ class OverallState:
     compressed_notes: str = ""
     research_loop_count: int = 0
     is_sufficient: bool = False
+    # Optional fields for compatibility with callbacks
+    needs_clarification: Optional[bool] = None
+    clarifying_questions: Optional[List[str]] = None
+    follow_up_queries: Optional[List[str]] = None
 
 
 # Backwards compatibility with earlier versions ---------------------------------

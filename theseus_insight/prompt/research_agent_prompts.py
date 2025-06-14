@@ -6,6 +6,24 @@ def get_current_date():
     """Get current date in a readable format."""
     return datetime.now().strftime("%B %d, %Y")
 
+
+@prompt
+def planner_prompt(question: str, n: int = 5):
+    """Rewrite the user question into {{n}} diverse academic sub-queries."""
+    pass
+
+
+@prompt
+def evidence_selector_prompt(question: str, passages: str):
+    """Assess whether the passages answer the research question and return JSON with 'is_sufficient'."""
+    pass
+
+
+@prompt
+def scratchpad_compress_prompt(max_tokens: int):
+    """Compress the notes to fit within {{max_tokens}} tokens."""
+    pass
+
 @prompt
 def query_refinement_instructions(current_date: str, research_question: str):
     """You are an expert research assistant helping to refine and clarify research questions for optimal academic literature search.

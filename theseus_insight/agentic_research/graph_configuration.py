@@ -60,8 +60,18 @@ class AgentConfiguration(BaseModel):
     )
 
     max_research_context_tokens: int = Field(
-        default=30000,
-        metadata={"description": "Maximum tokens for the research context given to the LLM for final summarization."}
+        default=15000,
+        metadata={"description": "Maximum tokens for the research context before compression."}
+    )
+
+    compress_to_ratio: float = Field(
+        default=0.2,
+        metadata={"description": "Target ratio when compressing scratchpad notes."}
+    )
+
+    initial_rerank_top_k: int = Field(
+        default=40,
+        metadata={"description": "Number of sources to pass through cross‑encoder rerank."}
     )
 
     enable_pdf_download: bool = Field(

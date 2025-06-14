@@ -107,7 +107,10 @@ class ResearchAgent:
         try:
             llm = self.model_router.get_model("generate_query")
             prompt = planner_prompt(question=question, n=n)
-            result = llm.invoke(prompt)
+            messages = [{"role": "user", "content": prompt}]
+            result = llm.invoke(messages=messages, system_prompt="You are a helpful research assistant.")
+            if hasattr(result, "content"):
+                result = result.content
             queries = []
             try:
                 data = json.loads(result)
@@ -223,7 +226,10 @@ class ResearchAgent:
             question=get_research_topic(state.messages), passages=summary_text
         )
         try:
-            result = llm.invoke(prompt)
+            messages = [{"role": "user", "content": prompt}]
+            result = llm.invoke(messages=messages, system_prompt="You are a helpful research assistant analyzing evidence.")
+            if hasattr(result, "content"):
+                result = result.content
             data = json.loads(result)
             is_sufficient = bool(data.get("is_sufficient"))
         except Exception:
@@ -250,7 +256,10 @@ class ResearchAgent:
                 + "\n"
                 + text
             )
-            compressed = llm.invoke(prompt)
+            messages = [{"role": "user", "content": prompt}]
+            compressed = llm.invoke(messages=messages, system_prompt="You are a helpful assistant compressing notes.")
+            if hasattr(compressed, "content"):
+                compressed = compressed.content
             state.compressed_notes = compressed
             return {"compressed_notes": compressed}
         except Exception as e:
@@ -320,7 +329,10 @@ class ResearchAgent:
             research_topic=get_research_topic(state.messages),
             summaries=notes,
         )
-        answer = llm.invoke(prompt)
+        messages = [{"role": "user", "content": prompt}]
+        answer = llm.invoke(messages=messages, system_prompt="You are a helpful assistant generating a research summary.")
+        if hasattr(answer, "content"):
+            answer = answer.content
         state.messages.append(AIMessage(content=answer))
         return {
             "messages": state.messages,

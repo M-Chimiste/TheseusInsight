@@ -94,12 +94,15 @@ class ResearchAgent:
     # ------------------------------------------------------------------
     def _query_refinement(self, state: OverallState, config: RunnableConfig) -> Dict:
         question = get_research_topic(state.messages)
-        return {
+        result = {
             "needs_clarification": False,
             "clarifying_questions": [],
             "refined_query": question,
             "original_query": question,
         }
+        state.needs_clarification = result["needs_clarification"]
+        state.clarifying_questions = result["clarifying_questions"]
+        return result
 
     # ------------------------------------------------------------------
     def _generate_query(self, state: OverallState, config: RunnableConfig) -> Dict:
@@ -173,6 +176,14 @@ class ResearchAgent:
             "search_query": state.sub_queries,
             "web_research_result": [],
         }
+
+    # ------------------------------------------------------------------
+    def _local_research(self, state: OverallState, config: RunnableConfig) -> Dict:
+        return self._retriever_local(state, config)
+
+    # ------------------------------------------------------------------
+    def _external_research(self, state: OverallState, config: RunnableConfig) -> Dict:
+        return self._retriever_external(state, config)
 
     # ------------------------------------------------------------------
     def _merger(self, state: OverallState, config: RunnableConfig) -> Dict:
@@ -297,7 +308,10 @@ class ResearchAgent:
         )
         answer = llm.invoke(prompt)
         state.messages.append(AIMessage(content=answer))
-        return {"messages": state.messages}
+        return {
+            "messages": state.messages,
+            "sources_gathered": state.sources_gathered,
+        }
 
     # ------------------------------------------------------------------
     def _reflection_route(self, state: OverallState) -> str:

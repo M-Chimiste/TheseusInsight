@@ -210,7 +210,8 @@ class OpenAIInference(InferenceModel):
         return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
-               streaming: bool = False, model_name: Optional[str] = None) -> Union[str, Iterator[str]]:
+               streaming: bool = False, model_name: Optional[str] = None,
+               schema: Optional[BaseModel] = None) -> Union[str, Iterator[str]]:
         """
         Invokes the OpenAI model to generate a response based on the provided messages and system prompt.
 
@@ -221,19 +222,34 @@ class OpenAIInference(InferenceModel):
             system_prompt (str): The system prompt to prepend to the conversation history.
             streaming (bool, optional): If True, the method returns an iterator over the generated text chunks. Defaults to False.
             model_name (Optional[str], optional): The name of the model to use for generation. If not provided, the default model is used.
+            schema (Optional[BaseModel], optional): A Pydantic model schema for structured JSON output. Defaults to None.
 
         Returns:
             Union[str, Iterator[str]]: The generated response as a string or an iterator over the generated text chunks, depending on the `streaming` parameter.
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
+        
+        # Prepare completion parameters
+        completion_params = {
+            "model": model_name or self.model_name,
+            "messages": full_messages,
+            "max_tokens": self.max_new_tokens,
+            "temperature": self.temperature,
+        }
+        
+        # Add schema support for structured output
+        if schema:
+            completion_params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "schema": schema.model_json_schema()
+                }
+            }
+        
         if streaming:
-            stream = self.client.chat.completions.create(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                max_tokens=self.max_new_tokens,
-                temperature=self.temperature,
-                stream=True,
-            )
+            completion_params["stream"] = True
+            stream = self.client.chat.completions.create(**completion_params)
 
             def _gen() -> Iterator[str]:
                 for chunk in stream:
@@ -242,12 +258,7 @@ class OpenAIInference(InferenceModel):
                         yield delta
             return _gen()
         else:
-            response = self.client.chat.completions.create(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                max_tokens=self.max_new_tokens,
-                temperature=self.temperature,
-            )
+            response = self.client.chat.completions.create(**completion_params)
             return response.choices[0].message.content
 
 
@@ -288,6 +299,7 @@ class GeminiInference(InferenceModel):
                system_prompt: str, *,
                streaming: bool = False, 
                model_name: Optional[str] = None,
+               schema: Optional[BaseModel] = None,
                **kwargs) -> Union[str, Iterator[str]]:
         """
         Initiates the Gemini Inference process for generating text based on input messages and a system prompt.
@@ -299,6 +311,7 @@ class GeminiInference(InferenceModel):
             system_prompt (str): A string that serves as the initial prompt for the model to generate text.
             streaming (bool, optional): A boolean indicating whether to use streaming mode. Defaults to False.
             model_name (Optional[str], optional): The name of the model to use for inference. Defaults to None, which uses the default model name set during initialization.
+            schema (Optional[BaseModel], optional): A Pydantic model schema for structured JSON output. Defaults to None.
             **kwargs: Additional keyword arguments that can be passed to the model for configuration.
 
         Returns:
@@ -311,13 +324,22 @@ class GeminiInference(InferenceModel):
 
         if streaming:
             model = self.client.GenerativeModel(model_name=model_name or self.model_name)
+            
+            # Prepare generation config
+            generation_config_params = {
+                "max_output_tokens": self.max_new_tokens,
+                "temperature": self.temperature
+            }
+            
+            # Add schema support for structured output
+            if schema:
+                generation_config_params["response_mime_type"] = "application/json"
+                generation_config_params["response_schema"] = schema.model_json_schema()
+            
             stream = model.generate_content(
                 gemini_messages,
                 safety_settings=self.safety,
-                generation_config=self.client.types.GenerationConfig(
-                    max_output_tokens=self.max_new_tokens,
-                    temperature=self.temperature
-                ),
+                generation_config=self.client.types.GenerationConfig(**generation_config_params),
                 stream=True
             )
 
@@ -329,13 +351,22 @@ class GeminiInference(InferenceModel):
             return _gen()
         else:
             model = self.client.GenerativeModel(model_name=model_name or self.model_name)
+            
+            # Prepare generation config
+            generation_config_params = {
+                "max_output_tokens": self.max_new_tokens,
+                "temperature": self.temperature
+            }
+            
+            # Add schema support for structured output
+            if schema:
+                generation_config_params["response_mime_type"] = "application/json"
+                generation_config_params["response_schema"] = schema.model_json_schema()
+            
             response = model.generate_content(
                 gemini_messages,
                 safety_settings=self.safety,
-                generation_config=self.client.types.GenerationConfig(
-                    max_output_tokens=self.max_new_tokens,
-                    temperature=self.temperature
-                )
+                generation_config=self.client.types.GenerationConfig(**generation_config_params)
             )
             return response.text
 
@@ -648,6 +679,7 @@ class CustomOAIInference(InferenceModel):
                system_prompt: str, *,
                streaming: bool = False, 
                model_name: Optional[str] = None,
+               schema: Optional[BaseModel] = None,
                **kwargs) -> Union[str, Iterator[str]]:
         """
         Invokes the model to generate text based on the provided messages and system prompt.
@@ -665,6 +697,7 @@ class CustomOAIInference(InferenceModel):
                 generated text, allowing for streaming of the output. Defaults to False.
             model_name (Optional[str], optional): The name of the model to use for generation. If
                 not provided, the default model name set during initialization will be used.
+            schema (Optional[BaseModel], optional): A Pydantic model schema for structured JSON output. Defaults to None.
             **kwargs: Additional keyword arguments to be passed to the model's generation method.
 
         Returns:
@@ -672,15 +705,29 @@ class CustomOAIInference(InferenceModel):
                 depending on the streaming mode.
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
+        
+        # Prepare completion parameters
+        completion_params = {
+            "model": model_name or self.model_name,
+            "messages": full_messages,
+            "max_tokens": self.max_new_tokens,
+            "temperature": self.temperature,
+            **kwargs
+        }
+        
+        # Add schema support for structured output
+        if schema:
+            completion_params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "schema": schema.model_json_schema()
+                }
+            }
+        
         if streaming:
-            stream = self.client.chat.completions.create(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                max_tokens=self.max_new_tokens,
-                temperature=self.temperature,
-                stream=True,
-                **kwargs
-            )
+            completion_params["stream"] = True
+            stream = self.client.chat.completions.create(**completion_params)
 
             def _gen() -> Iterator[str]:
                 for chunk in stream:
@@ -689,12 +736,7 @@ class CustomOAIInference(InferenceModel):
                         yield delta
             return _gen()
         else:
-            response = self.client.chat.completions.create(
-                model=model_name or self.model_name,
-                messages=full_messages,
-                max_tokens=self.max_new_tokens,
-                temperature=self.temperature,
-            )
+            response = self.client.chat.completions.create(**completion_params)
             return response.choices[0].message.content
 
 

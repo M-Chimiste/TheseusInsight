@@ -81,11 +81,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
     { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
     { text: 'Research Agent', icon: <PsychologyIcon />, path: '/research-agent' },
-    { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
+    { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
     { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
     { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
   ];

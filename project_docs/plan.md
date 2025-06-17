@@ -1,58 +1,86 @@
-Research Agent — Step‑by‑Step Implementation Plan
+# Mind‑Map Explorer – Phased Implementation Plan
 
-This plan maps directly to Functional Requirements (FR‑1 → FR‑19) in the PRD and assumes the Theseus Insight application is already cloned with all dependencies installed.
+*Role:* **LLM Software‑Engineer Agent** (single developer)
+*Context:* All dependencies & local dev environment are pre‑provisioned. SQLite+`sqlite‑vec` DB is backed‑up and ready.
+*Goal:* Deliver the Mind‑Map Explorer feature set described in the PRD, fully integrated with the existing **PapersHistory** library.
 
-⸻
+---
 
-Phase 1 — Data‑Layer Foundations
+## Phase 1 – Core Data Services
 
-Step	Action	Output
-1.1	Extend tasks enum & constants to include "research_agent".	Updated TaskType model / Pydantic schema
-1.2	Create Alembic migration to ensure the tasks table schema matches the PRD and includes the new task type.	Migration script applied
-1.3	Verify the papers table matches the PRD: add embedding_model column and FTS5 triggers if missing.	Confirmed or updated schema
+| Task                                                                                  | Details                                                                                       |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1.1 Data access layer                                                                 | Create `paper_repository.py` (async, cached).                                                 |
+| `get_paper(id)`, `search_papers(q)`, `nearest_embeddings(vec, k)` using `sqlite‑vec`. |                                                                                               |
+| 1.2 Embedding service                                                                 | Wrap existing embedding models behind `EmbeddingProvider` contract (factory pattern).         |
+| 1.3 LLMFactory skeleton                                                               | Define `generate(task: str, prompt: str, **kw) → str` and providers registry (local, remote). |
+| **Deliverable**                                                                       | Unit tests: nearest‑neighbour returns expected papers; LLMFactory returns mock output.        |
 
+---
 
-⸻
+## Phase 2 – LangGraph Pipeline
 
-Phase 2 — Core Research Agent Engine (Backend)
+| Task                                                          | Details                                                                   |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 2.1 State schema                                              | Implement `MMState` TypedDict.                                            |
+| 2.2 Nodes                                                     | `SelectSeed`, `EmbedSeed`, `Retriever`, `SummarisePaper`, `BuildMindMap`. |
+| Summarisation uses `LLMFactory` with generic prompt template. |                                                                           |
+| 2.3 Runner & tests                                            | Bundle as `mindmap_graph.py`; write integration test with a known seed.   |
+| **Deliverable**                                               | `pytest -k mindmap_graph` passes; JSON output validates schema.           |
 
-Step	FR	Action
-2.1	FR‑2	Implement LocalSearchTool (agentic_research/local_search.py) for embedding and similarity search over papers.
-2.2	FR‑3,4	Port the agent loop into agentic_research/loop.py, replacing model calls with ModelFactory.invoke() and injecting the search tool.
-2.3	FR‑8‑10	Add AgentModelRouter that loads the boss/worker configuration from research_agent_model_config and routes calls through the factory.
-2.4	FR‑11	Integrate SpacyLayoutDocProcessor → FlatMarkdownParser as an async ingestion step for new PDFs.
-2.5	FR‑12	Emit structured RunLog events; store them in logs and publish each message via an internal asyncio.Queue.
-2.6	FR‑18	Add POST /api/research-agent/run to FastAPI: validate input, create tasks row, launch background coroutine, return {taskId}.
-2.7	FR‑18	Implement WebSocket endpoint /ws/research-agent/{taskId} that streams log events by consuming the queue.
-2.8	FR‑14	Update the scheduler so that while any research_agent task is processing, new newsletter or podcast tasks are rejected.
-2.9	FR‑15	On each progress milestone, POST a webhook to /api/tasks/{id}/status so UI reloads show current state.
+---
 
+## Phase 3 – Backend API & Streaming
 
-⸻
+| Task                  | Details                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| 3.1 FastAPI endpoints | `/expand` (WebSocket/SSE), `/parse-pdfs`, `/paper/{id}`.             |
+| 3.2 Stream adapter    | Transform LangGraph snapshots → JSON patch messages.                 |
+| 3.3 Security          | Add API key env toggle for remote‑LLM routes.                        |
+| **Deliverable**       | Swagger docs live; local WebSocket demo streams nodes incrementally. |
 
-Phase 3 — Frontend Integration (React / MUI)
+---
 
-Step	FR	Action
-3.1	FR‑13	Add a dedicated route /research-agent; insert navigation links in Sidebar.tsx and Dashboard.
-3.2	—	Create useResearchAgent hook that calls the new API, opens the WebSocket, and streams log events.
-3.3	—	Build UI components: progress bar, live log console, and summary card rendered in Markdown.
-3.4	FR‑16	Extend Settings.tsx with “Research Agent Models” panel (boss dropdown, worker multi‑select).
-3.5	FR‑17	Persist the model configuration via /api/settings/research_agent_model_config and expose it through a React context provider.
-3.6	FR‑12	Show a toast banner on any page when a research‑agent job is running, with a quick‑link to the run.
+## Phase 4 – React Integration
 
+| Task                  | Details                                                                           |
+| --------------------- | --------------------------------------------------------------------------------- |
+| 4.1 Hook export       | Implement `useMindMap(paperId)` inside PapersHistory; opens explorer modal/panel. |
+| 4.2 Canvas v1         | Use React Flow for drag/zoom; render nodes/edges.                                 |
+| 4.3 Side Drawer       | Metadata, “Expand node”, “Parse PDF” button.                                      |
+| 4.4 Streaming reducer | Consume JSON patches; optimistic updates.                                         |
+| **Deliverable**       | Manual E2E demo: open paper → interactive map in browser.                         |
 
-⸻
+---
 
-Phase 4 — Documentation & Ops
+## Phase 5 – On‑Demand PDF Parsing&#x20;
 
-Step	Action
-4.1	Update README with Research Agent usage, env vars, and sample API calls.
-4.2	Add OpenAPI documentation for the new REST and WebSocket endpoints.
-4.3	Draft a runbook covering scheduler blocking rules and troubleshooting steps.
+| Task                                 | Details                                                   |
+| ------------------------------------ | --------------------------------------------------------- |
+| 5.1 Integrate MarkdownitDocProcessor | Batch parse up to 20 PDFs; extract sections.              |
+| 5.2 Embedding & storage              | Insert into `paper_fulltext`, compute section embeddings. |
+| 5.3 UI feedback                      | Batch queue modal, per‑PDF progress.                      |
+| **Deliverable**                      | Parsed sections searchable; UI highlights new insights.   |
 
+---
 
-⸻
+## Phase 6 – Filtering, Search & Export
 
-Next Action
+| Task                  | Details                                               |
+| --------------------- | ----------------------------------------------------- |
+| 6.1 Filter panel      | Year slider, venue multiselect, similarity threshold. |
+| 6.2 Keyword highlight | Client‑side search over currently loaded nodes.       |
+| 6.3 Export            | PNG via `html‑to‑image`; JSON snapshot download.      |
+| **Deliverable**       | Features accessible & pass smoke tests.               |
 
-Create the feature branch feature/research-agent and start with Phase 1, Step 1.1.
+---
+
+## Phase 7 – Docs & Hand‑off
+
+| Task                  | Details                                              |
+| --------------------- | ---------------------------------------------------- |
+| 7.1 Docs              | Update `README`, add developer guide, API reference. |
+| 7.2 Deployment script | `Makefile` target: `make dev` & `make prod`.         |
+| **Deliverable**       | Tag `v1.0.0` released; hand‑off notes shared.        |
+
+---

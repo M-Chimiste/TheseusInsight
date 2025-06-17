@@ -15,7 +15,9 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
+  DialogContentText,
   DialogActions,
+  CardActionArea,
   FormControl,
   InputLabel,
   Select,
@@ -33,7 +35,6 @@ import {
 import { Grid } from '@mui/material';
 import {
   Search as SearchIcon,
-  Visibility as VisibilityIcon,
   Download as DownloadIcon,
   Delete as DeleteIcon,
   Refresh as RefreshIcon,
@@ -57,6 +58,8 @@ const ResearchLibrary: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedTask, setSelectedTask] = useState<ResearchTaskResult | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedTaskForDelete, setSelectedTaskForDelete] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -90,15 +93,19 @@ const ResearchLibrary: React.FC = () => {
     },
   });
 
-  // Delete task
+  // Delete task - works for both running and completed tasks
   const deleteTaskMutation = useMutation({
     mutationFn: (taskId: string) => researchAgentApi.cancelTask(taskId),
     onSuccess: () => {
       setSuccess('Research task deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['researchHistory'] });
+      setDeleteDialogOpen(false);
+      setSelectedTaskForDelete(null);
     },
     onError: (error: any) => {
       setError(error.response?.data?.detail || 'Failed to delete task');
+      setDeleteDialogOpen(false);
+      setSelectedTaskForDelete(null);
     },
   });
 
@@ -111,10 +118,26 @@ const ResearchLibrary: React.FC = () => {
     fetchTaskDetailsMutation.mutate(taskId);
   };
 
-  const handleDelete = (taskId: string) => {
-    if (window.confirm('Are you sure you want to delete this research task?')) {
-      deleteTaskMutation.mutate(taskId);
+  const handleCardClick = (taskId: string) => {
+    handleViewDetails(taskId);
+  };
+
+  const handleDeleteClick = (taskId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedTaskForDelete(taskId);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (selectedTaskForDelete) {
+      deleteTaskMutation.mutate(selectedTaskForDelete);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setSelectedTaskForDelete(null);
   };
 
   const copyToClipboard = (text: string) => {
@@ -310,81 +333,88 @@ Task ID: ${result.task_id}
                     height: '100%', 
                     display: 'flex', 
                     flexDirection: 'column',
-                    '&:hover': { boxShadow: 4 }
+                    '&:hover': { boxShadow: 4 },
+                    position: 'relative'
                   }}
                 >
-                  <CardContent sx={{ flex: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                      <Chip
-                        label={item.status}
-                        color={getStatusColor(item.status) as any}
-                        size="small"
-                      />
-                      <Typography variant="caption" color="text.secondary">
-                        {new Date(item.created_at).toLocaleDateString()}
-                      </Typography>
-                    </Box>
-
-                    <Typography 
-                      variant="h6" 
-                      gutterBottom 
-                      sx={{ 
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        minHeight: '3em',
-                      }}
-                    >
-                      {item.research_question}
-                    </Typography>
-
-                    {item.statistics && (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2 }}>
+                  <IconButton
+                    sx={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      zIndex: 1,
+                      backgroundColor: theme => theme.palette.mode === 'dark' 
+                        ? 'rgba(0, 0, 0, 0.8)' 
+                        : 'rgba(255, 255, 255, 0.8)',
+                      '&:hover': {
+                        backgroundColor: theme => theme.palette.mode === 'dark' 
+                          ? 'rgba(0, 0, 0, 0.9)' 
+                          : 'rgba(255, 255, 255, 0.9)',
+                      },
+                    }}
+                    onClick={(e) => handleDeleteClick(item.task_id, e)}
+                    color="error"
+                    size="small"
+                    disabled={deleteTaskMutation.isPending}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                  <CardActionArea 
+                    onClick={() => handleCardClick(item.task_id)} 
+                    sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
+                  >
+                    <CardContent sx={{ flex: 1, width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, pr: 5 }}>
                         <Chip
-                          label={`${item.statistics.research_loops} loops`}
+                          label={item.status}
+                          color={getStatusColor(item.status) as any}
                           size="small"
-                          variant="outlined"
                         />
-                        <Chip
-                          label={`${item.statistics.total_sources_found} sources`}
-                          size="small"
-                          variant="outlined"
-                        />
-                        <Chip
-                          label={`${item.statistics.evidence_pieces} evidence`}
-                          size="small"
-                          variant="outlined"
-                        />
+                        <Typography variant="caption" color="text.secondary">
+                          {new Date(item.created_at).toLocaleDateString()}
+                        </Typography>
                       </Box>
-                    )}
 
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      Duration: {formatDuration(item.created_at, item.completed_at)}
-                    </Typography>
-                  </CardContent>
+                      <Typography 
+                        variant="h6" 
+                        gutterBottom 
+                        sx={{ 
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          minHeight: '3em',
+                        }}
+                      >
+                        {item.research_question}
+                      </Typography>
 
-                  <Box sx={{ p: 2, pt: 0 }}>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Button
-                        size="small"
-                        startIcon={<VisibilityIcon />}
-                        onClick={() => handleViewDetails(item.task_id)}
-                        disabled={fetchTaskDetailsMutation.isPending}
-                      >
-                        View
-                      </Button>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDelete(item.task_id)}
-                        disabled={deleteTaskMutation.isPending}
-                        color="error"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Box>
-                  </Box>
+                      {item.statistics && (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2 }}>
+                          <Chip
+                            label={`${item.statistics.research_loops} loops`}
+                            size="small"
+                            variant="outlined"
+                          />
+                          <Chip
+                            label={`${item.statistics.total_sources_found} sources`}
+                            size="small"
+                            variant="outlined"
+                          />
+                          <Chip
+                            label={`${item.statistics.evidence_pieces} evidence`}
+                            size="small"
+                            variant="outlined"
+                          />
+                        </Box>
+                      )}
+
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Duration: {formatDuration(item.created_at, item.completed_at)}
+                      </Typography>
+                    </CardContent>
+                  </CardActionArea>
                 </Card>
               </Grid>
             ))}
@@ -443,7 +473,16 @@ Task ID: ${result.task_id}
               <Typography variant="h6" gutterBottom>
                 Research Question
               </Typography>
-              <Typography variant="body1" sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+              <Typography 
+                variant="body1" 
+                sx={{ 
+                  mb: 3, 
+                  p: 2, 
+                  bgcolor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'grey.50', 
+                  borderRadius: 1,
+                  color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
+                }}
+              >
                 {selectedTask.research_question}
               </Typography>
 
@@ -452,13 +491,19 @@ Task ID: ${result.task_id}
               </Typography>
               <Typography 
                 variant="body1" 
-                sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}
+                sx={{ 
+                  mb: 3, 
+                  p: 2, 
+                  bgcolor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'grey.50', 
+                  borderRadius: 1 
+                }}
               >
                 <Box 
                   sx={{ 
                     '& h1, & h2, & h3, & h4, & h5, & h6': {
                       fontWeight: 'bold',
                       margin: '16px 0 8px 0',
+                      color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit',
                       '&:first-of-type': { marginTop: 0 }
                     },
                     '& h1': { fontSize: '1.5rem' },
@@ -466,17 +511,20 @@ Task ID: ${result.task_id}
                     '& h3': { fontSize: '1.1rem' },
                     '& p': {
                       margin: '8px 0',
-                      lineHeight: 1.6
+                      lineHeight: 1.6,
+                      color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                     },
                     '& ul, & ol': {
                       margin: '8px 0',
-                      paddingLeft: '24px'
+                      paddingLeft: '24px',
+                      color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                     },
                     '& li': {
                       margin: '4px 0'
                     },
                     '& code': {
-                      backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                      backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.05)',
+                      color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit',
                       padding: '2px 4px',
                       borderRadius: '4px',
                       fontFamily: 'monospace',
@@ -484,6 +532,7 @@ Task ID: ${result.task_id}
                     },
                     '& pre': {
                       backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                      color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit',
                       padding: '12px',
                       borderRadius: '4px',
                       overflow: 'auto',
@@ -495,7 +544,8 @@ Task ID: ${result.task_id}
                       paddingLeft: '16px',
                       margin: '16px 0',
                       fontStyle: 'italic',
-                      opacity: 0.8
+                      opacity: 0.8,
+                      color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                     },
                     '& table': {
                       width: '100%',
@@ -504,13 +554,21 @@ Task ID: ${result.task_id}
                     },
                     '& th, & td': {
                       border: '1px solid',
-                      borderColor: 'divider',
+                      borderColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.2)' : 'divider',
                       padding: '8px 12px',
-                      textAlign: 'left'
+                      textAlign: 'left',
+                      color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                     },
                     '& th': {
-                      backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)',
-                      fontWeight: 'bold'
+                      backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.02)',
+                      fontWeight: 'bold',
+                      color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit'
+                    },
+                    '& strong': {
+                      color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit'
+                    },
+                    '& em': {
+                      color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                     }
                   }}
                 >
@@ -589,16 +647,38 @@ Task ID: ${result.task_id}
                         </Typography>
                         <Typography 
                           variant="body2" 
-                          sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}
+                          sx={{ 
+                            p: 2, 
+                            bgcolor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'grey.50', 
+                            borderRadius: 1 
+                          }}
                         >
                           <Box sx={{ 
-                            '& p': { margin: '4px 0', lineHeight: 1.5 },
-                            '& code': { 
-                              backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                              padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.9em' 
+                            '& p': { 
+                              margin: '4px 0', 
+                              lineHeight: 1.5,
+                              color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                             },
-                            '& ul, & ol': { margin: '4px 0', paddingLeft: '20px' },
-                            '& li': { margin: '2px 0' }
+                            '& code': { 
+                              backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.05)',
+                              color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit',
+                              padding: '2px 4px', 
+                              borderRadius: '4px', 
+                              fontFamily: 'monospace', 
+                              fontSize: '0.9em' 
+                            },
+                            '& ul, & ol': { 
+                              margin: '4px 0', 
+                              paddingLeft: '20px',
+                              color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
+                            },
+                            '& li': { margin: '2px 0' },
+                            '& strong': {
+                              color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit'
+                            },
+                            '& em': {
+                              color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
+                            }
                           }}>
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{evidence}</ReactMarkdown>
                           </Box>
@@ -618,16 +698,38 @@ Task ID: ${result.task_id}
                   <AccordionDetails>
                     <Typography 
                       variant="body2" 
-                      sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}
+                      sx={{ 
+                        p: 2, 
+                        bgcolor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'grey.50', 
+                        borderRadius: 1 
+                      }}
                     >
                       <Box sx={{ 
-                        '& p': { margin: '4px 0', lineHeight: 1.5 },
-                        '& code': { 
-                          backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                          padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.9em' 
+                        '& p': { 
+                          margin: '4px 0', 
+                          lineHeight: 1.5,
+                          color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
                         },
-                        '& ul, & ol': { margin: '4px 0', paddingLeft: '20px' },
-                        '& li': { margin: '2px 0' }
+                        '& code': { 
+                          backgroundColor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.05)',
+                          color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit',
+                          padding: '2px 4px', 
+                          borderRadius: '4px', 
+                          fontFamily: 'monospace', 
+                          fontSize: '0.9em' 
+                        },
+                        '& ul, & ol': { 
+                          margin: '4px 0', 
+                          paddingLeft: '20px',
+                          color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
+                        },
+                        '& li': { margin: '2px 0' },
+                        '& strong': {
+                          color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit'
+                        },
+                        '& em': {
+                          color: theme => theme.palette.mode === 'dark' ? '#e0e0e0' : 'inherit'
+                        }
                       }}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedTask.compressed_notes}</ReactMarkdown>
                       </Box>
@@ -636,8 +738,21 @@ Task ID: ${result.task_id}
                 </Accordion>
               )}
 
-              <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                <Typography variant="body2" color="text.secondary">
+              <Box sx={{ 
+                mt: 3, 
+                p: 2, 
+                bgcolor: theme => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'grey.50', 
+                borderRadius: 1 
+              }}>
+                <Typography 
+                  variant="body2" 
+                  sx={{ 
+                    color: theme => theme.palette.mode === 'dark' ? '#b0b0b0' : 'text.secondary',
+                    '& strong': {
+                      color: theme => theme.palette.mode === 'dark' ? '#ffffff' : 'inherit'
+                    }
+                  }}
+                >
                   <strong>Task ID:</strong> {selectedTask.task_id}<br />
                   <strong>Created:</strong> {new Date(selectedTask.created_at).toLocaleString()}<br />
                   {selectedTask.completed_at && (
@@ -653,6 +768,34 @@ Task ID: ${result.task_id}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDetailDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={handleDeleteCancel}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">Confirm Delete</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="delete-dialog-description">
+            Are you sure you want to delete this research task? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeleteCancel} color="primary">
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleDeleteConfirm} 
+            color="error" 
+            variant="contained"
+            disabled={deleteTaskMutation.isPending}
+          >
+            {deleteTaskMutation.isPending ? 'Deleting...' : 'Delete'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Container>

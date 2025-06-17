@@ -94,6 +94,14 @@ class ResearchHistoryItem(BaseModel):
     statistics: Optional[Dict[str, Any]] = None
 
 
+class ResearchHistoryResponse(BaseModel):
+    """Response model for paginated research history."""
+    items: List[ResearchHistoryItem]
+    total: int
+    limit: int
+    offset: int
+
+
 # Router setup
 router = APIRouter(prefix="/api/research-agent", tags=["research-agent"])
 logger = logging.getLogger(__name__)
@@ -423,12 +431,12 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
     )
 
 
-@router.get("/history", response_model=List[ResearchHistoryItem])
+@router.get("/history", response_model=ResearchHistoryResponse)
 async def get_research_history(
     limit: int = 50,
     offset: int = 0,
     status_filter: Optional[str] = None
-) -> Dict[str, Any]:
+) -> ResearchHistoryResponse:
     """
     Get research task history from the database.
     
@@ -472,12 +480,12 @@ async def get_research_history(
                 statistics=run.get("statistics")
             ))
         
-        return {
-            "items": history_items,
-            "total": total,
-            "limit": limit,
-            "offset": offset
-        }
+        return ResearchHistoryResponse(
+            items=history_items,
+            total=total,
+            limit=limit,
+            offset=offset
+        )
         
     except Exception as e:
         logger.error(f"Error getting research history: {e}")
@@ -485,47 +493,65 @@ async def get_research_history(
 
 
 @router.delete("/{task_id}")
-async def cancel_research_task(task_id: str) -> Dict[str, str]:
+async def delete_research_task(task_id: str) -> Dict[str, str]:
     """
-    Cancel a running research task.
+    Delete a research task (cancel if running, remove if completed/failed).
     
     Args:
         task_id: Unique identifier for the research task
         
     Returns:
-        Cancellation confirmation
+        Deletion/cancellation confirmation
     """
     research_run = db.get_research_run(task_id)
     if not research_run:
         raise HTTPException(status_code=404, detail="Research task not found")
     
-    if research_run["status"] in ["completed", "failed", "cancelled"]:
-        raise HTTPException(status_code=400, detail="Research task cannot be cancelled")
+    # If task is still running, cancel it
+    if research_run["status"] in ["pending", "running"]:
+        # Update global dictionaries
+        if task_id in research_tasks:
+            research_tasks[task_id]["status"] = "cancelled"
+            research_tasks[task_id]["completed_at"] = datetime.utcnow()
+        
+        # Update both tables
+        completed_at = datetime.utcnow().isoformat()
+        
+        db.update_research_run_status(
+            task_id=task_id,
+            status="cancelled",
+            completed_at=completed_at
+        )
+        
+        db.update_task_status(
+            task_id=task_id,
+            status="cancelled",
+            end_time=completed_at,
+            message="Task cancelled by user request"
+        )
+        
+        logger.info(f"Cancelled research task {task_id}")
+        return {"message": f"Research task {task_id} has been cancelled"}
     
-    # Update global dictionaries
-    if task_id in research_tasks:
-        research_tasks[task_id]["status"] = "cancelled"
-        research_tasks[task_id]["completed_at"] = datetime.utcnow()
-    
-    # Update both tables
-    completed_at = datetime.utcnow().isoformat()
-    
-    db.update_research_run_status(
-        task_id=task_id,
-        status="cancelled",
-        completed_at=completed_at
-    )
-    
-    db.update_task_status(
-        task_id=task_id,
-        status="cancelled",
-        end_time=completed_at,
-        message="Task cancelled by user request"
-    )
-    
-    logger.info(f"Cancelled research task {task_id}")
-    
-    return {"message": f"Research task {task_id} has been cancelled"}
+    # If task is completed/failed/cancelled, delete it from database
+    else:
+        # Remove from global dictionary if present
+        if task_id in research_tasks:
+            del research_tasks[task_id]
+        
+        # Delete from both tables using the existing database methods
+        try:
+            # Delete from research_runs table (and associated state records)
+            db.delete_research_run(task_id)
+            # Delete from tasks table
+            db.delete_task(task_id)
+            
+            logger.info(f"Deleted research task {task_id}")
+            return {"message": f"Research task {task_id} has been deleted"}
+        
+        except Exception as e:
+            logger.error(f"Error deleting research task {task_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to delete research task: {str(e)}")
 
 
 @router.get("/workflow/info")

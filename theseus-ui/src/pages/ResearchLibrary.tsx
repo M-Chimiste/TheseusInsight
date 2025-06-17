@@ -65,18 +65,18 @@ const ResearchLibrary: React.FC = () => {
 
   const itemsPerPage = 12;
 
-  // Fetch research history
+  // Fetch all research history for client-side filtering
   const { 
     data: historyData, 
     isLoading, 
     isError,
     refetch 
   } = useQuery({
-    queryKey: ['researchHistory', currentPage, statusFilter, searchQuery],
+    queryKey: ['researchHistory'],
     queryFn: () => researchAgentApi.getHistory(
-      itemsPerPage, 
-      (currentPage - 1) * itemsPerPage, 
-      statusFilter || undefined
+      100, // Get more items for client-side filtering
+      0, 
+      undefined // Don't filter by status on server side
     ),
     refetchInterval: 30000, // Refresh every 30 seconds
   });
@@ -109,9 +109,32 @@ const ResearchLibrary: React.FC = () => {
     },
   });
 
-  const handleSearch = () => {
-    setCurrentPage(1);
-    refetch();
+  // Client-side filtering function
+  const filterHistory = (items: ResearchHistoryItem[]) => {
+    if (!items) return [];
+
+    return items.filter(item => {
+      // Search filter - keyword-based search across multiple fields
+      if (searchQuery.trim()) {
+        const searchTerms = searchQuery.toLowerCase().trim().split(/\s+/);
+        const searchableText = [
+          item.research_question,
+          item.status,
+        ].join(' ').toLowerCase();
+
+        const matchesSearch = searchTerms.every(term => 
+          searchableText.includes(term)
+        );
+        if (!matchesSearch) return false;
+      }
+
+      // Status filter
+      if (statusFilter && item.status !== statusFilter) {
+        return false;
+      }
+
+      return true;
+    });
   };
 
   const handleViewDetails = (taskId: string) => {
@@ -213,8 +236,19 @@ Task ID: ${result.task_id}
     return `${seconds}s`;
   };
 
-  const filteredHistory = historyData?.data?.items || [];
-  const totalPages = Math.ceil((historyData?.data?.total || 0) / itemsPerPage);
+  // Apply filters to get filtered history
+  const filteredHistory = filterHistory(historyData?.data?.items || []);
+
+  // Pagination for filtered results
+  const totalPages = Math.ceil(filteredHistory.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedHistory = filteredHistory.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter]);
 
   if (isLoading) {
     return (
@@ -271,10 +305,9 @@ Task ID: ${result.task_id}
               placeholder="Search research questions..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
               InputProps={{
                 endAdornment: (
-                  <IconButton onClick={handleSearch}>
+                  <IconButton>
                     <SearchIcon />
                   </IconButton>
                 ),
@@ -302,7 +335,7 @@ Task ID: ${result.task_id}
               fullWidth
               variant="contained"
               startIcon={<FilterListIcon />}
-              onClick={handleSearch}
+              onClick={() => {/* Filters are applied automatically */}}
             >
               Apply Filters
             </Button>
@@ -311,22 +344,27 @@ Task ID: ${result.task_id}
       </Paper>
 
       {/* Research History Grid */}
-      {filteredHistory.length === 0 ? (
+      {paginatedHistory.length === 0 ? (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.secondary" gutterBottom>
-            No research tasks found
+            {filteredHistory.length === 0 && (historyData?.data?.items?.length || 0) > 0
+              ? 'No results match your search criteria'
+              : 'No research tasks found'
+            }
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {searchQuery || statusFilter 
-              ? 'Try adjusting your search criteria or filters.'
-              : 'Start your first research task to see it here.'
+            {filteredHistory.length === 0 && (historyData?.data?.items?.length || 0) > 0
+              ? 'Try adjusting your search terms or filters.'
+              : searchQuery || statusFilter 
+                ? 'Try adjusting your search criteria or filters.'
+                : 'Start your first research task to see it here.'
             }
           </Typography>
         </Box>
       ) : (
         <>
           <Grid container spacing={3}>
-            {filteredHistory.map((item: ResearchHistoryItem) => (
+            {paginatedHistory.map((item: ResearchHistoryItem) => (
               <Grid size={{ xs: 12, md: 6, lg: 4 }} key={item.task_id}>
                 <Card 
                   sx={{ 
@@ -431,6 +469,13 @@ Task ID: ${result.task_id}
               />
             </Box>
           )}
+          
+          {/* Show total results */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Showing {startIndex + 1}-{Math.min(endIndex, filteredHistory.length)} of {filteredHistory.length} results
+            </Typography>
+          </Box>
         </>
       )}
 

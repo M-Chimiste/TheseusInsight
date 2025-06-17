@@ -2,8 +2,6 @@
 
 ---
 
----
-
 ## 1  Background & Problem Statement
 
 Researchers often discover a single relevant paper but struggle to **visualise its intellectual neighbourhood**—related works, earlier inspirations, and follow‑up studies. Existing discovery tools provide linear lists, not an **interactive concept map** that can be expanded, filtered, annotated, **and optionally enriched with full‑text insights**.

@@ -28,7 +28,7 @@ import {
   LinearProgress,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../services/api';
+import { settingsApi, modelCatalogApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -83,6 +83,133 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+// Interface for model catalog entries
+interface ModelCatalogOption {
+  id: number;
+  alias: string;
+  model_string: string;
+  provider_name: string;
+  model_type: string;
+  display: string; // "Alias (model_string)"
+}
+
+// Component for model name autocomplete with catalog integration
+interface ModelNameAutocompleteProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onModelSelected?: (model: any) => void; // Called when a catalog model is selected
+  modelCatalogData?: any;
+  fullWidth?: boolean;
+}
+
+const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
+  label,
+  value,
+  onChange,
+  onModelSelected,
+  modelCatalogData,
+  fullWidth = true
+}) => {
+  // Transform model catalog data into options
+  const catalogOptions: ModelCatalogOption[] = React.useMemo(() => {
+    if (!modelCatalogData?.models) {
+      return [];
+    }
+    
+    const options = modelCatalogData.models.map((model: any) => ({
+      id: model.id,
+      alias: model.alias,
+      model_string: model.model_string,
+      provider_name: model.provider_name,
+      model_type: model.model_type,
+      display: `${model.alias} (${model.model_string})`
+    }));
+    
+    return options;
+  }, [modelCatalogData]);
+
+  // Find the currently selected option based on model_string
+  const selectedOption = catalogOptions.find(opt => opt.model_string === value) || null;
+
+  const handleChange = (_: any, newValue: ModelCatalogOption | string | null) => {
+    if (typeof newValue === 'string') {
+      // User typed a custom value
+      onChange(newValue);
+    } else if (newValue) {
+      // User selected from catalog - let batched update handle everything including model_name
+      // This prevents race conditions between individual and batched updates
+      if (onModelSelected) {
+        onModelSelected(newValue);
+      } else {
+        // Fallback if no batched update callback - set model name directly
+        onChange(newValue.model_string);
+      }
+    } else {
+      // Cleared
+      onChange('');
+    }
+  };
+
+  return (
+    <Autocomplete
+      fullWidth={fullWidth}
+      freeSolo
+      options={catalogOptions}
+      getOptionLabel={(option) => {
+        if (typeof option === 'string') return option;
+        return option.display;
+      }}
+      renderOption={(props, option) => (
+        <li {...props} key={option.id}>
+          <Box>
+            <Typography variant="body2" fontWeight={500}>
+              {option.alias}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {option.model_string} • {option.provider_name}
+            </Typography>
+          </Box>
+        </li>
+      )}
+      value={selectedOption}
+      onChange={handleChange}
+      inputValue={selectedOption ? selectedOption.display : value}
+      blurOnSelect={true}
+      selectOnFocus={true}
+      clearOnBlur={false}
+      onInputChange={(_, newInputValue, reason) => {
+        if (reason === 'clear') {
+          onChange('');
+        } else if (reason === 'input' && !selectedOption) {
+          onChange(newInputValue);
+        }
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          helperText={catalogOptions.length > 0 ? 
+            `Search model catalog (${catalogOptions.length} models) or enter custom model name` : 
+            "Model catalog not loaded - enter custom model name"
+          }
+        />
+      )}
+      filterOptions={(options, { inputValue }) => {
+        if (!inputValue) return options.slice(0, 10); // Show first 10 when no input
+        
+        const filtered = options.filter(option =>
+          option.alias.toLowerCase().includes(inputValue.toLowerCase()) ||
+          option.model_string.toLowerCase().includes(inputValue.toLowerCase()) ||
+          option.provider_name.toLowerCase().includes(inputValue.toLowerCase())
+        );
+        
+        return filtered.slice(0, 20); // Limit to 20 results
+      }}
+    />
+  );
+};
+
 const Settings: React.FC = () => {
   const queryClient = useQueryClient();
   // Alias taxonomy as any to allow dynamic indexing
@@ -96,6 +223,7 @@ const Settings: React.FC = () => {
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
+  const [editedResearchAgentConfig, setEditedResearchAgentConfig] = useState<any | null>(null);
   
   // Use the database task state hook for persistent state management
   const {
@@ -134,6 +262,15 @@ const Settings: React.FC = () => {
   const { data: modelProviders, isLoading: isLoadingProviders, isError: isErrorProviders } = useQuery<any[], Error>({
     queryKey: ['modelProviders'],
     queryFn: () => settingsApi.getModelProviders().then(res => res.data || []),
+  });
+
+  // Query for model catalog to enable autocomplete
+  const { data: modelCatalogData } = useQuery({
+    queryKey: ['modelCatalogForSettings'],
+    queryFn: () => modelCatalogApi.searchModels({
+      page: 1,
+      page_size: 100  // Maximum allowed by backend validation
+    }).then(res => res.data),
   });
   
   const updateOrchestrationMutation = useMutation({
@@ -334,8 +471,63 @@ const Settings: React.FC = () => {
     }
   }, [credentials]);
 
+  useEffect(() => {
+    if (orchestrationConfig?.research_agent_model_config) {
+      // Deep clone the config and ensure all nested objects exist
+      const clonedConfig = JSON.parse(JSON.stringify(orchestrationConfig.research_agent_model_config));
+      
+      // Ensure all required nested objects exist to prevent null access errors
+      if (!clonedConfig.boss_model) clonedConfig.boss_model = {};
+      if (!clonedConfig.worker_models) clonedConfig.worker_models = {};
+      if (!clonedConfig.worker_models.summary) clonedConfig.worker_models.summary = {};
+      if (!clonedConfig.worker_models.analysis) clonedConfig.worker_models.analysis = {};
+      if (!clonedConfig.worker_models.search) clonedConfig.worker_models.search = {};
+      if (!clonedConfig.query_planner_model) clonedConfig.query_planner_model = {};
+      if (!clonedConfig.evidence_selector_model) clonedConfig.evidence_selector_model = {};
+      if (!clonedConfig.compression_model) clonedConfig.compression_model = {};
+      if (!clonedConfig.answer_generator_model) clonedConfig.answer_generator_model = {};
+      
+      setEditedResearchAgentConfig(clonedConfig);
+    }
+  }, [orchestrationConfig]);
+
   const handleModelConfigChange = (modelKey: string, field: string, value: any) => {
-    if (!orchestrationConfig) return;
+    // Handle research agent model config separately
+    if (modelKey === 'research_agent_model_config') {
+      const newConfig = JSON.parse(JSON.stringify(editedResearchAgentConfig || {}));
+      
+      // Handle nested paths like "boss_model.model_name" or "worker_models.summary.temperature"
+      if (field.includes('.')) {
+        const fieldParts = field.split('.');
+        let currentObj = newConfig;
+        
+        // Navigate to the parent object
+        for (let i = 0; i < fieldParts.length - 1; i++) {
+          if (!currentObj[fieldParts[i]]) {
+            currentObj[fieldParts[i]] = {};
+          }
+          currentObj = currentObj[fieldParts[i]];
+        }
+        
+        // Set the final value
+        currentObj[fieldParts[fieldParts.length - 1]] = value;
+      } else {
+        newConfig[field] = value;
+      }
+      
+      setEditedResearchAgentConfig(newConfig);
+      // Optimistically update local state for UI responsiveness
+      queryClient.setQueryData(['orchestrationConfig'], {
+        ...orchestrationConfig,
+        research_agent_model_config: newConfig
+      });
+      return;
+    }
+    
+    // Handle regular orchestration config
+    if (!orchestrationConfig) {
+      return;
+    }
     const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
     
     if (!newOrchestrationConfig[modelKey]) {
@@ -363,8 +555,112 @@ const Settings: React.FC = () => {
     
     // Optimistically update local state for UI responsiveness
     queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
-    // Debounce or handle mutation trigger carefully if needed, for now direct mutation
-    // updateOrchestrationMutation.mutate(newOrchestrationConfig); // This will be triggered by Save button
+  };
+
+  // Handle when a model is selected from the catalog - auto-populate other fields
+  const handleModelSelectedFromCatalog = (modelKey: string, selectedOption: ModelCatalogOption, prefix?: string) => {
+    // Find the full catalog entry to get all the metadata
+    const fullCatalogEntry = modelCatalogData?.models?.find((model: any) => 
+      model.id === selectedOption.id
+    );
+
+    if (!fullCatalogEntry) {
+      return;
+    }
+
+    // Build model data object with all fields to update
+    const modelData: any = {};
+
+    // Always include the model_name when selecting from catalog
+    modelData.model_name = fullCatalogEntry.model_string;
+
+    // model_type should match provider names from the modelProviders query
+    if (fullCatalogEntry.provider_name) {
+      modelData.model_type = fullCatalogEntry.provider_name;
+    }
+
+    // Populate other fields from catalog if they exist
+    if (fullCatalogEntry.max_new_tokens !== null && fullCatalogEntry.max_new_tokens !== undefined) {
+      modelData.max_new_tokens = fullCatalogEntry.max_new_tokens;
+    }
+
+    if (fullCatalogEntry.temperature !== null && fullCatalogEntry.temperature !== undefined) {
+      modelData.temperature = fullCatalogEntry.temperature;
+    }
+
+    if (fullCatalogEntry.num_ctx !== null && fullCatalogEntry.num_ctx !== undefined) {
+      modelData.num_ctx = fullCatalogEntry.num_ctx;
+    }
+
+    // Only include trust_remote_code for sentence-transformers models
+    if (fullCatalogEntry.provider_name === 'sentence-transformers') {
+      modelData.trust_remote_code = fullCatalogEntry.trust_remote_code !== null ? fullCatalogEntry.trust_remote_code : false;
+    }
+
+    // Apply all fields in a single batch update to avoid race conditions
+    if (Object.keys(modelData).length > 0) {
+      if (modelKey === 'research_agent_model_config') {
+        const newConfig = JSON.parse(JSON.stringify(editedResearchAgentConfig || {}));
+        
+        // Apply all fields to the config
+        Object.entries(modelData).forEach(([field, value]) => {
+          const fieldPath = prefix ? `${prefix}.${field}` : field;
+          
+          if (fieldPath.includes('.')) {
+            const fieldParts = fieldPath.split('.');
+            let currentObj = newConfig;
+            
+            for (let i = 0; i < fieldParts.length - 1; i++) {
+              if (!currentObj[fieldParts[i]]) {
+                currentObj[fieldParts[i]] = {};
+              }
+              currentObj = currentObj[fieldParts[i]];
+            }
+            
+            currentObj[fieldParts[fieldParts.length - 1]] = value;
+          } else {
+            newConfig[fieldPath] = value;
+          }
+        });
+        setEditedResearchAgentConfig(newConfig);
+        queryClient.setQueryData(['orchestrationConfig'], {
+          ...orchestrationConfig,
+          research_agent_model_config: newConfig
+        });
+      } else {
+        if (!orchestrationConfig) {
+          return;
+        }
+        const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
+        
+        if (!newOrchestrationConfig[modelKey]) {
+          newOrchestrationConfig[modelKey] = {};
+        }
+        
+        // Apply all fields to the config
+        Object.entries(modelData).forEach(([field, value]) => {
+          const fieldPath = prefix ? `${prefix}.${field}` : field;
+          
+          if (fieldPath.includes('.')) {
+            const fieldParts = fieldPath.split('.');
+            let currentObj = newOrchestrationConfig[modelKey];
+            
+            for (let i = 0; i < fieldParts.length - 1; i++) {
+              if (!currentObj[fieldParts[i]]) {
+                currentObj[fieldParts[i]] = {};
+              }
+              currentObj = currentObj[fieldParts[i]];
+            }
+            
+            currentObj[fieldParts[fieldParts.length - 1]] = value;
+          } else {
+            newOrchestrationConfig[modelKey][fieldPath] = value;
+          }
+        });
+        
+        queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
+      }
+    }
   };
 
   useEffect(() => {
@@ -402,9 +698,7 @@ const Settings: React.FC = () => {
 
   const handleDatabaseImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      setSelectedImportFile(file);
-    }
+    setSelectedImportFile(file || null);
   };
 
   const handleDatabaseImport = () => {
@@ -413,14 +707,88 @@ const Settings: React.FC = () => {
     }
   };
 
+  const cleanResearchAgentConfig = (config: any): any => {
+    if (!config) return null;
+
+    // Deep copy to avoid mutating the original state
+    const cleanedConfig = JSON.parse(JSON.stringify(config));
+
+    // Helper to clean individual model objects
+    const cleanModel = (model: any) => {
+      if (!model) return null;
+      // If it's not a valid model object, return null
+      if (typeof model !== 'object' || !model.model_name || !model.model_type) {
+        return null;
+      }
+      
+      // Convert empty strings to null for numeric fields
+      const numericFields = ['max_new_tokens', 'temperature', 'num_ctx'];
+      numericFields.forEach(field => {
+        if (model[field] === '' || model[field] === undefined) {
+          model[field] = null;
+        }
+      });
+      return model;
+    };
+
+    // Clean the main boss_model (must be valid)
+    cleanedConfig.boss_model = cleanModel(cleanedConfig.boss_model);
+    if (!cleanedConfig.boss_model) {
+      setError("Research Agent's Boss Model must have a valid model name and type.");
+      return null; // Stop processing if boss model is invalid
+    }
+
+    // Clean worker models, removing invalid ones
+    if (cleanedConfig.worker_models) {
+      const validWorkerModels: { [key: string]: any } = {};
+      for (const key in cleanedConfig.worker_models) {
+        const cleanedWorker = cleanModel(cleanedConfig.worker_models[key]);
+        if (cleanedWorker) {
+          validWorkerModels[key] = cleanedWorker;
+        }
+      }
+      cleanedConfig.worker_models = validWorkerModels;
+    }
+
+    // Clean optional node-specific models
+    const optionalModels = [
+      'query_planner_model',
+      'evidence_selector_model',
+      'compression_model',
+      'answer_generator_model'
+    ];
+    optionalModels.forEach(key => {
+      cleanedConfig[key] = cleanModel(cleanedConfig[key]);
+    });
+    
+    // Remove deprecated fields that are no longer used in the workflow
+    delete cleanedConfig.timeout_seconds;
+    delete cleanedConfig.external_search_timeout;
+    delete cleanedConfig.default_worker;
+    delete cleanedConfig.max_retries;
+
+    // Ensure PDF processing fields have proper defaults
+    if (cleanedConfig.enable_full_text === undefined) {
+      cleanedConfig.enable_full_text = true;
+    }
+    if (cleanedConfig.full_text_top_n === undefined || cleanedConfig.full_text_top_n === '') {
+      cleanedConfig.full_text_top_n = 20;
+    }
+    if (cleanedConfig.max_chunk_tokens === undefined || cleanedConfig.max_chunk_tokens === '') {
+      cleanedConfig.max_chunk_tokens = 8000;
+    }
+    if (cleanedConfig.summary_target_tokens === undefined || cleanedConfig.summary_target_tokens === '') {
+      cleanedConfig.summary_target_tokens = 1500;
+    }
+
+    return cleanedConfig;
+  };
+
   const renderResearchAgentModelConfig = (config: any) => {
     if (!config) return <Typography>Research Agent configuration not available.</Typography>;
 
     const bossModel = config.boss_model || {};
     const workerModels = config.worker_models || {};
-    const defaultWorker = config.default_worker || 'summary';
-    const maxRetries = config.max_retries || 3;
-    const timeoutSeconds = config.timeout_seconds || 30;
 
     const renderModelFields = (modelConfig: any, prefix: string, title: string) => (
       <Card variant="outlined" sx={{ mb: 2 }}>
@@ -428,11 +796,12 @@ const Settings: React.FC = () => {
           <Typography variant="h6" gutterBottom>{title}</Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
             <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                fullWidth
+              <ModelNameAutocomplete
                 label="Model Name"
                 value={modelConfig.model_name || ''}
-                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, e.target.value)}
+                onChange={value => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, value)}
+                onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, prefix)}
+                modelCatalogData={modelCatalogData}
               />
               <FormControl fullWidth>
                 <InputLabel>Model Type (Provider)</InputLabel>
@@ -491,40 +860,236 @@ const Settings: React.FC = () => {
         {renderModelFields(workerModels.analysis || {}, 'worker_models.analysis', 'Analysis Worker')}
         {renderModelFields(workerModels.search || {}, 'worker_models.search', 'Search Worker')}
         
-        {/* Configuration Settings */}
+
+        
+        {/* Workflow Parameters */}
         <Card variant="outlined">
           <CardContent>
-            <Typography variant="h6" gutterBottom>Agent Configuration</Typography>
+            <Typography variant="h6" gutterBottom>Workflow Parameters</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Core Parameters Row */}
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                <TextField
+                  label="Max Research Context Tokens"
+                  type="number"
+                  value={config.max_research_context_tokens || 15000}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_context_tokens', Number(e.target.value))}
+                  sx={{ minWidth: 200 }}
+                  inputProps={{ min: 1000, max: 100000 }}
+                  helperText="Token budget before compression"
+                />
+                <TextField
+                  label="Compress to Ratio"
+                  type="number"
+                  value={config.compress_to_ratio || 0.2}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'compress_to_ratio', parseFloat(e.target.value))}
+                  sx={{ minWidth: 150 }}
+                  inputProps={{ min: 0.1, max: 0.8, step: 0.1 }}
+                  helperText="Target compression ratio"
+                />
+                <TextField
+                  label="Max Research Loops"
+                  type="number"
+                  value={config.max_research_loops || 3}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_loops', Number(e.target.value))}
+                  sx={{ minWidth: 150 }}
+                  inputProps={{ min: 1, max: 10 }}
+                  helperText="Max iteration loops"
+                />
+              </Box>
+
+              {/* Search & Ranking Parameters Row */}
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                <TextField
+                  label="Initial Rerank Top K"
+                  type="number"
+                  value={config.initial_rerank_top_k || 40}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', 'initial_rerank_top_k', Number(e.target.value))}
+                  sx={{ minWidth: 150 }}
+                  inputProps={{ min: 5, max: 100 }}
+                  helperText="Papers to re-rank"
+                />
+              </Box>
+
+              {/* PDF Full Text Processing Section */}
+              <Box sx={{ 
+                p: 2, 
+                border: '1px solid', 
+                borderColor: 'divider', 
+                borderRadius: 1,
+                backgroundColor: 'background.default'
+              }}>
+                <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
+                  PDF Full Text Processing
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Enable processing of full PDF content from top-ranked sources for enhanced evidence quality
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={config.enable_full_text !== false} // Default to true if undefined
+                        onChange={e => handleModelConfigChange('research_agent_model_config', 'enable_full_text', e.target.checked)}
+                        color="primary"
+                      />
+                    }
+                    label={
+                      <Box>
+                        <Typography variant="body2" fontWeight={500}>
+                          Enable PDF Processing
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Extract full text from PDFs for better analysis
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                  <TextField
+                    label="Max PDFs to Process"
+                    type="number"
+                    value={config.full_text_top_n || 20}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', 'full_text_top_n', Number(e.target.value))}
+                    sx={{ minWidth: 180 }}
+                    inputProps={{ min: 1, max: 50 }}
+                    helperText="Number of top sources for full text"
+                    disabled={config.enable_full_text === false}
+                  />
+                  <TextField
+                    label="Chunk Size (Tokens)"
+                    type="number"
+                    value={config.max_chunk_tokens || 8000}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', 'max_chunk_tokens', Number(e.target.value))}
+                    sx={{ minWidth: 180 }}
+                    inputProps={{ min: 2000, max: 20000, step: 1000 }}
+                    helperText="Max tokens per chunk for processing"
+                    disabled={config.enable_full_text === false}
+                  />
+                  <TextField
+                    label="Summary Target (Tokens)"
+                    type="number"
+                    value={config.summary_target_tokens || 1500}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', 'summary_target_tokens', Number(e.target.value))}
+                    sx={{ minWidth: 180 }}
+                    inputProps={{ min: 500, max: 4000, step: 250 }}
+                    helperText="Target tokens for each summary"
+                    disabled={config.enable_full_text === false}
+                  />
+                </Box>
+              </Box>
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* External API Configuration */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>External API Configuration</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Configure rate limits and timeouts for external research APIs
+            </Typography>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              <FormControl sx={{ minWidth: 200 }}>
-                <InputLabel>Default Worker</InputLabel>
-                <Select
-                  value={defaultWorker}
-                  label="Default Worker"
-                  onChange={e => handleModelConfigChange('research_agent_model_config', 'default_worker', e.target.value)}
-                >
-                  <MenuItem value="summary">Summary</MenuItem>
-                  <MenuItem value="analysis">Analysis</MenuItem>
-                  <MenuItem value="search">Search</MenuItem>
-                </Select>
-              </FormControl>
               <TextField
-                label="Max Retries"
+                label="ArXiv Rate Limit"
                 type="number"
-                value={maxRetries}
-                onChange={e => handleModelConfigChange('research_agent_model_config', 'max_retries', Number(e.target.value))}
-                sx={{ minWidth: 150 }}
-              />
-              <TextField
-                label="Timeout (seconds)"
-                type="number"
-                value={timeoutSeconds}
-                onChange={e => handleModelConfigChange('research_agent_model_config', 'timeout_seconds', Number(e.target.value))}
-                sx={{ minWidth: 150 }}
+                value={config.arxiv_rate_limit || 3.0}
+                onChange={e => handleModelConfigChange('research_agent_model_config', 'arxiv_rate_limit', parseFloat(e.target.value))}
+                sx={{ minWidth: 180 }}
+                inputProps={{ min: 0.5, max: 10.0, step: 0.5 }}
+                helperText="Requests per second to ArXiv API"
               />
             </Box>
           </CardContent>
         </Card>
+
+        {/* Node-Specific Models - Collapsible */}
+        <Accordion sx={{ mt: 2 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="h6">Node-Specific Models (Optional)</Typography>
+              <Tooltip title="Override default models for specific workflow nodes. Leave empty to use Boss/Worker models. These allow fine-tuning performance for specialized tasks.">
+                <IconButton size="small">
+                  <InfoOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Query Planner Model */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <Typography variant="h6">Query Planner Model</Typography>
+                    <Tooltip title="Breaks down your research question into focused sub-queries for targeted search. Reasoning models (like o1) excel at this complex decomposition task, but instruct models work fine for straightforward questions.">
+                      <IconButton size="small">
+                        <InfoOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for complex question decomposition, or instruct models for simpler queries
+                  </Typography>
+                  {renderModelFields(config.query_planner_model || {}, 'query_planner_model', '')}
+                </CardContent>
+              </Card>
+
+              {/* Evidence Selector Model */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <Typography variant="h6">Evidence Selector Model</Typography>
+                    <Tooltip title="Evaluates source quality, relevance, and determines if gathered evidence is sufficient to answer the research question. Benefits from reasoning capabilities for quality assessment.">
+                      <IconButton size="small">
+                        <InfoOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for better quality assessment, or strong instruct models (GPT-4, Claude-3.5)
+                  </Typography>
+                  {renderModelFields(config.evidence_selector_model || {}, 'evidence_selector_model', '')}
+                </CardContent>
+              </Card>
+
+              {/* Compression Model */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <Typography variant="h6">Compression Model</Typography>
+                    <Tooltip title="Compresses research evidence when token budget is exceeded, preserving the most important information while reducing length. Instruct models are sufficient for this summarization task.">
+                      <IconButton size="small">
+                        <InfoOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    <strong>Recommended:</strong> Instruct models (GPT-4, Claude-3.5, Llama-3) work well for summarization and compression
+                  </Typography>
+                  {renderModelFields(config.compression_model || {}, 'compression_model', '')}
+                </CardContent>
+              </Card>
+
+              {/* Answer Generator Model */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <Typography variant="h6">Answer Generator Model</Typography>
+                    <Tooltip title="Creates the final comprehensive research report by synthesizing all gathered evidence into a coherent, well-structured answer. Reasoning models provide better synthesis and analysis.">
+                      <IconButton size="small">
+                        <InfoOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for superior synthesis and analysis, or high-quality instruct models
+                  </Typography>
+                  {renderModelFields(config.answer_generator_model || {}, 'answer_generator_model', '')}
+                </CardContent>
+              </Card>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
       </Box>
     );
   };
@@ -553,7 +1118,8 @@ const Settings: React.FC = () => {
 
     // Research Agent model is a special case (boss + worker models)
     if (modelKey === 'research_agent_model_config') {
-      return renderResearchAgentModelConfig(currentConfig);
+      // Use editedResearchAgentConfig for research agent to maintain local state
+      return renderResearchAgentModelConfig(editedResearchAgentConfig || currentConfig);
     }
 
     // TTS model is a special case (single column)
@@ -574,11 +1140,12 @@ const Settings: React.FC = () => {
               ))}
             </Select>
           </FormControl>
-          <TextField
-            fullWidth
+          <ModelNameAutocomplete
             label="TTS Model Name"
             value={currentConfig.tts_model_name || ''}
-            onChange={e => handleModelConfigChange(modelKey, 'tts_model_name', e.target.value)}
+            onChange={value => handleModelConfigChange(modelKey, 'tts_model_name', value)}
+            onModelSelected={selectedModel => handleModelSelectedFromCatalog(modelKey, selectedModel)}
+            modelCatalogData={modelCatalogData}
           />
           <TextField
             fullWidth
@@ -616,11 +1183,12 @@ const Settings: React.FC = () => {
     return (
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
         <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <TextField
-            fullWidth
+          <ModelNameAutocomplete
             label="Model Name"
             value={currentConfig.model_name || ''}
-            onChange={e => handleModelConfigChange(modelKey, 'model_name', e.target.value)}
+            onChange={value => handleModelConfigChange(modelKey, 'model_name', value)}
+            onModelSelected={selectedModel => handleModelSelectedFromCatalog(modelKey, selectedModel)}
+            modelCatalogData={modelCatalogData}
           />
           <FormControl fullWidth>
             <InputLabel>Model Type (Provider)</InputLabel>
@@ -668,18 +1236,18 @@ const Settings: React.FC = () => {
               onChange={e => handleModelConfigChange(modelKey, 'num_ctx', Number(e.target.value))}
             />
           )}
-          {typeof currentConfig.trust_remote_code === 'boolean' && (
+          {currentConfig.model_type === 'sentence-transformers' && (
             <FormControlLabel
               control={
                 <Switch
-                  checked={currentConfig.trust_remote_code}
+                  checked={currentConfig.trust_remote_code || false}
                   onChange={e => handleModelConfigChange(modelKey, 'trust_remote_code', e.target.checked)}
                 />
               }
               label={
                 <Box display="flex" alignItems="center" gap={0.5}>
                   Trust Remote Code
-                  <Tooltip title="Allow loading remote code for this model. (Typically for embedding models)">
+                  <Tooltip title="Allow loading remote code for this model. Required for some sentence-transformers models.">
                     <IconButton size="small">
                       <InfoOutlinedIcon fontSize="small" />
                     </IconButton>
@@ -780,23 +1348,37 @@ const Settings: React.FC = () => {
                   <Typography variant="h6" gutterBottom component="div">
                     {tabDef.label} Settings
                   </Typography>
-                  {orchestrationConfig && orchestrationConfig[tabDef.key] ?
-                    renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
-                    : <Typography>Loading configuration for {tabDef.label}...</Typography>
-                  }
-                  <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-start' }}>
+                  {tabDef.key === 'research_agent_model_config' ? (
+                    editedResearchAgentConfig ?
+                      renderModelConfigFields(tabDef.key, editedResearchAgentConfig)
+                      : <Typography>Loading configuration...</Typography>
+                  ) : (
+                    orchestrationConfig && orchestrationConfig[tabDef.key] ?
+                      renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
+                      : <Typography>Loading configuration for {tabDef.label}...</Typography>
+                  )}
+                  <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
                     <Button
                       variant="contained"
                       onClick={() => {
-                        if (orchestrationConfig) {
-                           // Create a payload with only the specific model config that was changed
-                           const payload = {
-                            ...orchestrationConfig, // Send the whole config, backend expects OrchestrationConfig
-                           };
-                          updateOrchestrationMutation.mutate(payload);
+                        if (!orchestrationConfig) return;
+                        
+                        // Create a mutable copy of the config to be sent
+                        const configToUpdate = JSON.parse(JSON.stringify(orchestrationConfig));
+
+                        // If we are saving the research agent, use the cleaned local state
+                        if (tabDef.key === 'research_agent_model_config') {
+                          const cleanedConfig = cleanResearchAgentConfig(editedResearchAgentConfig);
+                          if (cleanedConfig) {
+                            configToUpdate.research_agent_model_config = cleanedConfig;
+                            updateOrchestrationMutation.mutate(configToUpdate);
+                          }
+                        } else {
+                          // For other tabs, just save the entire orchestration config
+                          updateOrchestrationMutation.mutate(configToUpdate);
                         }
                       }}
-                      disabled={updateOrchestrationMutation.isPending || !orchestrationConfig || !orchestrationConfig[tabDef.key]}
+                      disabled={updateOrchestrationMutation.isPending}
                     >
                       Save {tabDef.label} Settings
                     </Button>

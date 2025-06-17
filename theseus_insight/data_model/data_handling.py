@@ -209,6 +209,90 @@ class PaperDatabase:
                 # Column likely already exists, ignore
                 pass
 
+            # Research Agent tables
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS research_runs ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "task_id TEXT UNIQUE NOT NULL,"
+                "research_question TEXT NOT NULL,"
+                "status TEXT NOT NULL,"  # pending, running, completed, failed, cancelled
+                "config_json TEXT,"
+                "created_at TEXT NOT NULL,"
+                "started_at TEXT,"
+                "completed_at TEXT,"
+                "error_message TEXT,"
+                "final_answer TEXT,"
+                "generation_summary TEXT,"
+                "statistics_json TEXT,"
+                "sub_queries_json TEXT,"
+                "sources_gathered_json TEXT,"
+                "judged_sources_json TEXT,"
+                "evidence_json TEXT,"
+                "compressed_notes TEXT,"
+                "workflow_messages_json TEXT,"
+                "research_loop_count INTEGER DEFAULT 0,"
+                "is_sufficient BOOLEAN DEFAULT 0,"
+                "save_to_library BOOLEAN DEFAULT 1"
+                ")"
+            )
+
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS research_agent_state ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "task_id TEXT NOT NULL,"
+                "node_name TEXT NOT NULL,"
+                "state_json TEXT NOT NULL,"
+                "timestamp TEXT NOT NULL,"
+                "FOREIGN KEY (task_id) REFERENCES research_runs (task_id)"
+                ")"
+            )
+
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_runs_task_id ON research_runs (task_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_runs_status ON research_runs (status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_runs_created_at ON research_runs (created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_agent_state_task_id ON research_agent_state (task_id)"
+            )
+
+            # Model Catalog table
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS model_catalog ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "alias TEXT NOT NULL,"
+                "model_string TEXT NOT NULL,"
+                "provider_name TEXT NOT NULL,"
+                "model_type TEXT NOT NULL,"
+                "description TEXT,"
+                "max_new_tokens INTEGER,"
+                "temperature REAL,"
+                "num_ctx INTEGER,"
+                "trust_remote_code BOOLEAN DEFAULT 0,"
+                "tags_json TEXT,"
+                "is_favorite BOOLEAN DEFAULT 0,"
+                "created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+                "updated_at TEXT DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_model_catalog_alias ON model_catalog (alias)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_model_catalog_provider ON model_catalog (provider_name)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_model_catalog_type ON model_catalog (model_type)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_model_catalog_favorite ON model_catalog (is_favorite)"
+            )
+
     def insert_podcast(self, podcast: Podcast):
         # Validate date formats
         try:
@@ -1265,17 +1349,33 @@ class PaperDatabase:
                 search_terms = [t for t in query_text.lower().split() if t.strip()]
 
                 if search_terms:
-                    fts_query = " ".join(search_terms)
-                    keyword_sql = f"""
-                        SELECT p.id, p.title, p.abstract, p.date, p.date_run, p.score,
-                               p.rationale, p.related, p.cosine_similarity, p.url,
-                               p.embedding_model, p.embedding, bm25(papers_fts) as keyword_score
-                        FROM papers_fts
-                        JOIN papers p ON papers_fts.rowid = p.id
-                        WHERE papers_fts MATCH ? {('AND ' + where_clause) if where_clause else ''}
-                    """
-                    cursor.execute(keyword_sql, [fts_query] + where_params)
-                    rows = cursor.fetchall()
+                    # Properly escape FTS5 search terms by quoting them
+                    escaped_terms = []
+                    for term in search_terms:
+                        # Remove or escape special FTS5 characters
+                        cleaned_term = term.replace('"', '').replace("'", "").replace("?", "").replace("*", "")
+                        if cleaned_term:  # Only add non-empty terms
+                            escaped_terms.append(f'"{cleaned_term}"')
+                    
+                    if escaped_terms:
+                        fts_query = " ".join(escaped_terms)
+                        keyword_sql = f"""
+                            SELECT p.id, p.title, p.abstract, p.date, p.date_run, p.score,
+                                   p.rationale, p.related, p.cosine_similarity, p.url,
+                                   p.embedding_model, p.embedding, bm25(papers_fts) as keyword_score
+                            FROM papers_fts
+                            JOIN papers p ON papers_fts.rowid = p.id
+                            WHERE papers_fts MATCH ? {('AND ' + where_clause) if where_clause else ''}
+                        """
+                        cursor.execute(keyword_sql, [fts_query] + where_params)
+                        rows = cursor.fetchall()
+                    else:
+                        # No valid search terms after cleaning, fallback to semantic-only search
+                        base_query = "SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding FROM papers"
+                        if where_clause:
+                            base_query += f" WHERE {where_clause}"
+                        cursor.execute(base_query, where_params)
+                        rows = cursor.fetchall()
                 else:
                     base_query = "SELECT id, title, abstract, date, date_run, score, rationale, related, cosine_similarity, url, embedding_model, embedding FROM papers"
                     if where_clause:
@@ -1617,3 +1717,576 @@ class PaperDatabase:
                 }
                 for row in rows
             ]
+
+    # Research Agent Database Methods
+    def insert_research_run(
+        self,
+        task_id: str,
+        research_question: str,
+        status: str = "pending",
+        config: dict = None,
+        save_to_library: bool = True
+    ) -> None:
+        """Insert a new research run record."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO research_runs (task_id, research_question, status, config_json, "
+                "created_at, save_to_library) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    task_id,
+                    research_question,
+                    status,
+                    json.dumps(config) if config else None,
+                    datetime.datetime.utcnow().isoformat(),
+                    save_to_library
+                )
+            )
+
+    def update_research_run_status(
+        self,
+        task_id: str,
+        status: str,
+        started_at: str = None,
+        completed_at: str = None,
+        error_message: str = None
+    ) -> None:
+        """Update the status of a research run."""
+        with self.get_cursor() as cursor:
+            update_fields = ["status = ?"]
+            params = [status]
+            
+            if started_at:
+                update_fields.append("started_at = ?")
+                params.append(started_at)
+            if completed_at:
+                update_fields.append("completed_at = ?")
+                params.append(completed_at)
+            if error_message:
+                update_fields.append("error_message = ?")
+                params.append(error_message)
+            
+            params.append(task_id)
+            
+            cursor.execute(
+                f"UPDATE research_runs SET {', '.join(update_fields)} WHERE task_id = ?",
+                params
+            )
+
+    def update_research_run_results(
+        self,
+        task_id: str,
+        final_answer: str = None,
+        generation_summary: str = None,
+        statistics: dict = None,
+        sub_queries: list = None,
+        sources_gathered: list = None,
+        judged_sources: list = None,
+        evidence: list = None,
+        compressed_notes: str = None,
+        workflow_messages: list = None,
+        research_loop_count: int = None,
+        is_sufficient: bool = None
+    ) -> None:
+        """Update the results of a research run."""
+        with self.get_cursor() as cursor:
+            update_fields = []
+            params = []
+            
+            if final_answer is not None:
+                update_fields.append("final_answer = ?")
+                params.append(final_answer)
+            if generation_summary is not None:
+                update_fields.append("generation_summary = ?")
+                params.append(generation_summary)
+            if statistics is not None:
+                update_fields.append("statistics_json = ?")
+                params.append(json.dumps(statistics))
+            if sub_queries is not None:
+                update_fields.append("sub_queries_json = ?")
+                params.append(json.dumps(sub_queries))
+            if sources_gathered is not None:
+                update_fields.append("sources_gathered_json = ?")
+                params.append(json.dumps(sources_gathered))
+            if judged_sources is not None:
+                update_fields.append("judged_sources_json = ?")
+                params.append(json.dumps(judged_sources))
+            if evidence is not None:
+                update_fields.append("evidence_json = ?")
+                params.append(json.dumps(evidence))
+            if compressed_notes is not None:
+                update_fields.append("compressed_notes = ?")
+                params.append(compressed_notes)
+            if workflow_messages is not None:
+                update_fields.append("workflow_messages_json = ?")
+                params.append(json.dumps(workflow_messages))
+            if research_loop_count is not None:
+                update_fields.append("research_loop_count = ?")
+                params.append(research_loop_count)
+            if is_sufficient is not None:
+                update_fields.append("is_sufficient = ?")
+                params.append(is_sufficient)
+            
+            if update_fields:
+                params.append(task_id)
+                cursor.execute(
+                    f"UPDATE research_runs SET {', '.join(update_fields)} WHERE task_id = ?",
+                    params
+                )
+
+    def get_research_run(self, task_id: str) -> dict | None:
+        """Get a research run by task ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM research_runs WHERE task_id = ?",
+                (task_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'task_id': row[1],
+                    'research_question': row[2],
+                    'status': row[3],
+                    'config': json.loads(row[4]) if row[4] else None,
+                    'created_at': row[5],
+                    'started_at': row[6],
+                    'completed_at': row[7],
+                    'error_message': row[8],
+                    'final_answer': row[9],
+                    'generation_summary': row[10],
+                    'statistics': json.loads(row[11]) if row[11] else None,
+                    'sub_queries': json.loads(row[12]) if row[12] else [],
+                    'sources_gathered': json.loads(row[13]) if row[13] else [],
+                    'judged_sources': json.loads(row[14]) if row[14] else [],
+                    'evidence': json.loads(row[15]) if row[15] else [],
+                    'compressed_notes': row[16],
+                    'workflow_messages': json.loads(row[17]) if row[17] else [],
+                    'research_loop_count': row[18],
+                    'is_sufficient': bool(row[19]),
+                    'save_to_library': bool(row[20])
+                }
+            return None
+
+    def get_research_runs_history(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        status_filter: str = None
+    ) -> list:
+        """Get research runs history with pagination and filtering."""
+        with self.get_cursor() as cursor:
+            query = "SELECT * FROM research_runs"
+            params = []
+            
+            if status_filter:
+                query += " WHERE status = ?"
+                params.append(status_filter)
+            
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            results = []
+            for row in rows:
+                results.append({
+                    'id': row[0],
+                    'task_id': row[1],
+                    'research_question': row[2],
+                    'status': row[3],
+                    'config': json.loads(row[4]) if row[4] else None,
+                    'created_at': row[5],
+                    'started_at': row[6],
+                    'completed_at': row[7],
+                    'error_message': row[8],
+                    'final_answer': row[9],
+                    'generation_summary': row[10],
+                    'statistics': json.loads(row[11]) if row[11] else None,
+                    'sub_queries': json.loads(row[12]) if row[12] else [],
+                    'sources_gathered': json.loads(row[13]) if row[13] else [],
+                    'judged_sources': json.loads(row[14]) if row[14] else [],
+                    'evidence': json.loads(row[15]) if row[15] else [],
+                    'compressed_notes': row[16],
+                    'workflow_messages': json.loads(row[17]) if row[17] else [],
+                    'research_loop_count': row[18],
+                    'is_sufficient': bool(row[19]),
+                    'save_to_library': bool(row[20])
+                })
+            
+            return results
+
+    def get_research_runs_by_status(self, statuses: list) -> list:
+        """Get research runs by status list (for cleanup/recovery)."""
+        with self.get_cursor() as cursor:
+            placeholders = ','.join(['?'] * len(statuses))
+            query = f"SELECT task_id, research_question, status, created_at FROM research_runs WHERE status IN ({placeholders})"
+            
+            cursor.execute(query, statuses)
+            rows = cursor.fetchall()
+            
+            return [
+                {
+                    'task_id': row[0],
+                    'research_question': row[1],
+                    'status': row[2],
+                    'created_at': row[3]
+                }
+                for row in rows
+            ]
+
+    def delete_research_run(self, task_id: str) -> None:
+        """Delete a research run and its associated state records."""
+        with self.get_cursor() as cursor:
+            # Delete associated state records first
+            cursor.execute("DELETE FROM research_agent_state WHERE task_id = ?", (task_id,))
+            # Delete the research run
+            cursor.execute("DELETE FROM research_runs WHERE task_id = ?", (task_id,))
+
+    def insert_research_agent_state(
+        self,
+        task_id: str,
+        node_name: str,
+        state: dict
+    ) -> None:
+        """Insert a research agent state snapshot."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO research_agent_state (task_id, node_name, state_json, timestamp) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    task_id,
+                    node_name,
+                    json.dumps(state),
+                    datetime.datetime.utcnow().isoformat()
+                )
+            )
+
+    def get_research_agent_states(self, task_id: str) -> list:
+        """Get all state snapshots for a research task."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT node_name, state_json, timestamp FROM research_agent_state "
+                "WHERE task_id = ? ORDER BY timestamp ASC",
+                (task_id,)
+            )
+            rows = cursor.fetchall()
+            
+            return [
+                {
+                    'node_name': row[0],
+                    'state': json.loads(row[1]),
+                    'timestamp': row[2]
+                }
+                for row in rows
+            ]
+
+    def cleanup_old_research_runs(self, days_old: int = 30) -> int:
+        """Clean up old research runs and their associated data."""
+        cutoff_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days_old)).isoformat()
+        
+        with self.get_cursor() as cursor:
+            # Get task IDs to delete
+            cursor.execute(
+                "SELECT task_id FROM research_runs WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')",
+                (cutoff_date,)
+            )
+            task_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not task_ids:
+                return 0
+            
+            # Delete associated state records
+            placeholders = ','.join(['?'] * len(task_ids))
+            cursor.execute(
+                f"DELETE FROM research_agent_state WHERE task_id IN ({placeholders})",
+                task_ids
+            )
+            
+            # Delete research runs
+            cursor.execute(
+                f"DELETE FROM research_runs WHERE task_id IN ({placeholders})",
+                task_ids
+            )
+            
+            return len(task_ids)
+
+    def get_research_runs_statistics(self) -> dict:
+        """Get statistics about research runs."""
+        with self.get_cursor() as cursor:
+            # Total runs
+            cursor.execute("SELECT COUNT(*) FROM research_runs")
+            total_runs = cursor.fetchone()[0]
+            
+            # Runs by status
+            cursor.execute(
+                "SELECT status, COUNT(*) FROM research_runs GROUP BY status"
+            )
+            status_counts = dict(cursor.fetchall())
+            
+            # Recent runs (last 7 days)
+            cutoff_date = (datetime.datetime.utcnow() - datetime.timedelta(days=7)).isoformat()
+            cursor.execute(
+                "SELECT COUNT(*) FROM research_runs WHERE created_at >= ?",
+                (cutoff_date,)
+            )
+            recent_runs = cursor.fetchone()[0]
+            
+            # Average completion time for completed runs
+            cursor.execute(
+                "SELECT AVG(julianday(completed_at) - julianday(started_at)) * 24 * 60 "
+                "FROM research_runs WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL"
+            )
+            avg_completion_time_minutes = cursor.fetchone()[0]
+            
+            return {
+                'total_runs': total_runs,
+                'status_counts': status_counts,
+                'recent_runs': recent_runs,
+                'avg_completion_time_minutes': avg_completion_time_minutes
+            }
+
+    # Model Catalog methods
+    def create_model_catalog_entry(
+        self,
+        alias: str,
+        model_string: str,
+        provider_name: str,
+        model_type: str,
+        description: str = None,
+        max_new_tokens: int = None,
+        temperature: float = None,
+        num_ctx: int = None,
+        trust_remote_code: bool = False,
+        tags: list = None,
+        is_favorite: bool = False
+    ) -> int:
+        """Create a new model catalog entry."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO model_catalog 
+                   (alias, model_string, provider_name, model_type, description, 
+                    max_new_tokens, temperature, num_ctx, trust_remote_code, 
+                    tags_json, is_favorite) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    alias,
+                    model_string,
+                    provider_name,
+                    model_type,
+                    description,
+                    max_new_tokens,
+                    temperature,
+                    num_ctx,
+                    int(trust_remote_code) if trust_remote_code is not None else 0,
+                    json.dumps(tags) if tags else json.dumps([]),
+                    int(is_favorite) if is_favorite is not None else 0
+                )
+            )
+            return cursor.lastrowid
+
+    def get_model_catalog_entry(self, model_id: int) -> dict | None:
+        """Get a model catalog entry by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM model_catalog WHERE id = ?",
+                (model_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'alias': row[1],
+                    'model_string': row[2],
+                    'provider_name': row[3],
+                    'model_type': row[4],
+                    'description': row[5],
+                    'max_new_tokens': row[6],
+                    'temperature': row[7],
+                    'num_ctx': row[8],
+                    'trust_remote_code': bool(row[9]),
+                    'tags': json.loads(row[12]) if row[12] else [],
+                    'is_favorite': bool(row[13]),
+                    'created_at': row[10],
+                    'updated_at': row[11]
+                }
+            return None
+
+    def update_model_catalog_entry(
+        self,
+        model_id: int,
+        alias: str = None,
+        model_string: str = None,
+        provider_name: str = None,
+        model_type: str = None,
+        description: str = None,
+        max_new_tokens: int = None,
+        temperature: float = None,
+        num_ctx: int = None,
+        trust_remote_code: bool = None,
+        tags: list = None,
+        is_favorite: bool = None
+    ) -> bool:
+        """Update a model catalog entry."""
+        update_fields = []
+        params = []
+        
+        if alias is not None:
+            update_fields.append("alias = ?")
+            params.append(alias)
+        if model_string is not None:
+            update_fields.append("model_string = ?")
+            params.append(model_string)
+        if provider_name is not None:
+            update_fields.append("provider_name = ?")
+            params.append(provider_name)
+        if model_type is not None:
+            update_fields.append("model_type = ?")
+            params.append(model_type)
+        if description is not None:
+            update_fields.append("description = ?")
+            params.append(description)
+        if max_new_tokens is not None:
+            update_fields.append("max_new_tokens = ?")
+            params.append(max_new_tokens)
+        if temperature is not None:
+            update_fields.append("temperature = ?")
+            params.append(temperature)
+        if num_ctx is not None:
+            update_fields.append("num_ctx = ?")
+            params.append(num_ctx)
+        if trust_remote_code is not None:
+            update_fields.append("trust_remote_code = ?")
+            params.append(int(trust_remote_code))
+        if tags is not None:
+            update_fields.append("tags = ?")
+            params.append(json.dumps(tags))
+        if is_favorite is not None:
+            update_fields.append("is_favorite = ?")
+            params.append(int(is_favorite))
+        
+        if update_fields:
+            update_fields.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(model_id)
+            
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    f"UPDATE model_catalog SET {', '.join(update_fields)} WHERE id = ?",
+                    params
+                )
+                return cursor.rowcount > 0
+        return False
+
+    def delete_model_catalog_entry(self, model_id: int) -> bool:
+        """Delete a model catalog entry."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM model_catalog WHERE id = ?", (model_id,))
+            return cursor.rowcount > 0
+
+    def search_model_catalog(
+        self,
+        search: str = None,
+        provider: str = None,
+        model_type: str = None,
+        tags: list = None,
+        is_favorite: bool = None,
+        page: int = 1,
+        page_size: int = 10
+    ) -> dict:
+        """Search model catalog with filters and pagination."""
+        with self.get_cursor() as cursor:
+            # Build query
+            where_conditions = []
+            params = []
+            
+            if search:
+                where_conditions.append(
+                    "(alias LIKE ? OR model_string LIKE ? OR description LIKE ?)"
+                )
+                search_term = f"%{search}%"
+                params.extend([search_term, search_term, search_term])
+            
+            if provider:
+                where_conditions.append("provider_name = ?")
+                params.append(provider)
+            
+            if model_type:
+                where_conditions.append("model_type = ?")
+                params.append(model_type)
+            
+            if is_favorite is not None:
+                where_conditions.append("is_favorite = ?")
+                params.append(int(is_favorite))
+            
+            if tags:
+                # Simple tag search - check if any of the provided tags exist in tags
+                tag_conditions = []
+                for tag in tags:
+                    tag_conditions.append("tags LIKE ?")
+                    params.append(f'%"{tag}"%')
+                if tag_conditions:
+                    where_conditions.append(f"({' OR '.join(tag_conditions)})")
+            
+            base_query = "FROM model_catalog"
+            if where_conditions:
+                base_query += f" WHERE {' AND '.join(where_conditions)}"
+            
+            # Get total count
+            cursor.execute(f"SELECT COUNT(*) {base_query}", params)
+            total_count = cursor.fetchone()[0]
+            
+            # Get paginated results
+            offset = (page - 1) * page_size
+            query = f"SELECT * {base_query} ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+            params.extend([page_size, offset])
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            models = []
+            for row in rows:
+                models.append({
+                    'id': row[0],
+                    'alias': row[1],
+                    'model_string': row[2],
+                    'provider_name': row[3],
+                    'model_type': row[4],
+                    'description': row[5],
+                    'max_new_tokens': row[6],
+                    'temperature': row[7],
+                    'num_ctx': row[8],
+                    'trust_remote_code': bool(row[9]),
+                    'tags': json.loads(row[12]) if row[12] else [],
+                    'is_favorite': bool(row[13]),
+                    'created_at': row[10],
+                    'updated_at': row[11]
+                })
+            
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            return {
+                'models': models,
+                'total_count': total_count,
+                'total_pages': total_pages,
+                'current_page': page,
+                'page_size': page_size
+            }
+
+    def toggle_model_favorite(self, model_id: int) -> bool:
+        """Toggle favorite status of a model."""
+        with self.get_cursor() as cursor:
+            # Get current favorite status
+            cursor.execute("SELECT is_favorite FROM model_catalog WHERE id = ?", (model_id,))
+            result = cursor.fetchone()
+            if result is None:
+                return False
+            
+            current_favorite = bool(result[0])
+            new_favorite = not current_favorite
+            
+            # Update favorite status
+            cursor.execute(
+                "UPDATE model_catalog SET is_favorite = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (int(new_favorite), model_id)
+            )
+            return cursor.rowcount > 0

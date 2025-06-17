@@ -6,11 +6,20 @@ numpy
 # NLP & Text Processing
 spacy
 spacy-layout
+docling
+markitdown
+markdown
+mdpd
 tiktoken
 unidecode
 
 # Embeddings & Vector Search
 sentence-transformers
+
+# Research Agent Dependencies
+arxiv>=1.4.7
+simhash>=2.1.0
+langgraph
 
 # LLM & AI Services
 anthropic[bedrock]

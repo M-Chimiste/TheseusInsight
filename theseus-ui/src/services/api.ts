@@ -131,8 +131,33 @@ export const runsApi = {
   deleteRunArtifact: (runId: number) => api.delete(`/runs/${runId}/artifact`),
 };
 
+// Research Agent API
+export const researchAgentApi = {
+  startResearchTask: (request: any) => api.post('/research-agent/run', request),
+  getTaskStatus: (taskId: string) => api.get(`/research-agent/status/${taskId}`),
+  getTaskResult: (taskId: string) => api.get(`/research-agent/result/${taskId}`),
+  getHistory: (limit: number = 50, offset: number = 0, statusFilter?: string) => {
+    const params: any = { limit, offset };
+    if (statusFilter) params.status_filter = statusFilter;
+    return api.get('/research-agent/history', { params });
+  },
+  cancelTask: (taskId: string) => api.delete(`/research-agent/${taskId}`),
+  getWorkflowInfo: () => api.get('/research-agent/workflow/info'),
+  getHealth: () => api.get('/research-agent/health'),
+};
+
+// Model Catalog API
+export const modelCatalogApi = {
+  searchModels: (params: any) => api.get('/model-catalog/', { params }),
+  createModel: (model: any) => api.post('/model-catalog/', model),
+  updateModel: (modelId: number, model: any) => api.put(`/model-catalog/${modelId}`, model),
+  deleteModel: (modelId: number) => api.delete(`/model-catalog/${modelId}`),
+  toggleFavorite: (modelId: number) => api.post(`/model-catalog/${modelId}/toggle-favorite`),
+  getModel: (modelId: number) => api.get(`/model-catalog/${modelId}`),
+};
+
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer') => {
+export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };
@@ -359,4 +384,103 @@ export const papersApi = {
         const response: AxiosResponse<HybridSearchResponse> = await api.post<HybridSearchResponse>('/papers/hybrid-search', requestBody);
         return response.data;
     },
-}; 
+};
+
+// Research Agent Interfaces
+export interface ResearchTaskRequest {
+  research_question: string;
+  config?: {
+    search_config?: {
+      local_limit?: number;
+      external_limit?: number;
+    };
+    evidence_config?: {
+      min_evidence_threshold?: number;
+      quality_threshold?: number;
+    };
+    compression_config?: {
+      compression_ratio?: number;
+      max_tokens?: number;
+    };
+    answer_config?: {
+      citation_style?: 'academic' | 'numbered' | 'apa';
+      include_methodology?: boolean;
+      include_limitations?: boolean;
+    };
+  };
+  save_to_library?: boolean;
+}
+
+export interface ResearchTaskResponse {
+  task_id: string;
+  status: string;
+  created_at: string;
+  research_question: string;
+}
+
+export interface ResearchTaskStatus {
+  task_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress?: any;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export interface ResearchTaskResult {
+  task_id: string;
+  status: string;
+  research_question: string;
+  final_answer?: string;
+  generation_summary?: string;
+  statistics?: {
+    research_loops: number;
+    total_sources_found: number;
+    selected_sources: number;
+    evidence_pieces: number;
+    evidence_sufficient: boolean;
+    compression_used: boolean;
+  };
+  sub_queries: string[];
+  sources_gathered: any[];
+  judged_sources: any[];
+  evidence: string[];
+  compressed_notes: string;
+  workflow_messages: any[];
+  created_at: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export interface ResearchHistoryItem {
+  task_id: string;
+  research_question: string;
+  status: string;
+  created_at: string;
+  completed_at?: string;
+  statistics?: {
+    research_loops: number;
+    total_sources_found: number;
+    selected_sources: number;
+    evidence_pieces: number;
+    evidence_sufficient: boolean;
+    compression_used: boolean;
+  };
+}
+
+export interface ResearchWebSocketMessage {
+  type: 'status_update' | 'task_completed';
+  task_id: string;
+  status: string;
+  progress?: any;
+  timestamp: string;
+  error_message?: string;
+  results?: {
+    final_answer?: string;
+    statistics?: any;
+    sub_queries?: string[];
+    sources_count?: number;
+    evidence_count?: number;
+  };
+} 

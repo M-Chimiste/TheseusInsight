@@ -28,6 +28,9 @@ import {
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
   ChevronLeft as ChevronLeftIcon,
+  Psychology as PsychologyIcon,
+  LibraryBooks as LibraryBooksIcon,
+  Storage as StorageIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
@@ -76,6 +79,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
+    { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
+    { text: 'Research Agent', icon: <PsychologyIcon />, path: '/research-agent' },
+    { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },

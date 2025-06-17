@@ -1,5 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, List
+import asyncio
+import json
 
 from ..tasks import task_manager, TaskStatus
 
@@ -170,6 +172,94 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
             await task_manager.unsubscribe_from_updates(task_id, status_queue)
         manager.disconnect(task_id, websocket)
 
+async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
+    """Specialized WebSocket handler for research agent tasks.
+
+    This method handles the WebSocket connection specifically for research agent tasks,
+    providing real-time progress updates for each node in the workflow.
+
+    Args:
+        websocket (WebSocket): The WebSocket connection to handle.
+        task_id (str): The ID of the research task to handle.
+
+    Raises:
+        Exception: If an error occurs while handling the WebSocket connection.
+    """
+    try:
+        await manager.connect(task_id, websocket)
+        
+        # Import here to avoid circular imports
+        from .research_agent import research_tasks, task_results
+        
+        # Check if task exists
+        if task_id not in research_tasks:
+            await websocket.close(code=4004, reason="Research task not found")
+            return
+        
+        # Send initial status
+        task_info = research_tasks[task_id]
+        await websocket.send_json({
+            "type": "status_update",
+            "task_id": task_id,
+            "status": task_info["status"],
+            "progress": task_info.get("progress", {}),
+            "timestamp": task_info["created_at"].isoformat()
+        })
+        
+        # Monitor task progress
+        while True:
+            await asyncio.sleep(1)  # Poll every second
+            
+            # Get current task info
+            current_task_info = research_tasks.get(task_id)
+            if not current_task_info:
+                break
+            
+            # Send status update
+            status_message = {
+                "type": "status_update",
+                "task_id": task_id,
+                "status": current_task_info["status"],
+                "progress": current_task_info.get("progress", {}),
+                "timestamp": current_task_info.get("started_at", current_task_info["created_at"]).isoformat()
+            }
+            
+            # Add error message if failed
+            if current_task_info.get("error_message"):
+                status_message["error_message"] = current_task_info["error_message"]
+            
+            await websocket.send_json(status_message)
+            
+            # If task is completed, send final results and close
+            if current_task_info["status"] in ["completed", "failed", "cancelled"]:
+                if current_task_info["status"] == "completed":
+                    results = task_results.get(task_id, {})
+                    final_message = {
+                        "type": "task_completed",
+                        "task_id": task_id,
+                        "status": "completed",
+                        "results": {
+                            "final_answer": results.get("final_answer"),
+                            "statistics": results.get("statistics"),
+                            "sub_queries": results.get("sub_queries", []),
+                            "sources_count": len(results.get("sources_gathered", [])),
+                            "evidence_count": len(results.get("evidence", []))
+                        },
+                        "timestamp": current_task_info.get("completed_at", current_task_info["created_at"]).isoformat()
+                    }
+                    await websocket.send_json(final_message)
+                break
+                
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.close(code=4000, reason=str(e))
+        except Exception:
+            pass
+    finally:
+        manager.disconnect(task_id, websocket)
+
 # WebSocket endpoints
 @router.websocket("/ws/newsletter/{task_id}")
 async def newsletter_status(websocket: WebSocket, task_id: str):
@@ -194,4 +284,9 @@ async def database_import_status(websocket: WebSocket, task_id: str):
 @router.websocket("/ws/database-export/{task_id}")
 async def database_export_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for database export status updates."""
-    await handle_websocket_connection(websocket, task_id, "database-export") 
+    await handle_websocket_connection(websocket, task_id, "database-export")
+
+@router.websocket("/ws/research-agent/{task_id}")
+async def research_agent_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for research agent status updates."""
+    await handle_research_agent_connection(websocket, task_id) 

@@ -167,6 +167,40 @@ class StructuredParsingHelper:
     """Helper class for parsing structured responses with fallbacks."""
     
     @staticmethod
+    def _fix_evidence_selection_data(data):
+        """Fix missing fields in EvidenceSelectionResponse data."""
+        # Handle missing required fields for EvidenceSelectionResponse
+        if "evidence_assessments" not in data:
+            data["evidence_assessments"] = []
+        
+        # Fix individual evidence assessments if they're missing required fields
+        if "evidence_assessments" in data and isinstance(data["evidence_assessments"], list):
+            for i, assessment in enumerate(data["evidence_assessments"]):
+                if isinstance(assessment, dict):
+                    if "source_id" not in assessment:
+                        assessment["source_id"] = f"source_{i+1}"
+                    if "quality_score" not in assessment:
+                        assessment["quality_score"] = assessment.get("relevance_score", 0.7)
+                    if "relevance_score" not in assessment:
+                        assessment["relevance_score"] = assessment.get("quality_score", 0.7)
+                    if "key_findings" not in assessment:
+                        assessment["key_findings"] = ["Key findings from this source"]
+                    if "include_in_synthesis" not in assessment:
+                        assessment["include_in_synthesis"] = True
+        
+        if "sufficiency_assessment" not in data:
+            data["sufficiency_assessment"] = {
+                "is_sufficient": False,
+                "coverage_score": 0.0,
+                "well_covered_aspects": [],
+                "missing_aspects": ["Unable to assess due to parsing error"],
+                "confidence_level": "low",
+                "recommendation": "search_more"
+            }
+        if "selection_summary" not in data:
+            data["selection_summary"] = "Evidence selection completed with parsing assistance"
+    
+    @staticmethod
     def parse_with_fallback(response_text: str, schema_class: BaseModel, logger=None) -> Optional[BaseModel]:
         """
         Parse LLM response with json_repair fallback.
@@ -207,6 +241,8 @@ class StructuredParsingHelper:
                         data["methodology_notes"] = "Systematic search and synthesis of academic sources"
                     if "citations_used" not in data:
                         data["citations_used"] = []
+                elif schema_class == EvidenceSelectionResponse:
+                    StructuredParsingHelper._fix_evidence_selection_data(data)
                 
                 return schema_class(**data)
         except (json.JSONDecodeError, ValueError, TypeError) as e:
@@ -235,6 +271,8 @@ class StructuredParsingHelper:
                         data["methodology_notes"] = "Systematic search and synthesis of academic sources"
                     if "citations_used" not in data:
                         data["citations_used"] = []
+                elif schema_class == EvidenceSelectionResponse:
+                    StructuredParsingHelper._fix_evidence_selection_data(data)
                 
                 return schema_class(**data)
             else:
@@ -252,6 +290,8 @@ class StructuredParsingHelper:
                         data["methodology_notes"] = "Systematic search and synthesis of academic sources"
                     if "citations_used" not in data:
                         data["citations_used"] = []
+                elif schema_class == EvidenceSelectionResponse:
+                    StructuredParsingHelper._fix_evidence_selection_data(data)
                 
                 return schema_class(**data)
                 

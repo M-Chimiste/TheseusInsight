@@ -8,6 +8,9 @@ import MenuBookIcon from '@mui/icons-material/MenuBook';
 import HistoryIcon from '@mui/icons-material/History';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
+import StorageIcon from '@mui/icons-material/Storage';
 
 interface NavCardItem {
   title: string;
@@ -17,6 +20,24 @@ interface NavCardItem {
 }
 
 const navItems: NavCardItem[] = [
+  {
+    title: 'Research Agent',
+    description: 'AI-powered research assistant for comprehensive literature analysis.',
+    icon: <PsychologyIcon fontSize="large" color="primary" />,
+    path: '/research-agent',
+  },
+  {
+    title: 'Research Library',
+    description: 'Browse and manage your research history and reports.',
+    icon: <LibraryBooksIcon fontSize="large" color="primary" />,
+    path: '/research-library',
+  },
+  {
+    title: 'Model Catalog',
+    description: 'Manage and organize your AI models with detailed specifications.',
+    icon: <StorageIcon fontSize="large" color="primary" />,
+    path: '/model-catalog',
+  },
   {
     title: 'Newsletter',
     description: 'Generate research newsletters based on criteria.',

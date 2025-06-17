@@ -6,7 +6,7 @@ import os
 from ..models import (
     OrchestrationConfig, ArxivCategoriesConfig, ModelProvider,
     ResearchInterests, EmailRecipients, VisualizerSettings,
-    ModelConfig, TTSModelConfig
+    ModelConfig, TTSModelConfig, ResearchAgentModelConfigApi
 )
 from ..dependencies import db, CREDENTIAL_KEYS
 from ...utils.path_resolver import get_config_path, config_file_exists
@@ -49,17 +49,62 @@ async def get_orchestration_config_api():
         default_newsletter_intro_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=4096, temperature=0.1, num_ctx=131072)
         default_podcast_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=8192, temperature=0.1, num_ctx=131072)
         default_tts_model = TTSModelConfig(tts_provider='openai', tts_model_name='tts-1', speaker_1_voice='sage', speaker_1_speed=1.0, speaker_2_voice='ash', speaker_2_speed=1.0)
+        
+        # Default Research Agent configuration
+        default_research_agent_config = ResearchAgentModelConfigApi(
+            boss_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=4096, temperature=0.1),
+            worker_models={
+                'summary': ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=2048, temperature=0.1),
+                'analysis': ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=2048, temperature=0.1),
+                'search': ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=1024, temperature=0.1)
+            },
+            default_worker='summary',
+            max_retries=3,
+            max_research_context_tokens=15000,
+            compress_to_ratio=0.2,
+            initial_rerank_top_k=40,
+            max_research_loops=3,
+            query_planner_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=1024, temperature=0.1),
+            evidence_selector_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=2048, temperature=0.1),
+            compression_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=4096, temperature=0.1),
+            answer_generator_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=4096, temperature=0.3),
+            arxiv_rate_limit=3.0,
+        )
 
         # Create OrchestrationConfig by merging loaded data with defaults for missing top-level keys
-        # Pydantic will handle missing sub-fields within ModelConfig/TTSModelConfig if they are optional or have defaults in their own definitions
+        # Handle null values by using defaults when the loaded value is None
+        embedding_model_data = loaded_config_data.get('embedding_model') or default_embedding_model.dict()
+        judge_model_data = loaded_config_data.get('judge_model') or default_judge_model.dict()
+        content_extraction_model_data = loaded_config_data.get('content_extraction_model') or default_content_extraction_model.dict()
+        newsletter_sections_model_data = loaded_config_data.get('newsletter_sections_model') or default_newsletter_sections_model.dict()
+        newsletter_intro_model_data = loaded_config_data.get('newsletter_intro_model') or default_newsletter_intro_model.dict()
+        podcast_model_data = loaded_config_data.get('podcast_model') or default_podcast_model.dict()
+        tts_model_data = loaded_config_data.get('tts_model') or default_tts_model.dict()
+        
+        # Special handling for research agent config with nested null model configurations
+        research_agent_raw = loaded_config_data.get('research_agent_model_config') or {}
+        research_agent_model_config_data = default_research_agent_config.dict()
+        research_agent_model_config_data.update(research_agent_raw)
+        
+        # Handle null nested model configurations in research agent config
+        if research_agent_model_config_data.get('query_planner_model') is None:
+            research_agent_model_config_data['query_planner_model'] = default_research_agent_config.query_planner_model
+        if research_agent_model_config_data.get('evidence_selector_model') is None:
+            research_agent_model_config_data['evidence_selector_model'] = default_research_agent_config.evidence_selector_model
+        if research_agent_model_config_data.get('compression_model') is None:
+            research_agent_model_config_data['compression_model'] = default_research_agent_config.compression_model
+        if research_agent_model_config_data.get('answer_generator_model') is None:
+            research_agent_model_config_data['answer_generator_model'] = default_research_agent_config.answer_generator_model
+
         final_config = OrchestrationConfig(
-            embedding_model=ModelConfig(**loaded_config_data.get('embedding_model', default_embedding_model.dict())),
-            judge_model=ModelConfig(**loaded_config_data.get('judge_model', default_judge_model.dict())),
-            content_extraction_model=ModelConfig(**loaded_config_data.get('content_extraction_model', default_content_extraction_model.dict())),
-            newsletter_sections_model=ModelConfig(**loaded_config_data.get('newsletter_sections_model', default_newsletter_sections_model.dict())),
-            newsletter_intro_model=ModelConfig(**loaded_config_data.get('newsletter_intro_model', default_newsletter_intro_model.dict())),
-            podcast_model=ModelConfig(**loaded_config_data.get('podcast_model', default_podcast_model.dict())),
-            tts_model=TTSModelConfig(**loaded_config_data.get('tts_model', default_tts_model.dict()))
+            embedding_model=ModelConfig(**embedding_model_data),
+            judge_model=ModelConfig(**judge_model_data),
+            content_extraction_model=ModelConfig(**content_extraction_model_data),
+            newsletter_sections_model=ModelConfig(**newsletter_sections_model_data),
+            newsletter_intro_model=ModelConfig(**newsletter_intro_model_data),
+            podcast_model=ModelConfig(**podcast_model_data),
+            tts_model=TTSModelConfig(**tts_model_data),
+            research_agent_model_config=ResearchAgentModelConfigApi(**research_agent_model_config_data)
         )
         return final_config
 

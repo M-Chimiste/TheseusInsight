@@ -852,13 +852,288 @@ const Settings: React.FC = () => {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {/* Boss Model */}
-        {renderModelFields(bossModel, 'boss_model', 'Boss Model (Main Coordinator)')}
+        <Card variant="outlined" sx={{ mb: 2 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <Typography variant="h6">Boss Model (Main Coordinator)</Typography>
+              <Tooltip title="The primary model that orchestrates the entire research workflow, makes high-level decisions, and coordinates between different nodes. Reasoning models (o1) are highly recommended for complex research orchestration.">
+                <IconButton size="small">
+                  <InfoOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for superior research coordination and decision-making
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <ModelNameAutocomplete
+                  label="Model Name"
+                  value={bossModel.model_name || ''}
+                  onChange={value => handleModelConfigChange('research_agent_model_config', `boss_model.model_name`, value)}
+                  onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'boss_model')}
+                  modelCatalogData={modelCatalogData}
+                />
+                <FormControl fullWidth>
+                  <InputLabel>Model Type (Provider)</InputLabel>
+                  <Select
+                    value={bossModel.model_type || ''}
+                    label="Model Type (Provider)"
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.model_type`, e.target.value)}
+                  >
+                    {(modelProviders || []).map((provider: any) => (
+                      <MenuItem key={provider.id} value={provider.name}>
+                        {provider.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  fullWidth
+                  label="Max New Tokens"
+                  type="number"
+                  value={bossModel.max_new_tokens || 4096}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.max_new_tokens`, Number(e.target.value))}
+                />
+                <TextField
+                  fullWidth
+                  label="Temperature"
+                  type="number"
+                  inputProps={{ step: '0.1' }}
+                  value={bossModel.temperature || 0.1}
+                  onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.temperature`, parseFloat(e.target.value))}
+                />
+                {(bossModel.model_type === 'ollama' || bossModel.model_type === 'llamacpp') && (
+                  <TextField
+                    fullWidth
+                    label="Context Window (num_ctx)"
+                    type="number"
+                    value={bossModel.num_ctx || 131072}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.num_ctx`, Number(e.target.value))}
+                  />
+                )}
+              </Box>
+            </Box>
+          </CardContent>
+        </Card>
         
         {/* Worker Models */}
-        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Worker Models</Typography>
-        {renderModelFields(workerModels.summary || {}, 'worker_models.summary', 'Summary Worker')}
-        {renderModelFields(workerModels.analysis || {}, 'worker_models.analysis', 'Analysis Worker')}
-        {renderModelFields(workerModels.search || {}, 'worker_models.search', 'Search Worker')}
+        <Box sx={{ mt: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+            <Typography variant="h6">Worker Models</Typography>
+            <Tooltip title="Specialized models for specific tasks like summarization, analysis, and search processing. These handle the detailed work while the Boss Model coordinates the overall workflow.">
+              <IconButton size="small">
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          
+          {/* Summary Worker */}
+          <Card variant="outlined" sx={{ mb: 2 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <Typography variant="h6">Summary Worker</Typography>
+                <Tooltip title="Processes and summarizes full-text content from PDFs and research papers. Instruct models are well-suited for this summarization task.">
+                  <IconButton size="small">
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <strong>Recommended:</strong> Instruct models (GPT-4, Claude-3.5, Llama-3) excel at summarization tasks
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <ModelNameAutocomplete
+                    label="Model Name"
+                    value={workerModels.summary?.model_name || ''}
+                    onChange={value => handleModelConfigChange('research_agent_model_config', `worker_models.summary.model_name`, value)}
+                    onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'worker_models.summary')}
+                    modelCatalogData={modelCatalogData}
+                  />
+                  <FormControl fullWidth>
+                    <InputLabel>Model Type (Provider)</InputLabel>
+                    <Select
+                      value={workerModels.summary?.model_type || ''}
+                      label="Model Type (Provider)"
+                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.model_type`, e.target.value)}
+                    >
+                      {(modelProviders || []).map((provider: any) => (
+                        <MenuItem key={provider.id} value={provider.name}>
+                          {provider.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={workerModels.summary?.max_new_tokens || 4096}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.max_new_tokens`, Number(e.target.value))}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    inputProps={{ step: '0.1' }}
+                    value={workerModels.summary?.temperature || 0.1}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.temperature`, parseFloat(e.target.value))}
+                  />
+                  {(workerModels.summary?.model_type === 'ollama' || workerModels.summary?.model_type === 'llamacpp') && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={workerModels.summary?.num_ctx || 131072}
+                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.num_ctx`, Number(e.target.value))}
+                    />
+                  )}
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+
+          {/* Analysis Worker */}
+          <Card variant="outlined" sx={{ mb: 2 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <Typography variant="h6">Analysis Worker</Typography>
+                <Tooltip title="Analyzes research content for quality, relevance, and key insights. Reasoning models provide better analytical capabilities for complex research evaluation.">
+                  <IconButton size="small">
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for deeper analysis, or strong instruct models (GPT-4, Claude-3.5)
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <ModelNameAutocomplete
+                    label="Model Name"
+                    value={workerModels.analysis?.model_name || ''}
+                    onChange={value => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.model_name`, value)}
+                    onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'worker_models.analysis')}
+                    modelCatalogData={modelCatalogData}
+                  />
+                  <FormControl fullWidth>
+                    <InputLabel>Model Type (Provider)</InputLabel>
+                    <Select
+                      value={workerModels.analysis?.model_type || ''}
+                      label="Model Type (Provider)"
+                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.model_type`, e.target.value)}
+                    >
+                      {(modelProviders || []).map((provider: any) => (
+                        <MenuItem key={provider.id} value={provider.name}>
+                          {provider.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={workerModels.analysis?.max_new_tokens || 4096}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.max_new_tokens`, Number(e.target.value))}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    inputProps={{ step: '0.1' }}
+                    value={workerModels.analysis?.temperature || 0.1}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.temperature`, parseFloat(e.target.value))}
+                  />
+                  {(workerModels.analysis?.model_type === 'ollama' || workerModels.analysis?.model_type === 'llamacpp') && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={workerModels.analysis?.num_ctx || 131072}
+                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.num_ctx`, Number(e.target.value))}
+                    />
+                  )}
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+
+          {/* Search Worker */}
+          <Card variant="outlined" sx={{ mb: 2 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <Typography variant="h6">Search Worker</Typography>
+                <Tooltip title="Processes search results, filters relevant content, and helps refine search strategies. Instruct models are sufficient for search result processing and filtering.">
+                  <IconButton size="small">
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <strong>Recommended:</strong> Instruct models (GPT-4, Claude-3.5, Llama-3) work well for search processing and filtering
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <ModelNameAutocomplete
+                    label="Model Name"
+                    value={workerModels.search?.model_name || ''}
+                    onChange={value => handleModelConfigChange('research_agent_model_config', `worker_models.search.model_name`, value)}
+                    onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'worker_models.search')}
+                    modelCatalogData={modelCatalogData}
+                  />
+                  <FormControl fullWidth>
+                    <InputLabel>Model Type (Provider)</InputLabel>
+                    <Select
+                      value={workerModels.search?.model_type || ''}
+                      label="Model Type (Provider)"
+                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.model_type`, e.target.value)}
+                    >
+                      {(modelProviders || []).map((provider: any) => (
+                        <MenuItem key={provider.id} value={provider.name}>
+                          {provider.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={workerModels.search?.max_new_tokens || 4096}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.max_new_tokens`, Number(e.target.value))}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    inputProps={{ step: '0.1' }}
+                    value={workerModels.search?.temperature || 0.1}
+                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.temperature`, parseFloat(e.target.value))}
+                  />
+                  {(workerModels.search?.model_type === 'ollama' || workerModels.search?.model_type === 'llamacpp') && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={workerModels.search?.num_ctx || 131072}
+                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.num_ctx`, Number(e.target.value))}
+                    />
+                  )}
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
         
 
         

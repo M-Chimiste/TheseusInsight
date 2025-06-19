@@ -9,8 +9,8 @@ import requests
 
 import pandas as pd
 from tqdm import tqdm
-from markitdown import MarkItDown                 # core converter  [oai_citation:3‡github.com](https://github.com/microsoft/markitdown?utm_source=chatgpt.com) [oai_citation:4‡github.com](https://github.com/microsoft/markitdown)
-from bs4 import BeautifulSoup                     # HTML parsing  [oai_citation:5‡beautiful-soup-4.readthedocs.io](https://beautiful-soup-4.readthedocs.io/en/latest/?utm_source=chatgpt.com)
+from markitdown import MarkItDown                 
+from bs4 import BeautifulSoup                     
 import markdown as md_lib  
 
 import spacy
@@ -24,8 +24,8 @@ from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
 try:
-    import mdpd                                   # super‑light markdown→DataFrame
-except ImportError:                               #  [oai_citation:2‡github.com](https://github.com/kyoto7250/mdpd)
+    import mdpd                                   
+except ImportError:                               
     mdpd = None
 
 TABLE_REGEX = re.compile(r"(^\s*\|.*\|\s*$)", re.MULTILINE)

@@ -3,6 +3,35 @@ import type { AxiosResponse } from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
+// Configuration interfaces
+export interface ModelConfig {
+  model_name: string;
+  model_type: string;
+  max_new_tokens?: number;
+  temperature?: number;
+  num_ctx?: number;
+  trust_remote_code?: boolean;
+}
+
+export interface MindMapConfig {
+  k: number;
+  similarity_threshold: number;
+  layout_algorithm: 'force' | 'circular' | 'hierarchical';
+  summarization_model: ModelConfig;
+}
+
+export interface OrchestrationConfig {
+  embedding_model: ModelConfig;
+  judge_model: ModelConfig;
+  content_extraction_model: ModelConfig;
+  newsletter_sections_model: ModelConfig;
+  newsletter_intro_model: ModelConfig;
+  podcast_model?: ModelConfig;
+  tts_model?: any;
+  research_agent_model_config?: any;
+  mind_map_config?: MindMapConfig;
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -156,8 +185,20 @@ export const modelCatalogApi = {
   getModel: (modelId: number) => api.get(`/model-catalog/${modelId}`),
 };
 
+// Mind-Map API
+export const mindMapApi = {
+  expandMindMap: (request: MindMapExpandRequest) => 
+    api.post('/mindmap/expand', request),
+  parsePDFs: (request: MindMapPDFParseRequest) => 
+    api.post('/mindmap/parse-pdfs', request),
+  searchSeeds: (request: MindMapSeedSearchRequest) => 
+    api.get('/mindmap/search-seeds', { params: request }),
+  getPaper: (paperId: string) => 
+    api.get(`/mindmap/paper/${paperId}`),
+};
+
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent') => {
+export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent' | 'mindmap' | 'mindmap-pdf-parse') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };
@@ -483,4 +524,81 @@ export interface ResearchWebSocketMessage {
     sources_count?: number;
     evidence_count?: number;
   };
+}
+
+// Mind-Map API Types
+export interface MindMapNode {
+  id: string;
+  title: string;
+  summary: string;
+  similarity_score: number;
+  position: { x: number; y: number };
+  is_seed: boolean;
+  has_fulltext: boolean;
+  url?: string;
+  date?: string;
+}
+
+export interface MindMapEdge {
+  source_id: number;
+  target_id: number;
+  similarity_score: number;
+  relationship_type?: string;
+}
+
+export interface MindMapData {
+  nodes: MindMapNode[];
+  edges: MindMapEdge[];
+  seed_paper_id: string;
+  layout_algorithm: string;
+  generation_timestamp: string;
+}
+
+export interface MindMapExpandRequest {
+  paper_id: string;
+  k?: number;
+  similarity_threshold?: number;
+  layout_algorithm?: 'force' | 'circular' | 'hierarchical';
+  model_config_override?: any;
+}
+
+export interface MindMapExpandResponse {
+  task_id: string;
+  message: string;
+}
+
+export interface MindMapPDFParseRequest {
+  paper_ids: string[];
+}
+
+export interface MindMapPDFParseResponse {
+  task_id: string;
+  message: string;
+  papers_count: number;
+}
+
+export interface MindMapSeedSearchRequest {
+  query: string;
+  limit?: number;
+}
+
+export interface MindMapSeedSearchResponse {
+  papers: PaperApiResponse[];
+  total_results: number;
+}
+
+export interface MindMapWebSocketMessage {
+  type: 'progress_update' | 'task_completed' | 'task_failed';
+  task_id: string;
+  step: string;
+  progress: number;
+  message: string;
+  timestamp: string;
+  mindmap_data?: MindMapData;
+  statistics?: {
+    nodes_created: number;
+    edges_created: number;
+    layout_algorithm: string;
+  };
+  error?: string;
 } 

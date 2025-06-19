@@ -247,6 +247,31 @@ class PaperDatabase:
                 ")"
             )
 
+            # Mind-Map Explorer tables
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS paper_fulltext ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "paper_id INTEGER NOT NULL UNIQUE,"
+                "content TEXT NOT NULL,"
+                "embedding BLOB,"
+                "embedding_model TEXT,"
+                "created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+                "FOREIGN KEY (paper_id) REFERENCES papers (id) ON DELETE CASCADE"
+                ")"
+            )
+            
+            # Create index for efficient lookups
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_paper_fulltext_paper_id "
+                "ON paper_fulltext (paper_id)"
+            )
+            
+            # Create FTS index for full-text search on parsed content
+            cursor.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS paper_fulltext_fts USING fts5("
+                "content, content='paper_fulltext', content_rowid='id')"
+            )
+
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_research_runs_task_id ON research_runs (task_id)"
             )
@@ -2290,3 +2315,252 @@ class PaperDatabase:
                 (int(new_favorite), model_id)
             )
             return cursor.rowcount > 0
+
+    # Mind-Map Explorer Methods
+    
+    def has_paper_fulltext(self, paper_id: int) -> bool:
+        """Check if full-text content exists for a paper."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM paper_fulltext WHERE paper_id = ?",
+                (paper_id,)
+            )
+            return cursor.fetchone()[0] > 0
+    
+    def insert_paper_fulltext(self, paper_id: int, content: str, 
+                             embedding: list = None, embedding_model: str = None) -> int:
+        """Insert full-text content for a paper."""
+        embedding_blob = None
+        if embedding:
+            embedding_blob = np.array(embedding, dtype=np.float32).tobytes()
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT OR REPLACE INTO paper_fulltext (paper_id, content, embedding, embedding_model) "
+                "VALUES (?, ?, ?, ?)",
+                (paper_id, content, embedding_blob, embedding_model)
+            )
+            
+            # Update FTS index
+            fulltext_id = cursor.lastrowid
+            cursor.execute(
+                "INSERT OR REPLACE INTO paper_fulltext_fts (rowid, content) VALUES (?, ?)",
+                (fulltext_id, content)
+            )
+            
+            return fulltext_id
+    
+    def get_paper_fulltext(self, paper_id: int) -> dict:
+        """Get full-text content for a paper."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, content, embedding_model, created_at "
+                "FROM paper_fulltext WHERE paper_id = ?",
+                (paper_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'content': row[1],
+                    'embedding_model': row[2],
+                    'created_at': row[3]
+                }
+            return None
+    
+    def get_paper_fulltext_embedding(self, paper_id: int) -> list:
+        """Get embedding for a paper's full-text."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT embedding FROM paper_fulltext WHERE paper_id = ?",
+                (paper_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                return np.frombuffer(row[0], dtype=np.float32).tolist()
+            return None
+    
+    def update_paper_fulltext_embedding(self, paper_id: int, embedding: list, embedding_model: str):
+        """Update embedding for a paper's full-text."""
+        embedding_blob = np.array(embedding, dtype=np.float32).tobytes()
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE paper_fulltext SET embedding = ?, embedding_model = ? WHERE paper_id = ?",
+                (embedding_blob, embedding_model, paper_id)
+            )
+    
+    def find_similar_papers_mindmap(self, seed_paper_id: int, k: int = 15, 
+                                   similarity_threshold: float = 0.3) -> list:
+        """Find k most similar papers for mind-map generation using sqlite-vec."""
+        # Get the seed paper's embedding
+        seed_embedding = self.get_paper_embedding(seed_paper_id)
+        if not seed_embedding:
+            return []
+        
+        if self.vector_search_enabled:
+            with self.get_cursor() as cursor:
+                try:
+                    # Convert embedding to bytes for sqlite-vec
+                    seed_embedding_bytes = np.array(seed_embedding, dtype=np.float32).tobytes()
+                    
+                    # Use sqlite-vec for efficient similarity search
+                    cursor.execute(
+                        """
+                        SELECT p.id, p.title, p.abstract, p.date, p.url, p.score, p.rationale,
+                               vec_distance_cosine(p.embedding, ?) as similarity_distance
+                        FROM papers p
+                        WHERE p.id != ? AND p.embedding IS NOT NULL 
+                              AND vec_distance_cosine(p.embedding, ?) <= ?
+                        ORDER BY similarity_distance ASC
+                        LIMIT ?
+                        """,
+                        (seed_embedding_bytes, seed_paper_id, seed_embedding_bytes, 1.0 - similarity_threshold, k)
+                    )
+                    
+                    rows = cursor.fetchall()
+                    return [
+                        {
+                            'id': row[0],
+                            'title': row[1],
+                            'abstract': row[2],
+                            'date': row[3],
+                            'url': row[4],
+                            'score': row[5],
+                            'rationale': row[6],
+                            'similarity_distance': row[7],
+                            'cosine_similarity': 1.0 - row[7]  # Convert distance to similarity
+                        }
+                        for row in rows
+                    ]
+                except Exception as e:
+                    print(f"sqlite-vec search failed, falling back to manual calculation: {e}")
+        
+        # Fallback to manual cosine similarity calculation
+        return self._fallback_mindmap_similarity_search(seed_embedding, seed_paper_id, k, similarity_threshold)
+    
+    def _fallback_mindmap_similarity_search(self, seed_embedding: list, seed_paper_id: int, 
+                                          k: int, similarity_threshold: float) -> list:
+        """Fallback similarity search using manual cosine similarity calculation."""
+        with self.get_cursor(register_vectors=False) as cursor:
+            cursor.execute(
+                "SELECT id, title, abstract, date, url, score, rationale, embedding "
+                "FROM papers WHERE id != ? AND embedding IS NOT NULL",
+                (seed_paper_id,)
+            )
+            
+            results = []
+            for row in cursor.fetchall():
+                try:
+                    # Parse embedding from JSON (papers table stores as JSON string)
+                    paper_embedding = json.loads(row[7]) if row[7] else None
+                    if paper_embedding is None:
+                        continue
+                    
+                    similarity = cosine_similarity(seed_embedding, paper_embedding)
+                    
+                    if similarity >= similarity_threshold:
+                        results.append({
+                            'id': row[0],
+                            'title': row[1],
+                            'abstract': row[2],
+                            'date': row[3],
+                            'url': row[4],
+                            'score': row[5],
+                            'rationale': row[6],
+                            'cosine_similarity': similarity,
+                            'similarity_distance': 1.0 - similarity
+                        })
+                except (json.JSONDecodeError, TypeError):
+                    # Skip papers with invalid embeddings
+                    continue
+            
+            # Sort by similarity (descending) and limit results
+            results.sort(key=lambda x: x['cosine_similarity'], reverse=True)
+            return results[:k]
+    
+    def get_papers_for_mindmap_expansion(self, paper_ids: list) -> list:
+        """Get paper details for mind-map expansion."""
+        if not paper_ids:
+            return []
+        
+        placeholders = ','.join(['?'] * len(paper_ids))
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, title, abstract, date, url, score, rationale
+                FROM papers 
+                WHERE id IN ({placeholders})
+                ORDER BY score DESC
+                """,
+                paper_ids
+            )
+            
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'url': row[4],
+                    'score': row[5],
+                    'rationale': row[6]
+                }
+                for row in rows
+            ]
+    
+    def search_papers_for_mindmap_seed(self, query: str, limit: int = 10) -> list:
+        """Search papers by title/author for mind-map seed selection using FTS."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.id, p.title, p.abstract, p.date, p.url, p.score,
+                       papers_fts.rank
+                FROM papers_fts 
+                JOIN papers p ON papers_fts.rowid = p.id
+                WHERE papers_fts MATCH ?
+                ORDER BY papers_fts.rank
+                LIMIT ?
+                """,
+                (query, limit)
+            )
+            
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'url': row[4],
+                    'score': row[5],
+                    'fts_rank': row[6]
+                }
+                for row in rows
+            ]
+    
+    def get_papers_without_fulltext(self, limit: int = None) -> list:
+        """Get papers that don't have full-text content parsed yet."""
+        with self.get_cursor() as cursor:
+            query = """
+                SELECT p.id, p.title, p.url, p.date
+                FROM papers p
+                LEFT JOIN paper_fulltext pf ON p.id = pf.paper_id
+                WHERE pf.paper_id IS NULL AND p.url IS NOT NULL
+                ORDER BY p.score DESC
+            """
+            
+            if limit:
+                query += f" LIMIT {limit}"
+            
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'url': row[2],
+                    'date': row[3]
+                }
+                for row in rows
+            ]

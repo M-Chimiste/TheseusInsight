@@ -33,7 +33,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 
 ## Overview
 
-Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
+Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run. The latest version introduces the **Mind-Map Explorer**, an interactive tool for visually exploring the intellectual neighborhood of any research paper.
 
 ---
 
@@ -70,6 +70,11 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **Real‑time progress** streaming over WebSockets for long running tasks.
 - **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
+- **Mind-Map Explorer**: An interactive visualization tool to explore the connections between research papers.
+  - **Visual Exploration**: Generate and navigate a concept map of related works, inspirations, and follow-up studies.
+  - **Interactive Canvas**: Pan, zoom, and expand nodes to follow a branch of interest.
+  - **On-Demand Full-Text Analysis**: Select up to 20 papers at a time for on-demand PDF parsing to enrich the mind map with deeper insights from full-text content.
+  - **Seamless Integration**: Launch the Mind-Map Explorer from any paper in the existing research library.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers.

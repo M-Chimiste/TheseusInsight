@@ -6,7 +6,8 @@ import os
 from ..models import (
     OrchestrationConfig, ArxivCategoriesConfig, ModelProvider,
     ResearchInterests, EmailRecipients, VisualizerSettings,
-    ModelConfig, TTSModelConfig, ResearchAgentModelConfigApi
+    ModelConfig, TTSModelConfig, ResearchAgentModelConfigApi,
+    MindMapConfig
 )
 from ..dependencies import db, CREDENTIAL_KEYS
 from ...utils.path_resolver import get_config_path, config_file_exists
@@ -50,6 +51,14 @@ async def get_orchestration_config_api():
         default_podcast_model = ModelConfig(model_name='gemini-2.0-flash', model_type='gemini', max_new_tokens=8192, temperature=0.1, num_ctx=131072)
         default_tts_model = TTSModelConfig(tts_provider='openai', tts_model_name='tts-1', speaker_1_voice='sage', speaker_1_speed=1.0, speaker_2_voice='ash', speaker_2_speed=1.0)
         
+        # Default Mind-Map configuration
+        default_mind_map_config = MindMapConfig(
+            k=15,
+            similarity_threshold=0.3,
+            layout_algorithm='force',
+            summarization_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=1024, temperature=0.3)
+        )
+        
         # Default Research Agent configuration
         default_research_agent_config = ResearchAgentModelConfigApi(
             boss_model=ModelConfig(model_name='gpt-4', model_type='openai', max_new_tokens=4096, temperature=0.1),
@@ -80,6 +89,7 @@ async def get_orchestration_config_api():
         newsletter_intro_model_data = loaded_config_data.get('newsletter_intro_model') or default_newsletter_intro_model.dict()
         podcast_model_data = loaded_config_data.get('podcast_model') or default_podcast_model.dict()
         tts_model_data = loaded_config_data.get('tts_model') or default_tts_model.dict()
+        mind_map_config_data = loaded_config_data.get('mind_map_config') or default_mind_map_config.dict()
         
         # Special handling for research agent config with nested null model configurations
         research_agent_raw = loaded_config_data.get('research_agent_model_config') or {}
@@ -104,7 +114,8 @@ async def get_orchestration_config_api():
             newsletter_intro_model=ModelConfig(**newsletter_intro_model_data),
             podcast_model=ModelConfig(**podcast_model_data),
             tts_model=TTSModelConfig(**tts_model_data),
-            research_agent_model_config=ResearchAgentModelConfigApi(**research_agent_model_config_data)
+            research_agent_model_config=ResearchAgentModelConfigApi(**research_agent_model_config_data),
+            mind_map_config=MindMapConfig(**mind_map_config_data)
         )
         return final_config
 

@@ -24,10 +24,12 @@ class InferenceModel(ABC):
     def __init__(self,
                  model_name: str,
                  max_new_tokens: int = 4096,
-                 temperature: float = 0.1):
+                 temperature: float = 0.1,
+                 trust_remote_code: bool = True):
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
+        self.trust_remote_code = trust_remote_code
         self.provider = self._get_provider()
         self.client = self._load_model()
 
@@ -474,16 +476,22 @@ class OllamaEmbedInference(InferenceModel):
     """Ollama Embedding Inference for Ollama's embedding API."""
     def __init__(self,
                  model_name: str = "nomic-embed-text",
+                 max_new_tokens: int = 4096,
+                 temperature: float = 0.1,
+                 trust_remote_code: bool = True,
                  url: str = None):
         """
         Initializes the Ollama Embedding Inference model.
 
         Args:
             model_name (str, optional): The name of the model to use for embedding generation. Defaults to "nomic-embed-text".
+            max_new_tokens (int, optional): The maximum number of new tokens to generate. Defaults to 4096.
+            temperature (float, optional): The temperature parameter for the model. Defaults to 0.1.
+            trust_remote_code (bool, optional): Whether to trust remote code. Defaults to True.
             url (str, optional): The URL of the Ollama API. If None, uses the OLLAMA_URL environment variable. Defaults to None.
         """
         self.url = url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-        super().__init__(model_name)
+        super().__init__(model_name, max_new_tokens, temperature, trust_remote_code)
 
     def _get_provider(self) -> str:
         return "ollama-embed"
@@ -547,6 +555,7 @@ class LlamacppInference(InferenceModel):
                  model_name: str,
                  max_new_tokens: int = 4096,
                  temperature: float = 0.1,
+                 trust_remote_code: bool = True,
                  num_ctx: int = 131072,
                  n_gpu_layers: int = -1,
                  verbose: bool = False,
@@ -558,6 +567,7 @@ class LlamacppInference(InferenceModel):
             model_name (str): The name of the model to use for inference.
             max_new_tokens (int, optional): The maximum number of new tokens to generate. Defaults to 4096.
             temperature (float, optional): The temperature parameter for sampling. Defaults to 0.1.
+            trust_remote_code (bool, optional): Whether to trust remote code. Defaults to True.
             num_ctx (int, optional): The number of context tokens to use. Defaults to 131072.
             n_gpu_layers (int, optional): The number of GPU layers to use. Defaults to -1.
             verbose (bool, optional): Whether to enable verbose mode. Defaults to False.
@@ -570,7 +580,7 @@ class LlamacppInference(InferenceModel):
         self.n_gpu_layers = n_gpu_layers
         self.verbose = verbose
         self.model_kwargs = kwargs
-        super().__init__(model_name, max_new_tokens, temperature)
+        super().__init__(model_name, max_new_tokens, temperature, trust_remote_code)
 
     def _get_provider(self) -> str:
         return "llamacpp"
@@ -645,6 +655,7 @@ class CustomOAIInference(InferenceModel):
                  model_name: str,
                  max_new_tokens: int = 4096,
                  temperature: float = 0.1,
+                 trust_remote_code: bool = True,
                  base_url: Optional[str] = None,
                  api_key: Optional[str] = None):
         """
@@ -654,6 +665,7 @@ class CustomOAIInference(InferenceModel):
             model_name (str): The name of the model to use for inference.
             max_new_tokens (int, optional): The maximum number of tokens to generate in a single response. Defaults to 4096.
             temperature (float, optional): The temperature parameter for sampling. Defaults to 0.1.
+            trust_remote_code (bool, optional): Whether to trust remote code. Defaults to True.
             base_url (Optional[str], optional): The base URL for the custom OAI-compatible server. Defaults to None.
             api_key (Optional[str], optional): The API key for the custom OAI-compatible server. Defaults to None.
 
@@ -665,7 +677,7 @@ class CustomOAIInference(InferenceModel):
         if not self.base_url:
             raise ValueError("CUSTOM_OAI_BASE_URL environment variable or base_url parameter must be set for CustomOAIInference.")
         # API key can be optional for some self-hosted OAI compatible servers
-        super().__init__(model_name, max_new_tokens, temperature)
+        super().__init__(model_name, max_new_tokens, temperature, trust_remote_code)
 
     def _get_provider(self) -> str:
         return "custom-oai"

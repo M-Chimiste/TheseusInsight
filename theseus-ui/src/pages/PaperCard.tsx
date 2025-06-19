@@ -16,14 +16,16 @@ import { format } from 'date-fns';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ScoreIcon from '@mui/icons-material/Stars'; // Example icon for score
 import SearchIcon from '@mui/icons-material/Search';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 
 interface PaperCardProps {
   paper: PaperApiResponse;
   onFindSimilar?: (paper: PaperApiResponse) => void;
+  onOpenMindMap?: (paper: PaperApiResponse) => void;
   initialExpanded?: boolean;
 }
 
-const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpanded = false }) => {
+const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindMap, initialExpanded = false }) => {
   const [expanded, setExpanded] = useState(initialExpanded);
 
   const handleExpandClick = () => {
@@ -86,16 +88,30 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpa
               View on ArXiv
             </Link>
           </Typography>
-          {onFindSimilar && (
-            <Button
-              variant="outlined"
-              color="primary"
-              startIcon={<SearchIcon />}
-              onClick={() => onFindSimilar(paper)}
-            >
-              Find Similar
-            </Button>
-          )}
+          <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+            {onFindSimilar && (
+              <Button
+                variant="outlined"
+                color="primary"
+                startIcon={<SearchIcon />}
+                onClick={() => onFindSimilar(paper)}
+                size="small"
+              >
+                Find Similar
+              </Button>
+            )}
+            {onOpenMindMap && (
+              <Button
+                variant="outlined"
+                color="secondary"
+                startIcon={<AccountTreeIcon />}
+                onClick={() => onOpenMindMap(paper)}
+                size="small"
+              >
+                Mind Map
+              </Button>
+            )}
+          </Box>
         </CardContent>
       </Collapse>
     </Card>

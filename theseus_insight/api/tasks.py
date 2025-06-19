@@ -1,5 +1,6 @@
 from typing import Dict, Optional, List
 import asyncio
+import json
 import os
 from datetime import datetime
 from enum import Enum
@@ -221,27 +222,20 @@ class TaskManager:
         # Notify all subscribers
         if task_id in self.status_updates:
             for queue in self.status_updates[task_id]:
+                # Send the status update
                 await queue.put(status_obj)
-                
-        # Clean up queues for completed/failed tasks
+                # For terminal states, also enqueue a sentinel (None) so
+                # websocket handlers will exit cleanly **after** delivering
+                # the final frame.
+                if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                    await queue.put(None)
+
+        # Clean up mapping for terminal states *after* enqueuing items, but
+        # do NOT drain the queues – the websocket consumer needs to read them.
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
             if task_id in self.status_updates:
-                # Properly drain all queues for this task
-                for queue in self.status_updates[task_id]:
-                    # Drain any remaining items
-                    while not queue.empty():
-                        try:
-                            queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                    
-                    # For Python 3.9+, try to close the queue
-                    if hasattr(queue, '_close'):
-                        try:
-                            queue._close()
-                        except Exception:
-                            pass
-                
+                # Remove reference so new subscribers won't be added, but keep
+                # existing queues alive until consumers finish.
                 del self.status_updates[task_id]
 
     def _progress_callback(self, task_id: str):
@@ -796,159 +790,464 @@ class TaskManager:
             )
             raise
 
-    async def run_research_agent_task(self, task_id: str):
-        """Run the research agent task with progress tracking."""
+    # async def run_research_agent_task(self, task_id: str):
+    #     """Run the research agent task with progress tracking."""
+    #     try:
+    #         print(f"DEBUG: Starting research agent task {task_id}")
+    #         task = self.db.get_task(task_id)
+    #         if not task:
+    #             raise ValueError(f"Task {task_id} not found")
+            
+    #         config = task["config"]
+    #         research_question = config.get("research_question")
+    #         num_papers_target = config.get("num_papers_target", 5)
+    #         max_steps = config.get("max_steps", 10)
+    #         enable_pdf_download = config.get("enable_pdf_download", True)
+            
+    #         if not research_question:
+    #             raise ValueError("Research question is required")
+            
+    #         await self.update_task_status(
+    #             task_id,
+    #             TaskStatus.PROCESSING,
+    #             f"Starting literature review: {research_question}",
+    #             progress=5,
+    #             current_step="initializing_agent",
+    #         )
+            
+    #         # Import research agent here to avoid circular imports
+    #         from ..agentic_research.agent_loop import create_research_agent
+            
+    #         # Create research agent
+    #         agent = create_research_agent(
+    #             db=self.db,
+    #             num_papers_target=num_papers_target,
+    #             max_steps=max_steps,
+    #             enable_pdf_download=enable_pdf_download
+    #         )
+            
+    #         await self.update_task_status(
+    #             task_id,
+    #             TaskStatus.PROCESSING,
+    #             "Research agent initialized. Starting literature review...",
+    #             progress=10,
+    #             current_step="starting_review",
+    #         )
+            
+    #         # Custom progress tracking for agent iterations
+    #         class ProgressTracker:
+    #             def __init__(self, task_manager, task_id, max_steps, num_papers_target):
+    #                 self.task_manager = task_manager
+    #                 self.task_id = task_id
+    #                 self.max_steps = max_steps
+    #                 self.num_papers_target = num_papers_target
+    #                 self.last_update_time = 0
+                    
+    #             async def update_progress(self, iteration, summaries_count, current_action=""):
+    #                 # Calculate progress: 10% (start) + 80% (main work) + 10% (completion)
+    #                 iteration_progress = min(iteration / self.max_steps, 1.0) * 0.6  # 60% for iterations
+    #                 summary_progress = min(summaries_count / self.num_papers_target, 1.0) * 0.2  # 20% for summaries
+    #                 total_progress = 10 + (iteration_progress + summary_progress) * 80
+                    
+    #                 message = f"Iteration {iteration}/{self.max_steps}, Found {summaries_count}/{self.num_papers_target} papers"
+    #                 if current_action:
+    #                     message += f". {current_action}"
+                        
+    #                 await self.task_manager.update_task_status(
+    #                     self.task_id,
+    #                     TaskStatus.PROCESSING,
+    #                     message,
+    #                     progress=total_progress,
+    #                     current_step=f"iteration_{iteration}",
+    #                 )
+            
+    #         progress_tracker = ProgressTracker(self, task_id, max_steps, num_papers_target)
+            
+    #         # Add a custom progress callback to the agent
+    #         original_add_trace_entry = agent._add_trace_entry
+            
+    #         def enhanced_add_trace_entry(action_type, details, model_used=None, duration_seconds=None):
+    #             # Call original method
+    #             original_add_trace_entry(action_type, details, model_used, duration_seconds)
+                
+    #             # Update progress for key milestones
+    #             if action_type in ["agent_response", "search_execution", "summary_extracted"]:
+    #                 asyncio.create_task(progress_tracker.update_progress(
+    #                     agent.current_iteration,
+    #                     len(agent.collected_summaries),
+    #                     action_type.replace("_", " ").title()
+    #                 ))
+            
+    #         # Monkey-patch the trace entry method for progress updates
+    #         agent._add_trace_entry = enhanced_add_trace_entry
+            
+    #         # Run the literature review
+    #         result = agent.run_literature_review(research_question)
+            
+    #         if result.success:
+    #             await self.update_task_status(
+    #                 task_id,
+    #                 TaskStatus.PROCESSING,
+    #                 "Literature review completed. Saving results...",
+    #                 progress=90,
+    #                 current_step="saving_results",
+    #             )
+                
+    #             # Save results to database
+    #             review_id = agent.save_results(result)
+                
+    #             await self.update_task_status(
+    #                 task_id,
+    #                 TaskStatus.COMPLETED,
+    #                 f"Literature review completed successfully! Found {len(result.summaries)} papers in {result.total_iterations} iterations.",
+    #                 progress=100,
+    #                 current_step="review_complete",
+    #                 result={
+    #                     "review_id": review_id,
+    #                     "research_question": result.research_question,
+    #                     "papers_found": len(result.summaries),
+    #                     "iterations_used": result.total_iterations,
+    #                     "success": result.success,
+    #                     "summaries": [
+    #                         {
+    #                             "paper_id": s.paper_id,
+    #                             "title": s.title,
+    #                             "summary": s.summary,
+    #                             "rationale": s.rationale,
+    #                             "relevance_score": s.relevance_score
+    #                         }
+    #                         for s in result.summaries
+    #                     ],
+    #                     "trace_entries_count": len(result.trace_entries)
+    #                 },
+    #             )
+    #         else:
+    #             await self.update_task_status(
+    #                 task_id,
+    #                 TaskStatus.FAILED,
+    #                 f"Literature review failed: {result.error or 'Unknown error'}",
+    #                 error=result.error,
+    #                 current_step="review_failed",
+    #                 result={
+    #                     "papers_found": len(result.summaries),
+    #                     "iterations_used": result.total_iterations,
+    #                     "success": result.success,
+    #                     "error": result.error
+    #                 },
+    #             )
+                
+    #     except Exception as e:
+    #         import traceback
+    #         traceback.print_exc()
+    #         await self.update_task_status(
+    #             task_id,
+    #             TaskStatus.FAILED,
+    #             f"Research agent task failed: {str(e)}",
+    #             error=str(e),
+    #             current_step="task_failed",
+    #         )
+    #         raise
+
+    async def run_mindmap_expand_task(self, task_id: str):
+        """Run the mind-map expansion task."""
         try:
-            print(f"DEBUG: Starting research agent task {task_id}")
+            print(f"DEBUG: Starting mind-map expansion task {task_id}")
             task = self.db.get_task(task_id)
             if not task:
+                print(f"DEBUG: Task {task_id} not found in database")
                 raise ValueError(f"Task {task_id} not found")
             
+            print(f"DEBUG: Task found: {task}")
             config = task["config"]
-            research_question = config.get("research_question")
-            num_papers_target = config.get("num_papers_target", 5)
-            max_steps = config.get("max_steps", 10)
-            enable_pdf_download = config.get("enable_pdf_download", True)
+            paper_id = config.get("paper_id")
+            k = config.get("k", 15)
+            similarity_threshold = config.get("similarity_threshold", 0.3)
+            layout_algorithm = config.get("layout_algorithm", "force")
+            model_config_override = config.get("model_config_override")
             
-            if not research_question:
-                raise ValueError("Research question is required")
+            print(f"DEBUG: Task config - paper_id: {paper_id}, k: {k}, threshold: {similarity_threshold}")
             
-            await self.update_task_status(
-                task_id,
-                TaskStatus.PROCESSING,
-                f"Starting literature review: {research_question}",
-                progress=5,
-                current_step="initializing_agent",
-            )
+            if not paper_id:
+                print(f"DEBUG: No paper_id provided in config")
+                raise ValueError("Paper ID is required for mind-map expansion")
             
-            # Import research agent here to avoid circular imports
-            from ..agentic_research.agent_loop import create_research_agent
+            # Import the mind-map workflow
+            from ..mindmap.workflow import create_mindmap_workflow
             
-            # Create research agent
-            agent = create_research_agent(
-                db=self.db,
-                num_papers_target=num_papers_target,
-                max_steps=max_steps,
-                enable_pdf_download=enable_pdf_download
-            )
+            # Get configuration from database
+            orchestration_json = self.db.get_setting("orchestration")
+            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
             
-            await self.update_task_status(
-                task_id,
-                TaskStatus.PROCESSING,
-                "Research agent initialized. Starting literature review...",
-                progress=10,
-                current_step="starting_review",
-            )
-            
-            # Custom progress tracking for agent iterations
-            class ProgressTracker:
-                def __init__(self, task_manager, task_id, max_steps, num_papers_target):
-                    self.task_manager = task_manager
-                    self.task_id = task_id
-                    self.max_steps = max_steps
-                    self.num_papers_target = num_papers_target
-                    self.last_update_time = 0
-                    
-                async def update_progress(self, iteration, summaries_count, current_action=""):
-                    # Calculate progress: 10% (start) + 80% (main work) + 10% (completion)
-                    iteration_progress = min(iteration / self.max_steps, 1.0) * 0.6  # 60% for iterations
-                    summary_progress = min(summaries_count / self.num_papers_target, 1.0) * 0.2  # 20% for summaries
-                    total_progress = 10 + (iteration_progress + summary_progress) * 80
-                    
-                    message = f"Iteration {iteration}/{self.max_steps}, Found {summaries_count}/{self.num_papers_target} papers"
-                    if current_action:
-                        message += f". {current_action}"
-                        
-                    await self.task_manager.update_task_status(
-                        self.task_id,
-                        TaskStatus.PROCESSING,
-                        message,
-                        progress=total_progress,
-                        current_step=f"iteration_{iteration}",
-                    )
-            
-            progress_tracker = ProgressTracker(self, task_id, max_steps, num_papers_target)
-            
-            # Add a custom progress callback to the agent
-            original_add_trace_entry = agent._add_trace_entry
-            
-            def enhanced_add_trace_entry(action_type, details, model_used=None, duration_seconds=None):
-                # Call original method
-                original_add_trace_entry(action_type, details, model_used, duration_seconds)
-                
-                # Update progress for key milestones
-                if action_type in ["agent_response", "search_execution", "summary_extracted"]:
-                    asyncio.create_task(progress_tracker.update_progress(
-                        agent.current_iteration,
-                        len(agent.collected_summaries),
-                        action_type.replace("_", " ").title()
-                    ))
-            
-            # Monkey-patch the trace entry method for progress updates
-            agent._add_trace_entry = enhanced_add_trace_entry
-            
-            # Run the literature review
-            result = agent.run_literature_review(research_question)
-            
-            if result.success:
-                await self.update_task_status(
-                    task_id,
-                    TaskStatus.PROCESSING,
-                    "Literature review completed. Saving results...",
-                    progress=90,
-                    current_step="saving_results",
+            # Get LLM model configuration for summarization
+            # Use override if provided, otherwise fall back to orchestration config
+            llm_model_config = model_config_override
+            if not llm_model_config:
+                # Try to get a suitable LLM model from orchestration config
+                # Priority: content_extraction_model > judge_model > newsletter_sections_model
+                llm_model_config = (
+                    orchestration_config.get("content_extraction_model") or
+                    orchestration_config.get("judge_model") or
+                    orchestration_config.get("newsletter_sections_model")
                 )
-                
-                # Save results to database
-                review_id = agent.save_results(result)
-                
-                await self.update_task_status(
-                    task_id,
-                    TaskStatus.COMPLETED,
-                    f"Literature review completed successfully! Found {len(result.summaries)} papers in {result.total_iterations} iterations.",
-                    progress=100,
-                    current_step="review_complete",
-                    result={
-                        "review_id": review_id,
-                        "research_question": result.research_question,
-                        "papers_found": len(result.summaries),
-                        "iterations_used": result.total_iterations,
-                        "success": result.success,
-                        "summaries": [
-                            {
-                                "paper_id": s.paper_id,
-                                "title": s.title,
-                                "summary": s.summary,
-                                "rationale": s.rationale,
-                                "relevance_score": s.relevance_score
-                            }
-                            for s in result.summaries
-                        ],
-                        "trace_entries_count": len(result.trace_entries)
-                    },
-                )
+                print(f"DEBUG: Using fallback LLM model config from orchestration: {llm_model_config}")
             else:
+                print(f"DEBUG: Using provided LLM model config override: {llm_model_config}")
+            
+            print(f"DEBUG: Creating mind-map workflow...")
+            # Create workflow
+            workflow = create_mindmap_workflow(
+                db=self.db,
+                config=orchestration_config
+            )
+            print(f"DEBUG: Mind-map workflow created successfully")
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Mind-map workflow initialized. Processing...",
+                progress=10,
+                current_step="workflow_initialized",
+            )
+            print(f"DEBUG: Initial status update sent")
+            
+            # Define progress callback wrapper for sync execution
+            def sync_progress_callback(step: str, progress: float, message: str = ""):
+                print(f"DEBUG: sync_progress_callback called - step: {step}, progress: {progress}, message: {message}")
+                # Map workflow progress (0-100) to task progress (10-90)
+                task_progress = 10 + (progress * 0.8)
+                
+                # Create a task to update status asynchronously
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    print(f"DEBUG: Got event loop, is_running: {loop.is_running()}")
+                    if loop.is_running():
+                        # If we're in an async context, create a task
+                        print(f"DEBUG: Creating task for async status update")
+                        loop.create_task(self.update_task_status(
+                            task_id,
+                            TaskStatus.PROCESSING,
+                            message or f"Processing step: {step}",
+                            progress=task_progress,
+                            current_step=step,
+                        ))
+                    else:
+                        # If not, run it synchronously
+                        print(f"DEBUG: Running status update synchronously")
+                        loop.run_until_complete(self.update_task_status(
+                            task_id,
+                            TaskStatus.PROCESSING,
+                            message or f"Processing step: {step}",
+                            progress=task_progress,
+                            current_step=step,
+                        ))
+                    print(f"DEBUG: Status update completed successfully")
+                except Exception as e:
+                    print(f"Progress callback error: {e}")
+                    import traceback
+                    print(f"Progress callback traceback: {traceback.format_exc()}")
+            
+            # Run the mind-map workflow synchronously
+            print(f"DEBUG: About to call workflow.generate_mindmap_sync for task {task_id}")
+            result = workflow.generate_mindmap_sync(
+                seed_paper_id=int(paper_id),
+                k_neighbors=k,
+                similarity_threshold=similarity_threshold,
+                layout_algorithm=layout_algorithm,
+                embedding_model_config=None,  # Will be pulled from config
+                llm_model_config=llm_model_config,
+                task_id=task_id,  # Use the actual task ID
+                progress_callback=sync_progress_callback  # Pass the sync progress callback
+            )
+            print(f"DEBUG: workflow.generate_mindmap_sync completed for task {task_id}")
+            print(f"DEBUG: Result success: {result.get('success', False)}")
+            print(f"DEBUG: Result keys: {list(result.keys())}")
+            if result.get('mindmap_data'):
+                mindmap_data = result['mindmap_data']
+                print(f"DEBUG: Mindmap data keys: {list(mindmap_data.keys())}")
+                print(f"DEBUG: Nodes count: {len(mindmap_data.get('nodes', []))}")
+                print(f"DEBUG: Edges count: {len(mindmap_data.get('edges', []))}")
+            
+            if result.get("error"):
+                print(f"DEBUG: Result contains error: {result['error']}")
                 await self.update_task_status(
                     task_id,
                     TaskStatus.FAILED,
-                    f"Literature review failed: {result.error or 'Unknown error'}",
-                    error=result.error,
-                    current_step="review_failed",
-                    result={
-                        "papers_found": len(result.summaries),
-                        "iterations_used": result.total_iterations,
-                        "success": result.success,
-                        "error": result.error
-                    },
+                    f"Mind-map generation failed: {result['error']}",
+                    error=result["error"],
+                    current_step="generation_failed",
                 )
-                
+                print(f"DEBUG: Failed status update sent")
+                return
+
+            mindmap_data = result.get("mindmap_data", {})
+            nodes = mindmap_data.get("nodes", [])
+            edges = mindmap_data.get("edges", [])
+            
+            print(f"DEBUG: About to send completion status update")
+            # Add a small delay to ensure WebSocket has time to connect
+            await asyncio.sleep(0.5)
+            
+            # Create the result object that will be sent via WebSocket
+            completion_result = {
+                "mindmap_data": mindmap_data,
+                "seed_paper_id": paper_id,
+                "nodes_count": len(nodes),
+                "edges_count": len(edges),
+                "layout_algorithm": layout_algorithm
+            }
+            print(f"DEBUG: Completion result structure: {list(completion_result.keys())}")
+            print(f"DEBUG: Mindmap data structure being sent: {list(mindmap_data.keys()) if mindmap_data else 'None'}")
+            if mindmap_data and 'nodes' in mindmap_data:
+                print(f"DEBUG: First node sample: {mindmap_data['nodes'][0] if mindmap_data['nodes'] else 'No nodes'}")
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                f"Mind-map generated successfully with {len(nodes)} nodes and {len(edges)} edges",
+                progress=100,
+                current_step="generation_complete",
+                result=completion_result,
+            )
+            print(f"DEBUG: Completion status update sent")
+            
         except Exception as e:
             import traceback
             traceback.print_exc()
             await self.update_task_status(
                 task_id,
                 TaskStatus.FAILED,
-                f"Research agent task failed: {str(e)}",
+                f"Mind-map expansion task failed: {str(e)}",
+                error=str(e),
+                current_step="task_failed",
+            )
+            raise
+
+    async def run_mindmap_pdf_parse_task(self, task_id: str):
+        """Run the PDF parsing task for mind-map papers."""
+        try:
+            print(f"DEBUG: Starting mind-map PDF parsing task {task_id}")
+            task = self.db.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            
+            config = task["config"]
+            paper_ids = config.get("paper_ids", [])
+            
+            if not paper_ids:
+                raise ValueError("No paper IDs provided for parsing")
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Starting PDF parsing for {len(paper_ids)} papers",
+                progress=5,
+                current_step="initializing",
+            )
+            
+            # Import PDF processing utilities
+            from ..pdf.processing import MarkitdownDocProcessor
+            from ..inference.llm import LLMModelFactory
+            
+            # Get embedding model configuration from orchestration settings
+            orchestration_json = self.db.get_setting("orchestration")
+            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            embedding_config = orchestration_config.get("embedding_model", {})
+            
+            # Create embedding model
+            embedding_model = LLMModelFactory.create_model(
+                model_type=embedding_config.get("model_type", "sentence-transformer"),
+                model_name=embedding_config.get("model_name", "Alibaba-NLP/gte-large-en-v1.5"),
+                **{k: v for k, v in embedding_config.items() if k not in ["model_type", "model_name"]}
+            )
+            
+            # Initialize PDF processor
+            pdf_processor = MarkitdownDocProcessor()
+            
+            # Process each paper
+            parsed_papers = []
+            failed_papers = []
+            
+            for i, paper_id in enumerate(paper_ids):
+                try:
+                    # Update progress
+                    progress = 10 + (i / len(paper_ids)) * 80
+                    await self.update_task_status(
+                        task_id,
+                        TaskStatus.PROCESSING,
+                        f"Processing paper {i+1}/{len(paper_ids)}: {paper_id}",
+                        progress=progress,
+                        current_step=f"processing_paper_{paper_id}",
+                    )
+                    
+                    # Get paper details
+                    paper = self.db.get_paper_by_id(int(paper_id))
+                    if not paper:
+                        failed_papers.append({"paper_id": paper_id, "error": "Paper not found"})
+                        continue
+                    
+                    # Check if paper has URL for PDF download
+                    paper_url = paper.get('url', '')
+                    if not paper_url:
+                        failed_papers.append({"paper_id": paper_id, "error": "No URL available"})
+                        continue
+                    
+                    # Process PDF (this is a simplified version - you may need to adapt based on your PDF processing pipeline)
+                    try:
+                        # Extract text from PDF
+                        text_content = await pdf_processor.process_url(paper_url)
+                        
+                        if not text_content:
+                            failed_papers.append({"paper_id": paper_id, "error": "Failed to extract text"})
+                            continue
+                        
+                        # Generate embedding for the full text
+                        embedding = embedding_model.invoke(text_content, to_list=True)
+                        
+                        # Store in database
+                        self.db.insert_paper_fulltext(
+                            paper_id=int(paper_id),
+                            content=text_content,
+                            embedding=embedding,
+                            embedding_model=embedding_config.get("model_name", "unknown")
+                        )
+                        
+                        parsed_papers.append(paper_id)
+                        
+                    except Exception as pdf_error:
+                        failed_papers.append({"paper_id": paper_id, "error": str(pdf_error)})
+                        continue
+                        
+                except Exception as e:
+                    failed_papers.append({"paper_id": paper_id, "error": str(e)})
+                    continue
+            
+            # Complete the task
+            success_count = len(parsed_papers)
+            failure_count = len(failed_papers)
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                f"PDF parsing completed: {success_count} successful, {failure_count} failed",
+                progress=100,
+                current_step="parsing_complete",
+                result={
+                    "parsed_papers": parsed_papers,
+                    "failed_papers": failed_papers,
+                    "success_count": success_count,
+                    "failure_count": failure_count,
+                    "total_requested": len(paper_ids)
+                },
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await self.update_task_status(
+                task_id,
+                TaskStatus.FAILED,
+                f"PDF parsing task failed: {str(e)}",
                 error=str(e),
                 current_step="task_failed",
             )

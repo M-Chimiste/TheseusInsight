@@ -32,6 +32,7 @@ import type { PaperApiResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
 import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
 import SimilarityView from './SimilarityView'; // Import the new SimilarityView
+import MindMapExplorer from '../components/MindMapExplorer'; // Import the new MindMapExplorer
 import { useLayout } from '../contexts/LayoutContext';
 
 const DEFAULT_PAGE_SIZE = 18; // 6 cards per row, 3 rows for grid view - increased for smoother scrolling
@@ -65,6 +66,10 @@ const Papers: React.FC = () => {
   const [selectedPaper, setSelectedPaper] = useState<PaperApiResponse | null>(null);
   const [scrollPosition, setScrollPosition] = useState<number>(0);
   const [isScrolling, setIsScrolling] = useState<boolean>(false);
+  
+  // Mind-map state
+  const [mindMapOpen, setMindMapOpen] = useState<boolean>(false);
+  const [mindMapSeedPaper, setMindMapSeedPaper] = useState<PaperApiResponse | null>(null);
   
   // Filter state
   const [filters, setFilters] = useState<FilterState>({
@@ -272,6 +277,16 @@ const Papers: React.FC = () => {
     setTimeout(() => {
       window.scrollTo(0, scrollPosition);
     }, 100);
+  };
+
+  const handleOpenMindMap = (paper: PaperApiResponse) => {
+    setMindMapSeedPaper(paper);
+    setMindMapOpen(true);
+  };
+
+  const handleCloseMindMap = () => {
+    setMindMapOpen(false);
+    setMindMapSeedPaper(null);
   };
 
   const handleApplyFilters = () => {
@@ -623,14 +638,23 @@ const Papers: React.FC = () => {
               <Grid container spacing={3} sx={{ mb: 3 }}>
                 {sortedPapers.map((paper) => (
                   <Grid size={{ xs: 12, sm: 6, md: 4 }} key={paper.id + "_" + paper.date_run + "_grid"}>
-                    <PaperCard paper={paper} onFindSimilar={handleFindSimilar} />
+                    <PaperCard 
+                      paper={paper} 
+                      onFindSimilar={handleFindSimilar}
+                      onOpenMindMap={handleOpenMindMap}
+                    />
                   </Grid>
                 ))}
               </Grid>
             ) : (
               <Box sx={{ mb: 3 }}>
                 {sortedPapers.map((paper) => (
-                  <PaperRowCard key={paper.id + "_" + paper.date_run + "_list"} paper={paper} onFindSimilar={handleFindSimilar} />
+                  <PaperRowCard 
+                    key={paper.id + "_" + paper.date_run + "_list"} 
+                    paper={paper} 
+                    onFindSimilar={handleFindSimilar}
+                    onOpenMindMap={handleOpenMindMap}
+                  />
                 ))}
               </Box>
             )}
@@ -659,6 +683,13 @@ const Papers: React.FC = () => {
           </Box>
         </Box>
       )}
+
+      {/* Mind-Map Explorer */}
+      <MindMapExplorer
+        open={mindMapOpen}
+        onClose={handleCloseMindMap}
+        seedPaper={mindMapSeedPaper}
+      />
     </LocalizationProvider>
   );
 };

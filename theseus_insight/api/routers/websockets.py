@@ -141,20 +141,51 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
         # Subscribe to task updates
         status_queue = await task_manager.subscribe_to_updates(task_id)
         
+        # --------------------------------------------
+        # Send an immediate snapshot of current status
+        # --------------------------------------------
+        try:
+            from datetime import datetime
+            from ..models import RunStatus, NodeStatus  # Local import to avoid circular issues
+
+            current_task = task_manager.get_task_status(task_id)
+            if current_task:
+                snapshot_status = RunStatus(
+                    taskId=task_id,
+                    nodes=[
+                        NodeStatus(
+                            nodeId="main",
+                            status=current_task["status"],
+                            message=current_task.get("message", ""),
+                            progress=current_task.get("progress", 0),
+                            timestamp=datetime.now().isoformat(),
+                        )
+                    ],
+                    overallStatus=current_task["status"],
+                    currentStep=current_task.get("current_step"),
+                    progress=current_task.get("progress", 0),
+                    message=current_task.get("message", ""),
+                    result=current_task.get("result"),
+                    error=current_task.get("error"),
+                )
+                # Push snapshot to the front of the queue so it will be sent first
+                await status_queue.put(snapshot_status)
+        except Exception as snap_err:
+            # Log but don't fail the connection
+            print(f"Error sending snapshot status for task {task_id}: {snap_err}")
+
+        # Main loop: forward subsequent updates
         while True:
-            # Wait for status updates
             status = await status_queue.get()
-            
-            # Check for cleanup sentinel
+            # Sentinel for shutdown
             if status is None:
                 break
-                
+
             await websocket.send_json(status.dict())
-            
-            # If task is completed or failed, close connection
+
             if status.overallStatus in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
                 break
-                
+
     except WebSocketDisconnect:
         pass
     except ValueError as e:
@@ -289,4 +320,14 @@ async def database_export_status(websocket: WebSocket, task_id: str):
 @router.websocket("/ws/research-agent/{task_id}")
 async def research_agent_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for research agent status updates."""
-    await handle_research_agent_connection(websocket, task_id) 
+    await handle_research_agent_connection(websocket, task_id)
+
+@router.websocket("/ws/mindmap/{task_id}")
+async def mindmap_expand_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for mind-map expansion task status updates."""
+    await handle_websocket_connection(websocket, task_id, "mindmap_expand")
+
+@router.websocket("/ws/mindmap-pdf-parse/{task_id}")
+async def mindmap_pdf_parse_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for mind-map PDF parsing task status updates."""
+    await handle_websocket_connection(websocket, task_id, "mindmap_pdf_parse") 

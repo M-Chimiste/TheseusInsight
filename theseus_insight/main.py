@@ -152,6 +152,14 @@ async def lifespan(app_instance: FastAPI):
         else:
             print("INFO:     Research interests settings found in DB. Skipping pre-population.")
         
+        # Start task manager workers
+        print("INFO:     Starting task manager workers...")
+        try:
+            await task_manager.start_worker()
+            print("INFO:     Task manager workers started successfully.")
+        except Exception as e:
+            print(f"Error starting task manager workers: {e}")
+        
         # Run media file cleanup
         print("INFO:     Running media file cleanup...")
         try:

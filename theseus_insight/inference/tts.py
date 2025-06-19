@@ -739,11 +739,11 @@ class OrpheusCppInference(TTSInference):
         format: str = "wav",
         **generation_kwargs,
     ) -> Tuple[np.ndarray, Dict]:
-        """Generate speech from *text* using the **orpheus‑cpp** backend.
+        """Generate speech from *text* using the **orpheus-cpp** backend.
 
         Args:
             text (str): Text to be synthesised.
-            voice_name (str | None): Built‑in Orpheus voice ID.  If
+            voice_name (str | None): Built-in Orpheus voice ID.  If
                 ``None``, the instance default is used.
             save_file (bool, optional): If ``True``, the generated audio is
                 written to *file_path*.  Defaults to ``False``.
@@ -755,7 +755,7 @@ class OrpheusCppInference(TTSInference):
                 :py:meth:`orpheus_cpp.OrpheusCpp.stream_tts_sync`.
 
         Returns:
-            tuple[np.ndarray, dict]: A two‑tuple ``(audio, meta)`` where
+            tuple[np.ndarray, dict]: A two-tuple ``(audio, meta)`` where
             ``audio`` is a **float32** NumPy array normalised to ``[-1, 1]``
             and ``meta`` is an empty dictionary (reserved for future
             extensions).
@@ -802,3 +802,154 @@ class OrpheusCppInference(TTSInference):
                 print(f"[OrpheusCpp] Saved audio to {file_path}")
 
         return audio_f32, {}
+
+# ---------------------------------------------------------------------
+#  Chatterbox drop‑in engine
+# ---------------------------------------------------------------------
+@register_tts("chatterbox")                    # access via create_tts("chatterbox", …)
+class ChatterboxTTSInference(TTSInference):
+    """
+    Local, open-source TTS based on Resemble-AI's **Chatterbox** model.
+
+    Parameters
+    ----------
+    device : {"auto","cuda","mps","cpu"}, optional
+        Preferred inference device.  "auto" = CUDA → MPS → CPU.
+    verbose : bool, optional
+        If *True*, prints model-loading and synthesis progress.
+    **model_kwargs
+        Forwarded to `ChatterboxTTS.from_pretrained`.  Rarely needed
+        (e.g. override HF cache dir).
+
+    Notes
+    -----
+    • Supports zero-shot voice cloning - simply supply
+      ``audio_prompt_path=...`` when calling :py:meth:`invoke`.  
+    • Emotion / style control is exposed via *exaggeration* (0-2) and
+      *cfg_weight* (0-1).  Default values match the repo's examples.
+    """
+
+    # Chatterbox accepts ~300 characters; stay well below 4096‑char factory max
+    _MAX_CHARS = 300
+
+    def __init__(self, device: str = "auto", verbose: bool = False, **model_kwargs):
+        from chatterbox.tts import ChatterboxTTS   # heavy import; keep local
+        import torch, numpy as np
+
+        self.verbose = verbose
+
+        # -------- device selection -------------------------------------------------
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+
+        if self.verbose:
+            print(f"[ChatterboxTTS] Loading weights on {device} …")
+
+        # Lazy HF‑download; ~1.6 GB on first run
+        self.engine = ChatterboxTTS.from_pretrained(device=device, **model_kwargs)
+
+        # Public attrs for callers that inspect the object
+        self.sample_rate = self.engine.sr          # 24 kHz [oai_citation:1‡resemble-ai-chatterbox.txt](file-service://file-6XMeshWBkhhfMLb4pPtYpi)
+        self.np = np                               # stash to avoid re‑imports
+
+    # ------------------------------------------------------------------ #
+    def _synth_chunk(
+        self,
+        chunk: str,
+        audio_prompt_path: str | None,
+        exaggeration: float,
+        cfg_weight: float,
+        temperature: float,
+        **kw,
+    ):
+        """Helper - runs one Chatterbox `generate` call and returns pydub segment."""
+        from pydub import AudioSegment
+        import torch, uuid, io
+
+        # Temporary WAV path (Chatterbox returns Torch tensor → we dump to bytes)
+        wav_tensor = self.engine.generate(
+            chunk,
+            audio_prompt_path=audio_prompt_path,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            temperature=temperature,
+            **kw,
+        ).cpu()                          # [1, T] float32 ‑1..1
+
+        # Convert to int16 PCM bytes in‑memory
+        pcm_i16 = (wav_tensor.squeeze().clamp(-1, 1) * 32767).short().numpy()
+
+        # Build pydub segment from raw bytes
+        seg = AudioSegment(
+            pcm_i16.tobytes(),
+            frame_rate=self.sample_rate,
+            sample_width=2,              # int16
+            channels=1,
+        )
+        return seg
+
+    # ------------------------------------------------------------------ #
+    def invoke(
+        self,
+        text: str,
+        *,
+        audio_prompt_path: str | None = None,
+        exaggeration: float = 0.5,
+        cfg_weight: float = 0.5,
+        temperature: float = 0.8,
+        save_file: bool = True,
+        file_path: str | None = None,
+        format: str = "wav",
+        **kw,
+    ):
+        """
+        Synthesise *text* and return ``(audio_np, metadata_dict)``.
+
+        Extra generation controls map 1-to-1 to Chatterbox:
+        * *audio_prompt_path* - reference WAV for voice cloning
+        * *exaggeration*      - stylistic intensity (0 = flat, 2 = very expressive)
+        * *cfg_weight*        - pacing / adherence to prompt
+        * *temperature*       - sampling temperature
+        """
+        from pydub import AudioSegment
+
+        if format.lower() not in SUPPORTED_AUDIO_FORMATS:
+            raise ValueError(f"Unsupported format '{format}'. "
+                             f"Choose from {SUPPORTED_AUDIO_FORMATS}")
+
+        # 1) Sentence‑level chunking to respect Chatterbox’s ~300‑char limit
+        chunks = chunk_text_by_sentences(text, max_len=self._MAX_CHARS)
+
+        final_seg = AudioSegment.silent(duration=0)
+        for i, ch in enumerate(chunks, 1):
+            if self.verbose:
+                print(f"[ChatterboxTTS] Synthesising chunk {i}/{len(chunks)} "
+                      f"(len={len(ch)} chars)…")
+            seg = self._synth_chunk(
+                ch,
+                audio_prompt_path,
+                exaggeration,
+                cfg_weight,
+                temperature,
+                **kw,
+            )
+            final_seg += seg
+
+        # 2) Return waveform as float32 numpy array in [-1, 1]
+        samples = self.np.array(final_seg.get_array_of_samples(), dtype=self.np.float32)
+        audio_f32 = samples / 32767.0
+
+        # 3) Optional disk write
+        if save_file:
+            if file_path is None:
+                raise ValueError("`file_path` must be provided when save_file=True.")
+            final_seg.export(file_path, format=format)
+            if self.verbose:
+                print(f"[ChatterboxTTS] Saved audio → {file_path}")
+
+        return audio_f32, {}   # metadata placeholder (kept for API symmetry)

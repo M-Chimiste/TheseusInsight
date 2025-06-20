@@ -28,10 +28,28 @@ const navItems: NavCardItem[] = [
     path: '/research-agent',
   },
   {
+    title: 'Papers',
+    description: 'Browse and review historical research papers.',
+    icon: <MenuBookIcon fontSize="large" color="primary" />,
+    path: '/papers',
+  },
+  {
     title: 'Research Library',
     description: 'Browse and manage your research history and reports.',
     icon: <LibraryBooksIcon fontSize="large" color="primary" />,
     path: '/research-library',
+  },
+  {
+    title: 'Mind-Map Reports',
+    description: 'View and edit your saved mind-map report library.',
+    icon: <AccountTreeIcon fontSize="large" color="primary" />,
+    path: '/mindmap-reports',
+  },
+  {
+    title: 'Audio Visualizer',
+    description: 'Generate video visualizations for audio files.',
+    icon: <GraphicEqIcon fontSize="large" color="primary" />,
+    path: '/visualizer',
   },
   {
     title: 'Model Catalog',
@@ -52,34 +70,16 @@ const navItems: NavCardItem[] = [
     path: '/podcast',
   },
   {
-    title: 'Papers',
-    description: 'Browse and review historical research papers.',
-    icon: <MenuBookIcon fontSize="large" color="primary" />,
-    path: '/papers',
-  },
-  {
-    title: 'Mind-Map Reports',
-    description: 'View and edit your saved mind-map report library.',
-    icon: <AccountTreeIcon fontSize="large" color="primary" />,
-    path: '/mindmap-reports',
-  },
-  {
-    title: 'Run History',
-    description: 'View logs and history of past pipeline runs.',
-    icon: <HistoryIcon fontSize="large" color="primary" />,
-    path: '/run-history',
-  },
-  {
     title: 'Podcast History',
     description: 'Browse and review previously generated podcasts.',
     icon: <PodcastsIcon fontSize="large" color="primary" />,
     path: '/podcast-history',
   },
   {
-    title: 'Audio Visualizer',
-    description: 'Generate video visualizations for audio files.',
-    icon: <GraphicEqIcon fontSize="large" color="primary" />,
-    path: '/visualizer',
+    title: 'Run History',
+    description: 'View logs and history of past pipeline runs.',
+    icon: <HistoryIcon fontSize="large" color="primary" />,
+    path: '/run-history',
   },
   {
     title: 'Settings',

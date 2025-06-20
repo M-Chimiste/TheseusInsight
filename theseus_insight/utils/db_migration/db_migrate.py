@@ -32,7 +32,7 @@ class DatabaseMigrator:
         """Initialize the migrator."""
         pass
     
-    def export_database(self, source_db: str, output_path: str, archive_name: str = None) -> Dict[str, Any]:
+    def export_database(self, source_db: str, output_path: str, archive_name: str = None, include_new_tables: bool = True) -> Dict[str, Any]:
         """
         Export a database to an archive file.
         
@@ -40,6 +40,7 @@ class DatabaseMigrator:
             source_db: Source database connection string
             output_path: Output path for the archive
             archive_name: Name for the archive (without extension)
+            include_new_tables: Whether to include new MindMap and Research Agent tables
             
         Returns:
             Dictionary with export results
@@ -49,7 +50,7 @@ class DatabaseMigrator:
         # Create temporary directory for export
         with tempfile.TemporaryDirectory() as temp_dir:
             exporter = DatabaseExporter(source_db, temp_dir)
-            result = exporter.export_all(create_archive=True, archive_name=archive_name)
+            result = exporter.export_all(create_archive=True, archive_name=archive_name, include_new_tables=include_new_tables)
             
             # Move archive to desired location
             archive_path = Path(result["archive"])
@@ -91,7 +92,7 @@ class DatabaseMigrator:
         return result
     
     def migrate_database(self, source_db: str, target_db: str, skip_duplicates: bool = True, 
-                        keep_archive: bool = False, archive_path: str = None) -> Dict[str, Any]:
+                        keep_archive: bool = False, archive_path: str = None, include_new_tables: bool = True) -> Dict[str, Any]:
         """
         Migrate data directly from one database to another.
         
@@ -101,6 +102,7 @@ class DatabaseMigrator:
             skip_duplicates: Whether to skip duplicate entries
             keep_archive: Whether to keep the intermediate archive file
             archive_path: Path to save the archive (if keep_archive is True)
+            include_new_tables: Whether to include new MindMap and Research Agent tables
             
         Returns:
             Dictionary with migration results
@@ -109,14 +111,14 @@ class DatabaseMigrator:
         
         if keep_archive and archive_path:
             # Export to specified archive path
-            export_result = self.export_database(source_db, archive_path)
+            export_result = self.export_database(source_db, archive_path, include_new_tables=include_new_tables)
             archive_file = export_result["final_archive_path"]
         else:
             # Use temporary archive
             with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as temp_file:
                 temp_archive = temp_file.name
             
-            export_result = self.export_database(source_db, temp_archive)
+            export_result = self.export_database(source_db, temp_archive, include_new_tables=include_new_tables)
             archive_file = export_result["final_archive_path"]
         
         # Import from archive
@@ -151,14 +153,16 @@ class DatabaseMigrator:
         source_exporter = DatabaseExporter(source_db, tempfile.mkdtemp())
         target_exporter = DatabaseExporter(target_db, tempfile.mkdtemp())
         
-        # Get counts from both databases
+        # Get counts from both databases for core tables
         source_papers = source_exporter.db.fetch_all_papers()
         source_podcasts = source_exporter.db.fetch_all_podcasts()
         source_newsletters = source_exporter.db.fetch_all_newsletters()
+        source_lit_reviews = source_exporter.db.fetch_all_literature_reviews()
         
         target_papers = target_exporter.db.fetch_all_papers()
         target_podcasts = target_exporter.db.fetch_all_podcasts()
         target_newsletters = target_exporter.db.fetch_all_newsletters()
+        target_lit_reviews = target_exporter.db.fetch_all_literature_reviews()
         
         verification = {
             "papers": {
@@ -175,11 +179,57 @@ class DatabaseMigrator:
                 "source_count": len(source_newsletters),
                 "target_count": len(target_newsletters),
                 "match": len(source_newsletters) <= len(target_newsletters)
+            },
+            "literature_reviews": {
+                "source_count": len(source_lit_reviews),
+                "target_count": len(target_lit_reviews),
+                "match": len(source_lit_reviews) <= len(target_lit_reviews)
             }
         }
         
-        all_match = all(table["match"] for table in verification.values())
+        # Verify new tables if they exist
+        try:
+            source_research_runs = source_exporter.db.get_research_runs_history(limit=10000)
+            target_research_runs = target_exporter.db.get_research_runs_history(limit=10000)
+            verification["research_runs"] = {
+                "source_count": len(source_research_runs),
+                "target_count": len(target_research_runs),
+                "match": len(source_research_runs) <= len(target_research_runs)
+            }
+        except Exception as e:
+            print(f"Note: Could not verify research_runs (table may not exist): {e}")
+            verification["research_runs"] = {"note": "Table not available for verification"}
+        
+        try:
+            source_mindmap_reports = source_exporter.db.get_mindmap_reports(limit=10000)
+            target_mindmap_reports = target_exporter.db.get_mindmap_reports(limit=10000)
+            verification["mindmap_reports"] = {
+                "source_count": len(source_mindmap_reports),
+                "target_count": len(target_mindmap_reports),
+                "match": len(source_mindmap_reports) <= len(target_mindmap_reports)
+            }
+        except Exception as e:
+            print(f"Note: Could not verify mindmap_reports (table may not exist): {e}")
+            verification["mindmap_reports"] = {"note": "Table not available for verification"}
+        
+        try:
+            source_model_catalog = source_exporter.db.search_model_catalog(page_size=10000)
+            target_model_catalog = target_exporter.db.search_model_catalog(page_size=10000)
+            verification["model_catalog"] = {
+                "source_count": len(source_model_catalog['models']),
+                "target_count": len(target_model_catalog['models']),
+                "match": len(source_model_catalog['models']) <= len(target_model_catalog['models'])
+            }
+        except Exception as e:
+            print(f"Note: Could not verify model_catalog (table may not exist): {e}")
+            verification["model_catalog"] = {"note": "Table not available for verification"}
+        
+        # Count available verification checks (excluding notes)
+        verifiable_tables = [table for table, data in verification.items() 
+                           if isinstance(data, dict) and "match" in data]
+        all_match = all(verification[table]["match"] for table in verifiable_tables)
         verification["overall_success"] = all_match
+        verification["verified_tables"] = verifiable_tables
         
         print("Verification completed")
         return verification
@@ -195,6 +245,8 @@ def main():
     export_parser.add_argument("--source-db", required=True, help="Source database connection string")
     export_parser.add_argument("--output", required=True, help="Output path for archive")
     export_parser.add_argument("--archive-name", help="Name for the archive (without extension)")
+    export_parser.add_argument("--exclude-new-tables", action="store_true", 
+                              help="Exclude new MindMap and Research Agent tables (backwards compatibility)")
     
     # Import command
     import_parser = subparsers.add_parser("import", help="Import archive to database")
@@ -210,6 +262,8 @@ def main():
     migrate_parser.add_argument("--keep-archive", action="store_true", help="Keep intermediate archive file")
     migrate_parser.add_argument("--archive-path", help="Path to save archive (if --keep-archive)")
     migrate_parser.add_argument("--verify", action="store_true", help="Verify migration after completion")
+    migrate_parser.add_argument("--exclude-new-tables", action="store_true", 
+                               help="Exclude new MindMap and Research Agent tables (backwards compatibility)")
     
     # Verify command
     verify_parser = subparsers.add_parser("verify", help="Verify migration between databases")
@@ -229,7 +283,8 @@ def main():
             result = migrator.export_database(
                 args.source_db,
                 args.output,
-                args.archive_name
+                args.archive_name,
+                include_new_tables=not args.exclude_new_tables
             )
             print(f"\nExport completed successfully!")
             print(f"Archive saved to: {result['final_archive_path']}")
@@ -251,7 +306,8 @@ def main():
                 args.target_db,
                 skip_duplicates=not args.allow_duplicates,
                 keep_archive=args.keep_archive,
-                archive_path=args.archive_path
+                archive_path=args.archive_path,
+                include_new_tables=not args.exclude_new_tables
             )
             print(f"\nMigration completed successfully!")
             

@@ -15,15 +15,15 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Environment Variables](#environment-variables)
 - [Running the API](#running-the-api)
 - [Running the Frontend](#running-the-frontend)
-- [External Database Access](#external-database-access)
-- [External Database Access](#external-database-access)
 - [Custom Data Storage Location](#custom-data-storage-location)
+- [Desktop Build](#desktop-build)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)
   - [Script Management](#script-management)
   - [Visualizer Generation](#visualizer-generation)
   - [Similarity Search](#similarity-search)
+  - [Mind-Map Explorer](#mind-map-explorer)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
@@ -34,7 +34,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 
 ## Overview
 
-Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
+Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run. The latest version introduces the **Mind-Map Explorer**, an interactive visualization system for exploring multi-order research paper relationships through configurable network graphs, enabling researchers to discover both direct and indirect connections in the academic literature.
 
 ---
 
@@ -69,8 +69,18 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **FastAPI** server with endpoints for paper management, newsletter and podcast pipelines and visualiser generation.
 - **React** frontend built with Vite and Material UI, served from the backend in production.
 - **Real‑time progress** streaming over WebSockets for long running tasks.
-- **PostgreSQL database** (with pgvector) for storing papers, runs and configuration data.
+- **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
+- **Robust ArXiv Data Access**: Automatic fallback from live ArXiv OAI-PMH API to Kaggle dataset (1.7M+ papers) with auto-download and cleanup when the API is unavailable.
+- **Cached Summaries & Keywords**: LLM-generated paper summaries and YAKE-extracted top keywords are stored in the database, eliminating redundant generation and dramatically speeding up subsequent mind-map builds.
+- **Mind-Map Explorer**: An interactive visualization tool to explore the intellectual neighborhood of research papers.
+  - **Multi-Order Expansion**: Generate mind-maps with configurable expansion orders (1-5) to explore deeper connections between papers.
+  - **Visual Network Exploration**: Interactive force-directed layouts with similarity-based node positioning and edge weighting.
+  - **Configurable Parameters**: Adjust similarity thresholds (10%-80%), paper count (5-30), and nodes per expansion order (5-50).
+  - **Smart Deduplication**: Automatic duplicate detection and removal across expansion orders for clean visualizations.
+  - **Real-Time Progress Tracking**: WebSocket-powered progress updates with detailed step information during generation.
+  - **Save & Share Reports**: Save mind-map configurations and results for future reference and collaboration.
+  - **Seamless Integration**: Launch from any paper in the research library or similarity search results.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers.
@@ -81,38 +91,157 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 
 ```
 theseus_insight/
-  api/               # FastAPI models, tasks and routes
-  communication/     # Gmail and YouTube helpers
-  data_model/        # PostgreSQL interactions and pydantic models
-  data_processing/   # Arxiv harvesting utilities
-  inference/         # LLM and TTS wrappers
-  pdf/               # PDF parsing helpers
-  podcast/           # Podcast and visualiser generation
-  main.py            # FastAPI entrypoint
-  theseus_insight.py # Pipeline orchestrator
+  api/                    # FastAPI backend components
+    routers/              # Modular API route definitions
+      papers.py           # Paper search, similarity, embeddings
+      settings.py         # Configuration and credentials
+      model_providers.py  # Model provider management
+      runs_and_tasks.py   # Task management and status
+      logs.py             # Logging and task history
+      newsletters_and_podcasts.py  # Content generation
+      actions.py          # Visualizer pipeline actions
+      database.py         # Import/export functionality
+      mindmap.py          # Mind-map generation and reports
+      websockets.py       # WebSocket connections
+      __init__.py         # Router registry
+    dependencies.py       # Shared dependencies (db, credentials)
+    models.py            # Pydantic data models
+    tasks.py             # Background task management
+  communication/          # Gmail and YouTube helpers
+  data_model/            # SQLite interactions and pydantic models
+  data_processing/       # Arxiv harvesting utilities
+  inference/             # LLM and TTS wrappers
+  mindmap/               # Mind-map generation system
+    nodes/               # LangGraph workflow nodes
+      build_mindmap.py   # Mind-map data structure assembly
+      embed_seed.py      # Seed paper embedding generation
+      multi_order_retriever.py  # Multi-order similarity search
+      retriever.py       # Single-order similarity search
+      select_seed.py     # Seed paper selection and validation
+      summariser.py      # Paper summarization for nodes
+    state.py             # Mind-map workflow state management
+    workflow.py          # LangGraph workflow orchestration
+  pdf/                   # PDF parsing helpers
+  podcast/               # Podcast and visualiser generation
+  main.py                # FastAPI entrypoint and app configuration
+  theseus_insight.py     # Pipeline orchestrator
 ```
 
 Configuration files live in `config/` and the React app is located in `theseus-ui/`.
+
+### API Router Architecture
+
+The FastAPI backend uses a modular router architecture for better maintainability and separation of concerns:
+
+- **Centralized Dependencies**: Shared resources like database connections and credential keys are managed in `api/dependencies.py`
+- **Focused Routers**: Each router handles a specific domain (papers, settings, tasks, etc.)
+- **Clean Separation**: Route definitions are separated from the main application setup
+- **Easy Extension**: New functionality can be added by creating focused router modules
 
 ---
 
 ## Installation
 
-If you prefer running locally without Docker:
-1. Install Python dependencies
+### Automated Installation (Recommended)
+
+For the fastest setup, use our automated installation scripts that handle all dependencies and start both servers:
+
+#### macOS / Linux
+```bash
+# Make the script executable and run
+chmod +x scripts/install-and-start.sh
+./scripts/install-and-start.sh
+```
+
+#### Windows (Command Prompt)
+```cmd
+scripts\install-and-start.bat
+```
+
+#### Windows (PowerShell)
+```powershell
+.\scripts\install-and-start.ps1
+```
+
+**What the scripts do:**
+- Check for Python 3.8+ and Node.js installations
+- Create Python virtual environment and install dependencies
+- Install and build the React frontend
+- Create necessary data directories
+- Generate default configuration files
+- Start both backend (port 8000) and frontend (port 5173) servers
+
+**Script Options:**
+- `--install-only` - Only install dependencies, don't start servers
+- `--start-only` - Only start servers (skip installation)  
+- `--help` - Show help and usage information
+
+**Examples:**
+```bash
+# Install dependencies only
+./scripts/install-and-start.sh --install-only
+
+# Start servers only (after installation)
+./scripts/install-and-start.sh --start-only
+
+# Full setup (default)
+./scripts/install-and-start.sh
+```
+
+After successful installation, you'll have:
+- **Backend API:** `http://localhost:8000`
+- **Frontend UI:** `http://localhost:5173` 
+- **API Documentation:** `http://localhost:8000/docs`
+
+For detailed troubleshooting and platform-specific installation instructions, see [`docs/installation.md`](docs/installation_README.md).
+
+### Manual Installation
+
+If you prefer to install manually or the automated scripts don't work for your environment:
+
+#### Prerequisites
+- **Python 3.8+** - Download from [python.org](https://www.python.org/downloads/)
+- **Node.js 16+** - Download from [nodejs.org](https://nodejs.org/)
+
+#### Steps
+1. **Install Python dependencies**
    ```bash
-
+   # Create virtual environment
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate.bat
+   
+   # Install dependencies
    pip install -r requirements.txt
-
    ```
-2. (Optional) install Node.js 18+ and build the frontend
+
+2. **Install and build frontend**
    ```bash
    cd theseus-ui
    npm install
    npm run build
+   cd ..
    ```
-3. Configure environment variables as shown below.
-4. Run `scripts/setup_database.sh` to create the default PostgreSQL database and role.
+
+3. **Create data directories**
+   ```bash
+   mkdir -p data/{newsletters,podcasts,visualizations,temp}
+   mkdir -p config
+   ```
+
+4. **Configure environment variables** (see [Environment Variables](#environment-variables) section)
+
+5. **Start the application**
+   ```bash
+   # Backend (in one terminal)
+   source venv/bin/activate
+   uvicorn theseus_insight.main:app --host 0.0.0.0 --port 8000 --reload
+   
+   # Frontend (in another terminal) 
+   cd theseus-ui
+   npm run dev
+   ```
+
+The SQLite database will be created automatically on first run.
 
 ---
 
@@ -127,15 +256,45 @@ Create a `.env` file in the project root containing keys and settings:
 | `GOOGLE_API_KEY` | API key for Google Gemini models |
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
 | `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
-| `ALLOW_DB_CONNECTION` | When `true`, enables external access to PostgreSQL database on port 5433 (default `false` for security) |
+| `ALLOW_DB_CONNECTION` | Deprecated - no external database |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
-| `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication |
-| `DATABASE_URL` | Connection string for the PostgreSQL database (default `postgresql://theseus:theseus@localhost:5432/theseusdb`) |
+| `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
+| `DATABASE_URL` | Path to the SQLite database file (default `data/theseus.db`) |
+| `SQLITE_VEC_PATH` | Optional path to the `sqlite_vec` extension for vector similarity |
+| `DEBUG` | When set to `true`, `1`, or `yes` globally re-enables verbose `print()` statements and DEBUG-level logger output. Leave unset (default) for a quiet console |
+
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
 | `RUNNING_IN_DOCKER` | Set to `true` in Docker images for correct static file paths |
 | `APP_SECRET_KEY` | Secret used to encrypt API credentials stored in the database |
+
+### ArXiv Data Source Configuration
+
+Theseus Insight automatically fetches papers from ArXiv's OAI-PMH API. When the API is unavailable, it can automatically fall back to the Kaggle ArXiv dataset:
+
+| Variable | Purpose |
+|----------|---------|
+| `KAGGLE_USERNAME` | Your Kaggle username for automatic dataset downloads |
+| `KAGGLE_KEY` | Your Kaggle API key for authentication |
+| `KAGGLE_ARXIV_PATH` | Path to existing Kaggle ArXiv dataset file (optional) |
+| `FORCE_KAGGLE` | Set to `true` to skip OAI-PMH and use Kaggle dataset only |
+| `AUTO_DOWNLOAD` | Set to `false` to disable automatic Kaggle dataset downloads (default: `true`) |
+
+**Auto-Download Setup:**
+1. Get your Kaggle API credentials from [kaggle.com/account](https://www.kaggle.com/account) → API → "Create New API Token"
+2. Add to your `.env` file:
+   ```bash
+   KAGGLE_USERNAME=your_username
+   KAGGLE_KEY=your_api_key
+   ```
+
+When ArXiv's API is down, the system will automatically:
+- ✅ Download the 3.1GB Kaggle ArXiv dataset to a temporary directory
+- ✅ Process your queries using the downloaded data  
+- ✅ Clean up downloaded files after completion
+
+For detailed setup instructions, see [docs/kaggle_setup_README.md](docs/kaggle_setup_README.md).
 
 The application loads these credentials from the database at startup, falling back to `.env` values if necessary. You can view and update them from the **Settings → API Credentials** section in the UI.
 More details are available in [docs/credential_management_README.md](docs/credential_management_README.md).
@@ -175,82 +334,10 @@ During development use the Vite dev server as shown in the [Quickstart](#quickst
 
 ---
 
-## External Database Access
-
-By default, the PostgreSQL database runs in an isolated Docker container and is not accessible from external tools. For development, debugging, data migration, or administrative tasks, you can enable external database access.
-
-### Enabling External Access
-
-**Option 1: Using the helper script (recommended)**
-```bash
-# Start with external database access enabled
-./scripts/start-with-db-access.sh
-
-# Or pass additional docker-compose arguments
-./scripts/start-with-db-access.sh -d  # Run in detached mode
-```
-
-**Option 2: Manual Docker Compose override**
-```bash
-# Start with both compose files
-docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
-```
-
-**Option 3: Environment variable in .env file**
-```bash
-# Add to your .env file
-ALLOW_DB_CONNECTION=true
-
-# Then start normally (this sets the variable but you still need the override file)
-docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up --build
-```
-
-### Connection Details
-
-When external access is enabled, the database is accessible on:
-- **Host**: `localhost`
-- **Port**: `5433` (to avoid conflicts with local PostgreSQL)
-- **Database**: `theseusdb`
-- **Username**: `theseus`
-- **Password**: `theseus`
-
-### Example Connections
-
-**Using psql command line:**
-```bash
-psql -h localhost -p 5433 -U theseus -d theseusdb
-```
-
-**Using pgAdmin:**
-- Server: `localhost:5433`
-- Maintenance database: `theseusdb`
-- Username: `theseus`
-- Password: `theseus`
-
-**Using Python/SQLAlchemy:**
-```python
-from sqlalchemy import create_engine
-engine = create_engine("postgresql://theseus:theseus@localhost:5433/theseusdb")
-```
-
-### Security Considerations
-
-⚠️ **Important**: Only enable external database access in development environments or secure networks. When enabled:
-- The database accepts connections from any IP address on the host machine
-- Database credentials are transmitted over the network
-- The database port is exposed on the host machine
-
-For production deployments, use secure connection methods such as:
-- VPN tunnels
-- SSH port forwarding
-- Database connection pools with authentication
-- Network firewalls and access controls
-
----
 
 ## Custom Data Storage Location
 
-By default, Theseus Insight stores data in the local `./data` directory and uses Docker named volumes for the PostgreSQL database. For installations with limited internal storage, you can redirect all data to an external drive or custom location.
+By default, Theseus Insight stores data in the local `./data` directory. This folder contains the `theseus.db` SQLite database alongside generated newsletters, podcasts and other files. For installations with limited internal storage, you can redirect all data to an external drive or custom location.
 
 ### Quick Setup for External Storage
 
@@ -295,11 +382,7 @@ When using external storage, the following directory structure is created:
 │   ├── podcasts/               # Generated podcast audio/video
 │   ├── visualizations/         # Generated visualizations
 │   └── temp/                   # Temporary processing files
-└── postgres_data/              # PostgreSQL database files
-    ├── base/                   # Database tables and indexes
-    ├── global/                 # Cluster-wide data
-    ├── pg_wal/                 # Write-ahead log files
-    └── ...                     # Other PostgreSQL system files
+└── theseus.db                 # SQLite database file
 ```
 
 ### Platform-Specific Paths
@@ -344,13 +427,10 @@ If you've already been running Theseus Insight and want to move existing data to
 docker-compose down
 
 # Create external storage directory
-mkdir -p /Volumes/nyx/theseus_insight_data/{app_data,postgres_data}
+mkdir -p /Volumes/nyx/theseus_insight_data/app_data
 
 # Copy existing application data
 cp -r ./data/* /Volumes/nyx/theseus_insight_data/app_data/
-
-# Export existing database (if you have data)
-docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_insight_data/postgres_data:/backup alpine sh -c "cp -r /data/* /backup/"
 
 # Start with external storage
 ./scripts/start-with-external-storage.sh
@@ -410,13 +490,13 @@ docker run --rm -v theseusinsight_theseus_db_data:/data -v /Volumes/nyx/theseus_
 Theseus Insight features advanced hybrid search capabilities that combine the precision of BM25-style keyword ranking with the contextual understanding of semantic similarity. This provides significantly enhanced search accuracy compared to traditional keyword-only or semantic-only approaches.
 
 **Key Features:**
-- **BM25-Enhanced Keyword Search**: Uses PostgreSQL's full-text search with `ts_rank_cd()` for sophisticated term frequency and document ranking (replaces simple substring matching)
+- **BM25-Enhanced Keyword Search**: Uses SQLite FTS5 with the `bm25()` ranking function for accurate term frequency scoring
 - **Dual-Mode Search**: Simultaneously performs semantic similarity using vector embeddings and advanced keyword ranking across paper titles and abstracts
 - **Weighted Title Boost**: Title matches receive 2x scoring weight compared to abstract matches for improved relevance
 - **Weighted Scoring**: User-adjustable weights for combining semantic and keyword scores (default: 60% semantic, 40% keyword)
 - **Real-Time Scoring**: Returns individual `semantic_score`, `keyword_score`, and combined `hybrid_score` for transparency
 - **Full Integration**: Works seamlessly with existing filters (date range, score threshold, pagination)
-- **Performance Optimized**: Database-level operations using PostgreSQL with pgvector and GIN indexes for scalable performance
+- **Performance Optimized**: Database-level operations use sqlite-vec for vector search and FTS5 indexes for scalable performance
 
 **Example API Request:**
 ```json
@@ -458,12 +538,81 @@ POST /api/papers/hybrid-search
 The React interface provides an intuitive toggle for enabling hybrid search with interactive weight adjustment sliders. Users can fine-tune the balance between semantic understanding and BM25-style keyword ranking to optimize results for their specific research needs.
 
 **Technical Implementation:**
-- **PostgreSQL Full-Text Search**: Leverages native `tsvector` and `tsquery` types with English language stemming and stopword filtering
-- **Ranking Algorithm**: Uses `ts_rank_cd()` with normalization flags for document length and term frequency weighting
-- **Index Optimization**: GIN (Generalized Inverted Index) indexes on title, abstract, and combined search vectors for fast retrieval
-- **Automatic Migration**: Existing installations automatically gain BM25 capabilities through database schema updates
+- **SQLite Full-Text Search**: Utilises the FTS5 module with Unicode-aware tokenization and stopword filtering
+- **Ranking Algorithm**: Uses the `bm25()` ranking function for weighted relevance
+- **Index Optimization**: FTS5 indexes provide fast lookup over title and abstract text
+- **Automatic Migration**: Existing installations automatically update the SQLite schema when new search features are introduced
 
 See [docs/embedding_functionality_README.md](docs/embedding_functionality_README.md) for more details.
+### Mind-Map Explorer
+- **`POST /api/mindmap/expand`** – generate a mind-map from a seed paper.
+- **`GET /api/mindmap/reports`** – list saved mind-map reports.
+- **`POST /api/mindmap/reports`** – save a mind-map report.
+- **`GET /api/mindmap/reports/{report_id}`** – retrieve a specific mind-map report.
+- **`DELETE /api/mindmap/reports/{report_id}`** – delete a mind-map report.
+
+#### Mind-Map Generation Features
+
+The Mind-Map Explorer provides an advanced visualization system for exploring research paper relationships through interactive network graphs. Built on top of the existing similarity search infrastructure, it offers configurable multi-order expansion to discover both direct and indirect connections between papers.
+
+**Core Capabilities:**
+- **Multi-Order Expansion**: Generate mind-maps with 1-5 expansion orders to explore increasingly distant paper relationships
+- **Similarity-Based Clustering**: Papers are automatically arranged in concentric rings based on similarity scores (≥80%, 60-80%, 40-60%, <40%)
+- **Interactive Canvas**: Built with React Flow for smooth panning, zooming, and node interaction
+- **Real-Time Generation**: WebSocket-powered progress tracking with detailed step information
+- **Persistent Storage**: Save mind-map configurations and results as reports for future reference
+
+**Configuration Parameters:**
+- **Expansion Order** (1-5): Controls the depth of exploration (Order 1 = direct similarities, Order 2+ = indirect connections)
+- **Papers per Order** (5-30): Number of similar papers to find at each expansion level
+- **Max Nodes per Order** (5-50): Maximum nodes to include per expansion order for performance optimization
+- **Similarity Threshold** (10%-80%): Minimum similarity score for including papers in the mind-map
+- **Layout Algorithm**: Force-directed positioning with collision detection and edge optimization
+
+**Technical Implementation:**
+- **Deduplication Logic**: Automatic removal of duplicate papers across expansion orders using ID-based tracking
+- **Efficient Routing**: Conditional workflow routing between single-order (`RetrieverNode`) and multi-order (`MultiOrderRetrieverNode`) based on expansion parameters
+- **Progress Callbacks**: Specialized progress tracking for multi-order operations with step-by-step feedback
+- **Database Integration**: Complete CRUD operations for mind-map reports with JSON storage for configurations and results
+
+**Example API Request:**
+```json
+POST /api/mindmap/expand
+{
+  "paper_id": "12345",
+  "k": 15,
+  "similarity_threshold": 0.3,
+  "layout_algorithm": "force",
+  "expansion_order": 2,
+  "max_nodes_per_order": 20
+}
+```
+
+**Example Response:**
+```json
+{
+  "status": "success",
+  "data": {
+    "task_id": "mindmap_abc123",
+    "message": "Mind-map generation started"
+  }
+}
+```
+
+**Frontend Integration:**
+The React interface provides an intuitive dialog for configuring mind-map parameters with real-time validation and helpful tooltips. The interactive canvas supports:
+- **Node Expansion**: Double-click nodes to generate new mind-maps with that paper as the seed
+- **Contextual Actions**: Right-click menus for opening papers, expanding nodes, and accessing additional options
+- **Visual Feedback**: Similarity scores displayed as edge weights and node positioning
+- **Save Functionality**: One-click saving of mind-map configurations and results
+- **Fullscreen Mode**: Dedicated fullscreen view for detailed exploration
+
+**Use Cases:**
+- **Literature Review**: Discover related works and research trends around a specific paper
+- **Research Planning**: Identify gaps and opportunities in research areas
+- **Citation Analysis**: Explore indirect connections between papers through similarity rather than citations
+- **Knowledge Discovery**: Find unexpected connections between seemingly unrelated research areas
+
 ### Theseus Insight Run Orchestration
 - **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
 
@@ -497,22 +646,22 @@ Theseus Insight includes comprehensive database migration tools for transferring
 **Export database to archive:**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate export \
-    --source-db "postgresql://user:pass@localhost:5432/theseus_dev" \
+    --source-db data/theseus.db \
     --output ./backup.tar.gz
 ```
 
 **Import archive to new database:**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate import \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --target-db data/theseus.db \
     --input ./backup.tar.gz
 ```
 
 **Direct migration with verification:**
 ```bash
 python -m theseus_insight.utils.db_migration.db_migrate migrate \
-    --source-db "postgresql://user:pass@old-server:5432/theseus_dev" \
-    --target-db "postgresql://user:pass@new-server:5432/theseus_prod" \
+    --source-db old.db \
+    --target-db new.db \
     --verify
 ```
 
@@ -521,7 +670,7 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 - **Compressed archives** - tar.gz format with metadata for easy transfer
 - **Vector embedding preservation** - Maintains exact embeddings during migration
 - **Verification tools** - Compare source and target databases after migration
-- **Flexible import options** - Support for selective imports and batch processing
+- **Summary & Keyword Preservation** – Export/import routines now include the new `summary` and `keywords` columns so cached content moves seamlessly between installations.
 
 For detailed documentation and advanced usage examples, see [`theseus_insight/docs/db_migration_README.md`](theseus_insight/docs/db_migration_README.md).
 
@@ -540,7 +689,7 @@ This project is licensed under the [Apache License 2.0](LICENSE) unless otherwis
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
 - [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.
-- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for backend processing.
+- [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), SQLite with [sqlite-vec](https://github.com/asg017/sqlite-vss) for backend processing.
 
 Theseus Insight is maintained by [M. Chimiste](https://github.com/M-Chimiste) & contributors.
 

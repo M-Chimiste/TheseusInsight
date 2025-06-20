@@ -11,11 +11,13 @@ import {
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import type { PaperApiResponse } from '../services/api'; // Assuming PaperApiResponse is in services/api
 
 interface PaperRowCardProps {
   paper: PaperApiResponse;
   onFindSimilar?: (paper: PaperApiResponse) => void;
+  onOpenMindMap?: (paper: PaperApiResponse) => void;
 }
 
 const TruncatedTypography = styled(Typography)(() => ({
@@ -28,7 +30,7 @@ const TruncatedTypography = styled(Typography)(() => ({
   lineHeight: '1.5em' 
 }));
 
-const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar }) => {
+const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpenMindMap }) => {
   const [expanded, setExpanded] = useState(false);
 
   const handleExpandClick = () => {
@@ -101,25 +103,48 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar }) => 
                sx={{mb:1}}
              />
           )}
+          {Array.isArray(paper.keywords) && paper.keywords.length > 0 && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+              {paper.keywords.slice(0,5).map((kw)=> (
+                 <Chip key={kw} label={kw} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+              ))}
+            </Box>
+          )}
           <Typography variant="body2" sx={{mt:2}}>
             <Link href={paper.url} target="_blank" rel="noopener noreferrer">
               View on ArXiv
             </Link>
           </Typography>
-          {onFindSimilar && (
-            <Button
-              variant="outlined"
-              color="primary"
-              startIcon={<SearchIcon />}
-              onClick={(e) => {
-                e.stopPropagation();
-                onFindSimilar(paper);
-              }}
-              sx={{ mt: 2 }}
-            >
-              Find Similar
-            </Button>
-          )}
+          <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+            {onFindSimilar && (
+              <Button
+                variant="outlined"
+                color="primary"
+                startIcon={<SearchIcon />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFindSimilar(paper);
+                }}
+                size="small"
+              >
+                Find Similar
+              </Button>
+            )}
+            {onOpenMindMap && (
+              <Button
+                variant="outlined"
+                color="secondary"
+                startIcon={<AccountTreeIcon />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenMindMap(paper);
+                }}
+                size="small"
+              >
+                Mind Map
+              </Button>
+            )}
+          </Box>
         </CardContent>
       </Collapse>
     </Card>

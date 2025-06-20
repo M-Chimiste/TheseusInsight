@@ -8,6 +8,10 @@ import MenuBookIcon from '@mui/icons-material/MenuBook';
 import HistoryIcon from '@mui/icons-material/History';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
+import StorageIcon from '@mui/icons-material/Storage';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 
 interface NavCardItem {
   title: string;
@@ -17,6 +21,42 @@ interface NavCardItem {
 }
 
 const navItems: NavCardItem[] = [
+  {
+    title: 'Research Agent',
+    description: 'AI-powered research assistant for comprehensive literature analysis.',
+    icon: <PsychologyIcon fontSize="large" color="primary" />,
+    path: '/research-agent',
+  },
+  {
+    title: 'Papers',
+    description: 'Browse and review historical research papers.',
+    icon: <MenuBookIcon fontSize="large" color="primary" />,
+    path: '/papers',
+  },
+  {
+    title: 'Research Library',
+    description: 'Browse and manage your research history and reports.',
+    icon: <LibraryBooksIcon fontSize="large" color="primary" />,
+    path: '/research-library',
+  },
+  {
+    title: 'Mind-Map Reports',
+    description: 'View and edit your saved mind-map report library.',
+    icon: <AccountTreeIcon fontSize="large" color="primary" />,
+    path: '/mindmap-reports',
+  },
+  {
+    title: 'Audio Visualizer',
+    description: 'Generate video visualizations for audio files.',
+    icon: <GraphicEqIcon fontSize="large" color="primary" />,
+    path: '/visualizer',
+  },
+  {
+    title: 'Model Catalog',
+    description: 'Manage and organize your AI models with detailed specifications.',
+    icon: <StorageIcon fontSize="large" color="primary" />,
+    path: '/model-catalog',
+  },
   {
     title: 'Newsletter',
     description: 'Generate research newsletters based on criteria.',
@@ -30,28 +70,16 @@ const navItems: NavCardItem[] = [
     path: '/podcast',
   },
   {
-    title: 'Papers',
-    description: 'Browse and review historical research papers.',
-    icon: <MenuBookIcon fontSize="large" color="primary" />,
-    path: '/papers',
+    title: 'Podcast History',
+    description: 'Browse and review previously generated podcasts.',
+    icon: <PodcastsIcon fontSize="large" color="primary" />,
+    path: '/podcast-history',
   },
   {
     title: 'Run History',
     description: 'View logs and history of past pipeline runs.',
     icon: <HistoryIcon fontSize="large" color="primary" />,
     path: '/run-history',
-  },
-  {
-    title: 'Podcast History',
-    description: 'Listen to and review previously generated podcasts.',
-    icon: <PodcastsIcon fontSize="large" color="primary" />,
-    path: '/podcast-history',
-  },
-  {
-    title: 'Audio Visualizer',
-    description: 'Generate video visualizations for audio files.',
-    icon: <GraphicEqIcon fontSize="large" color="primary" />,
-    path: '/visualizer',
   },
   {
     title: 'Settings',

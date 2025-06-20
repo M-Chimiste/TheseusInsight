@@ -28,6 +28,10 @@ import {
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
   ChevronLeft as ChevronLeftIcon,
+  Psychology as PsychologyIcon,
+  LibraryBooks as LibraryBooksIcon,
+  Storage as StorageIcon,
+  AccountTree as AccountTreeIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
@@ -75,13 +79,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
-    { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
+    { text: 'Research Agent', icon: <PsychologyIcon />, path: '/research-agent' },
+    { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
+    { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
+    { text: 'Mind-Map Reports', icon: <AccountTreeIcon />, path: '/mindmap-reports' },
+    { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
+    { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
     { text: 'Podcast Creator', icon: <PodcastIcon />, path: '/podcast' },
-    { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
-    { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
     { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
     { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
+    { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
   ];
 
   return (

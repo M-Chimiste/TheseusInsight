@@ -167,16 +167,14 @@ backup.tar.gz
 
 ## Database Connection Strings
 
-The tools support standard PostgreSQL connection strings:
+The tools accept standard SQLite file paths or connection URLs:
 
 ```bash
-# Basic format
-postgresql://username:password@hostname:port/database
+# Local file path
+data/theseus.db
 
-# Examples
-postgresql://theseus:secret@localhost:5432/theseus_dev
-postgresql://user@localhost/theseus_db
-postgresql://user:pass@prod-server.com:5432/theseus_production
+# URL style
+sqlite:///data/theseus.db
 ```
 
 ## Error Handling
@@ -283,9 +281,8 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 ## Version Compatibility
 
 - Export format version: 1.0
-- Compatible with PostgreSQL 12+
 - Requires Python 3.8+
-- Dependencies: psycopg, pgvector, pydantic
+- Dependencies: sqlite3, pydantic
 
 ## Support
 

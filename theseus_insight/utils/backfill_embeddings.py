@@ -215,7 +215,7 @@ def main():
     parser = argparse.ArgumentParser(description="Backfill embeddings for papers without them")
     parser.add_argument(
         "--db-url", 
-        default=os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"),
+        default=os.getenv("DATABASE_URL", "data/theseus.db"),
         help="Database connection URL (default: from DATABASE_URL env var)"
     )
     parser.add_argument(

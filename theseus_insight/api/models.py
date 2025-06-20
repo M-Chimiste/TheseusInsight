@@ -93,6 +93,15 @@ class TTSModelConfig(BaseModel):
             }
         }
 
+class MindMapConfig(BaseModel):
+    """Configuration for Mind-Map Explorer."""
+    k: int = Field(15, ge=5, le=50, description="Number of neighbors to retrieve")
+    similarity_threshold: float = Field(0.3, ge=0.1, le=0.95, description="Minimum similarity threshold")
+    layout_algorithm: str = Field("force", description="Layout algorithm: force, circular, hierarchical")
+    summarization_model: ModelConfig = Field(..., description="Model used for paper summarization")
+    expansion_order: int = Field(1, ge=1, le=5, description="Order of expansion (1-5). Higher orders expand from each retrieved paper.")
+    max_nodes_per_order: int = Field(20, ge=5, le=50, description="Maximum number of nodes to expand from each paper in multi-order expansion")
+
 class OrchestrationConfig(BaseModel):
     embedding_model: ModelConfig = Field(..., example={"model_name": "Alibaba-NLP/gte-modernbert-base", "model_type": "sentence-transformers", "trust_remote_code": True})
     judge_model: ModelConfig = Field(..., example={"model_name": "phi4-mini:3.8b-q8_0", "model_type": "ollama", "max_new_tokens": 512, "temperature": 0.1, "num_ctx": 4096})
@@ -101,6 +110,8 @@ class OrchestrationConfig(BaseModel):
     newsletter_intro_model: ModelConfig = Field(..., example={"model_name": "gemini-2.0-flash", "model_type": "gemini", "max_new_tokens": 4096, "temperature": 0.1, "num_ctx": 131072})
     podcast_model: Optional[ModelConfig] = Field(None, example={"model_name": "gemini-2.0-flash", "model_type": "gemini", "max_new_tokens": 8192, "temperature": 0.1, "num_ctx": 131072})
     tts_model: Optional[TTSModelConfig] = Field(None, example={"tts_provider": "openai", "tts_model_name": "tts-1", "speaker_1_voice": "sage", "speaker_1_speed": 1.0, "speaker_2_voice": "ash", "speaker_2_speed": 1.0})
+    research_agent_model_config: Optional[ResearchAgentModelConfigApi] = Field(None, description="Research Agent model configuration for automated literature review")  
+    mind_map_config: Optional[MindMapConfig] = Field(None, description="Mind-Map Explorer configuration")
     # Add other orchestration settings as needed
 
 class ModelProvider(BaseModel):
@@ -264,6 +275,7 @@ class PaperApiResponse(BaseModel):
     cosine_similarity: float
     url: str
     embedding_model: str
+    keywords: Optional[List[str]] = Field(default=None, description="Top keywords extracted from title/abstract")
     similarity_score: Optional[float] = Field(default=None, description="Semantic similarity score when returned from similarity search")
     semantic_score: Optional[float] = Field(default=None, description="Semantic similarity score in hybrid search")
     keyword_score: Optional[float] = Field(default=None, description="Keyword matching score in hybrid search")
@@ -313,8 +325,257 @@ class HybridSearchResponse(BaseModel):
     semantic_weight: float
     keyword_weight: float
 
-# Removed the conflicting/simpler NodeStatus definition that was here.
-# class NodeStatus(BaseModel):
-#     id: str 
-#     status: str 
-#     message: Optional[str] = None 
+# Research Agent Model Configuration
+class ResearchAgentModelConfigApi(BaseModel):
+    """API model for Research Agent model configuration (FR-16, FR-17)."""
+    boss_model: ModelConfig = Field(..., description="Main coordinating model")
+    worker_models: Dict[str, ModelConfig] = Field(
+        default_factory=dict, 
+        description="Task-specific worker models (summary, analysis, search)"
+    )
+    default_worker: str = Field("summary", description="Default worker model role")
+    max_retries: int = Field(3, ge=1, le=10, description="Maximum retry attempts")
+    
+    # LangGraph workflow configuration
+    max_research_context_tokens: int = Field(15000, ge=1000, le=100000, description="Budget before compression")
+    compress_to_ratio: float = Field(0.2, ge=0.1, le=0.8, description="Target ratio for scratch-pad compression")
+    initial_rerank_top_k: int = Field(40, ge=5, le=100, description="Input to cross-encoder re-ranking")
+    max_research_loops: int = Field(3, ge=1, le=10, description="Maximum research iteration loops")
+    
+    # Node-specific model configurations
+    query_planner_model: Optional[ModelConfig] = Field(None, description="Model for query decomposition")
+    evidence_selector_model: Optional[ModelConfig] = Field(None, description="Model for evidence sufficiency evaluation")
+    compression_model: Optional[ModelConfig] = Field(None, description="Model for context compression")
+    answer_generator_model: Optional[ModelConfig] = Field(None, description="Model for final report generation")
+    
+    # External API configuration
+    arxiv_rate_limit: float = Field(3.0, ge=0.5, le=10.0, description="ArXiv API requests per second")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "boss_model": {
+                    "model_name": "gemini-2.0-flash",
+                    "model_type": "gemini",
+                    "max_new_tokens": 4096,
+                    "temperature": 0.1,
+                    "num_ctx": 131072
+                },
+                "worker_models": {
+                    "summary": {
+                        "model_name": "gemma3:27b-it-qat",
+                        "model_type": "ollama",
+                        "max_new_tokens": 4096,
+                        "temperature": 0.1,
+                        "num_ctx": 131072
+                    },
+                    "analysis": {
+                        "model_name": "phi4-mini:3.8b-q8_0",
+                        "model_type": "ollama",
+                        "max_new_tokens": 2048,
+                        "temperature": 0.1,
+                        "num_ctx": 4096
+                    }
+                },
+                "default_worker": "summary",
+                "max_retries": 3,
+                "max_research_context_tokens": 15000,
+                "compress_to_ratio": 0.2,
+                "initial_rerank_top_k": 40,
+                "max_research_loops": 3,
+                "arxiv_rate_limit": 3.0,
+            }
+        }
+
+# Research Agent Request/Response models
+class ResearchAgentRunRequest(BaseModel):
+    """Request model for starting a research agent run (FR-18)."""
+    research_question: str = Field(..., min_length=10, description="Research question to investigate")
+    num_papers_target: int = Field(5, ge=1, le=20, description="Target number of papers to collect")
+    max_steps: int = Field(10, ge=1, le=50, description="Maximum agent iteration steps")
+    model_config_override: Optional[ResearchAgentModelConfigApi] = Field(
+        None, description="Optional model configuration override"
+    )
+
+class ResearchAgentRunResponse(BaseModel):
+    """Response model for research agent run initiation."""
+    task_id: str = Field(..., description="Unique task identifier")
+    message: str = Field(..., description="Status message")
+
+# Literature Review result models
+class LiteratureReviewSummary(BaseModel):
+    """Summary of a literature review result."""
+    paper_id: int
+    title: str
+    summary: str
+    rationale: str
+    relevance_score: float
+
+class LiteratureReviewResult(BaseModel):
+    """Complete literature review result."""
+    id: int
+    research_question: str
+    summaries: List[LiteratureReviewSummary]
+    created_ts: str
+    total_papers: int
+    trace_log: List[Dict[str, Any]] = Field(default_factory=list)
+    report_text: Optional[str] = Field(None, description="Full markdown report generated by the research agent")
+
+# Model Catalog models
+class ModelCatalogEntry(BaseModel):
+    """Model catalog entry."""
+    id: int
+    alias: str = Field(..., description="Display name for the model")
+    model_string: str = Field(..., description="Model identifier string")
+    provider_name: str = Field(..., description="Provider name (e.g., openai, ollama)")
+    model_type: str = Field(..., description="Model type (e.g., chat, completion, embedding)")
+    description: Optional[str] = Field(None, description="Model description (markdown supported)")
+    max_new_tokens: Optional[int] = Field(None, description="Maximum new tokens")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Temperature setting")
+    num_ctx: Optional[int] = Field(None, description="Context window size")
+    trust_remote_code: Optional[bool] = Field(False, description="Whether to trust remote code")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Model tags")
+    is_favorite: Optional[bool] = Field(False, description="Whether model is marked as favorite")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+
+class ModelCatalogCreateRequest(BaseModel):
+    """Request model for creating a model catalog entry."""
+    alias: str = Field(..., description="Display name for the model")
+    model_string: str = Field(..., description="Model identifier string") 
+    provider_name: str = Field(..., description="Provider name")
+    model_type: str = Field(..., description="Model type")
+    description: Optional[str] = Field("", description="Model description")
+    max_new_tokens: Optional[int] = Field(None, description="Maximum new tokens")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Temperature setting")
+    num_ctx: Optional[int] = Field(None, description="Context window size")
+    trust_remote_code: bool = Field(False, description="Whether to trust remote code")
+    tags: List[str] = Field(default_factory=list, description="Model tags")
+    is_favorite: bool = Field(False, description="Whether model is marked as favorite")
+
+class ModelCatalogUpdateRequest(BaseModel):
+    """Request model for updating a model catalog entry."""
+    alias: Optional[str] = Field(None, description="Display name for the model")
+    model_string: Optional[str] = Field(None, description="Model identifier string")
+    provider_name: Optional[str] = Field(None, description="Provider name")
+    model_type: Optional[str] = Field(None, description="Model type")
+    description: Optional[str] = Field(None, description="Model description")
+    max_new_tokens: Optional[int] = Field(None, description="Maximum new tokens")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Temperature setting")
+    num_ctx: Optional[int] = Field(None, description="Context window size")
+    trust_remote_code: Optional[bool] = Field(None, description="Whether to trust remote code")
+    tags: Optional[List[str]] = Field(None, description="Model tags")
+    is_favorite: Optional[bool] = Field(None, description="Whether model is marked as favorite")
+
+class ModelCatalogSearchRequest(BaseModel):
+    """Request model for searching model catalog."""
+    search: Optional[str] = Field(None, description="Search query")
+    provider: Optional[str] = Field(None, description="Filter by provider")
+    model_type: Optional[str] = Field(None, description="Filter by model type")
+    tags: Optional[List[str]] = Field(None, description="Filter by tags")
+    is_favorite: Optional[bool] = Field(None, description="Filter by favorite status")
+    page: int = Field(1, ge=1, description="Page number")
+    page_size: int = Field(10, ge=1, le=100, description="Page size")
+
+class ModelCatalogSearchResponse(BaseModel):
+    """Response model for model catalog search."""
+    models: List[ModelCatalogEntry] = Field(..., description="List of models")
+    total_count: int = Field(..., description="Total number of models")
+    total_pages: int = Field(..., description="Total number of pages")
+    current_page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Page size")
+
+# Mind-Map specific models
+class MindMapNode(BaseModel):
+    """A node in the mind-map visualization."""
+    id: str = Field(..., description="Unique node identifier (paper_id)")
+    title: str = Field(..., description="Paper title")
+    summary: str = Field(..., description="LLM-generated summary")
+    similarity_score: float = Field(..., description="Similarity score to seed paper")
+    position: Dict[str, float] = Field(..., description="Node position {x, y}")
+    is_seed: bool = Field(False, description="Whether this is the seed paper")
+    has_fulltext: bool = Field(False, description="Whether full-text is available")
+    url: Optional[str] = Field(None, description="Paper URL")
+    date: Optional[str] = Field(None, description="Publication date")
+    keywords: Optional[List[str]] = Field(None, description="Top keywords extracted from the paper title/abstract")
+
+class MindMapEdge(BaseModel):
+    """An edge connecting two nodes in the mind-map."""
+    source: str = Field(..., description="Source node ID")
+    target: str = Field(..., description="Target node ID")
+    similarity_score: float = Field(..., description="Similarity score between papers")
+
+class MindMapData(BaseModel):
+    """Complete mind-map data structure."""
+    nodes: List[MindMapNode] = Field(..., description="List of nodes")
+    edges: List[MindMapEdge] = Field(..., description="List of edges")
+    seed_paper_id: str = Field(..., description="ID of the seed paper")
+    layout_algorithm: str = Field(..., description="Layout algorithm used")
+    generation_timestamp: str = Field(..., description="When the mind-map was generated")
+
+class MindMapExpandRequest(BaseModel):
+    """Request model for expanding a mind-map."""
+    paper_id: str = Field(..., description="Seed paper ID")
+    k: int = Field(15, ge=1, le=50, description="Number of similar papers to retrieve")
+    similarity_threshold: float = Field(0.3, ge=0.0, le=1.0, description="Minimum similarity threshold")
+    layout_algorithm: str = Field("force", description="Layout algorithm: force, circular, hierarchical")
+    model_config_override: Optional[ModelConfig] = Field(None, description="Override default summarization model")
+    expansion_order: int = Field(1, ge=1, le=5, description="Order of expansion (1-5). Higher orders expand from each retrieved paper.")
+    max_nodes_per_order: int = Field(20, ge=5, le=50, description="Maximum number of nodes to expand from each paper in multi-order expansion")
+
+class MindMapExpandResponse(BaseModel):
+    """Response model for mind-map expansion."""
+    task_id: str = Field(..., description="Task ID for tracking progress")
+    message: str = Field(..., description="Status message")
+
+class PDFParseRequest(BaseModel):
+    """Request model for parsing PDFs on-demand."""
+    paper_ids: List[str] = Field(..., max_items=20, description="List of paper IDs to parse (max 20)")
+
+class PDFParseResponse(BaseModel):
+    """Response model for PDF parsing."""
+    task_id: str = Field(..., description="Task ID for tracking progress")
+    message: str = Field(..., description="Status message")
+    papers_to_parse: int = Field(..., description="Number of papers queued for parsing")
+
+class MindMapSeedSearchRequest(BaseModel):
+    """Request model for searching papers to use as mind-map seeds."""
+    query: str = Field(..., min_length=3, description="Search query")
+    limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
+
+class MindMapSeedSearchResponse(BaseModel):
+    """Response model for seed paper search."""
+    query: str = Field(..., description="Search query used")
+    results: List[PaperApiResponse] = Field(..., description="List of matching papers")
+    total_results: int = Field(..., description="Total number of results")
+
+# Mind-Map Report models for saving and loading mind-maps
+class MindMapReport(BaseModel):
+    """A saved mind-map report."""
+    id: int = Field(..., description="Unique report ID")
+    title: str = Field(..., description="Report title")
+    description: Optional[str] = Field(None, description="Optional report description")
+    seed_paper_id: int = Field(..., description="ID of the seed paper")
+    seed_paper_title: str = Field(..., description="Title of the seed paper")
+    parameters: Dict[str, Any] = Field(..., description="Generation parameters used")
+    mindmap_data: Dict[str, Any] = Field(..., description="Complete mind-map data")
+    statistics: Dict[str, Any] = Field(..., description="Generation statistics")
+    created_at: str = Field(..., description="Creation timestamp")
+
+class MindMapReportSaveRequest(BaseModel):
+    """Request to save a mind-map as a report."""
+    title: str = Field(..., min_length=1, max_length=200, description="Report title (required)")
+    description: Optional[str] = Field(None, max_length=1000, description="Optional description")
+    mindmap_data: Dict[str, Any] = Field(..., description="Complete mind-map data to save")
+    parameters: Dict[str, Any] = Field(..., description="Generation parameters")
+
+class MindMapReportListResponse(BaseModel):
+    """Response with list of saved mind-map reports."""
+    reports: List[MindMapReport] = Field(..., description="List of saved reports")
+    total_count: int = Field(..., description="Total number of reports")
+
+class MindMapReportSaveResponse(BaseModel):
+    """Response when saving a mind-map report."""
+    id: int = Field(..., description="Saved report ID")
+    title: str = Field(..., description="Report title")
+    message: str = Field(..., description="Success message")

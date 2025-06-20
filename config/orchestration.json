@@ -10,9 +10,9 @@
   "judge_model": {
     "model_name": "phi4-mini:3.8b-q8_0",
     "model_type": "ollama",
-    "max_new_tokens": 600,
+    "max_new_tokens": 512,
     "temperature": 0.1,
-    "num_ctx": 4096,
+    "num_ctx": 131072,
     "trust_remote_code": null
   },
   "content_extraction_model": {
@@ -24,9 +24,9 @@
     "trust_remote_code": null
   },
   "newsletter_sections_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
+    "model_name": "hf.co/bartowski/google_gemma-3-27b-it-qat-GGUF:Q4_K_M",
     "model_type": "ollama",
-    "max_new_tokens": 4096,
+    "max_new_tokens": 8192,
     "temperature": 0.1,
     "num_ctx": 131072,
     "trust_remote_code": null
@@ -34,9 +34,9 @@
   "newsletter_intro_model": {
     "model_name": "gemini-2.0-flash",
     "model_type": "gemini",
-    "max_new_tokens": 4096,
+    "max_new_tokens": null,
     "temperature": 0.1,
-    "num_ctx": 131072,
+    "num_ctx": null,
     "trust_remote_code": null
   },
   "podcast_model": {
@@ -54,5 +54,95 @@
     "speaker_1_speed": 1.0,
     "speaker_2_voice": "ash",
     "speaker_2_speed": 1.0
+  },
+  "research_agent_model_config": {
+    "boss_model": {
+      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "worker_models": {
+      "summary": {
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 4096,
+        "temperature": 0.1,
+        "num_ctx": 131072,
+        "trust_remote_code": null
+      },
+      "analysis": {
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 4096,
+        "temperature": 0.1,
+        "num_ctx": 131072,
+        "trust_remote_code": null
+      },
+      "search": {
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 4096,
+        "temperature": 0.1,
+        "num_ctx": 131072,
+        "trust_remote_code": null
+      }
+    },
+    "default_worker": "summary",
+    "max_retries": 3,
+    "max_research_context_tokens": 15000,
+    "compress_to_ratio": 0.2,
+    "initial_rerank_top_k": 40,
+    "max_research_loops": 3,
+    "query_planner_model": {
+      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "evidence_selector_model": {
+      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "compression_model": {
+      "model_name": "phi4-mini:3.8b-q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "answer_generator_model": {
+      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "arxiv_rate_limit": 1.0
+  },
+  "mind_map_config": {
+    "k": 5,
+    "similarity_threshold": 0.65,
+    "layout_algorithm": "force",
+    "summarization_model": {
+      "model_name": "phi4-mini:3.8b-q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 512,
+      "temperature": 0.1,
+      "num_ctx": 131072,
+      "trust_remote_code": null
+    },
+    "expansion_order": 2,
+    "max_nodes_per_order": 5
   }
 }

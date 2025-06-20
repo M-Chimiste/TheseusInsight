@@ -6,11 +6,21 @@ numpy
 # NLP & Text Processing
 spacy
 spacy-layout
+docling
+markitdown
+markdown
+mdpd
 tiktoken
 unidecode
 
 # Embeddings & Vector Search
 sentence-transformers
+
+# Research Agent Dependencies
+arxiv>=1.4.7
+simhash>=2.1.0
+langgraph
+yake
 
 # LLM & AI Services
 anthropic[bedrock]
@@ -46,9 +56,9 @@ pygame  # Visualization
 google-api-python-client
 google-auth-oauthlib
 
-# Electron
+# WebAPI / DB
 fastapi
-uvicorn
+uvicorn[standard]
+websockets
 python-multipart
-psycopg2-binary
-pgvector
+sqlite-vec

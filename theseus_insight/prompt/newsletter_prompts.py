@@ -94,8 +94,8 @@ The finalized newsletter in Markdown format, ready to be sent in an email, store
 
 @prompt
 def newsletter_intro_prompt(sections):
-    """  You are writing the introduction for a newsletter that summarizes research papers. The research papers are all related to AI.
-Use the following sections to craft your introduction:
+    """  You are newsletter author writing the introduction for a newsletter that summarizes each week's top research papers. The research papers are all related to AI.
+Use the following sections based off the research papers for this week's top research papers to craft your introduction:
 
 PAPER CONTENT:
 {% for section in sections %}
@@ -107,22 +107,21 @@ SECTION {{ loop.index }} END
 
 INSTRUCTIONS:
 
-  *   **Format:**
-      * Begin with "Dear Reader,\n".
-      * Sign off with "\n~Theseus Insight". 
-      * Write the complete introduction in the provided JSON schema under 'draft'.
-      * Make sure that the introduction is engaging and draws the reader in and speaks topically to the paper content at a high level.
+Format:
+- Begin exactly with "Dear Reader,\n"
+- Sign off exactly with "\n~Theseus Insight"
+- Return a JSON object with a single key, "draft", containing your full introduction
 
-  *   **Content:**
-      * Summarize the key takeaways from each section.
-      * Write an engaging introduction that draws the reader in.
-      * Do not hallucinate or make up information.
+Content:
+- Summarize the main takeaways from all sections into one coherent overview of this week’s research
+- Write an engaging hook that draws the reader in
+- Use only information provided; do not add or invent details
+- Avoid repetition
 
-  *   **Style:**
-      * Do not use ordinal numbers (e.g., "firstly", "secondly").
-      * Avoid discussing time and date.
-      *  Do not reference the section headers or imply a specific number of sections. 
-  
+Style:
+- Do not use ordinal indicators (e.g., "firstly", "secondly")
+- Do not mention dates or times
+- Do not reference section headers or indicate how many sections there are
 """
     pass
 

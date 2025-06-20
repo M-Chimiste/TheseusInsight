@@ -1,4 +1,4 @@
-from .harvester import ArxivOAIHarvester
+from .unified_harvester import UnifiedArxivHarvester
 from datetime import datetime, timedelta, date
 import pandas as pd
 
@@ -92,33 +92,34 @@ class ArxivDataProcessor:
         print(f"Start date: {start_date}, End date: {end_date}")
         print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
-        harvester = ArxivOAIHarvester(
+        with UnifiedArxivHarvester(
             category=self.category,
             subcategories=self.subcategories,
             date_from=start_date,
             date_until=end_date,
+            max_results=self.max_results,
             verbose=True
-        )
-        records = harvester.harvest()
-        data_df = harvester.to_dataframe()
-        
-        # Handle case where no records were retrieved
-        if data_df.empty or len(records) == 0:
-            print(f"No records found for date range {start_date} to {end_date}")
-            print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+        ) as harvester:
+            records = harvester.harvest()
+            data_df = harvester.to_dataframe()
             
-            # Create an empty DataFrame with the expected structure for downstream processing
-            empty_df = pd.DataFrame(columns=[
-                'id', 'url', 'pdf_url', 'title', 'abstract', 'categories', 
-                'created', 'updated', 'doi', 'authors', 'affiliation'
-            ])
-            # Add the 'date' column that downstream code expects
-            empty_df['date'] = pd.to_datetime([])
-            return empty_df
-        
-        # Normal case: process the retrieved records
-        data_df['date'] = pd.to_datetime(data_df['created'])
-        return data_df
+            # Handle case where no records were retrieved
+            if data_df.empty or len(records) == 0:
+                print(f"No records found for date range {start_date} to {end_date}")
+                print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+                
+                # Create an empty DataFrame with the expected structure for downstream processing
+                empty_df = pd.DataFrame(columns=[
+                    'id', 'url', 'pdf_url', 'title', 'abstract', 'categories', 
+                    'created', 'updated', 'doi', 'authors', 'affiliation'
+                ])
+                # Add the 'date' column that downstream code expects
+                empty_df['date'] = pd.to_datetime([])
+                return empty_df
+            
+            # Normal case: process the retrieved records
+            data_df['date'] = pd.to_datetime(data_df['created'])
+            return data_df
             
             
         

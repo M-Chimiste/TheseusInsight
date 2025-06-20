@@ -1,7 +1,22 @@
 _ARXIV_NS = "{http://arxiv.org/OAI/arXiv/}"
-_BASE_URL = "https://export.arxiv.org/oai2"
+_BASE_URL = "http://export.arxiv.org/oai2"  # HTTP works better than HTTPS currently
+_FALLBACK_URLS = [
+    "http://export.arxiv.org/oai2",   # HTTP primary (works for simple requests)
+    "https://export.arxiv.org/oai2",  # HTTPS fallback (currently having issues)
+    # Note: arxiv.org redirects to export.arxiv.org, so no point trying it
+]
 _OAI_NS = "{http://www.openarchives.org/OAI/2.0/}"
 _MIN_INTERVAL = 3.0  # ≤ 1 request / 3 s (arXiv legacy policy)
+
+# Task Types
+TASK_TYPE_NEWSLETTER = "newsletter"
+TASK_TYPE_PODCAST = "podcast"
+TASK_TYPE_VISUALIZER = "visualizer"
+TASK_TYPE_CUSTOM_NEWSLETTER_RUN = "custom_newsletter_run"
+TASK_TYPE_DATABASE_EXPORT = "database_export"
+TASK_TYPE_DATABASE_IMPORT = "database_import"
+TASK_TYPE_RESEARCH_AGENT = "research_agent"
+
 INTRO_TEXT = [
     "This fascinating study sheds light on...",
     "This research shows that...",

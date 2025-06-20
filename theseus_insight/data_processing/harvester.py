@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # Standard library imports
+import os
 import random
 import threading
 import time
@@ -77,6 +78,54 @@ class ArxivOAIHarvester:
 
         self._last_call = 0.0  # Unix-epoch timestamp
         self._lock = threading.Lock()
+        
+        # Debug mode check
+        self._debug_mode = os.getenv("DEBUG", "").lower() == "true"
+        if self._debug_mode:
+            self._debug_log("Debug mode enabled for ArxivOAIHarvester")
+            self._debug_log(f"Initialized with: category={category}, date_from={date_from}, date_until={date_until}")
+            self._debug_log(f"Subcategories: {subcategories}, max_results={max_results}, timeout={timeout}")
+
+    def check_service_health(self) -> bool:
+        """Check if ArXiv OAI-PMH ListRecords endpoint is responsive.
+        
+        Returns:
+            bool: True if service is healthy, False otherwise.
+        """
+        self._debug_log("Checking ArXiv OAI-PMH service health...")
+        
+        # Test with a minimal request - just one day, minimal date range
+        test_params = {
+            "verb": "ListRecords",
+            "metadataPrefix": "arXiv", 
+            "from": "2024-01-01",
+            "until": "2024-01-01",
+            "set": "cs"
+        }
+        
+        try:
+            # Use a short timeout for health check
+            request_timeout = 15
+            self._debug_log(f"Health check request with {request_timeout}s timeout")
+            resp = self._session.get(_BASE_URL, params=test_params, timeout=request_timeout)
+            
+            if resp.status_code == 200:
+                # Check if we got valid XML (not just connection)
+                root = ET.fromstring(resp.content)
+                error = root.find(_OAI_NS + "error")
+                if error is not None:
+                    self._debug_log(f"Health check failed - OAI error: {error.attrib.get('code')}: {error.text}")
+                    return False
+                    
+                self._debug_log("Health check passed - ArXiv OAI-PMH is responsive")
+                return True
+            else:
+                self._debug_log(f"Health check failed - HTTP {resp.status_code}")
+                return False
+                
+        except Exception as exc:
+            self._debug_log(f"Health check failed - {exc}")
+            return False
 
     def _log(self, msg: str) -> None:
         """Print a message if verbose mode is enabled.
@@ -86,6 +135,16 @@ class ArxivOAIHarvester:
         """
         if self.verbose:
             print(msg, flush=True)
+            
+    def _debug_log(self, msg: str) -> None:
+        """Print a debug message if DEBUG environment variable is 'true'.
+
+        Args:
+            msg (str): Debug message to print.
+        """
+        if self._debug_mode:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[DEBUG {timestamp}] {msg}", flush=True)
 
     def _exp_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff delay with jitter.
@@ -108,6 +167,7 @@ class ArxivOAIHarvester:
         with self._lock:
             wait = max(0.0, (_MIN_INTERVAL + extra) - (time.time() - self._last_call))
             if wait:
+                self._debug_log(f"Throttling request - waiting {wait:.2f}s (min_interval={_MIN_INTERVAL}, extra={extra})")
                 time.sleep(wait)
             self._last_call = time.time()
 
@@ -125,15 +185,23 @@ class ArxivOAIHarvester:
             RuntimeError: If the request fails for other reasons.
         """
         start, attempt = time.time(), 0
+        self._debug_log(f"Starting request with params: {params}")
 
         while True:
-            if time.time() - start > self.timeout:
+            elapsed = time.time() - start
+            if elapsed > self.timeout:
+                self._debug_log(f"Request timeout exceeded after {elapsed:.1f}s (limit: {self.timeout}s)")
                 raise TimeoutError("Aggregate timeout exceeded")
 
+            self._debug_log(f"Making request attempt {attempt + 1} to {_BASE_URL}")
             self._throttle()
 
             try:
-                resp = self._session.get(_BASE_URL, params=params, timeout=30)
+                # Use a shorter timeout for individual requests to avoid hanging
+                request_timeout = min(30, self.timeout)
+                self._debug_log(f"Making HTTP request with {request_timeout}s timeout")
+                resp = self._session.get(_BASE_URL, params=params, timeout=request_timeout)
+                self._debug_log(f"Response received: status={resp.status_code}, content_length={len(resp.content)}")
 
                 if resp.status_code == 503:
                     retry_hdr = resp.headers.get("Retry-After")
@@ -141,6 +209,7 @@ class ArxivOAIHarvester:
                     backoff = self._exp_backoff(attempt)
                     extra = max(hdr_delay, backoff)
 
+                    self._debug_log(f"503 Service Unavailable - retry_after_header={retry_hdr}, calculated_delay={extra:.1f}s")
                     self._log(
                         f"503 → retry {attempt+1} after {extra:.1f}s "
                         f"(hdr={hdr_delay:.0f}, backoff={backoff:.1f})"
@@ -150,13 +219,22 @@ class ArxivOAIHarvester:
                     continue
 
                 resp.raise_for_status()
+                self._debug_log(f"Request successful after {time.time() - start:.1f}s")
                 return ET.fromstring(resp.content)
 
             except requests.RequestException as exc:
-                raise RuntimeError(f"OAI-PMH request failed: {exc}") from exc
+                self._debug_log(f"Request failed: {exc}")
+                if "timeout" in str(exc).lower():
+                    backoff = self._exp_backoff(attempt)
+                    self._debug_log(f"Request timeout - retrying after {backoff:.1f}s (attempt {attempt + 1})")
+                    self._log(f"Request timeout → retry {attempt+1} after {backoff:.1f}s")
+                    self._throttle(backoff)
+                    attempt += 1
+                    if attempt < 3:  # Allow up to 3 timeout retries
+                        continue
+                raise RuntimeError(f"OAI-PMH request failed after {attempt + 1} attempts: {exc}") from exc
 
-    @staticmethod
-    def _parse_record(rec_xml: ET.Element) -> Dict[str, Any]:
+    def _parse_record(self, rec_xml: ET.Element) -> Dict[str, Any]:
         """Parse a single record from XML.
 
         Args:
@@ -165,10 +243,18 @@ class ArxivOAIHarvester:
         Returns:
             Dict[str, Any]: Parsed record as a dictionary, or empty dict if malformed.
         """
-        meta = rec_xml.find(_OAI_NS + "metadata").find(_ARXIV_NS + "arXiv")
-        if meta is None:
+        try:
+            meta = rec_xml.find(_OAI_NS + "metadata").find(_ARXIV_NS + "arXiv")
+            if meta is None:
+                self._debug_log("Record metadata not found - skipping malformed record")
+                return {}
+            
+            parsed = ArxivRecord(meta).model_dump()
+            self._debug_log(f"Parsed record: id={parsed.get('id', 'unknown')}, title={parsed.get('title', 'unknown')[:50]}...")
+            return parsed
+        except Exception as exc:
+            self._debug_log(f"Failed to parse record: {exc}")
             return {}
-        return ArxivRecord(meta).model_dump()
 
     # ------------------------------------------------------------------ date filter
     def _created_in_range(self, created_str: str) -> bool:
@@ -177,9 +263,12 @@ class ArxivOAIHarvester:
             created = datetime.datetime.strptime(created_str, "%Y-%m-%d").date()
             start   = datetime.datetime.strptime(self.date_from, "%Y-%m-%d").date()
             end     = datetime.datetime.strptime(self.date_until, "%Y-%m-%d").date()
-            return start <= created <= end
-        except Exception:
+            in_range = start <= created <= end
+            self._debug_log(f"Date check: created={created_str}, range=[{self.date_from}, {self.date_until}], in_range={in_range}")
+            return in_range
+        except Exception as exc:
             # Malformed date? Treat as out‑of‑range so it gets skipped
+            self._debug_log(f"Invalid date format '{created_str}': {exc} - treating as out of range")
             return False
 
     def harvest(self) -> List[Dict[str, Any]]:
@@ -191,7 +280,15 @@ class ArxivOAIHarvester:
         Raises:
             RuntimeError: If the OAI-PMH API returns an error.
         """
+        self._debug_log("Starting harvest operation")
         self._records.clear()
+        
+        # Check if ArXiv service is healthy before starting
+        if not self.check_service_health():
+            raise RuntimeError(
+                "ArXiv OAI-PMH ListRecords service appears to be down or unresponsive. "
+                "Please try again later or check ArXiv status at https://status.arxiv.org/"
+            )
 
         params = {
             "verb": "ListRecords",
@@ -200,9 +297,15 @@ class ArxivOAIHarvester:
             "until": self.date_until,
             "set": self.set,
         }
+        self._debug_log(f"Initial harvest parameters: {params}")
 
+        page_count = 0
         while True:
+            page_count += 1
+            self._debug_log(f"Processing page {page_count}")
+            
             root = self._request(params)
+            
             if self.verbose and not hasattr(self, "_total_records"):
                 total = None
                 try:
@@ -217,42 +320,76 @@ class ArxivOAIHarvester:
                     if self.max_results:
                         total = min(total, self.max_results)
                     self._log(f"Total records available in range: {total}")
+                    self._debug_log(f"Total records count determined: {total}")
                 else:
                     self._log("Could not determine total record count; proceeding...")
+                    self._debug_log("Could not determine total record count from response")
                 self._total_records = total  # remember so we don't print again
                 
             err = root.find(_OAI_NS + "error")
             if err is not None:
+                error_code = err.attrib.get('code')
+                error_text = err.text.strip() if err.text else 'No error text'
+                self._debug_log(f"OAI-PMH API returned error: code={error_code}, text={error_text}")
                 raise RuntimeError(
-                    f"OAI-PMH error {err.attrib.get('code')}: {err.text.strip()}"
+                    f"OAI-PMH error {error_code}: {error_text}"
                 )
 
-            for rec in root.findall(_OAI_NS + "ListRecords/" + _OAI_NS + "record"):
+            records_in_page = root.findall(_OAI_NS + "ListRecords/" + _OAI_NS + "record")
+            self._debug_log(f"Found {len(records_in_page)} records in page {page_count}")
+            
+            records_processed = 0
+            records_filtered_subcategory = 0
+            records_filtered_date = 0
+            records_accepted = 0
+
+            for rec in records_in_page:
+                records_processed += 1
                 parsed = self._parse_record(rec)
+                
+                if not parsed:  # Skip empty/malformed records
+                    continue
+                    
                 # Skip records that do not match requested sub‑categories
                 if (
                     self.subcategories
                     and not any(sub in parsed["categories"].lower() for sub in self.subcategories)
                 ):
+                    records_filtered_subcategory += 1
+                    self._debug_log(f"Filtered by subcategory: {parsed['categories']} not in {self.subcategories}")
                     continue
+                    
                 # Skip records whose *creation* date is outside the requested range
                 if not self._created_in_range(parsed["created"]):
+                    records_filtered_date += 1
                     continue
+                    
                 if parsed:
+                    records_accepted += 1
                     self._records.append(parsed)
+                    self._debug_log(f"Accepted record {len(self._records)}: {parsed['id']}")
+                    
                     if self.max_results and len(self._records) >= self.max_results:
                         self._log("Reached max_results limit; stopping.")
+                        self._debug_log(f"Stopping at max_results limit: {self.max_results}")
                         return self._records
+
+            self._debug_log(f"Page {page_count} summary: processed={records_processed}, "
+                          f"filtered_subcategory={records_filtered_subcategory}, "
+                          f"filtered_date={records_filtered_date}, accepted={records_accepted}")
 
             token = root.find(
                 _OAI_NS + "ListRecords/" + _OAI_NS + "resumptionToken"
             )
             if token is None or not token.text:
+                self._debug_log("No more pages - harvest complete")
                 break
 
+            self._debug_log(f"Found resumption token: {token.text[:50]}...")
             params = {"verb": "ListRecords", "resumptionToken": token.text}
 
         self._log(f"Harvested {len(self._records)} records")
+        self._debug_log(f"Harvest completed: {len(self._records)} total records collected over {page_count} pages")
         return self._records
 
     def to_dataframe(self):

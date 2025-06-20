@@ -71,6 +71,7 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **Real‑time progress** streaming over WebSockets for long running tasks.
 - **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
+- **Robust ArXiv Data Access**: Automatic fallback from live ArXiv OAI-PMH API to Kaggle dataset (1.7M+ papers) with auto-download and cleanup when the API is unavailable.
 - **Cached Summaries & Keywords**: LLM-generated paper summaries and YAKE-extracted top keywords are stored in the database, eliminating redundant generation and dramatically speeding up subsequent mind-map builds.
 - **Mind-Map Explorer**: An interactive visualization tool to explore the intellectual neighborhood of research papers.
   - **Multi-Order Expansion**: Generate mind-maps with configurable expansion orders (1-5) to explore deeper connections between papers.
@@ -267,6 +268,33 @@ Create a `.env` file in the project root containing keys and settings:
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |
 | `RUNNING_IN_DOCKER` | Set to `true` in Docker images for correct static file paths |
 | `APP_SECRET_KEY` | Secret used to encrypt API credentials stored in the database |
+
+### ArXiv Data Source Configuration
+
+Theseus Insight automatically fetches papers from ArXiv's OAI-PMH API. When the API is unavailable, it can automatically fall back to the Kaggle ArXiv dataset:
+
+| Variable | Purpose |
+|----------|---------|
+| `KAGGLE_USERNAME` | Your Kaggle username for automatic dataset downloads |
+| `KAGGLE_KEY` | Your Kaggle API key for authentication |
+| `KAGGLE_ARXIV_PATH` | Path to existing Kaggle ArXiv dataset file (optional) |
+| `FORCE_KAGGLE` | Set to `true` to skip OAI-PMH and use Kaggle dataset only |
+| `AUTO_DOWNLOAD` | Set to `false` to disable automatic Kaggle dataset downloads (default: `true`) |
+
+**Auto-Download Setup:**
+1. Get your Kaggle API credentials from [kaggle.com/account](https://www.kaggle.com/account) → API → "Create New API Token"
+2. Add to your `.env` file:
+   ```bash
+   KAGGLE_USERNAME=your_username
+   KAGGLE_KEY=your_api_key
+   ```
+
+When ArXiv's API is down, the system will automatically:
+- ✅ Download the 3.1GB Kaggle ArXiv dataset to a temporary directory
+- ✅ Process your queries using the downloaded data  
+- ✅ Clean up downloaded files after completion
+
+For detailed setup instructions, see [docs/kaggle_setup_README.md](docs/kaggle_setup_README.md).
 
 The application loads these credentials from the database at startup, falling back to `.env` values if necessary. You can view and update them from the **Settings → API Credentials** section in the UI.
 More details are available in [docs/credential_management_README.md](docs/credential_management_README.md).

@@ -14,7 +14,7 @@ import requests
 import pandas as pd
 
 from ..data_model.papers import ArxivRecord
-from ..constants import _ARXIV_NS, _BASE_URL, _OAI_NS, _MIN_INTERVAL
+from ..constants import _ARXIV_NS, _BASE_URL, _FALLBACK_URLS, _OAI_NS, _MIN_INTERVAL
 
 
 class ArxivOAIHarvester:
@@ -79,12 +79,34 @@ class ArxivOAIHarvester:
         self._last_call = 0.0  # Unix-epoch timestamp
         self._lock = threading.Lock()
         
+        # URL management
+        self._current_url = _BASE_URL
+        self._tried_urls = set()
+        
         # Debug mode check
         self._debug_mode = os.getenv("DEBUG", "").lower() == "true"
         if self._debug_mode:
             self._debug_log("Debug mode enabled for ArxivOAIHarvester")
             self._debug_log(f"Initialized with: category={category}, date_from={date_from}, date_until={date_until}")
             self._debug_log(f"Subcategories: {subcategories}, max_results={max_results}, timeout={timeout}")
+            self._debug_log(f"Available fallback URLs: {_FALLBACK_URLS}")
+
+    def _try_next_url(self) -> bool:
+        """Try the next available URL from the fallback list.
+        
+        Returns:
+            bool: True if a new URL was set, False if no more URLs to try.
+        """
+        self._tried_urls.add(self._current_url)
+        
+        for url in _FALLBACK_URLS:
+            if url not in self._tried_urls:
+                self._debug_log(f"Switching from {self._current_url} to fallback URL: {url}")
+                self._current_url = url
+                return True
+        
+        self._debug_log("No more fallback URLs available")
+        return False
 
     def check_service_health(self) -> bool:
         """Check if ArXiv OAI-PMH ListRecords endpoint is responsive.
@@ -94,7 +116,50 @@ class ArxivOAIHarvester:
         """
         self._debug_log("Checking ArXiv OAI-PMH service health...")
         
-        # Test with a minimal request - just one day, minimal date range
+        # Test basic connectivity first
+        import socket
+        try:
+            from urllib.parse import urlparse
+            parsed_url = urlparse(self._current_url)
+            host = parsed_url.hostname
+            port = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
+            
+            self._debug_log(f"Testing network connectivity to {host}:{port}")
+            sock = socket.create_connection((host, port), timeout=10)
+            sock.close()
+            self._debug_log(f"Network connectivity to {host}:{port} successful")
+        except Exception as exc:
+            self._debug_log(f"Network connectivity failed to {host}:{port}: {exc}")
+            self._debug_log(f"Server {host} appears to be down or unreachable")
+            
+            # Try next URL if available
+            if self._try_next_url():
+                self._debug_log("Retrying health check with fallback URL...")
+                return self.check_service_health()  # Recursive retry with new URL
+            return False
+        
+        # Test with Identify first (lighter request)
+        identify_params = {"verb": "Identify"}
+        
+        try:
+            request_timeout = 10
+            self._debug_log(f"Testing Identify endpoint at {self._current_url} with {request_timeout}s timeout") 
+            resp = self._session.get(self._current_url, params=identify_params, timeout=request_timeout)
+            if resp.status_code != 200:
+                self._debug_log(f"Identify test failed - HTTP {resp.status_code}")
+                raise Exception(f"HTTP {resp.status_code}")
+            self._debug_log("Identify test passed - basic connectivity OK")
+        except Exception as exc:
+            self._debug_log(f"Identify test failed - {exc}")
+            # Check if this should trigger fallback
+            is_connection_issue = any(keyword in str(exc).lower() for keyword in 
+                                    ['timeout', 'connection', 'unreachable', 'refused', 'reset', 'read timed out'])
+            if is_connection_issue and self._try_next_url():
+                self._debug_log("Identify failed with connection issue - trying fallback URL...")
+                return self.check_service_health()
+            return False
+        
+        # Test with a minimal ListRecords request - just one day, minimal date range
         test_params = {
             "verb": "ListRecords",
             "metadataPrefix": "arXiv", 
@@ -104,10 +169,11 @@ class ArxivOAIHarvester:
         }
         
         try:
-            # Use a short timeout for health check
-            request_timeout = 15
-            self._debug_log(f"Health check request with {request_timeout}s timeout")
-            resp = self._session.get(_BASE_URL, params=test_params, timeout=request_timeout)
+            # Use a longer timeout for ListRecords health check (it's slower)
+            request_timeout = 45
+            self._debug_log(f"ListRecords health check to {self._current_url} with {request_timeout}s timeout")
+            self._debug_log("Warning: ListRecords may be slow - this is normal for ArXiv")
+            resp = self._session.get(self._current_url, params=test_params, timeout=request_timeout)
             
             if resp.status_code == 200:
                 # Check if we got valid XML (not just connection)
@@ -125,6 +191,15 @@ class ArxivOAIHarvester:
                 
         except Exception as exc:
             self._debug_log(f"Health check failed - {exc}")
+            
+            # Check if this is a timeout/connection issue that might benefit from HTTP fallback
+            is_connection_issue = any(keyword in str(exc).lower() for keyword in 
+                                    ['timeout', 'connection', 'unreachable', 'refused', 'reset', 'read timed out'])
+            
+            if is_connection_issue and self._try_next_url():
+                self._debug_log("Health check failed with connection issue - trying fallback URL...")
+                return self.check_service_health()  # Recursive retry with new URL
+                
             return False
 
     def _log(self, msg: str) -> None:
@@ -193,14 +268,14 @@ class ArxivOAIHarvester:
                 self._debug_log(f"Request timeout exceeded after {elapsed:.1f}s (limit: {self.timeout}s)")
                 raise TimeoutError("Aggregate timeout exceeded")
 
-            self._debug_log(f"Making request attempt {attempt + 1} to {_BASE_URL}")
+            self._debug_log(f"Making request attempt {attempt + 1} to {self._current_url}")
             self._throttle()
 
             try:
                 # Use a shorter timeout for individual requests to avoid hanging
                 request_timeout = min(30, self.timeout)
-                self._debug_log(f"Making HTTP request with {request_timeout}s timeout")
-                resp = self._session.get(_BASE_URL, params=params, timeout=request_timeout)
+                self._debug_log(f"Making HTTP request to {self._current_url} with {request_timeout}s timeout")
+                resp = self._session.get(self._current_url, params=params, timeout=request_timeout)
                 self._debug_log(f"Response received: status={resp.status_code}, content_length={len(resp.content)}")
 
                 if resp.status_code == 503:
@@ -224,7 +299,21 @@ class ArxivOAIHarvester:
 
             except requests.RequestException as exc:
                 self._debug_log(f"Request failed: {exc}")
-                if "timeout" in str(exc).lower():
+                
+                # Check if this is a connection/timeout issue that might benefit from fallback URL
+                is_connection_error = any(keyword in str(exc).lower() for keyword in 
+                                        ['timeout', 'connection', 'unreachable', 'refused', 'reset'])
+                
+                if is_connection_error:
+                    self._debug_log(f"Connection issue detected: {exc}")
+                    
+                    # Try fallback URL first if available
+                    if self._try_next_url():
+                        self._debug_log("Retrying with fallback URL...")
+                        attempt = 0  # Reset attempt counter for new URL
+                        continue
+                    
+                    # If no fallback URLs, try normal retry logic
                     backoff = self._exp_backoff(attempt)
                     self._debug_log(f"Request timeout - retrying after {backoff:.1f}s (attempt {attempt + 1})")
                     self._log(f"Request timeout → retry {attempt+1} after {backoff:.1f}s")
@@ -232,6 +321,7 @@ class ArxivOAIHarvester:
                     attempt += 1
                     if attempt < 3:  # Allow up to 3 timeout retries
                         continue
+                        
                 raise RuntimeError(f"OAI-PMH request failed after {attempt + 1} attempts: {exc}") from exc
 
     def _parse_record(self, rec_xml: ET.Element) -> Dict[str, Any]:
@@ -284,11 +374,19 @@ class ArxivOAIHarvester:
         self._records.clear()
         
         # Check if ArXiv service is healthy before starting
-        if not self.check_service_health():
-            raise RuntimeError(
-                "ArXiv OAI-PMH ListRecords service appears to be down or unresponsive. "
-                "Please try again later or check ArXiv status at https://status.arxiv.org/"
-            )
+        # Allow skipping health check with environment variable for when service is slow but working
+        skip_health_check = os.getenv("SKIP_HEALTH_CHECK", "").lower() == "true"
+        
+        if skip_health_check:
+            self._debug_log("Skipping health check (SKIP_HEALTH_CHECK=true)")
+        else:
+            if not self.check_service_health():
+                self._debug_log("Health check failed - you can bypass this with SKIP_HEALTH_CHECK=true if you think the service is working but slow")
+                raise RuntimeError(
+                    "ArXiv OAI-PMH ListRecords service appears to be down or unresponsive. "
+                    "Please try again later or check ArXiv status at https://status.arxiv.org/. "
+                    "If you believe the service is working but slow, set SKIP_HEALTH_CHECK=true"
+                )
 
         params = {
             "verb": "ListRecords",

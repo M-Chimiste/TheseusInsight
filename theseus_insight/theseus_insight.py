@@ -733,22 +733,11 @@ Theseus Insight Team
                 if self.verbose:
                     print(f"Database save complete: {saved_count} new papers saved, {duplicate_count} duplicates skipped")
                 
-                # Filter out duplicates from top_n_df for newsletter generation
-                if duplicate_count > 0:
-                    # Remove duplicate papers from the top_n_df to exclude them from newsletter
-                    original_count = len(top_n_df)
-                    top_n_df = top_n_df[~top_n_df['pdf_url'].isin(duplicate_urls)].reset_index(drop=True)
-                    
-                    # If we filtered out papers from top_n, we might need to get more from data_df
-                    if len(top_n_df) < self.top_n:
-                        remaining_needed = self.top_n - len(top_n_df)
-                        # Get additional papers from data_df that aren't duplicates
-                        additional_papers = data_df[~data_df['pdf_url'].isin(duplicate_urls + list(top_n_df['pdf_url']))].head(remaining_needed)
-                        if len(additional_papers) > 0:
-                            top_n_df = pd.concat([top_n_df, additional_papers]).reset_index(drop=True)
-                    
-                    if self.verbose:
-                        print(f"Newsletter will use {len(top_n_df)} papers (excluded {original_count - len(top_n_df)} duplicates from top papers)")
+                # Keep all top_n papers for newsletter generation, including duplicates
+                if duplicate_count > 0 and self.verbose:
+                    duplicate_in_top_n = len([url for url in duplicate_urls if url in top_n_df['pdf_url'].values])
+                    print(f"Newsletter will use {len(top_n_df)} papers (including {duplicate_in_top_n} duplicates from top papers)")
+                    print("Note: Duplicates are kept in newsletter but were not re-saved to database")
        
             # Clean up partial checkpoint on success
             partial_checkpoint_path = os.path.join(self.checkpoint_dir, 'ranking_partial_checkpoint.pkl')
@@ -880,7 +869,7 @@ Theseus Insight Team
                                 reserch_embedding = self.embedding_model.invoke(self.research_interests)
 
                                 for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
-                                    abstract_embedding = self.embedding_model.invoke(abstract)
+                                    abstract_embedding = self.embedding_model.invoke(abstract, show_progress_bar=False)
                                     sim = cosine_similarity(abstract_embedding, reserch_embedding)
                                     cosine_similarities.append(sim)
                                     abstract_embeddings.append(abstract_embedding)
@@ -907,7 +896,7 @@ Theseus Insight Team
                             reserch_embedding = self.embedding_model.invoke(self.research_interests)
 
                             for abstract in tqdm(abstracts, disable=not self.verbose, desc="Embedding abstracts"):
-                                abstract_embedding = self.embedding_model.invoke(abstract)
+                                abstract_embedding = self.embedding_model.invoke(abstract, show_progress_bar=False)
                                 sim = cosine_similarity(abstract_embedding, reserch_embedding)
                                 cosine_similarities.append(sim)
                                 abstract_embeddings.append(abstract_embedding)
@@ -991,7 +980,7 @@ Theseus Insight Team
                     # Check if we have any papers to process
                     if len(top_n_df) == 0:
                         if self.verbose:
-                            print("No papers available for newsletter generation (all were duplicates or none met criteria)")
+                            print("No papers available for newsletter generation (none met criteria)")
                         sections_data = {
                             'sections': [],
                             'urls_and_titles': []
@@ -1085,9 +1074,9 @@ Theseus Insight Team
 
                     sections = sections_data['sections']
                     
-                    # Handle case where there are no sections (all papers were duplicates)
+                    # Handle case where there are no sections
                     if len(sections) == 0:
-                        newsletter_content = "No new papers found for this newsletter period. All papers were either duplicates or did not meet the criteria."
+                        newsletter_content = "No new papers found for this newsletter period. No papers met the criteria for inclusion."
                         if self.verbose:
                             print("No sections available - generating empty newsletter message")
                     else:

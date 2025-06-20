@@ -82,12 +82,16 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
   ];
 
   const getNodeStyles = () => {
+    const borderRadius = typeof theme.shape?.borderRadius === 'number' 
+      ? theme.shape.borderRadius 
+      : 4;
+      
     const baseStyles = {
       minWidth: 200,
       maxWidth: 320,
       width: 'fit-content',
       border: `2px solid ${theme.palette.divider}`,
-      borderRadius: theme.shape.borderRadius * 1.5,
+      borderRadius: borderRadius * 1.5,
       backgroundColor: theme.palette.background.paper,
       boxShadow: theme.shadows[1],
       transition: 'all 0.3s ease-in-out',

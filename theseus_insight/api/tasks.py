@@ -238,6 +238,76 @@ class TaskManager:
                 # existing queues alive until consumers finish.
                 del self.status_updates[task_id]
 
+    # ------------------------------------------------------------------
+    # Synchronous variant for situations where we are inside a blocking
+    # workflow executed in the event-loop thread (e.g. sync_progress_callback)
+    # ------------------------------------------------------------------
+    def update_task_status_sync(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        message: str = "",
+        progress: float = 0,
+        current_step: str | None = None,
+        error: str | None = None,
+        result: dict | None = None,
+    ) -> None:
+        """Synchronous, non-awaiting version of update_task_status.
+
+        Runs directly inside the same thread – useful when long blocking
+        operations (e.g. LLM summarisation) would otherwise prevent the
+        event-loop from executing the regular async method and therefore the
+        websocket clients would only receive updates at the very end.
+        """
+        # Update DB row immediately
+        end_time = datetime.now().isoformat() if status in [TaskStatus.COMPLETED, TaskStatus.FAILED] else None
+        self.db.update_task_status(
+            task_id=task_id,
+            status=status.value,
+            progress=progress,
+            current_step=current_step,
+            message=message,
+            error=error,
+            result=result,
+            end_time=end_time,
+        )
+
+        timestamp = datetime.now().isoformat()
+        status_obj = RunStatus(
+            taskId=task_id,
+            nodes=[
+                NodeStatus(
+                    nodeId="main",
+                    status=status,
+                    message=message,
+                    progress=progress,
+                    timestamp=timestamp,
+                )
+            ],
+            overallStatus=status,
+            currentStep=current_step,
+            progress=progress,
+            message=message,
+            result=result,
+            error=error,
+        )
+
+        # Persist to logs
+        log = Logs(task_id=task_id, status=status, datetime_run=timestamp)
+        self.db.insert_log(log)
+
+        # Notify subscribers synchronously using put_nowait to avoid awaits
+        if task_id in self.status_updates:
+            for queue in list(self.status_updates[task_id]):
+                try:
+                    queue.put_nowait(status_obj)
+                    if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                        queue.put_nowait(None)
+                except Exception:
+                    pass
+        if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+            self.status_updates.pop(task_id, None)
+
     def _progress_callback(self, task_id: str):
         """Create a progress callback function for TheseusInsight."""
         loop = asyncio.get_event_loop()
@@ -962,10 +1032,12 @@ class TaskManager:
             paper_id = config.get("paper_id")
             k = config.get("k", 15)
             similarity_threshold = config.get("similarity_threshold", 0.3)
+            expansion_order = config.get("expansion_order", 1)
+            max_nodes_per_order = config.get("max_nodes_per_order", 20)
             layout_algorithm = config.get("layout_algorithm", "force")
             model_config_override = config.get("model_config_override")
             
-            print(f"DEBUG: Task config - paper_id: {paper_id}, k: {k}, threshold: {similarity_threshold}")
+            print(f"DEBUG: Task config - paper_id: {paper_id}, k: {k}, threshold: {similarity_threshold}, expansion_order: {expansion_order}, max_nodes_per_order: {max_nodes_per_order}")
             
             if not paper_id:
                 print(f"DEBUG: No paper_id provided in config")
@@ -974,24 +1046,48 @@ class TaskManager:
             # Import the mind-map workflow
             from ..mindmap.workflow import create_mindmap_workflow
             
-            # Get configuration from database
+            # Get configuration from database or fallback file
             orchestration_json = self.db.get_setting("orchestration")
-            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
-            
+            if orchestration_json:
+                print("DEBUG: Loaded orchestration config from DB settings table")
+                orchestration_config = json.loads(orchestration_json)
+            else:
+                # Fallback to bundled config/orchestration.json file
+                try:
+                    from pathlib import Path
+                    cfg_path = Path(__file__).resolve().parents[2] / "config" / "orchestration.json"
+                    print(f"DEBUG: Loading orchestration config from file: {cfg_path}")
+                    orchestration_config = json.loads(cfg_path.read_text())
+                except Exception as e:
+                    print(f"DEBUG: Failed to load orchestration config file: {e}")
+                    orchestration_config = {}
+
+            # Pull mind-map specific defaults from orchestration config if not provided
+            mind_cfg = orchestration_config.get("mind_map_config", {})
+            k = config.get("k", mind_cfg.get("k", 15))
+            similarity_threshold = config.get("similarity_threshold", mind_cfg.get("similarity_threshold", 0.3))
+            expansion_order = config.get("expansion_order", mind_cfg.get("expansion_order", 1))
+            max_nodes_per_order = config.get("max_nodes_per_order", mind_cfg.get("max_nodes_per_order", 20))
+            layout_algorithm = config.get("layout_algorithm", mind_cfg.get("layout_algorithm", "force"))
+
+            print(f"DEBUG: Final parameters after orchestration defaults – k:{k} thresh:{similarity_threshold} order:{expansion_order} max_per_order:{max_nodes_per_order}")
+
             # Get LLM model configuration for summarization
-            # Use override if provided, otherwise fall back to orchestration config
             llm_model_config = model_config_override
             if not llm_model_config:
-                # Try to get a suitable LLM model from orchestration config
-                # Priority: content_extraction_model > judge_model > newsletter_sections_model
+                llm_model_config = mind_cfg.get("summarization_model")
+                if llm_model_config:
+                    print("DEBUG: Using mind_map_config.summarization_model as LLM config")
+            if not llm_model_config:
+                # Try alternative fallbacks
                 llm_model_config = (
                     orchestration_config.get("content_extraction_model") or
                     orchestration_config.get("judge_model") or
                     orchestration_config.get("newsletter_sections_model")
                 )
-                print(f"DEBUG: Using fallback LLM model config from orchestration: {llm_model_config}")
+                print(f"DEBUG: Using generic fallback LLM config: {llm_model_config}")
             else:
-                print(f"DEBUG: Using provided LLM model config override: {llm_model_config}")
+                print(f"DEBUG: LLM model config determined: {llm_model_config}")
             
             print(f"DEBUG: Creating mind-map workflow...")
             # Create workflow
@@ -1015,37 +1111,17 @@ class TaskManager:
                 print(f"DEBUG: sync_progress_callback called - step: {step}, progress: {progress}, message: {message}")
                 # Map workflow progress (0-100) to task progress (10-90)
                 task_progress = 10 + (progress * 0.8)
-                
-                # Create a task to update status asynchronously
-                import asyncio
+
                 try:
-                    loop = asyncio.get_event_loop()
-                    print(f"DEBUG: Got event loop, is_running: {loop.is_running()}")
-                    if loop.is_running():
-                        # If we're in an async context, create a task
-                        print(f"DEBUG: Creating task for async status update")
-                        loop.create_task(self.update_task_status(
-                            task_id,
-                            TaskStatus.PROCESSING,
-                            message or f"Processing step: {step}",
-                            progress=task_progress,
-                            current_step=step,
-                        ))
-                    else:
-                        # If not, run it synchronously
-                        print(f"DEBUG: Running status update synchronously")
-                        loop.run_until_complete(self.update_task_status(
-                            task_id,
-                            TaskStatus.PROCESSING,
-                            message or f"Processing step: {step}",
-                            progress=task_progress,
-                            current_step=step,
-                        ))
-                    print(f"DEBUG: Status update completed successfully")
+                    self.update_task_status_sync(
+                        task_id,
+                        TaskStatus.PROCESSING,
+                        message or f"Processing step: {step}",
+                        progress=task_progress,
+                        current_step=step,
+                    )
                 except Exception as e:
-                    print(f"Progress callback error: {e}")
-                    import traceback
-                    print(f"Progress callback traceback: {traceback.format_exc()}")
+                    print(f"DEBUG: Progress status update failed (sync): {e}")
             
             # Run the mind-map workflow synchronously
             print(f"DEBUG: About to call workflow.generate_mindmap_sync for task {task_id}")
@@ -1053,6 +1129,8 @@ class TaskManager:
                 seed_paper_id=int(paper_id),
                 k_neighbors=k,
                 similarity_threshold=similarity_threshold,
+                expansion_order=expansion_order,
+                max_nodes_per_order=max_nodes_per_order,
                 layout_algorithm=layout_algorithm,
                 embedding_model_config=None,  # Will be pulled from config
                 llm_model_config=llm_model_config,

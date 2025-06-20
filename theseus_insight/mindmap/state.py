@@ -26,6 +26,7 @@ class PaperNode(TypedDict):
     rationale: str
     similarity_score: float
     summary: Optional[str]  # LLM-generated summary
+    keywords: Optional[List[str]]
     x: Optional[float]  # UI positioning
     y: Optional[float]  # UI positioning
 
@@ -57,9 +58,16 @@ class MindMapState(TypedDict):
     k_neighbors: int  # Number of similar papers to find
     similarity_threshold: float
     
+    # Multi-order expansion parameters
+    expansion_order: int  # Number of expansion orders (1-5)
+    max_nodes_per_order: int  # Maximum nodes to expand from each paper
+    current_expansion_order: int  # Current order being processed
+    
     # Retrieved papers and relationships
     similar_papers: List[PaperNode]
     edges: List[MindMapEdge]
+    all_papers: Dict[int, PaperNode]  # All papers found across all orders
+    papers_by_order: Dict[int, List[int]]  # Order -> list of paper IDs
     
     # LLM-generated summaries
     summaries: Dict[int, str]  # paper_id -> summary
@@ -91,6 +99,8 @@ def create_initial_mindmap_state(
     seed_paper_id: int,
     k_neighbors: int = 15,
     similarity_threshold: float = 0.3,
+    expansion_order: int = 1,
+    max_nodes_per_order: int = 20,
     task_id: str = "",
     embedding_model_config: Dict[str, Any] = None,
     llm_model_config: Dict[str, Any] = None
@@ -102,8 +112,13 @@ def create_initial_mindmap_state(
         seed_paper=None,
         k_neighbors=k_neighbors,
         similarity_threshold=similarity_threshold,
+        expansion_order=expansion_order,
+        max_nodes_per_order=max_nodes_per_order,
+        current_expansion_order=1,
         similar_papers=[],
         edges=[],
+        all_papers={},
+        papers_by_order={},
         summaries={},
         nodes=[],
         layout_algorithm="force",
@@ -147,6 +162,7 @@ def create_paper_node(paper_data: Dict[str, Any], similarity_score: float = 0.0)
         rationale=paper_data.get('rationale', ''),
         similarity_score=similarity_score,
         summary=None,
+        keywords=None,
         x=None,
         y=None
     )

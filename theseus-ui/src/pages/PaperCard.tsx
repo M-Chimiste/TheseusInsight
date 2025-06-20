@@ -80,6 +80,13 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
           <Typography variant="body2" paragraph sx={{whiteSpace: 'pre-line'}}>
             {paper.rationale}
           </Typography>
+          {Array.isArray(paper.keywords) && paper.keywords.length > 0 && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+              {paper.keywords.slice(0,5).map((kw) => (
+                <Chip key={kw} label={kw} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+              ))}
+            </Box>
+          )}
           {paper.related !== undefined && (
              <Chip label={paper.related ? "Considered Relevant" : "Considered Not Relevant"} color={paper.related ? "success" : "default"} sx={{mb:1}}/>
           )}

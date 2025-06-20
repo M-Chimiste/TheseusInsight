@@ -18,6 +18,7 @@ const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const ResearchAgent = React.lazy(() => import('./pages/ResearchAgent'));
 const ResearchLibrary = React.lazy(() => import('./pages/ResearchLibrary'));
 const ModelCatalog = React.lazy(() => import('./pages/ModelCatalog'));
+const MindMapReports = React.lazy(() => import('./pages/MindMapReports'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +50,7 @@ function App() {
                   <Route path="/research-agent" element={<ResearchAgent />} />
                   <Route path="/research-library" element={<ResearchLibrary />} />
                   <Route path="/model-catalog" element={<ModelCatalog />} />
+                  <Route path="/mindmap-reports" element={<MindMapReports />} />
                   <Route path="/*" element={<Navigate to="/" replace />} />
                 </Routes>
               </React.Suspense>

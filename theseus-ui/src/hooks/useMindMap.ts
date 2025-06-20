@@ -20,8 +20,9 @@ export interface UseMindMapReturn {
   state: MindMapState;
   openMindMap: (paper: PaperApiResponse, options?: Partial<MindMapExpandRequest>) => void;
   closeMindMap: () => void;
-  expandNode: (paperId: string, options?: Partial<MindMapExpandRequest>) => void;
+  expandNode: (paperId: string, options?: Partial<MindMapExpandRequest>, merge?: boolean) => void;
   clearError: () => void;
+  loadSavedMap: (data: MindMapData, seedPaper: PaperApiResponse | null) => void;
 }
 
 export const useMindMap = (): UseMindMapReturn => {
@@ -36,6 +37,9 @@ export const useMindMap = (): UseMindMapReturn => {
   });
 
   const wsRef = useRef<WebSocket | null>(null);
+  // Flag to indicate whether the current operation is an incremental expand (merge) rather than a full regeneration
+  const mergeModeRef = useRef<boolean>(false);
+  const generationColorRef = useRef<number>(0);
   const currentTaskIdRef = useRef<string | null>(null);
 
   // Cleanup WebSocket connection
@@ -51,11 +55,19 @@ export const useMindMap = (): UseMindMapReturn => {
   const handleWebSocketMessage = useCallback((event: MessageEvent) => {
     try {
       const message = JSON.parse(event.data);
+      console.log('🔄 MindMap WebSocket Message:', {
+        overallStatus: message.overallStatus,
+        progress: message.progress,
+        currentStep: message.currentStep,
+        message: message.message,
+        fullMessage: message
+      });
       
       setState(prevState => {
         // Handle the RunStatus message format from the task manager
         switch (message.overallStatus) {
           case 'processing':
+            console.log('📈 Updating UI state with progress:', message.progress, message.currentStep || message.message);
             return {
               ...prevState,
               isLoading: true,
@@ -64,60 +76,101 @@ export const useMindMap = (): UseMindMapReturn => {
               error: null,
             };
           
-          case 'completed':
+          case 'completed': {
             const incoming = message.result?.mindmap_data || null;
+
+            // Reset merge flag for subsequent operations
+            const wasMerge = mergeModeRef.current;
+            mergeModeRef.current = false;
+
             if (!incoming) {
+              return {
+                ...prevState,
+                isLoading: false,
+                error: 'No mind-map data received from server',
+              };
+            }
+
+            if (!wasMerge || !prevState.data) {
+              // Reset generation color index on full regeneration
+              generationColorRef.current = 0;
+              // Ensure all nodes have colorIndex 0
+              incoming.nodes = incoming.nodes.map((n: any) => ({ ...n, colorIndex: 0 }));
+              // Full regeneration path (default behaviour)
               return {
                 ...prevState,
                 isLoading: false,
                 progress: 100,
                 currentStep: 'Completed',
+                data: incoming,
+                error: null,
               };
             }
 
-            let mergedData = incoming;
-            if (prevState.data) {
-              const existingNodeIds = new Set(prevState.data.nodes?.map(n => n.id));
-              const existingEdgeIds = new Set(prevState.data.edges?.map((e: any) => `${e.source_id}-${e.target_id}`));
+            // Merge path – add new nodes/edges to existing graph
+            try {
+              const existingData = prevState.data;
 
-              const newNodes = (incoming.nodes || []).filter((n: any) => !existingNodeIds.has(n.id));
-              const newEdges = (incoming.edges || []).filter((e: any) => {
-                const id = `${e.source_id}-${e.target_id}`;
-                return !existingEdgeIds.has(id);
+              // Build lookup for existing nodes
+              const nodeMap = new Map<string, any>(existingData.nodes.map((n) => [String(n.id), n]));
+              const mergedNodes = [...existingData.nodes];
+
+              // Increment generation color for this merge cycle
+              generationColorRef.current = (generationColorRef.current + 1) % 6;
+              const newColorIndex = generationColorRef.current;
+
+              incoming.nodes.forEach((node: any) => {
+                const idStr = String(node.id);
+                if (!nodeMap.has(idStr)) {
+                  const coloredNode = { ...node, colorIndex: newColorIndex };
+                  nodeMap.set(idStr, coloredNode);
+                  mergedNodes.push(coloredNode);
+                }
               });
 
-              mergedData = {
-                ...prevState.data,
-                nodes: [...(prevState.data.nodes || []), ...newNodes],
-                edges: [...(prevState.data.edges || []), ...newEdges],
-              } as any;
-            }
+              // Build lookup for existing edges (treat as undirected)
+              const edgeKey = (e: any) => `${Math.min(e.source_id, e.target_id)}-${Math.max(e.source_id, e.target_id)}`;
+              const edgeSet = new Set<string>(existingData.edges.map(edgeKey));
+              const mergedEdges = [...existingData.edges];
 
-            return {
-              ...prevState,
-              isLoading: false,
-              progress: 100,
-              currentStep: 'Completed',
-              data: mergedData,
-              error: null,
-            };
+              incoming.edges.forEach((e: any) => {
+                const key = edgeKey(e);
+                if (!edgeSet.has(key)) {
+                  edgeSet.add(key);
+                  mergedEdges.push(e);
+                }
+              });
+
+              const mergedData = {
+                ...existingData,
+                nodes: mergedNodes,
+                edges: mergedEdges,
+                generation_timestamp: incoming.generation_timestamp || new Date().toISOString(),
+              } as typeof existingData;
+
+              return {
+                ...prevState,
+                isLoading: false,
+                progress: 100,
+                currentStep: 'Expansion completed',
+                data: mergedData,
+                error: null,
+              };
+            } catch (mergeErr) {
+              console.error('Error merging mind-map data:', mergeErr);
+              return {
+                ...prevState,
+                isLoading: false,
+                error: 'Failed to merge expanded nodes',
+              };
+            }
+          }
           
           case 'failed':
             return {
               ...prevState,
               isLoading: false,
-              progress: 0,
-              currentStep: '',
-              error: message.error || message.message || 'Mind-map generation failed',
-            };
-          
-          case 'pending':
-            return {
-              ...prevState,
-              isLoading: true,
-              progress: 0,
-              currentStep: 'Initializing...',
-              error: null,
+              error: message.message || 'Mind-map generation failed',
             };
           
           default:
@@ -125,11 +178,7 @@ export const useMindMap = (): UseMindMapReturn => {
         }
       });
     } catch (error) {
-      setState(prevState => ({
-        ...prevState,
-        isLoading: false,
-        error: 'Failed to process mind-map update',
-      }));
+      console.error('Error parsing WebSocket message:', error, event.data);
     }
   }, []);
 
@@ -138,46 +187,53 @@ export const useMindMap = (): UseMindMapReturn => {
     paper: PaperApiResponse,
     options: Partial<MindMapExpandRequest> = {}
   ) => {
+    console.log('🚀 STARTMINDMAPGENERATION FUNCTION CALLED!', { options });
+    
     try {
-      setState(prevState => ({
-        ...prevState,
+      setState({
+        isOpen: true,
         isLoading: true,
         progress: 0,
         currentStep: 'Initializing...',
-        error: null,
+        data: null,
         seedPaper: paper,
-      }));
+        error: null,
+      });
 
-      // Prepare request
+      // Prepare request. Only include parameters explicitly provided in `options` so
+      // that the backend can fall back to the orchestration defaults when a
+      // particular value is not supplied by the user.
       const request: MindMapExpandRequest = {
         paper_id: paper.id.toString(),
-        k: 15,
-        similarity_threshold: 0.3,
-        layout_algorithm: 'force',
         ...options,
       };
+
+      console.log('🔧 Frontend sending request:', {
+        originalOptions: options,
+        finalRequest: request,
+        expansionOrderFromOptions: options.expansion_order,
+        expansionOrderInRequest: request.expansion_order
+      });
 
       // Start the mind-map generation task
       const response = await mindMapApi.expandMindMap(request);
       const taskId = response.data.task_id;
       currentTaskIdRef.current = taskId;
 
+      // Add a small delay to ensure backend task is ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // Setup WebSocket connection for progress updates
       const ws = createWebSocket(taskId, 'mindmap');
       wsRef.current = ws;
 
       ws.onopen = () => {
-        // console.log('Mind-map WebSocket connected');
+        console.log('✅ Mind-map WebSocket connected with task ID:', taskId);
       };
 
       ws.onmessage = handleWebSocketMessage;
 
       ws.onclose = (_event) => {
-        /* console.log('Mind-map WebSocket disconnected', {
-          code: event.code,
-          reason: event.reason,
-          wasClean: event.wasClean
-        }); */
         cleanupWebSocket();
       };
 
@@ -229,21 +285,83 @@ export const useMindMap = (): UseMindMapReturn => {
     });
   }, [cleanupWebSocket]);
 
-  // Expand a node (generate new mind-map with different seed)
+  // Expand a node – can be full regeneration or incremental merge based on `merge` flag
   const expandNode = useCallback((
     paperId: string,
-    options?: Partial<MindMapExpandRequest>
+    options?: Partial<MindMapExpandRequest>,
+    merge: boolean = false
   ) => {
     if (!state.seedPaper) return;
 
-    // Create a temporary paper object for expansion
-    const expandPaper: PaperApiResponse = {
-      ...state.seedPaper,
-      id: parseInt(paperId),
-    };
+    if (!merge) {
+      // Original behaviour – full regeneration with new seed
+      const expandPaper: PaperApiResponse = {
+        ...state.seedPaper,
+        id: parseInt(paperId),
+      };
+      startMindMapGeneration(expandPaper, options);
+      return;
+    }
 
-    startMindMapGeneration(expandPaper, options);
-  }, [state.seedPaper, startMindMapGeneration]);
+    // Incremental merge mode
+    (async () => {
+      try {
+        // Set merge mode flag so WebSocket handler knows to merge results
+        mergeModeRef.current = true;
+
+        setState(prev => ({
+          ...prev,
+          isLoading: true,
+          progress: 0,
+          currentStep: 'Expanding nodes...',
+          error: null,
+        }));
+
+        const request: MindMapExpandRequest = {
+          paper_id: paperId,
+          ...options,
+          expansion_order: 1, // Force single-order for incremental expansion
+        };
+
+        const response = await mindMapApi.expandMindMap(request);
+        const taskId = response.data.task_id;
+        currentTaskIdRef.current = taskId;
+
+        // Wait briefly then open websocket for updates
+        await new Promise(res => setTimeout(res, 100));
+
+        const ws = createWebSocket(taskId, 'mindmap');
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          console.log('✅ Incremental expand WebSocket connected', taskId);
+        };
+
+        ws.onmessage = handleWebSocketMessage;
+
+        ws.onclose = () => {
+          cleanupWebSocket();
+        };
+
+        ws.onerror = (err) => {
+          console.error('Incremental expand WS error', err);
+          setState(prev => ({
+            ...prev,
+            isLoading: false,
+            error: 'Connection error during node expansion',
+          }));
+        };
+      } catch (err) {
+        console.error('Error starting incremental expansion', err);
+        mergeModeRef.current = false;
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: 'Failed to expand node',
+        }));
+      }
+    })();
+  }, [state.seedPaper, handleWebSocketMessage, cleanupWebSocket]);
 
   // Clear error
   const clearError = useCallback(() => {
@@ -251,6 +369,19 @@ export const useMindMap = (): UseMindMapReturn => {
       ...prevState,
       error: null,
     }));
+  }, []);
+
+  // Load already generated mind-map data (saved reports)
+  const loadSavedMap = useCallback((data: MindMapData, seed: PaperApiResponse | null) => {
+    setState({
+      isOpen: true,
+      isLoading: false,
+      data,
+      error: null,
+      progress: 100,
+      currentStep: 'Loaded',
+      seedPaper: seed,
+    });
   }, []);
 
   // Cleanup on unmount
@@ -266,5 +397,6 @@ export const useMindMap = (): UseMindMapReturn => {
     closeMindMap,
     expandNode,
     clearError,
+    loadSavedMap,
   };
 }; 

@@ -23,17 +23,20 @@ class SummariserNode:
     that highlight key contributions and relevance to the seed paper.
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], db=None):
         """
         Initialize the Summariser Node.
         
         Args:
             config: Configuration dictionary containing LLM settings
+            db: Database instance for caching summaries
         """
         self.config = config
         # No hard character cap; rely on LLM token limit
         self.max_summary_length = None
         self.batch_size = config.get("summary_batch_size", 5)
+        self.progress_callback = None  # Will be set during workflow execution
+        self.db = db
         
     def __call__(self, state: MindMapState) -> Dict[str, Any]:
         """
@@ -120,10 +123,34 @@ class SummariserNode:
             all_papers = [seed_paper] + similar_papers
             summaries = {}
             
+            # Attempt to fetch cached summaries from DB if available
+            papers_to_summarize = []
+            if self.db is not None:
+                for p in all_papers:
+                    cached = None
+                    try:
+                        cached = self.db.get_paper_summary(p["id"])
+                    except Exception:
+                        cached = None
+                    if cached:
+                        summaries[p["id"]] = cached
+                    else:
+                        papers_to_summarize.append(p)
+            else:
+                papers_to_summarize = all_papers
+            
+            if not papers_to_summarize:
+                logger.info("All summaries retrieved from cache; skipping LLM calls")
+                return {
+                    "summaries": summaries,
+                    "current_node": "summariser",
+                    "messages": [Message(role="assistant", content="Loaded cached summaries")]
+                }
+            
             try:
                 # Process papers in batches to avoid overwhelming the LLM
-                for i in range(0, len(all_papers), self.batch_size):
-                    batch = all_papers[i:i + self.batch_size]
+                for i in range(0, len(papers_to_summarize), self.batch_size):
+                    batch = papers_to_summarize[i:i + self.batch_size]
                     print(f"DEBUG: Processing batch {i//self.batch_size + 1} with {len(batch)} papers")
                     batch_summaries = self._generate_batch_summaries(
                         batch, seed_paper, llm_model
@@ -131,7 +158,15 @@ class SummariserNode:
                     summaries.update(batch_summaries)
                     print(f"DEBUG: Batch {i//self.batch_size + 1} completed, got {len(batch_summaries)} summaries")
                     
-                    logger.info(f"Generated summaries for batch {i//self.batch_size + 1}/{(len(all_papers) + self.batch_size - 1)//self.batch_size}")
+                    logger.info(f"Generated summaries for batch {i//self.batch_size + 1}/{(len(papers_to_summarize) + self.batch_size - 1)//self.batch_size}")
+                    
+                    # Save newly generated summaries to DB if possible
+                    if self.db is not None:
+                        for pid, summ in batch_summaries.items():
+                            try:
+                                self.db.update_paper_summary(pid, summ)
+                            except Exception:
+                                pass
                 
                 logger.info(f"Successfully generated {len(summaries)} summaries")
                 
@@ -177,12 +212,36 @@ class SummariserNode:
         """
         summaries = {}
         
-        for paper in papers:
+        for i, paper in enumerate(papers, 1):
             try:
+                logger.info(f"Generating summary for paper {i}/{len(papers)}: {paper['id']}")
+                logger.info(f"Paper title: {paper['title'][:80]}...")
                 print(f"DEBUG: Generating summary for paper {paper['id']}: {paper['title'][:50]}...")
+                
+                # Calculate progress within summarization phase (60-75)
+                # This provides granular progress during the potentially long summarization phase
+                summary_start_progress = 60
+                summary_end_progress = 75
+                individual_progress = summary_start_progress + ((i-1) / len(papers)) * (summary_end_progress - summary_start_progress)
+                
+                # Call progress callback if available (for synchronous execution)
+                if hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+                    try:
+                        self.sync_progress_callback(
+                            "summariser", 
+                            individual_progress, 
+                            f"Generating summary {i}/{len(papers)}: {paper['title'][:40]}..."
+                        )
+                    except Exception as e:
+                        logger.error(f"Progress callback error during summary {i}: {e}")
+                
                 summary = self._generate_single_summary(paper, seed_paper, llm_model)
                 summaries[paper["id"]] = summary
+                
+                logger.info(f"Completed summary {i}/{len(papers)} for paper {paper['id']}")
+                logger.info(f"Summary preview: {summary[:150]}...")
                 print(f"DEBUG: Summary generated for paper {paper['id']}: {summary[:100]}...")
+                
             except Exception as e:
                 logger.error(f"Failed to generate summary for paper {paper['id']}: {e}")
                 print(f"DEBUG: Failed to generate summary for paper {paper['id']}: {e}")

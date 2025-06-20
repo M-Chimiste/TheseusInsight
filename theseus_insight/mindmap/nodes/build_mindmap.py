@@ -159,7 +159,8 @@ class BuildMindMapNode:
                 node.update({
                     "x": x,
                     "y": y,
-                    "summary": summaries.get(paper["id"], "")
+                    "summary": summaries.get(paper["id"], ""),
+                    "keywords": paper.get("keywords", []),
                 })
                 positioned_nodes.append(node)
         
@@ -216,7 +217,8 @@ class BuildMindMapNode:
                 node.update({
                     "x": x,
                     "y": y,
-                    "summary": summaries.get(paper["id"], "")
+                    "summary": summaries.get(paper["id"], ""),
+                    "keywords": paper.get("keywords", []),
                 })
                 positioned_nodes.append(node)
         
@@ -274,7 +276,8 @@ class BuildMindMapNode:
                 node.update({
                     "x": x,
                     "y": y,
-                    "summary": summaries.get(paper["id"], "")
+                    "summary": summaries.get(paper["id"], ""),
+                    "keywords": paper.get("keywords", []),
                 })
                 positioned_nodes.append(node)
         
@@ -302,6 +305,7 @@ class BuildMindMapNode:
                 "has_fulltext": node.get("has_fulltext", False),
                 "url": node.get("url"),
                 "date": node.get("date"),
+                "keywords": node.get("keywords", []),
                 "position": {"x": node.get("x", 0), "y": node.get("y", 0)},
             })
             

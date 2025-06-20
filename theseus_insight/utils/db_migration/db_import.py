@@ -15,6 +15,7 @@ import json
 import tarfile
 import argparse
 import tempfile
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -85,9 +86,23 @@ class DatabaseImporter:
                 print(f"Warning: Missing expected tables in export: {missing}")
                 return False
             
-            # Check if literature_reviews is available (new feature)
-            if "literature_reviews" in exported_tables:
-                print("Literature reviews data detected in export")
+            # Check version and available features
+            export_version = metadata.get("export_version", "1.0")
+            print(f"Export version: {export_version}")
+            
+            # List new features if available
+            new_features = metadata.get("new_features", [])
+            if new_features:
+                print(f"New features detected: {new_features}")
+            
+            # Check if new tables are available
+            new_table_names = {
+                "research_runs", "research_agent_state", "paper_fulltext",
+                "mindmap_reports", "model_catalog"
+            }
+            available_new_tables = new_table_names.intersection(exported_tables)
+            if available_new_tables:
+                print(f"New tables available for import: {available_new_tables}")
             
             print(f"Metadata validation passed. Export from: {metadata['export_timestamp']}")
             return True
@@ -152,11 +167,28 @@ class DatabaseImporter:
                 # Insert paper (with duplicate handling)
                 was_inserted = self.db.insert_paper(paper, skip_duplicates=skip_duplicates)
                 
+                # Determine paper_id (inserted or existing)
+                paper_record = self.db.get_paper_by_url(paper_data["url"])
+                paper_id = paper_record["id"] if paper_record else None
+
                 if was_inserted:
                     stats["imported"] += 1
                 else:
                     stats["skipped"] += 1
                     
+                # Update summary / keywords if available
+                if paper_id:
+                    if paper_data.get("summary"):
+                        try:
+                            self.db.update_paper_summary(paper_id, paper_data["summary"])
+                        except Exception:
+                            pass
+                    if paper_data.get("keywords"):
+                        try:
+                            self.db.update_paper_keywords(paper_id, paper_data["keywords"])
+                        except Exception:
+                            pass
+
             except Exception as e:
                 print(f"Error importing paper '{paper_data.get('title', 'Unknown')}': {e}")
                 stats["errors"] += 1
@@ -262,7 +294,7 @@ class DatabaseImporter:
                 stats["imported"] += 1
                 
             except Exception as e:
-                print(f"Error importing newsletter from {newsletter_data.get('start_date', 'Unknown')} to {newsletter_data.get('end_date', 'Unknown')}: {e}")
+                print(f"Error importing newsletter {newsletter_data.get('start_date', 'Unknown')}-{newsletter_data.get('end_date', 'Unknown')}: {e}")
                 stats["errors"] += 1
             
             # Report progress
@@ -321,6 +353,330 @@ class DatabaseImporter:
         print(f"Literature reviews import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
     
+    def import_research_runs(self, research_runs_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import research runs from JSON file.
+        
+        Args:
+            research_runs_file: Path to research_runs.json file
+            skip_duplicates: Whether to skip research runs that already exist (by task_id)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing research runs...")
+        
+        with open(research_runs_file, 'r', encoding='utf-8') as f:
+            research_runs_data = json.load(f)
+        
+        stats = {"total": len(research_runs_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, run_data in enumerate(research_runs_data):
+            try:
+                # Check for duplicates by task_id if requested
+                if skip_duplicates:
+                    existing_run = self.db.get_research_run(run_data["task_id"])
+                    if existing_run:
+                        stats["skipped"] += 1
+                        continue
+                
+                # Insert research run - use raw SQL to handle all fields including timestamps
+                with self.db.get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO research_runs 
+                        (task_id, research_question, status, config_json, created_at, started_at,
+                         completed_at, error_message, final_answer, generation_summary, statistics_json,
+                         sub_queries_json, sources_gathered_json, judged_sources_json, evidence_json,
+                         compressed_notes, workflow_messages_json, research_loop_count, is_sufficient, save_to_library)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        run_data["task_id"],
+                        run_data["research_question"],
+                        run_data["status"],
+                        json.dumps(run_data.get("config")) if run_data.get("config") else None,
+                        run_data["created_at"],
+                        run_data.get("started_at"),
+                        run_data.get("completed_at"),
+                        run_data.get("error_message"),
+                        run_data.get("final_answer"),
+                        run_data.get("generation_summary"),
+                        json.dumps(run_data.get("statistics")) if run_data.get("statistics") else None,
+                        json.dumps(run_data.get("sub_queries", [])),
+                        json.dumps(run_data.get("sources_gathered", [])),
+                        json.dumps(run_data.get("judged_sources", [])),
+                        json.dumps(run_data.get("evidence", [])),
+                        run_data.get("compressed_notes"),
+                        json.dumps(run_data.get("workflow_messages", [])),
+                        run_data.get("research_loop_count", 0),
+                        int(run_data.get("is_sufficient", False)),
+                        int(run_data.get("save_to_library", True))
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing research run '{run_data.get('task_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(research_runs_data), f"Importing research runs: {i + 1}/{len(research_runs_data)}")
+        
+        print(f"Research runs import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
+    def import_research_agent_state(self, research_agent_state_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import research agent state snapshots from JSON file.
+        
+        Args:
+            research_agent_state_file: Path to research_agent_state.json file
+            skip_duplicates: Whether to skip state snapshots that already exist (by id or timestamp+task_id+node_name)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing research agent state...")
+        
+        with open(research_agent_state_file, 'r', encoding='utf-8') as f:
+            state_data = json.load(f)
+        
+        stats = {"total": len(state_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, state_record in enumerate(state_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with self.db.get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM research_agent_state 
+                            WHERE task_id = ? AND node_name = ? AND timestamp = ?
+                        """, (state_record["task_id"], state_record["node_name"], state_record["timestamp"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert state record
+                with self.db.get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO research_agent_state (task_id, node_name, state_json, timestamp)
+                        VALUES (?, ?, ?, ?)
+                    """, (
+                        state_record["task_id"],
+                        state_record["node_name"],
+                        state_record["state_json"],
+                        state_record["timestamp"]
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing research agent state for task '{state_record.get('task_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(state_data), f"Importing research agent state: {i + 1}/{len(state_data)}")
+        
+        print(f"Research agent state import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
+    def import_paper_fulltext(self, paper_fulltext_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import paper full-text content from JSON file.
+        
+        Args:
+            paper_fulltext_file: Path to paper_fulltext.json file
+            skip_duplicates: Whether to skip full-text entries that already exist (by paper_id)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing paper full-text content...")
+        
+        with open(paper_fulltext_file, 'r', encoding='utf-8') as f:
+            fulltext_data = json.load(f)
+        
+        stats = {"total": len(fulltext_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, fulltext_record in enumerate(fulltext_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    if self.db.has_paper_fulltext(fulltext_record["paper_id"]):
+                        stats["skipped"] += 1
+                        continue
+                
+                # Convert embedding from list to bytes if present
+                embedding_blob = None
+                if fulltext_record.get("embedding"):
+                    try:
+                        embedding_array = np.array(fulltext_record["embedding"], dtype=np.float32)
+                        embedding_blob = embedding_array.tobytes()
+                    except Exception as e:
+                        print(f"Warning: Could not convert embedding for paper_id {fulltext_record['paper_id']}: {e}")
+                
+                # Insert full-text record
+                with self.db.get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO paper_fulltext (paper_id, content, embedding, embedding_model, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        fulltext_record["paper_id"],
+                        fulltext_record["content"],
+                        embedding_blob,
+                        fulltext_record.get("embedding_model"),
+                        fulltext_record.get("created_at")
+                    ))
+                    
+                    # Update FTS index
+                    fulltext_id = cursor.lastrowid
+                    cursor.execute("""
+                        INSERT INTO paper_fulltext_fts (rowid, content) VALUES (?, ?)
+                    """, (fulltext_id, fulltext_record["content"]))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing paper fulltext for paper_id '{fulltext_record.get('paper_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(fulltext_data), f"Importing paper fulltext: {i + 1}/{len(fulltext_data)}")
+        
+        print(f"Paper fulltext import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
+    def import_mindmap_reports(self, mindmap_reports_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import mindmap reports from JSON file.
+        
+        Args:
+            mindmap_reports_file: Path to mindmap_reports.json file
+            skip_duplicates: Whether to skip mindmap reports that already exist (by title and created_at)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing mindmap reports...")
+        
+        with open(mindmap_reports_file, 'r', encoding='utf-8') as f:
+            reports_data = json.load(f)
+        
+        stats = {"total": len(reports_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, report_data in enumerate(reports_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    existing_reports = self.db.get_mindmap_reports(limit=1000)
+                    if any(r["title"] == report_data["title"] and 
+                          r["created_at"] == report_data["created_at"] for r in existing_reports):
+                        stats["skipped"] += 1
+                        continue
+                
+                # Use the database method to save the report (need to reconstruct the full mindmap data)
+                # For import, we'll insert directly to preserve all original data including IDs
+                with self.db.get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO mindmap_reports 
+                        (title, description, seed_paper_id, seed_paper_title, mindmap_data_json, 
+                         parameters_json, statistics_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        report_data["title"],
+                        report_data.get("description"),
+                        report_data["seed_paper_id"],
+                        report_data["seed_paper_title"],
+                        json.dumps(report_data.get("mindmap_data", {})),
+                        json.dumps(report_data.get("parameters", {})),
+                        json.dumps(report_data.get("statistics", {})),
+                        report_data["created_at"]
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing mindmap report '{report_data.get('title', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(reports_data), f"Importing mindmap reports: {i + 1}/{len(reports_data)}")
+        
+        print(f"Mindmap reports import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
+    def import_model_catalog(self, model_catalog_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import model catalog entries from JSON file.
+        
+        Args:
+            model_catalog_file: Path to model_catalog.json file
+            skip_duplicates: Whether to skip model catalog entries that already exist (by alias)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing model catalog...")
+        
+        with open(model_catalog_file, 'r', encoding='utf-8') as f:
+            catalog_data = json.load(f)
+        
+        stats = {"total": len(catalog_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, model_data in enumerate(catalog_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with self.db.get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM model_catalog WHERE alias = ?", (model_data["alias"],))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert model catalog entry
+                with self.db.get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO model_catalog 
+                        (alias, model_string, provider_name, model_type, description, max_new_tokens,
+                         temperature, num_ctx, trust_remote_code, tags_json, is_favorite, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        model_data["alias"],
+                        model_data["model_string"],
+                        model_data["provider_name"],
+                        model_data["model_type"],
+                        model_data.get("description"),
+                        model_data.get("max_new_tokens"),
+                        model_data.get("temperature"),
+                        model_data.get("num_ctx"),
+                        int(model_data.get("trust_remote_code", False)),
+                        json.dumps(model_data.get("tags", [])),
+                        int(model_data.get("is_favorite", False)),
+                        model_data.get("created_at"),
+                        model_data.get("updated_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing model catalog entry '{model_data.get('alias', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(catalog_data), f"Importing model catalog: {i + 1}/{len(catalog_data)}")
+        
+        print(f"Model catalog import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
     def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
@@ -346,100 +702,98 @@ class DatabaseImporter:
         
         # Check what files are available
         available_files = []
-        if (input_path / "papers.json").exists():
-            available_files.append("papers")
-        if (input_path / "podcasts.json").exists():
-            available_files.append("podcasts")
-        if (input_path / "newsletters.json").exists():
-            available_files.append("newsletters")
-        if (input_path / "literature_reviews.json").exists():
-            available_files.append("literature_reviews")
+        file_map = {
+            "papers": "papers.json",
+            "podcasts": "podcasts.json", 
+            "newsletters": "newsletters.json",
+            "literature_reviews": "literature_reviews.json",
+            "research_runs": "research_runs.json",
+            "research_agent_state": "research_agent_state.json",
+            "paper_fulltext": "paper_fulltext.json",
+            "mindmap_reports": "mindmap_reports.json",
+            "model_catalog": "model_catalog.json"
+        }
+        
+        for table_name, filename in file_map.items():
+            if (input_path / filename).exists():
+                available_files.append(table_name)
         
         total_steps = len(available_files)
         
-        # Import papers
-        papers_file = input_path / "papers.json"
-        if papers_file.exists():
-            if progress_callback:
-                progress_callback(0, 100, "Starting papers import...")
-            results["papers"] = self.import_papers(
-                str(papers_file), 
-                skip_duplicates, 
-                lambda c, t, m: progress_callback(
-                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
-                    100, 
-                    m
-                ) if progress_callback else None
-            )
-            current_step += 1
-        else:
-            print("Warning: papers.json not found")
-            results["papers"] = {"error": "File not found"}
-            current_step += 1
+        # Helper function to create progress callback for each import
+        def create_progress_callback(step_index, table_name):
+            def table_progress_callback(current, total, message):
+                if progress_callback:
+                    # Calculate overall progress: each table gets equal weight
+                    step_progress = (current / total) * (100 / total_steps)
+                    overall_progress = int((step_index / total_steps) * 100 + step_progress)
+                    progress_callback(overall_progress, 100, f"{table_name}: {message}")
+            return table_progress_callback
         
-        # Import podcasts
-        podcasts_file = input_path / "podcasts.json"
-        if podcasts_file.exists():
+        # Import each available table
+        for i, table_name in enumerate(available_files):
+            filename = file_map[table_name]
+            file_path = input_path / filename
+            
             if progress_callback:
-                progress_callback(int((current_step / total_steps) * 100), 100, "Starting podcasts import...")
-            results["podcasts"] = self.import_podcasts(
-                str(podcasts_file), 
-                skip_duplicates,
-                lambda c, t, m: progress_callback(
-                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
-                    100, 
-                    m
-                ) if progress_callback else None
-            )
-            current_step += 1
-        else:
-            print("Warning: podcasts.json not found")
-            results["podcasts"] = {"error": "File not found"}
-            current_step += 1
+                progress_callback(int((i / total_steps) * 100), 100, f"Starting {table_name} import...")
+            
+            try:
+                if table_name == "papers":
+                    results[table_name] = self.import_papers(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "podcasts":
+                    results[table_name] = self.import_podcasts(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "newsletters":
+                    results[table_name] = self.import_newsletters(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "literature_reviews":
+                    results[table_name] = self.import_literature_reviews(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "research_runs":
+                    results[table_name] = self.import_research_runs(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "research_agent_state":
+                    results[table_name] = self.import_research_agent_state(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "paper_fulltext":
+                    results[table_name] = self.import_paper_fulltext(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "mindmap_reports":
+                    results[table_name] = self.import_mindmap_reports(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "model_catalog":
+                    results[table_name] = self.import_model_catalog(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+            except Exception as e:
+                print(f"Error importing {table_name}: {e}")
+                results[table_name] = {"error": str(e)}
         
-        # Import newsletters
-        newsletters_file = input_path / "newsletters.json"
-        if newsletters_file.exists():
-            if progress_callback:
-                progress_callback(int((current_step / total_steps) * 100), 100, "Starting newsletters import...")
-            results["newsletters"] = self.import_newsletters(
-                str(newsletters_file), 
-                skip_duplicates,
-                lambda c, t, m: progress_callback(
-                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
-                    100, 
-                    m
-                ) if progress_callback else None
-            )
-            current_step += 1
-        else:
-            print("Warning: newsletters.json not found")
-            results["newsletters"] = {"error": "File not found"}
-            current_step += 1
-        
-        # Import literature reviews (optional for backward compatibility)
-        literature_reviews_file = input_path / "literature_reviews.json"
-        if literature_reviews_file.exists():
-            if progress_callback:
-                progress_callback(int((current_step / total_steps) * 100), 100, "Starting literature reviews import...")
-            results["literature_reviews"] = self.import_literature_reviews(
-                str(literature_reviews_file), 
-                skip_duplicates,
-                lambda c, t, m: progress_callback(
-                    int((current_step / total_steps) * 100 + (c / t) * (100 / total_steps)), 
-                    100, 
-                    m
-                ) if progress_callback else None
-            )
-        else:
-            print("Note: literature_reviews.json not found (this is optional for older exports)")
-            results["literature_reviews"] = {"note": "File not found (optional)"}
+        # Handle missing files with informative messages
+        for table_name, filename in file_map.items():
+            if table_name not in results:
+                if table_name in ["papers", "podcasts", "newsletters"]:
+                    print(f"Warning: {filename} not found")
+                    results[table_name] = {"error": "File not found"}
+                else:
+                    print(f"Note: {filename} not found (this is optional for older exports)")
+                    results[table_name] = {"note": "File not found (optional)"}
         
         if progress_callback:
             progress_callback(100, 100, "Import completed!")
         
         return results
-    
+
     def import_from_archive(self, archive_path: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a tar.gz archive.
@@ -492,7 +846,7 @@ class DatabaseImporter:
 
     def clear_all_data(self, progress_callback=None) -> Dict[str, int]:
         """
-        Clear all data from the main tables (papers, podcasts, newsletters, logs, tasks).
+        Clear all data from the main tables.
         WARNING: This is destructive and cannot be undone.
         
         Args:
@@ -504,7 +858,10 @@ class DatabaseImporter:
         print("WARNING: Clearing all data from database tables...")
         
         # Tables to clear in order (respecting potential foreign key constraints)
-        tables_to_clear = ['logs', 'tasks', 'lit_reviews', 'newsletters', 'podcasts', 'papers']
+        tables_to_clear = [
+            'logs', 'tasks', 'research_agent_state', 'research_runs', 'lit_reviews', 
+            'mindmap_reports', 'model_catalog', 'paper_fulltext', 'newsletters', 'podcasts', 'papers'
+        ]
         deletion_counts = {}
         total_tables = len(tables_to_clear)
         

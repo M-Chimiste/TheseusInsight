@@ -1510,6 +1510,44 @@ const Settings: React.FC = () => {
                 </Tooltip>
               </Box>
             </Box>
+            
+            {/* Multi-Order Expansion Settings */}
+            <Typography variant="body2" color="primary" sx={{ mt: 2, mb: 1, fontWeight: 'medium' }}>
+              Multi-Order Expansion
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'flex-start' }}>
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, minWidth: 200, flex: '1 1 200px' }}>
+                <Box sx={{ flex: 1 }}>
+                  <TextField
+                    label="Expansion Order"
+                    type="number"
+                    value={currentConfig.expansion_order || 1}
+                    onChange={(e) => handleModelConfigChange(modelKey, 'expansion_order', Number(e.target.value))}
+                    inputProps={{ min: 1, max: 5, step: 1 }}
+                    helperText="Number of expansion orders (1-5)"
+                    fullWidth
+                  />
+                  <Box sx={{ mt: 0.5, fontSize: '0.75rem', color: 'text.secondary', minHeight: '1.5em' }}>
+                    1st order = direct neighbors, 2nd order = neighbors of neighbors, etc.
+                  </Box>
+                </Box>
+                <Tooltip title="Higher orders exponentially expand the graph by finding papers similar to each retrieved paper. Order 1 finds papers similar to the seed. Order 2 finds papers similar to each Order 1 paper, and so on." placement="top">
+                  <IconButton size="small" sx={{ mt: 1 }}>
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              
+              <TextField
+                label="Max Nodes per Order"
+                type="number"
+                value={currentConfig.max_nodes_per_order || 20}
+                onChange={(e) => handleModelConfigChange(modelKey, 'max_nodes_per_order', Number(e.target.value))}
+                inputProps={{ min: 5, max: 50, step: 1 }}
+                helperText="Maximum nodes to expand from each paper in multi-order expansion (5-50)"
+                sx={{ minWidth: 200, flex: '1 1 200px' }}
+              />
+            </Box>
           </Box>
 
           {/* Summarization Model */}

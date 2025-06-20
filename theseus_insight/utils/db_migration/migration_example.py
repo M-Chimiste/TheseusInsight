@@ -1,239 +1,256 @@
 #!/usr/bin/env python3
 """
-Example script demonstrating how to use the database migration tools programmatically.
+Database Migration Example
 
-This script shows various migration scenarios and how to handle them in code.
+This script demonstrates how to use the updated Theseus Insight database migration tools
+that now support MindMap and Research Agent data.
+
+The migration system is backwards compatible - you can:
+1. Export/import older databases without the new tables
+2. Export/import with the new tables included (default)
+3. Selectively exclude new tables for backwards compatibility
 """
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
-from .db_export import DatabaseExporter
-from .db_import import DatabaseImporter
-from .db_migrate import DatabaseMigrator
+# Add the parent directory to the path so we can import the migration modules
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from theseus_insight.utils.db_migration import DatabaseExporter, DatabaseImporter, DatabaseMigrator
 
 
-def example_export_to_archive():
-    """Example: Export database to a timestamped archive."""
-    print("=== Example: Export Database to Archive ===")
+def example_export_with_new_tables():
+    """Example: Export database including new MindMap and Research Agent tables."""
+    print("=== Example: Export with New Tables (Default) ===")
     
-    # Database connection (replace with your actual connection string)
-    source_db = os.getenv("SOURCE_DB_URL", "postgresql://user:pass@localhost:5432/theseus_dev")
+    source_db_path = "data/papers.db"  # Adjust path as needed
+    output_dir = "temp_export"
     
-    # Create exporter
-    with tempfile.TemporaryDirectory() as temp_dir:
-        exporter = DatabaseExporter(source_db, temp_dir)
+    try:
+        exporter = DatabaseExporter(source_db_path, output_dir)
         
-        # Export with custom archive name
+        # Export with new tables included (default behavior)
         result = exporter.export_all(
             create_archive=True,
-            archive_name="dev_backup_manual"
+            archive_name="full_export_with_new_features"
         )
         
         print(f"Export completed!")
-        print(f"Archive created: {result['archive']}")
         print(f"Files exported: {list(result['files'].keys())}")
+        print(f"Archive created: {result.get('archive', 'No archive created')}")
         
-        return result['archive']
-
-
-def example_import_from_archive(archive_path: str):
-    """Example: Import data from an archive to a new database."""
-    print("\n=== Example: Import from Archive ===")
-    
-    # Target database connection (replace with your actual connection string)
-    target_db = os.getenv("TARGET_DB_URL", "postgresql://user:pass@localhost:5432/theseus_new")
-    
-    # Create importer
-    importer = DatabaseImporter(target_db)
-    
-    # Import data (skipping duplicates by default)
-    result = importer.import_from_archive(archive_path, skip_duplicates=True)
-    
-    print("Import completed!")
-    for table, stats in result.items():
-        if "error" not in stats:
-            print(f"{table}: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
-        else:
-            print(f"{table}: {stats['error']}")
-    
-    return result
-
-
-def example_direct_migration():
-    """Example: Direct migration between two databases."""
-    print("\n=== Example: Direct Database Migration ===")
-    
-    source_db = os.getenv("SOURCE_DB_URL", "postgresql://user:pass@localhost:5432/theseus_dev")
-    target_db = os.getenv("TARGET_DB_URL", "postgresql://user:pass@localhost:5432/theseus_staging")
-    
-    # Create migrator
-    migrator = DatabaseMigrator()
-    
-    # Perform migration with verification
-    result = migrator.migrate_database(
-        source_db=source_db,
-        target_db=target_db,
-        skip_duplicates=True,
-        keep_archive=True,
-        archive_path="./migration_backup.tar.gz"
-    )
-    
-    print("Migration completed!")
-    print(f"Archive saved: {result['archive_path']}")
-    
-    # Verify the migration
-    verification = migrator.verify_migration(source_db, target_db)
-    print("\nVerification Results:")
-    for table, stats in verification.items():
-        if table != "overall_success":
-            status = "✓" if stats["match"] else "✗"
-            print(f"{status} {table}: {stats['source_count']} → {stats['target_count']}")
-    
-    if verification["overall_success"]:
-        print("✓ Migration verified successfully!")
-    else:
-        print("✗ Migration verification failed!")
-    
-    return result
-
-
-def example_selective_import():
-    """Example: Import only specific tables from an archive."""
-    print("\n=== Example: Selective Import ===")
-    
-    # This example shows how you could modify the import process
-    # to only import specific tables
-    
-    target_db = os.getenv("TARGET_DB_URL", "postgresql://user:pass@localhost:5432/theseus_test")
-    archive_path = "./test_backup.tar.gz"
-    
-    # Extract archive to temporary directory
-    importer = DatabaseImporter(target_db)
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        extract_dir = importer.extract_archive(archive_path, temp_dir)
-        
-        # Import only papers (skip podcasts and newsletters)
-        papers_file = Path(extract_dir) / "papers.json"
-        if papers_file.exists():
-            papers_result = importer.import_papers(str(papers_file), skip_duplicates=True)
-            print(f"Papers: {papers_result['imported']} imported, {papers_result['skipped']} skipped")
-        
-        # You could add conditional logic here for other tables
-        # based on your specific requirements
-    
-    print("Selective import completed!")
-
-
-def example_batch_processing():
-    """Example: Process multiple archives in batch."""
-    print("\n=== Example: Batch Processing ===")
-    
-    target_db = os.getenv("TARGET_DB_URL", "postgresql://user:pass@localhost:5432/theseus_consolidated")
-    archive_directory = "./archives/"
-    
-    # Find all tar.gz files in the directory
-    archive_files = list(Path(archive_directory).glob("*.tar.gz"))
-    
-    if not archive_files:
-        print("No archive files found in ./archives/")
-        return
-    
-    importer = DatabaseImporter(target_db)
-    total_stats = {"imported": 0, "skipped": 0, "errors": 0}
-    
-    for archive_file in archive_files:
-        print(f"Processing: {archive_file.name}")
-        
-        try:
-            result = importer.import_from_archive(str(archive_file), skip_duplicates=True)
-            
-            # Aggregate statistics
-            for table_stats in result.values():
-                if "error" not in table_stats:
-                    total_stats["imported"] += table_stats.get("imported", 0)
-                    total_stats["skipped"] += table_stats.get("skipped", 0)
-                    total_stats["errors"] += table_stats.get("errors", 0)
-        
-        except Exception as e:
-            print(f"Error processing {archive_file.name}: {e}")
-            total_stats["errors"] += 1
-    
-    print(f"\nBatch processing completed!")
-    print(f"Total: {total_stats['imported']} imported, {total_stats['skipped']} skipped, {total_stats['errors']} errors")
-
-
-def example_error_handling():
-    """Example: Proper error handling in migration scripts."""
-    print("\n=== Example: Error Handling ===")
-    
-    source_db = "postgresql://invalid:connection@nonexistent:5432/fake_db"
-    
-    try:
-        # This will fail, demonstrating error handling
-        exporter = DatabaseExporter(source_db, "./temp_export")
-        result = exporter.export_all()
+        return result
         
     except Exception as e:
-        print(f"Expected error caught: {type(e).__name__}: {e}")
-        print("This demonstrates how to handle connection errors gracefully.")
-        
-        # In a real script, you might:
-        # 1. Log the error
-        # 2. Send notifications
-        # 3. Retry with exponential backoff
-        # 4. Fall back to alternative data sources
-        
-        return False
+        print(f"Export failed: {e}")
+        return None
+
+
+def example_export_backwards_compatible():
+    """Example: Export database excluding new tables for backwards compatibility."""
+    print("\n=== Example: Export for Backwards Compatibility ===")
     
-    return True
+    source_db_path = "data/papers.db"  # Adjust path as needed
+    output_dir = "temp_export_compat"
+    
+    try:
+        exporter = DatabaseExporter(source_db_path, output_dir)
+        
+        # Export without new tables (backwards compatible)
+        result = exporter.export_all(
+            create_archive=True,
+            archive_name="backwards_compatible_export",
+            include_new_tables=False  # Exclude new tables
+        )
+        
+        print(f"Export completed!")
+        print(f"Files exported: {list(result['files'].keys())}")
+        print(f"Archive created: {result.get('archive', 'No archive created')}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"Export failed: {e}")
+        return None
+
+
+def example_import_with_auto_detection():
+    """Example: Import database with automatic new table detection."""
+    print("\n=== Example: Import with Auto Detection ===")
+    
+    archive_path = "temp_export/full_export_with_new_features.tar.gz"
+    target_db_path = "data/imported_papers.db"
+    
+    try:
+        importer = DatabaseImporter(target_db_path)
+        
+        # Import will automatically detect and handle new tables if present
+        result = importer.import_all(archive_path, skip_duplicates=True)
+        
+        print(f"Import completed!")
+        for table, stats in result.items():
+            if isinstance(stats, dict) and 'imported' in stats:
+                print(f"{table}: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+            elif isinstance(stats, dict) and 'note' in stats:
+                print(f"{table}: {stats['note']}")
+            elif isinstance(stats, dict) and 'error' in stats:
+                print(f"{table}: {stats['error']}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"Import failed: {e}")
+        return None
+
+
+def example_full_migration():
+    """Example: Complete migration between databases."""
+    print("\n=== Example: Full Database Migration ===")
+    
+    source_db_path = "data/papers.db"
+    target_db_path = "data/migrated_papers.db"
+    
+    try:
+        migrator = DatabaseMigrator()
+        
+        # Migrate including new tables
+        result = migrator.migrate_database(
+            source_db=source_db_path,
+            target_db=target_db_path,
+            skip_duplicates=True,
+            keep_archive=True,
+            archive_path="migration_backup.tar.gz",
+            include_new_tables=True  # Include new tables
+        )
+        
+        print(f"Migration completed!")
+        print(f"Export result: {result['export']['files'].keys()}")
+        print(f"Import result available for each table")
+        
+        # Verify the migration
+        verification = migrator.verify_migration(source_db_path, target_db_path)
+        print(f"\nVerification Results:")
+        for table, stats in verification.items():
+            if table == "overall_success":
+                continue
+            if isinstance(stats, dict) and "match" in stats:
+                status = "✓" if stats["match"] else "✗"
+                print(f"{status} {table}: {stats['source_count']} → {stats['target_count']}")
+            else:
+                print(f"- {table}: {stats.get('note', 'Not verified')}")
+        
+        print(f"\nOverall success: {'✓' if verification['overall_success'] else '✗'}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"Migration failed: {e}")
+        return None
+
+
+def example_new_table_operations():
+    """Example: Working with the new tables specifically."""
+    print("\n=== Example: New Table Operations ===")
+    
+    from theseus_insight.data_model.data_handling import PaperDatabase
+    
+    db_path = "data/papers.db"
+    
+    try:
+        db = PaperDatabase(db_path)
+        
+        # Check for new table data
+        print("Checking for new table data...")
+        
+        # Research Agent data
+        research_runs = db.get_research_runs_history(limit=5)
+        print(f"Research runs found: {len(research_runs)}")
+        
+        # MindMap data
+        mindmap_reports = db.get_mindmap_reports(limit=5)
+        print(f"MindMap reports found: {len(mindmap_reports)}")
+        
+        # Model catalog data
+        model_catalog = db.search_model_catalog(page_size=5)
+        print(f"Model catalog entries found: {len(model_catalog['models'])}")
+        
+        # Full-text papers
+        papers_without_fulltext = db.get_papers_without_fulltext(limit=5)
+        print(f"Papers without full-text: {len(papers_without_fulltext)}")
+        
+        print("New table data check completed!")
+        
+    except Exception as e:
+        print(f"New table operations failed: {e}")
+
+
+def cleanup_temp_files():
+    """Clean up temporary files created during examples."""
+    print("\n=== Cleanup ===")
+    
+    temp_dirs = ["temp_export", "temp_export_compat"]
+    temp_files = ["migration_backup.tar.gz"]
+    
+    for temp_dir in temp_dirs:
+        if os.path.exists(temp_dir):
+            import shutil
+            shutil.rmtree(temp_dir)
+            print(f"Removed directory: {temp_dir}")
+    
+    for temp_file in temp_files:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+            print(f"Removed file: {temp_file}")
 
 
 def main():
-    """Run all examples."""
-    print("Database Migration Examples")
+    """Run all migration examples."""
+    print("Theseus Insight Database Migration Examples")
     print("=" * 50)
     
-    # Set up environment variables for examples
-    # In practice, these would be set in your environment
-    os.environ.setdefault("SOURCE_DB_URL", "postgresql://user:pass@localhost:5432/theseus_dev")
-    os.environ.setdefault("TARGET_DB_URL", "postgresql://user:pass@localhost:5432/theseus_new")
+    # Check if database exists
+    if not os.path.exists("data/papers.db"):
+        print("Warning: Database file 'data/papers.db' not found.")
+        print("Please adjust the database paths in the examples or create a test database.")
+        print("\nShowing examples with placeholder data...")
     
+    # Run examples
     try:
-        # Example 1: Export to archive
-        archive_path = example_export_to_archive()
+        # Example 1: Export with new tables
+        export_result = example_export_with_new_tables()
         
-        # Example 2: Import from archive (using the archive we just created)
-        if archive_path and Path(archive_path).exists():
-            example_import_from_archive(archive_path)
+        # Example 2: Export for backwards compatibility
+        compat_result = example_export_backwards_compatible()
         
-        # Example 3: Direct migration
-        # example_direct_migration()  # Uncomment to run
+        # Example 3: Import with auto-detection
+        if export_result and export_result.get('archive'):
+            example_import_with_auto_detection()
         
-        # Example 4: Selective import
-        # example_selective_import()  # Uncomment to run
+        # Example 4: Full migration
+        example_full_migration()
         
-        # Example 5: Batch processing
-        # example_batch_processing()  # Uncomment to run
-        
-        # Example 6: Error handling
-        example_error_handling()
+        # Example 5: New table operations
+        example_new_table_operations()
         
     except Exception as e:
-        print(f"Example failed: {e}")
-        return 1
+        print(f"Examples failed: {e}")
+    
+    finally:
+        # Clean up
+        cleanup_temp_files()
     
     print("\n" + "=" * 50)
-    print("Examples completed! Check the output above for results.")
-    print("\nTo run these examples with real databases:")
-    print("1. Set SOURCE_DB_URL and TARGET_DB_URL environment variables")
-    print("2. Ensure the databases exist and are accessible")
-    print("3. Uncomment the examples you want to run")
-    
-    return 0
+    print("Migration examples completed!")
+    print("\nKey Features:")
+    print("✓ Backwards compatible migration")
+    print("✓ Automatic new table detection")
+    print("✓ Selective table inclusion/exclusion")
+    print("✓ MindMap and Research Agent data support")
+    print("✓ Comprehensive verification")
 
 
 if __name__ == "__main__":
-    exit(main()) 
+    main() 

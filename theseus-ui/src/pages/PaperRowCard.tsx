@@ -103,6 +103,13 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
                sx={{mb:1}}
              />
           )}
+          {Array.isArray(paper.keywords) && paper.keywords.length > 0 && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+              {paper.keywords.slice(0,5).map((kw)=> (
+                 <Chip key={kw} label={kw} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+              ))}
+            </Box>
+          )}
           <Typography variant="body2" sx={{mt:2}}>
             <Link href={paper.url} target="_blank" rel="noopener noreferrer">
               View on ArXiv

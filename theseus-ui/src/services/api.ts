@@ -18,6 +18,8 @@ export interface MindMapConfig {
   similarity_threshold: number;
   layout_algorithm: 'force' | 'circular' | 'hierarchical';
   summarization_model: ModelConfig;
+  expansion_order: number;
+  max_nodes_per_order: number;
 }
 
 export interface OrchestrationConfig {
@@ -195,6 +197,36 @@ export const mindMapApi = {
     api.get('/mindmap/search-seeds', { params: request }),
   getPaper: (paperId: string) => 
     api.get(`/mindmap/paper/${paperId}`),
+  
+  // Report management
+  getReports: async (): Promise<MindMapReportListResponse> => {
+    const response: AxiosResponse<MindMapReportListResponse> = await api.get('/mindmap/reports');
+    return response.data;
+  },
+  getReport: async (reportId: number): Promise<MindMapReport> => {
+    const response: AxiosResponse<MindMapReport> = await api.get(`/mindmap/reports/${reportId}`);
+    return response.data;
+  },
+  saveReport: async (request: MindMapReportSaveRequest): Promise<MindMapReportSaveResponse> => {
+    const response: AxiosResponse<MindMapReportSaveResponse> = await api.post('/mindmap/reports', request);
+    return response.data;
+  },
+  updateReport: async (reportId: number, request: MindMapReportSaveRequest): Promise<{ message: string; id: number }> => {
+    const response: AxiosResponse<{ message: string; id: number }> = await axios.put(`/api/mindmap/reports/${reportId}`, request);
+    return response.data;
+  },
+  deleteReport: async (reportId: number): Promise<{ status: string; message: string }> => {
+    const response: AxiosResponse<{ status: string; message: string }> = await api.delete(`/mindmap/reports/${reportId}`);
+    return response.data;
+  },
+  updateReportTitle: async (reportId: number, title: string): Promise<{ status: string; message: string; title: string }> => {
+    const response: AxiosResponse<{ status: string; message: string; title: string }> = await api.put(`/mindmap/reports/${reportId}/title`, { title });
+    return response.data;
+  },
+  updateReportDescription: async (reportId: number, description: string): Promise<{ status: string; message: string; description: string }> => {
+    const response: AxiosResponse<{ status: string; message: string; description: string }> = await api.put(`/mindmap/reports/${reportId}/description`, { description });
+    return response.data;
+  },
 };
 
 // WebSocket connection
@@ -299,6 +331,7 @@ export interface PaperApiResponse {
   cosine_similarity: number;
   url: string;
   embedding_model: string;
+  keywords?: string[];
   similarity_score?: number; // Optional field for similarity search results
 }
 
@@ -528,15 +561,19 @@ export interface ResearchWebSocketMessage {
 
 // Mind-Map API Types
 export interface MindMapNode {
-  id: string;
+  id: string | number;
   title: string;
-  summary: string;
+  abstract: string;
+  date: string;
+  url: string;
+  score: number;
+  rationale: string;
   similarity_score: number;
-  position: { x: number; y: number };
-  is_seed: boolean;
-  has_fulltext: boolean;
-  url?: string;
-  date?: string;
+  summary?: string;
+  keywords?: string[];
+  has_fulltext?: boolean;
+  is_seed?: boolean;
+  colorIndex?: number;
 }
 
 export interface MindMapEdge {
@@ -560,6 +597,8 @@ export interface MindMapExpandRequest {
   similarity_threshold?: number;
   layout_algorithm?: 'force' | 'circular' | 'hierarchical';
   model_config_override?: any;
+  expansion_order?: number;
+  max_nodes_per_order?: number;
 }
 
 export interface MindMapExpandResponse {
@@ -601,4 +640,35 @@ export interface MindMapWebSocketMessage {
     layout_algorithm: string;
   };
   error?: string;
+}
+
+// Mind-Map Reports interfaces
+export interface MindMapReport {
+  id: number;
+  title: string;
+  description?: string;
+  seed_paper_id: number;
+  seed_paper_title: string;
+  parameters: Record<string, any>;
+  mindmap_data: MindMapData;
+  statistics: Record<string, any>;
+  created_at: string;
+}
+
+export interface MindMapReportSaveRequest {
+  title: string;
+  description?: string;
+  mindmap_data: MindMapData;
+  parameters: Record<string, any>;
+}
+
+export interface MindMapReportSaveResponse {
+  id: number;
+  title: string;
+  message: string;
+}
+
+export interface MindMapReportListResponse {
+  reports: MindMapReport[];
+  total_count: number;
 } 

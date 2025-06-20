@@ -7,6 +7,7 @@ information from the database to use as the center of the mind-map.
 
 import logging
 from typing import Dict, Any
+import yake
 
 from ..state import MindMapState, Message, create_paper_node
 
@@ -68,7 +69,26 @@ class SelectSeedNode:
                 logger.warning(f"Seed paper {seed_paper_id} has no embedding - similarity search may be limited")
                 
             # Create seed paper node
-            seed_paper = create_paper_node(paper_data, similarity_score=1.0)  # Seed has perfect similarity to itself
+            seed_paper = create_paper_node(paper_data, similarity_score=1.0)
+            
+            # Keywords extraction / caching
+            keywords = None
+            try:
+                keywords = self.db.get_paper_keywords(seed_paper_id)
+            except Exception:
+                keywords = None
+
+            if not keywords:
+                try:
+                    extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+                    text_for_kw = f"{paper_data.get('title','')} {paper_data.get('abstract','')}"
+                    kw_scores = extractor.extract_keywords(text_for_kw)
+                    keywords = [kw for kw, _ in kw_scores]
+                    self.db.update_paper_keywords(seed_paper_id, keywords)
+                except Exception:
+                    keywords = []
+
+            seed_paper["keywords"] = keywords
             
             logger.info(f"Successfully selected seed paper: '{paper_data.get('title', 'Unknown Title')}'")
             

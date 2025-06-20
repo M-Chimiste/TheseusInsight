@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, List
 
 from ..state import MindMapState, Message, create_paper_node, create_mindmap_edge
+import yake
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class RetrieverNode:
             db: Database instance (PaperDatabase)
         """
         self.db = db
+        self.keyword_extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
         
     def __call__(self, state: MindMapState) -> Dict[str, Any]:
         """
@@ -97,6 +99,18 @@ class RetrieverNode:
                         similarity_score=similarity_score
                     )
                     edges.append(edge)
+                    
+                    # keywords
+                    kw = self.db.get_paper_keywords(paper_node["id"])
+                    if not kw:
+                        try:
+                            text_kw = f"{paper_node['title']} {paper_node['abstract']}"
+                            kw_scores = self.keyword_extractor.extract_keywords(text_kw)
+                            kw = [w for w, _ in kw_scores]
+                            self.db.update_paper_keywords(paper_node["id"], kw)
+                        except Exception:
+                            kw = []
+                    paper_node["keywords"] = kw
                 
                 logger.info(f"Successfully retrieved {len(similar_papers)} similar papers")
                 

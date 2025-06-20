@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import List
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Body
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
 import uuid
 from datetime import datetime
 
@@ -7,6 +8,8 @@ from ..models import (
     MindMapExpandRequest, MindMapExpandResponse,
     PDFParseRequest, PDFParseResponse,
     MindMapSeedSearchRequest, MindMapSeedSearchResponse,
+    MindMapReport, MindMapReportSaveRequest, MindMapReportSaveResponse,
+    MindMapReportListResponse,
     PaperApiResponse
 )
 from ..dependencies import db
@@ -46,7 +49,9 @@ async def expand_mindmap(
             "k": request.k,
             "similarity_threshold": request.similarity_threshold,
             "layout_algorithm": request.layout_algorithm,
-            "model_config_override": request.model_config_override.dict() if request.model_config_override else None
+            "model_config_override": request.model_config_override.dict() if request.model_config_override else None,
+            "expansion_order": request.expansion_order,
+            "max_nodes_per_order": request.max_nodes_per_order
         }
         
         # Create task in database
@@ -208,4 +213,233 @@ async def get_paper_details(paper_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get paper details: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to get paper details: {str(e)}")
+
+# Mind-Map Reports endpoints
+@router.get("/reports", response_model=MindMapReportListResponse)
+async def get_mindmap_reports():
+    """
+    Get list of all saved mind-map reports.
+    
+    Returns a list of saved mind-map reports with metadata.
+    """
+    try:
+        reports_data = db.get_mindmap_reports()
+        
+        # Convert to API response format
+        reports = []
+        for report_data in reports_data:
+            report = MindMapReport(
+                id=report_data['id'],
+                title=report_data['title'],
+                description=report_data.get('description'),
+                seed_paper_id=report_data['seed_paper_id'],
+                seed_paper_title=report_data['seed_paper_title'],
+                parameters=report_data.get('parameters', {}),
+                mindmap_data=report_data.get('mindmap_data', {}),
+                statistics=report_data.get('statistics', {}),
+                created_at=report_data['created_at']
+            )
+            reports.append(report)
+        
+        return MindMapReportListResponse(
+            reports=reports,
+            total_count=len(reports)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get mind-map reports: {str(e)}")
+
+@router.post("/reports", response_model=MindMapReportSaveResponse)
+async def save_mindmap_report(request: MindMapReportSaveRequest):
+    """
+    Save a mind-map as a report.
+    
+    This endpoint saves a generated mind-map with a title and optional description
+    for later retrieval and analysis.
+    """
+    try:
+        # Validate that the mindmap_data contains required fields
+        if not request.mindmap_data.get("seed_paper_id"):
+            raise HTTPException(status_code=400, detail="Mind-map data must contain seed_paper_id")
+        
+        # Get seed paper title for the report
+        seed_paper_id = request.mindmap_data.get("seed_paper_id")
+        seed_paper = db.get_paper_by_id(int(seed_paper_id))
+        if not seed_paper:
+            raise HTTPException(status_code=404, detail=f"Seed paper {seed_paper_id} not found")
+        
+        # Save the report
+        report_id = db.save_mindmap_report(
+            title=request.title,
+            description=request.description,
+            seed_paper_id=int(seed_paper_id),
+            seed_paper_title=seed_paper["title"],
+            mindmap_data=request.mindmap_data,
+            parameters=request.parameters,
+            statistics=request.mindmap_data.get("statistics", {})
+        )
+        
+        return MindMapReportSaveResponse(
+            id=report_id,
+            title=request.title,
+            message=f"Mind-map report '{request.title}' saved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save mind-map report: {str(e)}")
+
+@router.get("/reports/{report_id}", response_model=MindMapReport)
+async def get_mindmap_report(report_id: int):
+    """
+    Get a specific mind-map report by ID.
+    
+    Returns the complete mind-map report data including the visualization data.
+    """
+    try:
+        report_data = db.get_mindmap_report_by_id(report_id)
+        if not report_data:
+            raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
+        
+        # Convert to API response format
+        report = MindMapReport(
+            id=report_data['id'],
+            title=report_data['title'],
+            description=report_data.get('description'),
+            seed_paper_id=report_data['seed_paper_id'],
+            seed_paper_title=report_data['seed_paper_title'],
+            parameters=report_data.get('parameters', {}),
+            mindmap_data=report_data.get('mindmap_data', {}),
+            statistics=report_data.get('statistics', {}),
+            created_at=report_data['created_at']
+        )
+        
+        return report
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get mind-map report: {str(e)}")
+
+@router.delete("/reports/{report_id}")
+async def delete_mindmap_report(report_id: int):
+    """
+    Delete a mind-map report by ID.
+    
+    Permanently removes the saved mind-map report from the database.
+    """
+    try:
+        # Check if report exists
+        report = db.get_mindmap_report_by_id(report_id)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
+        
+        # Delete the report
+        db.delete_mindmap_report(report_id)
+        
+        return {
+            "status": "success",
+            "message": f"Mind-map report {report_id} deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete mind-map report: {str(e)}")
+
+@router.put("/reports/{report_id}/title")
+async def update_mindmap_report_title(report_id: int, request: dict):
+    """
+    Update the title of a mind-map report.
+    
+    Allows updating the title of an existing mind-map report.
+    """
+    try:
+        new_title = request.get("title", "").strip()
+        if not new_title:
+            raise HTTPException(status_code=400, detail="Title is required")
+        
+        if len(new_title) > 200:
+            raise HTTPException(status_code=400, detail="Title must be 200 characters or less")
+        
+        # Check if report exists
+        report = db.get_mindmap_report_by_id(report_id)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
+        
+        # Update the title
+        db.update_mindmap_report_title(report_id, new_title)
+        
+        return {
+            "status": "success",
+            "message": f"Mind-map report title updated successfully",
+            "title": new_title
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update mind-map report title: {str(e)}")
+
+# -----------------------------------------------------------------------------
+# Update description endpoint
+# -----------------------------------------------------------------------------
+
+@router.put("/reports/{report_id}/description")
+async def update_mindmap_report_description(report_id: int, request: dict):
+    """
+    Update the *description* of a mind-map report.
+    """
+    try:
+        new_description = request.get("description", "")
+        if new_description is None:
+            new_description = ""
+
+        # Validate report exists
+        report = db.get_mindmap_report_by_id(report_id)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
+
+        # Persist change
+        db.update_mindmap_report_description(report_id, new_description)
+
+        return {
+            "status": "success",
+            "message": "Mind-map report description updated successfully",
+            "description": new_description,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update mind-map report description: {str(e)}")
+
+# --- New endpoint: Update existing mind-map report (mindmap_data / parameters) --- #
+
+class MindMapReportUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    mindmap_data: Dict[str, Any]
+    parameters: Dict[str, Any]
+    statistics: Optional[Dict[str, Any]] = None
+
+@router.put("/reports/{report_id}")
+async def update_mindmap_report(report_id: int, request: MindMapReportUpdateRequest = Body(...)):
+    """Replace the stored mind-map data/parameters for an existing report."""
+    try:
+        updated = db.update_mindmap_report_data(
+            report_id=report_id,
+            mindmap_data=request.mindmap_data,
+            parameters=request.parameters,
+            statistics=request.statistics,
+            title=request.title,
+            description=request.description,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return {"message": "Mind-map report updated", "id": report_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update mind-map report: {str(e)}") 

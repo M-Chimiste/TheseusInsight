@@ -21,6 +21,7 @@ from tqdm import tqdm
 import pandas as pd
 import json_repair
 import torch
+import yake
 
 # Add project root to import path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -47,21 +48,15 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 # ---------------------------------------------------------------
 
 def check_paper_exists(db_url: str, paper_data: tuple) -> bool:
-    """
-    Helper function for multiprocessing database checks.
-    
-    Args:
-        db_url: Database connection URL
-        paper_data: Tuple of (index, paper_url)
-    
-    Returns:
-        bool: True if paper exists in database
-    """
+    """Return True if paper already exists, based on URL **or** title."""
     from theseus_insight.data_model.data_handling import PaperDatabase
-    
-    idx, paper_url = paper_data
+
+    idx, paper_url, paper_title = paper_data
     db = PaperDatabase(db_url)
-    return db.paper_exists_by_url(paper_url)
+    # Normalise URL for comparison
+    exists_by_url = db.paper_exists_by_url(paper_url) if paper_url else False
+    exists_by_title = db.paper_exists_by_title(paper_title)
+    return exists_by_url or exists_by_title
 
 
 def get_paper_count(db_url: str) -> int:
@@ -141,7 +136,7 @@ def check_existing_papers_parallel(
     
     # Prepare data for parallel processing
     paper_data = [
-        (idx, row.get("pdf_url") or row.get("url_pdf")) 
+        (idx, row.get("pdf_url") or row.get("url_pdf"), row["title"]) 
         for idx, (_, row) in enumerate(df.iterrows())
     ]
     
@@ -357,7 +352,7 @@ def embed_papers(
             new_mask = []
             with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
                 for _, row in pbar:
-                    exists = db.paper_exists_by_url(row["pdf_url"])
+                    exists = db.paper_exists_by_url(row["pdf_url"]) or db.paper_exists_by_title(row["title"])
                     new_mask.append(not exists)
         
         new_df = df[new_mask].reset_index(drop=True)
@@ -649,6 +644,8 @@ def insert_papers(
     dup = 0
     dup_urls = []
     
+    extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+    
     with tqdm(all_df.iterrows(), total=len(all_df), desc="Inserting papers", disable=not verbose) as pbar:
         for _, row in pbar:
             emb = row["abstract_embedding"]
@@ -671,7 +668,23 @@ def insert_papers(
                 embedding=emb,
             )
             
-            if db.insert_paper(paper, skip_duplicates=True):
+            inserted = db.insert_paper(paper, skip_duplicates=True)
+
+            # Retrieve paper_id whether newly inserted or existing
+            paper_rec = db.get_paper_by_url(row["pdf_url"])
+            if paper_rec:
+                pid = paper_rec["id"]
+                # If keywords missing, generate & store
+                if not db.get_paper_keywords(pid):
+                    try:
+                        text_kw = f"{row['title']} {row['abstract']}"
+                        kw_scores = extractor.extract_keywords(text_kw)
+                        keywords = [kw for kw, _ in kw_scores]
+                        db.update_paper_keywords(pid, keywords)
+                    except Exception:
+                        pass
+
+            if inserted:
                 saved += 1
             else:
                 dup += 1

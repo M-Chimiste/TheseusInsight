@@ -19,6 +19,7 @@ import {
   MoreVert as MoreVertIcon,
   Launch as LaunchIcon,
   AccountTree as ExpandIcon,
+  DeleteOutline as DeleteIcon,
   Star as StarIcon,
   ReadMore as ReadMoreIcon,
   UnfoldLess as UnfoldLessIcon,
@@ -26,9 +27,10 @@ import {
 import type { MindMapNode as MindMapNodeData } from '../services/api';
 
 interface MindMapNodeProps {
-  data: MindMapNodeData & {
+  data: (MindMapNodeData & { colorIndex?: number }) & {
     isSelected: boolean;
     onExpand?: () => void;
+    onDelete?: () => void;
   };
   selected?: boolean;
 }
@@ -53,6 +55,11 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
     handleMenuClose();
   };
 
+  const handleDelete = () => {
+    data.onDelete?.();
+    handleMenuClose();
+  };
+
   const handleOpenUrl = () => {
     if (data.url) {
       window.open(data.url, '_blank', 'noopener,noreferrer');
@@ -65,7 +72,15 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
     setIsExpanded(!isExpanded);
   };
 
-  // Determine node styling based on type and selection
+  const colorPalette = [
+    '#8e24aa', // purple
+    '#3949ab', // indigo
+    '#00897b', // teal
+    '#f9a825', // amber
+    '#d81b60', // pink/red
+    '#00acc1', // cyan
+  ];
+
   const getNodeStyles = () => {
     const baseStyles = {
       minWidth: 200,
@@ -79,25 +94,32 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
       cursor: 'pointer',
     };
 
+    const colorIdx = data.colorIndex ?? 0;
+    const expansionColor = colorPalette[colorIdx % colorPalette.length];
+
     if (data.is_seed) {
       return {
         ...baseStyles,
-        border: `3px solid ${theme.palette.primary.main}`,
-        backgroundColor: alpha(theme.palette.primary.main, 0.1),
+        border: `3px solid ${expansionColor}`,
+        backgroundColor: theme.palette.background.paper,
         boxShadow: theme.shadows[3],
+        zIndex: 2,
       };
     }
 
     if (selected || data.isSelected) {
       return {
         ...baseStyles,
-        border: `2px solid ${theme.palette.secondary.main}`,
-        backgroundColor: alpha(theme.palette.secondary.main, 0.05),
+        border: `2px solid ${expansionColor}`,
+        backgroundColor: alpha(expansionColor, 0.05),
         boxShadow: theme.shadows[2],
       };
     }
 
-    return baseStyles;
+    return {
+      ...baseStyles,
+      border: `2px solid ${expansionColor}`,
+    };
   };
 
   return (
@@ -215,8 +237,8 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
               color="text.secondary"
               sx={{
                 mt: 0.5,
-                mb: 1,
-                lineHeight: 1.25,
+                mb: 0.75,
+                lineHeight: 1,
                 fontSize: '0.7rem',
                 wordWrap: 'break-word',
                 whiteSpace: 'normal',
@@ -224,6 +246,21 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
             >
               {data.summary}
             </Typography>
+
+            {/* Keywords */}
+            {Array.isArray(data.keywords) && data.keywords.length > 0 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+                {data.keywords.slice(0,5).map((kw) => (
+                  <Chip
+                    key={kw}
+                    label={kw}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontSize: '0.6rem', height: 18 }}
+                  />
+                ))}
+              </Box>
+            )}
           </Collapse>
 
           {/* Metadata chips */}
@@ -311,6 +348,10 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
         <MenuItem onClick={handleExpand}>
           <ExpandIcon sx={{ mr: 1, fontSize: 16 }} />
           Expand Node
+        </MenuItem>
+        <MenuItem onClick={handleDelete}>
+          <DeleteIcon sx={{ mr: 1, fontSize: 16 }} />
+          Delete Node
         </MenuItem>
         {data.url && (
           <MenuItem onClick={handleOpenUrl}>

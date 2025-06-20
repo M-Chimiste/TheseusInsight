@@ -11,6 +11,7 @@ import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import StorageIcon from '@mui/icons-material/Storage';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 
 interface NavCardItem {
   title: string;
@@ -55,6 +56,12 @@ const navItems: NavCardItem[] = [
     description: 'Browse and review historical research papers.',
     icon: <MenuBookIcon fontSize="large" color="primary" />,
     path: '/papers',
+  },
+  {
+    title: 'Mind-Map Reports',
+    description: 'View and edit your saved mind-map report library.',
+    icon: <AccountTreeIcon fontSize="large" color="primary" />,
+    path: '/mindmap-reports',
   },
   {
     title: 'Run History',

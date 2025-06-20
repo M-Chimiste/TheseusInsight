@@ -15,6 +15,7 @@ from .nodes import (
     SelectSeedNode,
     EmbedSeedNode,
     RetrieverNode,
+    MultiOrderRetrieverNode,
     SummariserNode,
     BuildMindMapNode
 )
@@ -59,7 +60,8 @@ class MindMapWorkflow:
         self.select_seed = SelectSeedNode(db)
         self.embed_seed = EmbedSeedNode(db)
         self.retriever = RetrieverNode(db)
-        self.summariser = SummariserNode(config)
+        self.multi_order_retriever = MultiOrderRetrieverNode(db)
+        self.summariser = SummariserNode(config, db)
         self.build_mindmap = BuildMindMapNode(config)
         
         # Build the workflow graph
@@ -84,26 +86,49 @@ class MindMapWorkflow:
         workflow.add_node("select_seed", self._select_seed_with_progress)
         workflow.add_node("embed_seed", self._embed_seed_with_progress)
         workflow.add_node("retriever", self._retriever_with_progress)
+        workflow.add_node("multi_order_retriever", self._multi_order_retriever_with_progress)
         workflow.add_node("summariser", self._summariser_with_progress)
         workflow.add_node("build_mindmap", self._build_mindmap_with_progress)
         
         # Set entry point
         workflow.set_entry_point("select_seed")
         
-        # Add linear edges (no conditional routing needed for mind-map)
+        # Add conditional routing based on expansion order
         workflow.add_edge("select_seed", "embed_seed")
-        workflow.add_edge("embed_seed", "retriever")
+        workflow.add_conditional_edges(
+            "embed_seed",
+            self._route_to_retriever,
+            {
+                "single_order": "retriever",
+                "multi_order": "multi_order_retriever"
+            }
+        )
         workflow.add_edge("retriever", "summariser")
+        workflow.add_edge("multi_order_retriever", "summariser")
         workflow.add_edge("summariser", "build_mindmap")
         workflow.add_edge("build_mindmap", END)
         
         return workflow
+    
+    def _route_to_retriever(self, state: MindMapState) -> str:
+        """Route to appropriate retriever based on expansion order."""
+        expansion_order = state.get("expansion_order", 1)
+        self.logger.info(f"=== ROUTING DECISION ===")
+        self.logger.info(f"Expansion order from state: {expansion_order}")
+        if expansion_order > 1:
+            self.logger.info(f"Routing to MULTI-ORDER retriever (expansion_order={expansion_order})")
+            return "multi_order"
+        else:
+            self.logger.info(f"Routing to SINGLE-ORDER retriever (expansion_order={expansion_order})")
+            return "single_order"
     
     async def generate_mindmap(
         self,
         seed_paper_id: int,
         k_neighbors: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
+        expansion_order: Optional[int] = None,
+        max_nodes_per_order: Optional[int] = None,
         layout_algorithm: Optional[str] = None,
         embedding_model_config: Optional[Dict[str, Any]] = None,
         llm_model_config: Optional[Dict[str, Any]] = None,
@@ -134,15 +159,32 @@ class MindMapWorkflow:
             
             # Initialize state
             self.logger.info("Creating initial state...")
+            self.logger.info(f"=== PARAMETERS BEING PASSED ===")
+            self.logger.info(f"seed_paper_id: {seed_paper_id}")
+            self.logger.info(f"k_neighbors: {k_neighbors} (default: {self.default_k_neighbors})")
+            self.logger.info(f"similarity_threshold: {similarity_threshold} (default: {self.default_similarity_threshold})")
+            self.logger.info(f"expansion_order: {expansion_order} (default: 1)")
+            self.logger.info(f"max_nodes_per_order: {max_nodes_per_order} (default: 20)")
+            self.logger.info(f"layout_algorithm: {layout_algorithm}")
+            self.logger.info(f"=== END PARAMETERS ===")
+            
             initial_state = create_initial_mindmap_state(
                 seed_paper_id=seed_paper_id,
                 k_neighbors=k_neighbors or self.default_k_neighbors,
                 similarity_threshold=similarity_threshold or self.default_similarity_threshold,
+                expansion_order=expansion_order or 1,
+                max_nodes_per_order=max_nodes_per_order or 20,
                 task_id=task_id or "",
                 embedding_model_config=embedding_model_config,
                 llm_model_config=llm_model_config
             )
             self.logger.info(f"Initial state created with keys: {list(initial_state.keys())}")
+            self.logger.info(f"=== ACTUAL STATE VALUES ===")
+            self.logger.info(f"State k_neighbors: {initial_state.get('k_neighbors')}")
+            self.logger.info(f"State similarity_threshold: {initial_state.get('similarity_threshold')}")
+            self.logger.info(f"State expansion_order: {initial_state.get('expansion_order')}")
+            self.logger.info(f"State max_nodes_per_order: {initial_state.get('max_nodes_per_order')}")
+            self.logger.info(f"=== END STATE VALUES ===")
             self.logger.info(f"LLM model config in state: {initial_state.get('llm_model_config')}")
             self.logger.info(f"Embedding model config in state: {initial_state.get('embedding_model_config')}")
             
@@ -187,6 +229,8 @@ class MindMapWorkflow:
         seed_paper_id: int,
         k_neighbors: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
+        expansion_order: Optional[int] = None,
+        max_nodes_per_order: Optional[int] = None,
         layout_algorithm: Optional[str] = None,
         embedding_model_config: Optional[Dict[str, Any]] = None,
         llm_model_config: Optional[Dict[str, Any]] = None,
@@ -194,12 +238,17 @@ class MindMapWorkflow:
         progress_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
-        Generate a mind-map synchronously.
+        Generate a mind-map synchronously for local LLM resource management.
+        
+        This method uses a fully synchronous workflow to prevent overwhelming
+        local hardware with concurrent LLM calls.
         
         Args:
             seed_paper_id: ID of the seed paper
             k_neighbors: Number of similar papers to find
             similarity_threshold: Minimum similarity threshold
+            expansion_order: Expansion order for multi-level retrieval
+            max_nodes_per_order: Maximum nodes per expansion order
             layout_algorithm: Layout algorithm to use
             embedding_model_config: Embedding model configuration
             llm_model_config: LLM model configuration
@@ -227,15 +276,32 @@ class MindMapWorkflow:
             
             # Initialize state
             self.logger.info("Creating initial state...")
+            self.logger.info(f"=== PARAMETERS BEING PASSED ===")
+            self.logger.info(f"seed_paper_id: {seed_paper_id}")
+            self.logger.info(f"k_neighbors: {k_neighbors} (default: {self.default_k_neighbors})")
+            self.logger.info(f"similarity_threshold: {similarity_threshold} (default: {self.default_similarity_threshold})")
+            self.logger.info(f"expansion_order: {expansion_order} (default: 1)")
+            self.logger.info(f"max_nodes_per_order: {max_nodes_per_order} (default: 20)")
+            self.logger.info(f"layout_algorithm: {layout_algorithm}")
+            self.logger.info(f"=== END PARAMETERS ===")
+            
             initial_state = create_initial_mindmap_state(
                 seed_paper_id=seed_paper_id,
                 k_neighbors=k_neighbors or self.default_k_neighbors,
                 similarity_threshold=similarity_threshold or self.default_similarity_threshold,
+                expansion_order=expansion_order or 1,
+                max_nodes_per_order=max_nodes_per_order or 20,
                 task_id=task_id or "",
                 embedding_model_config=embedding_model_config,
                 llm_model_config=llm_model_config
             )
             self.logger.info(f"Initial state created with keys: {list(initial_state.keys())}")
+            self.logger.info(f"=== ACTUAL STATE VALUES ===")
+            self.logger.info(f"State k_neighbors: {initial_state.get('k_neighbors')}")
+            self.logger.info(f"State similarity_threshold: {initial_state.get('similarity_threshold')}")
+            self.logger.info(f"State expansion_order: {initial_state.get('expansion_order')}")
+            self.logger.info(f"State max_nodes_per_order: {initial_state.get('max_nodes_per_order')}")
+            self.logger.info(f"=== END STATE VALUES ===")
             self.logger.info(f"LLM model config in state: {initial_state.get('llm_model_config')}")
             self.logger.info(f"Embedding model config in state: {initial_state.get('embedding_model_config')}")
             
@@ -377,6 +443,37 @@ class MindMapWorkflow:
         self.logger.info("=== _retriever_with_progress COMPLETED ===")
         return result
 
+    async def _multi_order_retriever_with_progress(self, state: MindMapState) -> MindMapState:
+        """Multi-order retriever node with progress tracking."""
+        self.logger.info("=== _multi_order_retriever_with_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'progress_callback') and self.progress_callback:
+            try:
+                expansion_order = state.get("expansion_order", 1)
+                max_nodes_per_order = state.get("max_nodes_per_order", 20)
+                self.logger.info("Calling progress callback for multi-order retriever start...")
+                await self.progress_callback("multi_order_retriever", 40, f"Multi-order expansion: {expansion_order} orders, max {max_nodes_per_order} nodes per order")
+                self.logger.info("Progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Progress callback error: {e}")
+        
+        self.logger.info("About to call self.multi_order_retriever...")
+        result = self.multi_order_retriever(state)
+        self.logger.info(f"multi_order_retriever completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and "similar_papers" in result and hasattr(self, 'progress_callback') and self.progress_callback:
+            try:
+                similar_count = len(result.get("similar_papers", []))
+                total_papers = len(result.get("all_papers", {}))
+                self.logger.info("Calling progress callback for multi-order retriever completion...")
+                await self.progress_callback("multi_order_retriever", 50, f"Multi-order expansion complete: {total_papers} total papers found")
+                self.logger.info("Progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Progress callback error: {e}")
+        
+        self.logger.info("=== _multi_order_retriever_with_progress COMPLETED ===")
+        return result
+
     async def _summariser_with_progress(self, state: MindMapState) -> MindMapState:
         """Summariser node with progress tracking."""
         self.logger.info("=== _summariser_with_progress STARTED ===")
@@ -434,151 +531,6 @@ class MindMapWorkflow:
                 self.logger.error(f"Progress callback error: {e}")
         
         self.logger.info("=== _build_mindmap_with_progress COMPLETED ===")
-        return result
-
-    def _select_seed_with_sync_progress(self, state: MindMapState) -> MindMapState:
-        """Select seed node with synchronous progress tracking."""
-        self.logger.info("=== _select_seed_with_sync_progress STARTED ===")
-        self.logger.info(f"Current task ID: {self.current_task_id}")
-        self.logger.info(f"Has sync progress callback: {hasattr(self, 'sync_progress_callback') and self.sync_progress_callback is not None}")
-        
-        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                self.logger.info("Calling sync progress callback for select_seed start...")
-                self.sync_progress_callback("select_seed", 20, f"Retrieving paper {state.get('seed_paper_id')} from database")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("About to call self.select_seed...")
-        result = self.select_seed(state)
-        self.logger.info(f"select_seed completed, result keys: {list(result.keys()) if result else 'None'}")
-        
-        if self.current_task_id and "seed_paper" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                seed_paper = result.get("seed_paper")
-                self.logger.info("Calling sync progress callback for select_seed completion...")
-                self.sync_progress_callback("select_seed", 25, f"Selected: {seed_paper.get('title', 'Unknown Title')}")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("=== _select_seed_with_sync_progress COMPLETED ===")
-        return result
-
-    def _embed_seed_with_sync_progress(self, state: MindMapState) -> MindMapState:
-        """Embed seed node with synchronous progress tracking."""
-        self.logger.info("=== _embed_seed_with_sync_progress STARTED ===")
-        
-        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                self.logger.info("Calling sync progress callback for embed_seed start...")
-                self.sync_progress_callback("embed_seed", 30, "Ensuring seed paper has embedding for similarity search")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("About to call self.embed_seed...")
-        result = self.embed_seed(state)
-        self.logger.info(f"embed_seed completed, result keys: {list(result.keys()) if result else 'None'}")
-        
-        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                self.logger.info("Calling sync progress callback for embed_seed completion...")
-                self.sync_progress_callback("embed_seed", 35, "Seed paper embedding confirmed")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("=== _embed_seed_with_sync_progress COMPLETED ===")
-        return result
-
-    def _retriever_with_sync_progress(self, state: MindMapState) -> MindMapState:
-        """Retriever node with synchronous progress tracking."""
-        self.logger.info("=== _retriever_with_sync_progress STARTED ===")
-        
-        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                k_neighbors = state.get("k_neighbors", 15)
-                self.logger.info("Calling sync progress callback for retriever start...")
-                self.sync_progress_callback("retriever", 40, f"Searching for {k_neighbors} most similar papers")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("About to call self.retriever...")
-        result = self.retriever(state)
-        self.logger.info(f"retriever completed, result keys: {list(result.keys()) if result else 'None'}")
-        
-        if self.current_task_id and "similar_papers" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                similar_count = len(result.get("similar_papers", []))
-                self.logger.info("Calling sync progress callback for retriever completion...")
-                self.sync_progress_callback("retriever", 50, f"Found {similar_count} similar papers")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("=== _retriever_with_sync_progress COMPLETED ===")
-        return result
-
-    def _summariser_with_sync_progress(self, state: MindMapState) -> MindMapState:
-        """Summariser node with synchronous progress tracking."""
-        self.logger.info("=== _summariser_with_sync_progress STARTED ===")
-        
-        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                paper_count = len(state.get("similar_papers", [])) + 1  # +1 for seed
-                self.logger.info("Calling sync progress callback for summariser start...")
-                self.sync_progress_callback("summariser", 60, f"Creating LLM-powered summaries for {paper_count} papers")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("About to call self.summariser...")
-        result = self.summariser(state)
-        self.logger.info(f"summariser completed, result keys: {list(result.keys()) if result else 'None'}")
-        
-        if self.current_task_id and "summaries" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                summary_count = len(result.get("summaries", {}))
-                self.logger.info("Calling sync progress callback for summariser completion...")
-                self.sync_progress_callback("summariser", 75, f"Generated {summary_count} paper summaries")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("=== _summariser_with_sync_progress COMPLETED ===")
-        return result
-
-    def _build_mindmap_with_sync_progress(self, state: MindMapState) -> MindMapState:
-        """Build mind-map node with synchronous progress tracking."""
-        self.logger.info("=== _build_mindmap_with_sync_progress STARTED ===")
-        
-        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                self.logger.info("Calling sync progress callback for build_mindmap start...")
-                self.sync_progress_callback("build_mindmap", 80, "Constructing final mind-map with layout positioning")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("About to call self.build_mindmap...")
-        result = self.build_mindmap(state)
-        self.logger.info(f"build_mindmap completed, result keys: {list(result.keys()) if result else 'None'}")
-        
-        if self.current_task_id and "mindmap_data" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
-            try:
-                mindmap_data = result.get("mindmap_data", {})
-                node_count = len(mindmap_data.get("nodes", []))
-                edge_count = len(mindmap_data.get("edges", []))
-                self.logger.info("Calling sync progress callback for build_mindmap completion...")
-                self.sync_progress_callback("build_mindmap", 90, f"Built mind-map with {node_count} nodes and {edge_count} connections")
-                self.logger.info("Sync progress callback completed successfully")
-            except Exception as e:
-                self.logger.error(f"Sync progress callback error: {e}")
-        
-        self.logger.info("=== _build_mindmap_with_sync_progress COMPLETED ===")
         return result
 
     def _extract_results(self, final_state: MindMapState) -> Dict[str, Any]:
@@ -739,21 +691,210 @@ class MindMapWorkflow:
         # Add nodes with synchronous progress tracking wrappers
         workflow.add_node("select_seed", self._select_seed_with_sync_progress)
         workflow.add_node("embed_seed", self._embed_seed_with_sync_progress)
-        workflow.add_node("retriever", self._retriever_with_sync_progress)
+        workflow.add_node("single_order", self._retriever_with_sync_progress)
+        workflow.add_node("multi_order", self._multi_order_retriever_with_sync_progress)
         workflow.add_node("summariser", self._summariser_with_sync_progress)
         workflow.add_node("build_mindmap", self._build_mindmap_with_sync_progress)
         
         # Set entry point
         workflow.set_entry_point("select_seed")
         
-        # Add linear edges (no conditional routing needed for mind-map)
+        # Add edges with conditional routing for retriever selection
         workflow.add_edge("select_seed", "embed_seed")
-        workflow.add_edge("embed_seed", "retriever")
-        workflow.add_edge("retriever", "summariser")
+        workflow.add_conditional_edges(
+            "embed_seed",
+            self._route_to_retriever,
+            {
+                "single_order": "single_order",
+                "multi_order": "multi_order"
+            }
+        )
+        workflow.add_edge("single_order", "summariser")
+        workflow.add_edge("multi_order", "summariser")
         workflow.add_edge("summariser", "build_mindmap")
         workflow.add_edge("build_mindmap", END)
         
         return workflow
+
+    def _select_seed_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Select seed node with synchronous progress tracking."""
+        self.logger.info("=== _select_seed_with_sync_progress STARTED ===")
+        self.logger.info(f"Current task ID: {self.current_task_id}")
+        self.logger.info(f"Has sync progress callback: {hasattr(self, 'sync_progress_callback') and self.sync_progress_callback is not None}")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                self.logger.info("Calling sync progress callback for select_seed start...")
+                self.sync_progress_callback("select_seed", 20, f"Retrieving paper {state.get('seed_paper_id')} from database")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.select_seed...")
+        result = self.select_seed(state)
+        self.logger.info(f"select_seed completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and "seed_paper" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                seed_paper = result.get("seed_paper")
+                self.logger.info("Calling sync progress callback for select_seed completion...")
+                self.sync_progress_callback("select_seed", 25, f"Selected: {seed_paper.get('title', 'Unknown Title')}")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _select_seed_with_sync_progress COMPLETED ===")
+        return result
+
+    def _embed_seed_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Embed seed node with synchronous progress tracking."""
+        self.logger.info("=== _embed_seed_with_sync_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                self.logger.info("Calling sync progress callback for embed_seed start...")
+                self.sync_progress_callback("embed_seed", 30, "Ensuring seed paper has embedding for similarity search")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.embed_seed...")
+        result = self.embed_seed(state)
+        self.logger.info(f"embed_seed completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                self.logger.info("Calling sync progress callback for embed_seed completion...")
+                self.sync_progress_callback("embed_seed", 35, "Seed paper embedding confirmed")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _embed_seed_with_sync_progress COMPLETED ===")
+        return result
+
+    def _retriever_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Retriever node with synchronous progress tracking."""
+        self.logger.info("=== _retriever_with_sync_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                k_neighbors = state.get("k_neighbors", 15)
+                self.logger.info("Calling sync progress callback for retriever start...")
+                self.sync_progress_callback("retriever", 40, f"Searching for {k_neighbors} most similar papers")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.retriever...")
+        result = self.retriever(state)
+        self.logger.info(f"retriever completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and "similar_papers" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                similar_count = len(result.get("similar_papers", []))
+                self.logger.info("Calling sync progress callback for retriever completion...")
+                self.sync_progress_callback("retriever", 50, f"Found {similar_count} similar papers")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _retriever_with_sync_progress COMPLETED ===")
+        return result
+
+    def _multi_order_retriever_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Multi-order retriever node with synchronous progress tracking."""
+        self.logger.info("=== _multi_order_retriever_with_sync_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                expansion_order = state.get("expansion_order", 1)
+                max_nodes_per_order = state.get("max_nodes_per_order", 20)
+                self.logger.info("Calling sync progress callback for multi-order retriever start...")
+                self.sync_progress_callback("multi_order_retriever", 40, f"Multi-order expansion: {expansion_order} orders, max {max_nodes_per_order} nodes per order")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.multi_order_retriever...")
+        result = self.multi_order_retriever(state)
+        self.logger.info(f"multi_order_retriever completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and "similar_papers" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                similar_count = len(result.get("similar_papers", []))
+                total_papers = len(result.get("all_papers", {}))
+                self.logger.info("Calling sync progress callback for multi-order retriever completion...")
+                self.sync_progress_callback("multi_order_retriever", 50, f"Multi-order expansion complete: {total_papers} total papers found")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _multi_order_retriever_with_sync_progress COMPLETED ===")
+        return result
+
+    def _summariser_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Summariser node with synchronous progress tracking."""
+        self.logger.info("=== _summariser_with_sync_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                paper_count = len(state.get("similar_papers", [])) + 1  # +1 for seed
+                self.logger.info("Calling sync progress callback for summariser start...")
+                self.sync_progress_callback("summariser", 60, f"Creating LLM-powered summaries for {paper_count} papers")
+                self.logger.info("Sync progress callback completed successfully")
+                
+                # Pass the callback to the summariser node for granular progress
+                self.summariser.sync_progress_callback = self.sync_progress_callback
+                
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.summariser...")
+        result = self.summariser(state)
+        self.logger.info(f"summariser completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and "summaries" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                summary_count = len(result.get("summaries", {}))
+                self.logger.info("Calling sync progress callback for summariser completion...")
+                self.sync_progress_callback("summariser", 75, f"Generated {summary_count} paper summaries")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _summariser_with_sync_progress COMPLETED ===")
+        return result
+
+    def _build_mindmap_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Build mind-map node with synchronous progress tracking."""
+        self.logger.info("=== _build_mindmap_with_sync_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                self.logger.info("Calling sync progress callback for build_mindmap start...")
+                self.sync_progress_callback("build_mindmap", 80, "Constructing final mind-map with layout positioning")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.build_mindmap...")
+        result = self.build_mindmap(state)
+        self.logger.info(f"build_mindmap completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and "mindmap_data" in result and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                mindmap_data = result.get("mindmap_data", {})
+                node_count = len(mindmap_data.get("nodes", []))
+                edge_count = len(mindmap_data.get("edges", []))
+                self.logger.info("Calling sync progress callback for build_mindmap completion...")
+                self.sync_progress_callback("build_mindmap", 90, f"Built mind-map with {node_count} nodes and {edge_count} connections")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _build_mindmap_with_sync_progress COMPLETED ===")
+        return result
 
 
 def create_mindmap_workflow(

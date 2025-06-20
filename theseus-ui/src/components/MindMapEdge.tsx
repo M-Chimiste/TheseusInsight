@@ -4,6 +4,7 @@ import { Chip, useTheme } from '@mui/material';
 
 interface MindMapEdgeData {
   similarity_score: number;
+  colorIndex?: number;
 }
 
 interface MindMapEdgeProps {
@@ -35,21 +36,26 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
   });
 
   const similarity = data?.similarity_score || 0;
+  const palette = ['#8e24aa','#3949ab','#00897b','#f9a825','#d81b60','#00acc1'];
+  const colorIndex = (data as any)?.colorIndex;
+
+  let edgeColor: string;
+  if (colorIndex !== undefined) {
+    edgeColor = palette[colorIndex % palette.length];
+  } else {
+    // original similarity-based coloring
+    const getEdgeColor = () => {
+      if (similarity > 0.75) return theme.palette.primary.main;
+      if (similarity > 0.55) return theme.palette.primary.light;
+      return theme.palette.mode === 'dark'
+        ? theme.palette.grey[600]
+        : theme.palette.grey[400];
+    };
+    edgeColor = getEdgeColor();
+  }
+
   const strokeWidth = Math.max(1, similarity * 4);
-  const opacity = Math.max(0.3, similarity);
-
-  // Color based on similarity strength
-  const getEdgeColor = () => {
-    if (similarity > 0.75) return theme.palette.primary.main;          // strongest
-    if (similarity > 0.55) return theme.palette.primary.light;        // medium
-    return theme.palette.mode === 'dark'
-      ? theme.palette.grey[600]
-      : theme.palette.grey[400];
-  };
-
-  const edgeColor = selected 
-    ? theme.palette.secondary.main 
-    : getEdgeColor();
+  const opacity = selected ? 1 : 0.8;
 
   return (
     <>

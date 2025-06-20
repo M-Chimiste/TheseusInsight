@@ -18,7 +18,7 @@ import type {
   EdgeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Box, Paper, useTheme } from '@mui/material';
+import { Box, Paper, useTheme, CircularProgress, Typography } from '@mui/material';
 import type { MindMapData } from '../services/api';
 import MindMapNode from './MindMapNode';
 import MindMapEdge from './MindMapEdge';
@@ -177,6 +177,13 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         handles = getOptimalHandles(sourceNode, targetNode);
       }
       
+      let colorIndex: number | undefined;
+      const srcCI = sourceNode?.data?.colorIndex;
+      const tgtCI = targetNode?.data?.colorIndex;
+      if (srcCI !== undefined || tgtCI !== undefined) {
+        colorIndex = Math.max(Number(srcCI ?? 0), Number(tgtCI ?? 0));
+      }
+
       return {
         id: `${sourceId}-${targetId}`,
         source: sourceId,
@@ -186,6 +193,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         type: 'mindMapEdge',
         data: {
           similarity_score: edge.similarity_score,
+          ...(colorIndex !== undefined ? { colorIndex } : {}),
         },
         animated: false,
         style: {
@@ -333,6 +341,15 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
     [onNodeExpand]
   );
 
+  // Handle node deletion
+  const handleNodeDelete = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+    },
+    [setNodes, setEdges]
+  );
+
   // Update nodes with expand handler
   const nodesWithHandlers = useMemo(() => {
     return nodes.map((node) => ({
@@ -340,9 +357,10 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
       data: {
         ...node.data,
         onExpand: () => handleNodeExpand(node.id),
+        onDelete: () => handleNodeDelete(node.id),
       },
     }));
-  }, [nodes, handleNodeExpand]);
+  }, [nodes, handleNodeExpand, handleNodeDelete]);
 
   return (
     <Box
@@ -459,7 +477,10 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
             boxShadow: theme.shadows[8],
           }}
         >
-          {/* Loading content will be handled by parent component */}
+          <CircularProgress />
+          <Typography variant="body2" color="text.secondary">
+            Generating mind-map…
+          </Typography>
         </Paper>
       )}
     </Box>

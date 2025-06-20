@@ -60,6 +60,7 @@ const MODEL_TABS = [
   { key: 'podcast_model', label: 'Podcast Model', tooltip: 'Used for podcast generation.' },
   { key: 'tts_model', label: 'TTS Model', tooltip: 'Text-to-speech for podcast.' },
   { key: 'research_agent_model_config', label: 'Research Agent Models', tooltip: 'Boss and worker models for automated literature review.' },
+  { key: 'mind_map_config', label: 'Mind-Map Explorer', tooltip: 'Configuration for mind-map visualization and paper relationship exploration.' },
 ];
 
 interface TabPanelProps {
@@ -1450,6 +1451,165 @@ const Settings: React.FC = () => {
             value={currentConfig.speaker_2_speed || 1.0}
             onChange={e => handleModelConfigChange(modelKey, 'speaker_2_speed', parseFloat(e.target.value))}
           />
+        </Box>
+      );
+    }
+
+    // Mind-Map configuration is a special case (parameters + model)
+    if (modelKey === 'mind_map_config') {
+      return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {/* Mind-Map Parameters */}
+          <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'background.default' }}>
+            <Typography variant="h6" gutterBottom>
+              Mind-Map Parameters
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'flex-start' }}>
+              <TextField
+                label="Number of Neighbors"
+                type="number"
+                value={currentConfig.k || 15}
+                onChange={(e) => handleModelConfigChange(modelKey, 'k', Number(e.target.value))}
+                inputProps={{ min: 5, max: 50, step: 1 }}
+                helperText="Number of similar papers to retrieve (5-50)"
+                sx={{ minWidth: 200, flex: '1 1 200px' }}
+              />
+              <TextField
+                label="Similarity Threshold"
+                type="number"
+                value={currentConfig.similarity_threshold || 0.3}
+                onChange={(e) => handleModelConfigChange(modelKey, 'similarity_threshold', parseFloat(e.target.value))}
+                inputProps={{ min: 0.1, max: 0.95, step: 0.05 }}
+                helperText="Minimum similarity threshold (0.1-0.95)"
+                sx={{ minWidth: 200, flex: '1 1 200px' }}
+              />
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, minWidth: 200, flex: '1 1 200px' }}>
+                <Box sx={{ flex: 1 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Layout Algorithm</InputLabel>
+                    <Select
+                      value={currentConfig.layout_algorithm || 'force'}
+                      label="Layout Algorithm"
+                      onChange={(e) => handleModelConfigChange(modelKey, 'layout_algorithm', e.target.value)}
+                    >
+                      <MenuItem value="force">
+                         <Tooltip title="Physics-based layout that simulates forces between nodes, creating natural clustering and spacing. Best for exploring relationships organically." placement="right">
+                           <span>Force-Directed</span>
+                         </Tooltip>
+                       </MenuItem>
+                    </Select>
+                  </FormControl>
+                  <Box sx={{ mt: 0.5, fontSize: '0.75rem', color: 'text.secondary', minHeight: '1.5em' }}>
+                    Choose layout algorithm for node arrangement
+                  </Box>
+                </Box>
+                <Tooltip title="Choose how papers are visually arranged in the mind-map. Each algorithm reveals different relationship patterns." placement="top">
+                  <IconButton size="small" sx={{ mt: 1 }}>
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </Box>
+            
+            {/* Multi-Order Expansion Settings */}
+            <Typography variant="body2" color="primary" sx={{ mt: 2, mb: 1, fontWeight: 'medium' }}>
+              Multi-Order Expansion
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'flex-start' }}>
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, minWidth: 200, flex: '1 1 200px' }}>
+                <Box sx={{ flex: 1 }}>
+                  <TextField
+                    label="Expansion Order"
+                    type="number"
+                    value={currentConfig.expansion_order || 1}
+                    onChange={(e) => handleModelConfigChange(modelKey, 'expansion_order', Number(e.target.value))}
+                    inputProps={{ min: 1, max: 5, step: 1 }}
+                    helperText="Number of expansion orders (1-5)"
+                    fullWidth
+                  />
+                  <Box sx={{ mt: 0.5, fontSize: '0.75rem', color: 'text.secondary', minHeight: '1.5em' }}>
+                    1st order = direct neighbors, 2nd order = neighbors of neighbors, etc.
+                  </Box>
+                </Box>
+                <Tooltip title="Higher orders exponentially expand the graph by finding papers similar to each retrieved paper. Order 1 finds papers similar to the seed. Order 2 finds papers similar to each Order 1 paper, and so on." placement="top">
+                  <IconButton size="small" sx={{ mt: 1 }}>
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              
+              <TextField
+                label="Max Nodes per Order"
+                type="number"
+                value={currentConfig.max_nodes_per_order || 20}
+                onChange={(e) => handleModelConfigChange(modelKey, 'max_nodes_per_order', Number(e.target.value))}
+                inputProps={{ min: 5, max: 50, step: 1 }}
+                helperText="Maximum nodes to expand from each paper in multi-order expansion (5-50)"
+                sx={{ minWidth: 200, flex: '1 1 200px' }}
+              />
+            </Box>
+          </Box>
+
+          {/* Summarization Model */}
+          <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1, backgroundColor: 'background.default' }}>
+            <Typography variant="h6" gutterBottom>
+              Summarization Model
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Model used to generate paper summaries for the mind-map nodes.
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <ModelNameAutocomplete
+                  label="Model Name"
+                  value={currentConfig.summarization_model?.model_name || ''}
+                  onChange={value => handleModelConfigChange(modelKey, 'summarization_model.model_name', value)}
+                  onModelSelected={selectedModel => handleModelSelectedFromCatalog(modelKey, selectedModel, 'summarization_model')}
+                  modelCatalogData={modelCatalogData}
+                />
+                <FormControl fullWidth>
+                  <InputLabel>Model Type (Provider)</InputLabel>
+                  <Select
+                    value={currentConfig.summarization_model?.model_type || ''}
+                    label="Model Type (Provider)"
+                    onChange={e => handleModelConfigChange(modelKey, 'summarization_model.model_type', e.target.value)}
+                  >
+                    {(modelProviders || []).map((provider: any) => (
+                      <MenuItem key={provider.id} value={provider.name}>
+                        {provider.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  fullWidth
+                  label="Max New Tokens"
+                  type="number"
+                  value={currentConfig.summarization_model?.max_new_tokens || 1024}
+                  onChange={e => handleModelConfigChange(modelKey, 'summarization_model.max_new_tokens', Number(e.target.value))}
+                />
+                <TextField
+                  fullWidth
+                  label="Temperature"
+                  type="number"
+                  inputProps={{ step: '0.1' }}
+                  value={currentConfig.summarization_model?.temperature || 0.3}
+                  onChange={e => handleModelConfigChange(modelKey, 'summarization_model.temperature', parseFloat(e.target.value))}
+                />
+                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'llamacpp') && (
+                  <TextField
+                    fullWidth
+                    label="Context Window (num_ctx)"
+                    type="number"
+                    value={currentConfig.summarization_model?.num_ctx || 4096}
+                    onChange={e => handleModelConfigChange(modelKey, 'summarization_model.num_ctx', Number(e.target.value))}
+                  />
+                )}
+              </Box>
+            </Box>
+          </Box>
         </Box>
       );
     }

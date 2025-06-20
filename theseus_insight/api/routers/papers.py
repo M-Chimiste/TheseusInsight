@@ -70,7 +70,8 @@ async def get_papers(
                 score=p['score'], date=p['date'], url=p['url'],
                 date_run=p['date_run'], rationale=p['rationale'],
                 related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model']
+                embedding_model=p['embedding_model'],
+                keywords=p.get('keywords')
             ))
         
         return PaginatedPapersResponse(
@@ -136,7 +137,8 @@ async def semantic_similarity_search(request: SimilaritySearchRequest):
                 score=p['score'], date=p['date'], url=p['url'],
                 date_run=p['date_run'], rationale=p['rationale'],
                 related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model']
+                embedding_model=p['embedding_model'],
+                keywords=p.get('keywords')
             )
             # Add similarity score as additional metadata if needed
             if 'similarity_score' in p:
@@ -226,7 +228,8 @@ async def hybrid_search_papers(request: HybridSearchRequest):
                 embedding_model=p['embedding_model'],
                 semantic_score=p.get('semantic_score'),
                 keyword_score=p.get('keyword_score'),
-                hybrid_score=p.get('hybrid_score')
+                hybrid_score=p.get('hybrid_score'),
+                keywords=p.get('keywords')
             )
             results.append(paper_response)
         
@@ -277,7 +280,8 @@ async def get_papers_without_embeddings():
                 score=p['score'], date=p['date'], url=p['url'],
                 date_run=p['date_run'], rationale=p['rationale'],
                 related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model']
+                embedding_model=p['embedding_model'],
+                keywords=p.get('keywords')
             ))
         return {"papers": results, "count": len(results)}
     except Exception as e:
@@ -390,7 +394,8 @@ async def find_similar_papers_to_existing(
             rationale=ref_paper_data['rationale'],
             related=ref_paper_data['related'],
             cosine_similarity=ref_paper_data['cosine_similarity'],
-            embedding_model=ref_paper_data['embedding_model']
+            embedding_model=ref_paper_data['embedding_model'],
+            keywords=ref_paper_data.get('keywords')
         )
         
         # Convert similar papers to API response format
@@ -408,7 +413,8 @@ async def find_similar_papers_to_existing(
                 related=p['related'],
                 cosine_similarity=p['cosine_similarity'],
                 embedding_model=p['embedding_model'],
-                similarity_score=p['similarity_score']  # Include the similarity score
+                similarity_score=p['similarity_score'],  # Include the similarity score
+                keywords=p.get('keywords')
             )
             similar_papers.append(paper_response)
         

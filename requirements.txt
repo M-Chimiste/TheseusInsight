@@ -20,6 +20,7 @@ sentence-transformers
 arxiv>=1.4.7
 simhash>=2.1.0
 langgraph
+yake
 
 # LLM & AI Services
 anthropic[bedrock]

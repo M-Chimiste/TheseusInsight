@@ -11,6 +11,7 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 import json_repair
 from typing import Optional, Callable
+import yake
 
 from docling.document_converter import DocumentConverter
 
@@ -708,6 +709,21 @@ Theseus Insight Team
                     was_inserted = self.papers_db.insert_paper(paper, skip_duplicates=True)
                     if was_inserted:
                         saved_count += 1
+                        # Extract and cache keywords
+                        try:
+                            extractor = getattr(self, '_yake_extractor', None)
+                            if extractor is None:
+                                extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+                                self._yake_extractor = extractor  # cache for reuse
+                            text_kw = f"{row['title']} {row['abstract']}"
+                            kw_scores = extractor.extract_keywords(text_kw)
+                            keywords = [w for w, _ in kw_scores]
+                            # Retrieve inserted paper ID via URL lookup
+                            inserted_paper = self.papers_db.get_paper_by_url(row['pdf_url'])
+                            if inserted_paper and keywords:
+                                self.papers_db.update_paper_keywords(inserted_paper['id'], keywords)
+                        except Exception:
+                            pass
                     else:
                         duplicate_count += 1
                         duplicate_urls.append(row['pdf_url'])

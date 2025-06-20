@@ -3,6 +3,37 @@ import type { AxiosResponse } from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
+// Configuration interfaces
+export interface ModelConfig {
+  model_name: string;
+  model_type: string;
+  max_new_tokens?: number;
+  temperature?: number;
+  num_ctx?: number;
+  trust_remote_code?: boolean;
+}
+
+export interface MindMapConfig {
+  k: number;
+  similarity_threshold: number;
+  layout_algorithm: 'force' | 'circular' | 'hierarchical';
+  summarization_model: ModelConfig;
+  expansion_order: number;
+  max_nodes_per_order: number;
+}
+
+export interface OrchestrationConfig {
+  embedding_model: ModelConfig;
+  judge_model: ModelConfig;
+  content_extraction_model: ModelConfig;
+  newsletter_sections_model: ModelConfig;
+  newsletter_intro_model: ModelConfig;
+  podcast_model?: ModelConfig;
+  tts_model?: any;
+  research_agent_model_config?: any;
+  mind_map_config?: MindMapConfig;
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -156,8 +187,50 @@ export const modelCatalogApi = {
   getModel: (modelId: number) => api.get(`/model-catalog/${modelId}`),
 };
 
+// Mind-Map API
+export const mindMapApi = {
+  expandMindMap: (request: MindMapExpandRequest) => 
+    api.post('/mindmap/expand', request),
+  parsePDFs: (request: MindMapPDFParseRequest) => 
+    api.post('/mindmap/parse-pdfs', request),
+  searchSeeds: (request: MindMapSeedSearchRequest) => 
+    api.get('/mindmap/search-seeds', { params: request }),
+  getPaper: (paperId: string) => 
+    api.get(`/mindmap/paper/${paperId}`),
+  
+  // Report management
+  getReports: async (): Promise<MindMapReportListResponse> => {
+    const response: AxiosResponse<MindMapReportListResponse> = await api.get('/mindmap/reports');
+    return response.data;
+  },
+  getReport: async (reportId: number): Promise<MindMapReport> => {
+    const response: AxiosResponse<MindMapReport> = await api.get(`/mindmap/reports/${reportId}`);
+    return response.data;
+  },
+  saveReport: async (request: MindMapReportSaveRequest): Promise<MindMapReportSaveResponse> => {
+    const response: AxiosResponse<MindMapReportSaveResponse> = await api.post('/mindmap/reports', request);
+    return response.data;
+  },
+  updateReport: async (reportId: number, request: MindMapReportSaveRequest): Promise<{ message: string; id: number }> => {
+    const response: AxiosResponse<{ message: string; id: number }> = await axios.put(`/api/mindmap/reports/${reportId}`, request);
+    return response.data;
+  },
+  deleteReport: async (reportId: number): Promise<{ status: string; message: string }> => {
+    const response: AxiosResponse<{ status: string; message: string }> = await api.delete(`/mindmap/reports/${reportId}`);
+    return response.data;
+  },
+  updateReportTitle: async (reportId: number, title: string): Promise<{ status: string; message: string; title: string }> => {
+    const response: AxiosResponse<{ status: string; message: string; title: string }> = await api.put(`/mindmap/reports/${reportId}/title`, { title });
+    return response.data;
+  },
+  updateReportDescription: async (reportId: number, description: string): Promise<{ status: string; message: string; description: string }> => {
+    const response: AxiosResponse<{ status: string; message: string; description: string }> = await api.put(`/mindmap/reports/${reportId}/description`, { description });
+    return response.data;
+  },
+};
+
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent') => {
+export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent' | 'mindmap' | 'mindmap-pdf-parse') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };
@@ -258,6 +331,7 @@ export interface PaperApiResponse {
   cosine_similarity: number;
   url: string;
   embedding_model: string;
+  keywords?: string[];
   similarity_score?: number; // Optional field for similarity search results
 }
 
@@ -483,4 +557,118 @@ export interface ResearchWebSocketMessage {
     sources_count?: number;
     evidence_count?: number;
   };
+}
+
+// Mind-Map API Types
+export interface MindMapNode {
+  id: string | number;
+  title: string;
+  abstract: string;
+  date: string;
+  url: string;
+  score: number;
+  rationale: string;
+  similarity_score: number;
+  summary?: string;
+  keywords?: string[];
+  has_fulltext?: boolean;
+  is_seed?: boolean;
+  colorIndex?: number;
+}
+
+export interface MindMapEdge {
+  source_id: number;
+  target_id: number;
+  similarity_score: number;
+  relationship_type?: string;
+}
+
+export interface MindMapData {
+  nodes: MindMapNode[];
+  edges: MindMapEdge[];
+  seed_paper_id: string;
+  layout_algorithm: string;
+  generation_timestamp: string;
+}
+
+export interface MindMapExpandRequest {
+  paper_id: string;
+  k?: number;
+  similarity_threshold?: number;
+  layout_algorithm?: 'force' | 'circular' | 'hierarchical';
+  model_config_override?: any;
+  expansion_order?: number;
+  max_nodes_per_order?: number;
+}
+
+export interface MindMapExpandResponse {
+  task_id: string;
+  message: string;
+}
+
+export interface MindMapPDFParseRequest {
+  paper_ids: string[];
+}
+
+export interface MindMapPDFParseResponse {
+  task_id: string;
+  message: string;
+  papers_count: number;
+}
+
+export interface MindMapSeedSearchRequest {
+  query: string;
+  limit?: number;
+}
+
+export interface MindMapSeedSearchResponse {
+  papers: PaperApiResponse[];
+  total_results: number;
+}
+
+export interface MindMapWebSocketMessage {
+  type: 'progress_update' | 'task_completed' | 'task_failed';
+  task_id: string;
+  step: string;
+  progress: number;
+  message: string;
+  timestamp: string;
+  mindmap_data?: MindMapData;
+  statistics?: {
+    nodes_created: number;
+    edges_created: number;
+    layout_algorithm: string;
+  };
+  error?: string;
+}
+
+// Mind-Map Reports interfaces
+export interface MindMapReport {
+  id: number;
+  title: string;
+  description?: string;
+  seed_paper_id: number;
+  seed_paper_title: string;
+  parameters: Record<string, any>;
+  mindmap_data: MindMapData;
+  statistics: Record<string, any>;
+  created_at: string;
+}
+
+export interface MindMapReportSaveRequest {
+  title: string;
+  description?: string;
+  mindmap_data: MindMapData;
+  parameters: Record<string, any>;
+}
+
+export interface MindMapReportSaveResponse {
+  id: number;
+  title: string;
+  message: string;
+}
+
+export interface MindMapReportListResponse {
+  reports: MindMapReport[];
+  total_count: number;
 } 

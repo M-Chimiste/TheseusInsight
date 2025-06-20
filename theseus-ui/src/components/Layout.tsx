@@ -31,6 +31,7 @@ import {
   Psychology as PsychologyIcon,
   LibraryBooks as LibraryBooksIcon,
   Storage as StorageIcon,
+  AccountTree as AccountTreeIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
@@ -86,6 +87,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
     { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
+    { text: 'Mind-Map Reports', icon: <AccountTreeIcon />, path: '/mindmap-reports' },
     { text: 'Podcast History', icon: <ListAltIcon />, path: '/podcast-history' },
     { text: 'Run History', icon: <HistoryIcon />, path: '/run-history' },
   ];

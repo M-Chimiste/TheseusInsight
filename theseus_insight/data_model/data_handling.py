@@ -122,6 +122,18 @@ class PaperDatabase:
                 # Column likely already exists, ignore
                 pass
 
+            # Add summary column if not exists
+            try:
+                cursor.execute("ALTER TABLE papers ADD COLUMN summary TEXT")
+            except Exception:
+                pass
+
+            # Add keywords_json column if not exists
+            try:
+                cursor.execute("ALTER TABLE papers ADD COLUMN keywords_json TEXT")
+            except Exception:
+                pass
+
             cursor.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5("
                 "title, abstract, content='papers', content_rowid='id')"
@@ -245,6 +257,52 @@ class PaperDatabase:
                 "timestamp TEXT NOT NULL,"
                 "FOREIGN KEY (task_id) REFERENCES research_runs (task_id)"
                 ")"
+            )
+
+            # Mind-Map Explorer tables
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS paper_fulltext ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "paper_id INTEGER NOT NULL UNIQUE,"
+                "content TEXT NOT NULL,"
+                "embedding BLOB,"
+                "embedding_model TEXT,"
+                "created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+                "FOREIGN KEY (paper_id) REFERENCES papers (id) ON DELETE CASCADE"
+                ")"
+            )
+            
+            # Create index for efficient lookups
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_paper_fulltext_paper_id "
+                "ON paper_fulltext (paper_id)"
+            )
+            
+            # Create FTS index for full-text search on parsed content
+            cursor.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS paper_fulltext_fts USING fts5("
+                "content, content='paper_fulltext', content_rowid='id')"
+            )
+
+            # Mind-Map Reports table
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS mindmap_reports ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "title TEXT NOT NULL,"
+                "description TEXT,"
+                "seed_paper_id INTEGER NOT NULL,"
+                "seed_paper_title TEXT NOT NULL,"
+                "mindmap_data_json TEXT NOT NULL,"
+                "parameters_json TEXT NOT NULL,"
+                "statistics_json TEXT,"
+                "created_at TEXT DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+            
+            # Create index for efficient lookups
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mindmap_reports_created_at "
+                "ON mindmap_reports (created_at)"
             )
 
             cursor.execute(
@@ -823,7 +881,7 @@ class PaperDatabase:
             cursor.execute(
                 """
                 SELECT id, title, abstract, date, date_run, score, rationale, related,
-                       cosine_similarity, url, embedding_model, embedding
+                       cosine_similarity, url, embedding_model, embedding, keywords_json
                 FROM papers
                 WHERE id = ? AND embedding IS NOT NULL
                 """,
@@ -849,7 +907,8 @@ class PaperDatabase:
                 'cosine_similarity': reference_row[8],
                 'url': reference_row[9],
                 'embedding_model': reference_row[10],
-                'embedding': reference_row[11]
+                'embedding': reference_row[11],
+                'keywords': json.loads(reference_row[12]) if reference_row[12] else []
             }
             
             try:
@@ -861,7 +920,7 @@ class PaperDatabase:
             cursor.execute(
                 """
                 SELECT id, title, abstract, date, date_run, score, rationale, related,
-                       cosine_similarity, url, embedding_model, embedding
+                       cosine_similarity, url, embedding_model, embedding, keywords_json
                 FROM papers
                 WHERE embedding IS NOT NULL AND id != ?
                 """,
@@ -897,6 +956,7 @@ class PaperDatabase:
                     'embedding': row[11],
                     'similarity_distance': 1 - score,
                     'similarity_score': score,
+                    'keywords': json.loads(row[12]) if row[12] else []
                 })
 
         similar_papers.sort(key=lambda x: x['similarity_score'], reverse=True)
@@ -1263,7 +1323,7 @@ class PaperDatabase:
             # Get paginated results
             data_query = f"""
                 SELECT id, title, abstract, date, date_run, score, rationale, related, 
-                       cosine_similarity, url, embedding_model, embedding
+                       cosine_similarity, url, embedding_model, embedding, keywords_json
                 FROM papers 
                 {where_clause}
                 ORDER BY {sort_field} {sort_direction}
@@ -1291,7 +1351,8 @@ class PaperDatabase:
                     'cosine_similarity': float(row[8]) if row[8] is not None else 0.0,
                     'url': row[9] or '',
                     'embedding_model': row[10] or '',
-                    'embedding': row[11]  # Keep as-is for potential future use
+                    'embedding': row[11],  # Keep as-is for potential future use
+                    'keywords': json.loads(row[12]) if row[12] else []
                 })
             
             return {
@@ -2290,3 +2351,565 @@ class PaperDatabase:
                 (int(new_favorite), model_id)
             )
             return cursor.rowcount > 0
+
+    # Mind-Map Explorer Methods
+    
+    def has_paper_fulltext(self, paper_id: int) -> bool:
+        """Check if full-text content exists for a paper."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM paper_fulltext WHERE paper_id = ?",
+                (paper_id,)
+            )
+            return cursor.fetchone()[0] > 0
+    
+    def insert_paper_fulltext(self, paper_id: int, content: str, 
+                             embedding: list = None, embedding_model: str = None) -> int:
+        """Insert full-text content for a paper."""
+        embedding_blob = None
+        if embedding:
+            embedding_blob = np.array(embedding, dtype=np.float32).tobytes()
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT OR REPLACE INTO paper_fulltext (paper_id, content, embedding, embedding_model) "
+                "VALUES (?, ?, ?, ?)",
+                (paper_id, content, embedding_blob, embedding_model)
+            )
+            
+            # Update FTS index
+            fulltext_id = cursor.lastrowid
+            cursor.execute(
+                "INSERT OR REPLACE INTO paper_fulltext_fts (rowid, content) VALUES (?, ?)",
+                (fulltext_id, content)
+            )
+            
+            return fulltext_id
+    
+    def get_paper_fulltext(self, paper_id: int) -> dict:
+        """Get full-text content for a paper."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, content, embedding_model, created_at "
+                "FROM paper_fulltext WHERE paper_id = ?",
+                (paper_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'content': row[1],
+                    'embedding_model': row[2],
+                    'created_at': row[3]
+                }
+            return None
+    
+    def get_paper_fulltext_embedding(self, paper_id: int) -> list:
+        """Get embedding for a paper's full-text."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT embedding FROM paper_fulltext WHERE paper_id = ?",
+                (paper_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                return np.frombuffer(row[0], dtype=np.float32).tolist()
+            return None
+    
+    def update_paper_fulltext_embedding(self, paper_id: int, embedding: list, embedding_model: str):
+        """Update embedding for a paper's full-text."""
+        embedding_blob = np.array(embedding, dtype=np.float32).tobytes()
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE paper_fulltext SET embedding = ?, embedding_model = ? WHERE paper_id = ?",
+                (embedding_blob, embedding_model, paper_id)
+            )
+    
+    def find_similar_papers_mindmap(self, seed_paper_id: int, k: int = 15, 
+                                   similarity_threshold: float = 0.3) -> list:
+        """Find k most similar papers for mind-map generation using sqlite-vec."""
+        # Get the seed paper's embedding
+        seed_embedding = self.get_paper_embedding(seed_paper_id)
+        if not seed_embedding:
+            return []
+        
+        if self.vector_search_enabled:
+            with self.get_cursor() as cursor:
+                try:
+                    # Convert embedding to bytes for sqlite-vec
+                    seed_embedding_bytes = np.array(seed_embedding, dtype=np.float32).tobytes()
+                    
+                    # Use sqlite-vec for efficient similarity search
+                    cursor.execute(
+                        """
+                        SELECT p.id, p.title, p.abstract, p.date, p.url, p.score, p.rationale,
+                               vec_distance_cosine(p.embedding, ?) as similarity_distance
+                        FROM papers p
+                        WHERE p.id != ? AND p.embedding IS NOT NULL 
+                              AND vec_distance_cosine(p.embedding, ?) <= ?
+                        ORDER BY similarity_distance ASC
+                        LIMIT ?
+                        """,
+                        (seed_embedding_bytes, seed_paper_id, seed_embedding_bytes, 1.0 - similarity_threshold, k)
+                    )
+                    
+                    rows = cursor.fetchall()
+                    return [
+                        {
+                            'id': row[0],
+                            'title': row[1],
+                            'abstract': row[2],
+                            'date': row[3],
+                            'url': row[4],
+                            'score': row[5],
+                            'rationale': row[6],
+                            'similarity_distance': row[7],
+                            'cosine_similarity': 1.0 - row[7]  # Convert distance to similarity
+                        }
+                        for row in rows
+                    ]
+                except Exception as e:
+                    print(f"sqlite-vec search failed, falling back to manual calculation: {e}")
+        
+        # Fallback to manual cosine similarity calculation
+        return self._fallback_mindmap_similarity_search(seed_embedding, seed_paper_id, k, similarity_threshold)
+    
+    def _fallback_mindmap_similarity_search(self, seed_embedding: list, seed_paper_id: int, 
+                                          k: int, similarity_threshold: float) -> list:
+        """Fallback similarity search using manual cosine similarity calculation."""
+        with self.get_cursor(register_vectors=False) as cursor:
+            cursor.execute(
+                "SELECT id, title, abstract, date, url, score, rationale, embedding "
+                "FROM papers WHERE id != ? AND embedding IS NOT NULL",
+                (seed_paper_id,)
+            )
+            
+            results = []
+            for row in cursor.fetchall():
+                try:
+                    # Parse embedding from JSON (papers table stores as JSON string)
+                    paper_embedding = json.loads(row[7]) if row[7] else None
+                    if paper_embedding is None:
+                        continue
+                    
+                    similarity = cosine_similarity(seed_embedding, paper_embedding)
+                    
+                    if similarity >= similarity_threshold:
+                        results.append({
+                            'id': row[0],
+                            'title': row[1],
+                            'abstract': row[2],
+                            'date': row[3],
+                            'url': row[4],
+                            'score': row[5],
+                            'rationale': row[6],
+                            'cosine_similarity': similarity,
+                            'similarity_distance': 1.0 - similarity
+                        })
+                except (json.JSONDecodeError, TypeError):
+                    # Skip papers with invalid embeddings
+                    continue
+            
+            # Sort by similarity (descending) and limit results
+            results.sort(key=lambda x: x['cosine_similarity'], reverse=True)
+            return results[:k]
+    
+    def get_papers_for_mindmap_expansion(self, paper_ids: list) -> list:
+        """Get paper details for mind-map expansion."""
+        if not paper_ids:
+            return []
+        
+        placeholders = ','.join(['?'] * len(paper_ids))
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, title, abstract, date, url, score, rationale
+                FROM papers 
+                WHERE id IN ({placeholders})
+                ORDER BY score DESC
+                """,
+                paper_ids
+            )
+            
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'url': row[4],
+                    'score': row[5],
+                    'rationale': row[6]
+                }
+                for row in rows
+            ]
+    
+    def search_papers_for_mindmap_seed(self, query: str, limit: int = 10) -> list:
+        """Search papers by title/author for mind-map seed selection using FTS."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.id, p.title, p.abstract, p.date, p.url, p.score,
+                       papers_fts.rank
+                FROM papers_fts 
+                JOIN papers p ON papers_fts.rowid = p.id
+                WHERE papers_fts MATCH ?
+                ORDER BY papers_fts.rank
+                LIMIT ?
+                """,
+                (query, limit)
+            )
+            
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'url': row[4],
+                    'score': row[5],
+                    'fts_rank': row[6]
+                }
+                for row in rows
+            ]
+    
+    def get_papers_without_fulltext(self, limit: int = None) -> list:
+        """Get papers that don't have full-text content parsed yet."""
+        with self.get_cursor() as cursor:
+            query = """
+                SELECT p.id, p.title, p.url, p.date
+                FROM papers p
+                LEFT JOIN paper_fulltext pf ON p.id = pf.paper_id
+                WHERE pf.paper_id IS NULL AND p.url IS NOT NULL
+                ORDER BY p.score DESC
+            """
+            
+            if limit:
+                query += f" LIMIT {limit}"
+            
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'url': row[2],
+                    'date': row[3]
+                }
+                for row in rows
+            ]
+
+    # Mind-Map Reports CRUD Methods
+    
+    def save_mindmap_report(self, title: str, description: str, seed_paper_id: int, 
+                           seed_paper_title: str, mindmap_data: dict, parameters: dict, 
+                           statistics: dict = None) -> int:
+        """Save a mind-map report to the database.
+        
+        Args:
+            title: Report title (required)
+            description: Optional description
+            seed_paper_id: ID of the seed paper
+            seed_paper_title: Title of the seed paper
+            mindmap_data: Mind-map data structure
+            parameters: Generation parameters used
+            statistics: Optional generation statistics
+            
+        Returns:
+            int: ID of the saved report
+        """
+        if not title or not title.strip():
+            raise ValueError("Title is required for mind-map reports")
+        
+        if not mindmap_data:
+            raise ValueError("Mind-map data is required")
+        
+        if not parameters:
+            raise ValueError("Parameters are required")
+        
+        if not seed_paper_id:
+            raise ValueError("Seed paper ID is required")
+        
+        if not seed_paper_title or not seed_paper_title.strip():
+            raise ValueError("Seed paper title is required")
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO mindmap_reports (title, description, seed_paper_id, seed_paper_title, "
+                "mindmap_data_json, parameters_json, statistics_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    title.strip(),
+                    description.strip() if description else None,
+                    seed_paper_id,
+                    seed_paper_title.strip(),
+                    json.dumps(mindmap_data),
+                    json.dumps(parameters),
+                    json.dumps(statistics) if statistics else None,
+                    datetime.datetime.now().isoformat()
+                )
+            )
+            return cursor.lastrowid
+
+    def get_mindmap_reports(self, limit: int = 100, offset: int = 0) -> list:
+        """Get list of saved mind-map reports.
+        
+        Args:
+            limit: Maximum number of reports to return
+            offset: Number of reports to skip (for pagination)
+            
+        Returns:
+            List of mind-map report dictionaries
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, title, description, seed_paper_id, seed_paper_title, "
+                "parameters_json, statistics_json, created_at "
+                "FROM mindmap_reports "
+                "ORDER BY created_at DESC "
+                "LIMIT ? OFFSET ?",
+                (limit, offset)
+            )
+            
+            rows = cursor.fetchall()
+            reports = []
+            for row in rows:
+                try:
+                    parameters = json.loads(row[5]) if row[5] else {}
+                    statistics = json.loads(row[6]) if row[6] else {}
+                except (json.JSONDecodeError, TypeError):
+                    parameters = {}
+                    statistics = {}
+                
+                # Convert datetime string to proper format if needed
+                created_at_str = row[7]
+                if hasattr(row[7], 'strftime'):
+                    created_at_str = row[7].strftime('%Y-%m-%d %H:%M:%S')
+                elif isinstance(row[7], str):
+                    # Try to parse and reformat ISO format
+                    try:
+                        dt = datetime.datetime.fromisoformat(row[7].replace('Z', '+00:00'))
+                        created_at_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except (ValueError, AttributeError):
+                        created_at_str = str(row[7])
+                
+                reports.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'description': row[2],
+                    'seed_paper_id': row[3],
+                    'seed_paper_title': row[4],
+                    'parameters': parameters,
+                    'statistics': statistics,
+                    'created_at': created_at_str
+                })
+            
+            return reports
+
+    def get_mindmap_report_by_id(self, report_id: int) -> dict | None:
+        """Get a specific mind-map report by ID.
+        
+        Args:
+            report_id: ID of the report to retrieve
+            
+        Returns:
+            Mind-map report dictionary or None if not found
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, title, description, seed_paper_id, seed_paper_title, "
+                "mindmap_data_json, parameters_json, statistics_json, created_at "
+                "FROM mindmap_reports WHERE id = ?",
+                (report_id,)
+            )
+            
+            row = cursor.fetchone()
+            if row:
+                try:
+                    mindmap_data = json.loads(row[5]) if row[5] else {}
+                    parameters = json.loads(row[6]) if row[6] else {}
+                    statistics = json.loads(row[7]) if row[7] else {}
+                except (json.JSONDecodeError, TypeError):
+                    # Handle corrupted JSON gracefully
+                    mindmap_data = {}
+                    parameters = {}
+                    statistics = {}
+                
+                # Convert datetime string to proper format if needed
+                created_at_str = row[8]
+                if hasattr(row[8], 'strftime'):
+                    created_at_str = row[8].strftime('%Y-%m-%d %H:%M:%S')
+                elif isinstance(row[8], str):
+                    try:
+                        dt = datetime.datetime.fromisoformat(row[8].replace('Z', '+00:00'))
+                        created_at_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except (ValueError, AttributeError):
+                        created_at_str = str(row[8])
+                
+                return {
+                    'id': row[0],
+                    'title': row[1],
+                    'description': row[2],
+                    'seed_paper_id': row[3],
+                    'seed_paper_title': row[4],
+                    'mindmap_data': mindmap_data,
+                    'parameters': parameters,
+                    'statistics': statistics,
+                    'created_at': created_at_str
+                }
+            
+            return None
+
+    def delete_mindmap_report(self, report_id: int) -> bool:
+        """Delete a mind-map report by ID.
+        
+        Args:
+            report_id: ID of the report to delete
+            
+        Returns:
+            bool: True if report was deleted, False if not found
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM mindmap_reports WHERE id = ?", (report_id,))
+            return cursor.rowcount > 0
+
+    def update_mindmap_report_title(self, report_id: int, new_title: str) -> bool:
+        """Update the title of a mind-map report.
+        
+        Args:
+            report_id: ID of the report to update
+            new_title: New title for the report
+            
+        Returns:
+            bool: True if report was updated, False if not found
+        """
+        if not new_title or not new_title.strip():
+            raise ValueError("Title cannot be empty")
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE mindmap_reports SET title = ? WHERE id = ?",
+                (new_title.strip(), report_id)
+            )
+            return cursor.rowcount > 0
+
+    def get_mindmap_reports_count(self) -> int:
+        """Get total count of saved mind-map reports."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM mindmap_reports")
+            return cursor.fetchone()[0]
+
+    def cleanup_old_mindmap_reports(self, days_old: int = 90) -> int:
+        """Clean up old mind-map reports (optional maintenance method).
+        
+        Args:
+            days_old: Delete reports older than this many days
+            
+        Returns:
+            int: Number of reports deleted
+        """
+        cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=days_old)).isoformat()
+        
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM mindmap_reports WHERE created_at < ?",
+                (cutoff_date,)
+            )
+            return cursor.rowcount
+
+    def update_mindmap_report_description(self, report_id: int, new_description: str | None) -> bool:
+        """Update the description of a mind-map report.
+
+        Args:
+            report_id: ID of the report to update
+            new_description: The new description text (can be empty/None to clear)
+
+        Returns:
+            bool: True if a row was updated, False otherwise
+        """
+        # Allow clearing the description by passing an empty string
+        desc = (new_description or '').strip()
+
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE mindmap_reports SET description = ? WHERE id = ?",
+                (desc if desc else None, report_id)
+            )
+            return cursor.rowcount > 0
+
+    def update_mindmap_report_data(self, report_id: int, mindmap_data: dict, parameters: dict, statistics: dict | None = None, title: str | None = None, description: str | None = None) -> bool:
+        """Update the data, parameters (and optionally statistics) of an existing mind-map report.
+
+        Args:
+            report_id: ID of the report to update
+            mindmap_data: Full mind-map data structure
+            parameters: Generation parameters
+            statistics: Optional updated statistics
+            title: Optional new title
+            description: Optional new description
+
+        Returns:
+            bool: True if a row was updated, False otherwise
+        """
+        if not mindmap_data:
+            raise ValueError("mindmap_data cannot be empty")
+        if not parameters:
+            raise ValueError("parameters cannot be empty")
+
+        update_fields = ["mindmap_data_json = ?", "parameters_json = ?"]
+        params = [json.dumps(mindmap_data), json.dumps(parameters)]
+
+        if statistics is not None:
+            update_fields.append("statistics_json = ?")
+            params.append(json.dumps(statistics))
+        if title is not None:
+            update_fields.append("title = ?")
+            params.append(title.strip())
+        if description is not None:
+            update_fields.append("description = ?")
+            params.append(description.strip() or None)
+
+        params.append(report_id)
+
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"UPDATE mindmap_reports SET {', '.join(update_fields)} WHERE id = ?",
+                params
+            )
+            return cursor.rowcount > 0
+
+    # --- Summary caching helpers --- #
+
+    def get_paper_summary(self, paper_id: int) -> str | None:
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT summary FROM papers WHERE id = ?", (paper_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                return row[0]
+            return None
+
+    def update_paper_summary(self, paper_id: int, summary: str):
+        with self.get_cursor() as cursor:
+            cursor.execute("UPDATE papers SET summary = ? WHERE id = ?", (summary, paper_id))
+
+    # --- Keywords helpers --- #
+
+    def get_paper_keywords(self, paper_id: int) -> list | None:
+        """Return list of keywords if stored."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT keywords_json FROM papers WHERE id = ?", (paper_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                import json
+                try:
+                    return json.loads(row[0])
+                except Exception:
+                    return None
+            return None
+
+    def update_paper_keywords(self, paper_id: int, keywords: list):
+        import json
+        with self.get_cursor() as cursor:
+            cursor.execute("UPDATE papers SET keywords_json = ? WHERE id = ?", (json.dumps(keywords), paper_id))

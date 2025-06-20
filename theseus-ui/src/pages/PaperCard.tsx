@@ -16,14 +16,16 @@ import { format } from 'date-fns';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ScoreIcon from '@mui/icons-material/Stars'; // Example icon for score
 import SearchIcon from '@mui/icons-material/Search';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 
 interface PaperCardProps {
   paper: PaperApiResponse;
   onFindSimilar?: (paper: PaperApiResponse) => void;
+  onOpenMindMap?: (paper: PaperApiResponse) => void;
   initialExpanded?: boolean;
 }
 
-const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpanded = false }) => {
+const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindMap, initialExpanded = false }) => {
   const [expanded, setExpanded] = useState(initialExpanded);
 
   const handleExpandClick = () => {
@@ -78,6 +80,13 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpa
           <Typography variant="body2" paragraph sx={{whiteSpace: 'pre-line'}}>
             {paper.rationale}
           </Typography>
+          {Array.isArray(paper.keywords) && paper.keywords.length > 0 && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+              {paper.keywords.slice(0,5).map((kw) => (
+                <Chip key={kw} label={kw} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+              ))}
+            </Box>
+          )}
           {paper.related !== undefined && (
              <Chip label={paper.related ? "Considered Relevant" : "Considered Not Relevant"} color={paper.related ? "success" : "default"} sx={{mb:1}}/>
           )}
@@ -86,16 +95,30 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, initialExpa
               View on ArXiv
             </Link>
           </Typography>
-          {onFindSimilar && (
-            <Button
-              variant="outlined"
-              color="primary"
-              startIcon={<SearchIcon />}
-              onClick={() => onFindSimilar(paper)}
-            >
-              Find Similar
-            </Button>
-          )}
+          <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+            {onFindSimilar && (
+              <Button
+                variant="outlined"
+                color="primary"
+                startIcon={<SearchIcon />}
+                onClick={() => onFindSimilar(paper)}
+                size="small"
+              >
+                Find Similar
+              </Button>
+            )}
+            {onOpenMindMap && (
+              <Button
+                variant="outlined"
+                color="secondary"
+                startIcon={<AccountTreeIcon />}
+                onClick={() => onOpenMindMap(paper)}
+                size="small"
+              >
+                Mind Map
+              </Button>
+            )}
+          </Box>
         </CardContent>
       </Collapse>
     </Card>

@@ -1,184 +1,312 @@
-# Research Agent Implementation - Project Status
+# Project Status - Theseus Insight
 
-## Overview
-Implementation of the Research Agent feature for TheseusInsight application following the PRD specifications. The system provides automated literature review capabilities with local-first search that can expand to external sources.
+## Recently Completed (Latest Session)
 
-## Current Implementation Status
+### Mind-Map Progress Tracking & Async/Sync Deadlock Resolution (CRITICAL FIX)
+- **Issue Identified**: Mind-map generation was freezing due to async/sync race conditions and deadlocks
+- **Root Cause**: Mixed async/sync contexts in LangGraph workflow causing event loop conflicts
+- **Solution**: Restored fully synchronous workflow for local LLM resource management
+- **Hardware Consideration**: Local LLM models require synchronous calls to prevent hardware overload
 
-### ✅ Phase 1: Data Layer Foundations (COMPLETED)
-- **Database Schema**: Extended `papers` table with optional `text` column via migration
-- **Task Constants**: Added `TASK_TYPE_RESEARCH_AGENT = "research_agent"` in constants.py
-- **Data Handling Methods**: Added complete set of research agent methods to `PaperDatabase` class
+#### Key Fixes Implemented:
+1. **Synchronous Workflow Architecture**:
+   - Restored `generate_mindmap_sync` with proper sync workflow
+   - All progress callbacks are purely synchronous (no async/await mixing)
+   - LangGraph sync workflow with `sync_app.invoke()` instead of `async_app.ainvoke()`
 
-### ✅ Phase 2: LocalSearchTool Implementation (COMPLETED)
-- **BaseSearchTool Interface**: Abstract base class with `find_papers_by_str()` and `retrieve_full_text()`
-- **LocalSearchTool**: Hybrid BM25 + vector similarity search implementation
-- **PDF Processing**: Automatic download and text extraction using SpacyLayoutDocProcessor + FlatMarkdownParser
-- **Embedding Integration**: Lazy caching with existing sqlite-vec infrastructure
+2. **Frontend Race Condition Fix**:
+   - Removed `settings` dependency from useEffect to prevent duplicate API calls
+   - Fixed parameter flow from UI settings to backend (expansion_order issue)
+   - Added comprehensive debug logging for parameter tracking
 
-### ✅ Phase 3: Model Routing & Catalog (COMPLETED)
-- **ResearchAgentModelConfig**: Declarative boss + worker model configuration
-- **AgentModelRouter**: Dynamic model selection with trace logging
-- **LLMModelFactory Integration**: All calls route through existing factory
-- **Database Persistence**: Configuration stored in settings table
+3. **Progress Callback Architecture**:
+   - Synchronous progress callbacks throughout the workflow
+   - Granular progress updates during summarization phase
+   - Proper timeout handling (increased to 30 seconds)
 
-### ✅ Phase 4: Configuration Integration (COMPLETED - TODAY)
-- **Orchestration Config**: Added research_agent_model_config to orchestration.json
-- **API Models**: Extended OrchestrationConfig with ResearchAgentModelConfigApi field
-- **Settings UI**: 
-  - Added Research Agent Models tab to MODEL_TABS array
-  - Created renderResearchAgentModelConfig() function with boss/worker model cards
-  - Enhanced handleModelConfigChange() to handle nested property paths
-  - Separate configuration cards for boss model, worker models (summary/analysis/search), and agent settings
+4. **Local Hardware Optimization**:
+   - **Synchronous LLM calls prevent concurrent resource conflicts**
+   - Sequential processing protects local GPU/CPU from overload
+   - Batch processing with progress tracking for large paper sets
 
-## Configuration Structure Added
+#### Technical Details:
+- **LLM Inference**: Already synchronous (`invoke()` methods, not async)
+- **Workflow Nodes**: All sync progress wrappers (`_*_with_sync_progress`)
+- **State Management**: LangGraph StateGraph with sync compilation
+- **Progress Updates**: Direct sync callback execution without event loop scheduling
 
-### orchestration.json
-```json
-{
-  "research_agent_model_config": {
-    "boss_model": {
-      "model_name": "gemini-2.0-flash",
-      "model_type": "gemini",
-      "max_new_tokens": 4096,
-      "temperature": 0.1,
-      "num_ctx": 131072
-    },
-    "worker_models": {
-      "summary": { "model_name": "phi4-mini:3.8b-q8_0", ... },
-      "analysis": { "model_name": "phi4-mini:3.8b-q8_0", ... },
-      "search": { "model_name": "phi4-mini:3.8b-q8_0", ... }
-    },
-    "default_worker": "summary",
-    "max_retries": 3,
-    "timeout_seconds": 30
-  }
-}
+### Mind-Map Progress Tracking Investigation & Enhancement (Previous)
+- **Progress Callback Issue Analysis**: Investigated why percentage callbacks weren't registering in the UI during mind-map generation
+- **Root Cause Identified**: Progress callbacks were working correctly for workflow steps but lacked granular tracking during summary generation
+- **Enhanced Summary Progress**: Added fine-grained progress updates during the summarization phase
+- **Improved UX**: Users now see real-time progress updates throughout the entire mind-map generation process
+
+#### Key Findings & Fixes:
+1. **Progress Flow Analysis**:
+   - Frontend (`useMindMap.ts`): Correctly handles WebSocket messages with `message.overallStatus` and `message.progress`
+   - Backend WebSocket (`websockets.py`): Properly forwards `RunStatus` objects from TaskManager
+   - TaskManager (`tasks.py`): Uses correct `asyncio.run_coroutine_threadsafe()` approach for sync callbacks
+   - Workflow (`workflow.py`): Has comprehensive progress tracking at each major step
+
+2. **Summarization Enhancement**:
+   - Added granular progress callbacks within `SummariserNode._generate_batch_summaries()`
+   - Progress now updates for each individual paper summary (within 60-75% range)
+   - Enhanced logging to track individual summary generation steps
+   - Passed sync progress callback from workflow to summariser node
+
+3. **Technical Implementation**:
+   - Fixed potential async/sync context issues with proper coroutine scheduling
+   - Added detailed progress messages showing paper titles during summarization
+   - Enhanced error handling for progress callback failures
+   - Maintained backwards compatibility with existing progress tracking
+
+#### Progress Tracking Flow:
+```
+Frontend UI → WebSocket → TaskManager → Workflow → Individual Nodes
+    ↑                                                      ↓
+Progress Bar ← RunStatus ← update_task_status ← sync_progress_callback
 ```
 
-### Settings UI Components
-- Boss Model card with provider/model selection and parameters
-- Worker Model cards for each role (summary, analysis, search)
-- Agent Configuration card with default worker, retries, and timeout settings
-- Nested property path handling in form updates
+#### Detailed Progress Phases:
+- **10-20%**: Select seed paper from database
+- **20-35%**: Embed seed paper for similarity search
+- **35-50%**: Find similar papers (single or multi-order expansion)
+- **60-75%**: Generate LLM summaries (now with granular per-paper progress)
+- **75-90%**: Build mind-map with layout positioning
+- **90-100%**: Finalize and send results
 
-## Next Phase: Agent Loop Implementation
+### Database Migration System Update (New)
+- **Comprehensive Migration Overhaul**: Extended DB migration system to support all new MindMap and Research Agent tables
+- **Backwards Compatibility**: Maintained full backwards compatibility with older database exports
+- **New Table Support**: Added export/import for 5 new table types:
+  - `research_runs` - Research Agent execution history
+  - `research_agent_state` - Research Agent state snapshots
+  - `paper_fulltext` - Full-text content for papers (MindMap feature)
+  - `mindmap_reports` - Saved MindMap reports
+  - `model_catalog` - Model configuration catalog
+- **Enhanced CLI**: Updated command-line interface with `--exclude-new-tables` option for backwards compatibility
+- **Automatic Detection**: Import system automatically detects and handles new table data when present
+- **Comprehensive Verification**: Enhanced migration verification to check all table types
 
-### ✅ Phase 5: Agent Loop & Command Parsing (COMPLETED - TODAY)
-- **FR-3**: Agent loop with command parsing (`SUMMARY`, `FULL_TEXT`, `ADD_PAPER`) ✅
-- **FR-5**: Termination criteria (target papers reached or max iterations) ✅
-- **FR-6**: Result persistence in `lit_reviews` table ✅
-- **Core Implementation**: 
-  - ResearchAgentLoop class with iterative coordination
-  - Command parsing using regex for fenced code blocks
-  - Boss model coordination with worker model delegation
-  - Comprehensive trace logging for all agent decisions
-  - Integration with existing LocalSearchTool and AgentModelRouter
+#### Key Migration Features:
+1. **Export System Enhancements**:
+   - Export version bumped to 2.0 with backwards compatibility metadata
+   - Selective table inclusion/exclusion via `include_new_tables` parameter
+   - Proper handling of binary embedding data (numpy array to bytes conversion)
+   - Enhanced progress tracking for new table exports
+   - Graceful error handling for missing tables
 
-### ✅ Phase 6: API Endpoints (COMPLETED - Enhanced with Markdown Reports)
-**Successfully implemented comprehensive Research Agent API endpoints with full markdown report generation:**
+2. **Import System Enhancements**:
+   - Auto-detection of export version and available features
+   - Intelligent handling of missing tables (optional vs required)
+   - Proper embedding reconstruction from binary data
+   - Enhanced duplicate detection for all table types
+   - Comprehensive import statistics and error reporting
 
-#### **REST API Endpoints**
-- **Model Configuration**:
-  - `GET /api/settings/research-agent-model-config` - Retrieve current configuration ✅
-  - `PUT /api/settings/research-agent-model-config` - Update model settings ✅
-- **Research Agent Operations**:
-  - `POST /api/research-agent/run` - Start new literature review with progress tracking ✅
-  - `GET /api/research-agent/reviews/{review_id}` - Retrieve specific review with full markdown report ✅
-  - `GET /api/research-agent/reviews` - List recent reviews with pagination and markdown reports ✅
-- **Integration with existing task system** via `/api/tasks/{task_id}/status` ✅
+3. **Migration Orchestration**:
+   - Updated `DatabaseMigrator` class to support new table parameters
+   - Enhanced verification system checking all available tables
+   - Improved error messages and progress reporting
+   - Command-line interface for export/import/migrate operations
 
-#### **📝 NEW: Markdown Report Generation**
-- **Full Literature Review Reports**: Comprehensive markdown documents generated automatically
-- **Rich Formatting**: Executive summaries, key findings, paper inventories, methodology sections
-- **Statistical Analysis**: Relevance score distributions, paper recommendations, coverage metrics
-- **Database Storage**: `report_text` field added to `lit_reviews` table for persistent storage
-- **API Integration**: Reports included in all API responses for UI rendering
+4. **Documentation & Examples**:
+   - Updated migration example script with comprehensive demonstrations
+   - Clear documentation of backwards compatibility features
+   - Usage examples for all new migration capabilities
 
-#### **WebSocket Streaming**
-- **Real-time Progress**: `/ws/research-agent/{task_id}` ✅
-- Live status updates during agent execution
-- Progress tracking with detailed iteration information  
-- Error handling and connection management
+### Multi-Order Mind-Map Expansion & Saving Functionality
+- **Frontend Complete**: Implemented comprehensive multi-order mind-map expansion with saving capability
+- **Settings Integration**: Added multi-order parameters to Settings.tsx mind-map configuration
+- **New Page**: Created MindMapReports.tsx page for managing saved mind-map reports
+- **Enhanced UI**: Updated MindMapExplorer with save dialog, multi-order settings, and improved controls
+- **API Layer**: Extended all mind-map APIs and interfaces to support new parameters and report management
+- **Navigation**: Added Mind-Map Reports to main navigation menu
 
-#### **Task Management Integration**
-- Added `run_research_agent_task()` to TaskManager with enhanced progress tracking ✅
-- Monkey-patched agent trace entries for real-time updates ✅
-- Background task queuing and worker processing ✅
-- Comprehensive error handling and result persistence ✅
+#### Key Features Implemented:
+1. **Multi-Order Expansion**:
+   - Expansion Order setting (1-5 levels)
+   - Max Nodes per Order setting (5-50 nodes)
+   - Exponential growth control to prevent overwhelming graphs
+   - Both global settings and per-generation overrides
 
-#### **API Models & Validation**
-- `ResearchAgentModelConfigApi` for configuration management ✅
-- `ResearchAgentRunRequest/Response` for run lifecycle ✅
-- `LiteratureReviewResult/Summary` for structured outputs ✅
-- Complete request validation and type safety ✅
+2. **Mind-Map Report Saving**:
+   - Required title with optional description
+   - Complete mind-map data persistence
+   - Generation parameters tracking
+   - Statistics and metadata storage
 
-### 🔄 Phase 7: Frontend Integration (READY TO START)
-- **FR-13**: Research Agent page with live logs and progress
-- **FR-14**: Task integration with job history
-- **FR-15**: Scheduler blocking rules during research runs
+3. **Report Management Page**:
+   - Card-based layout showing all saved reports
+   - View, edit titles, and delete functionality
+   - Metadata display (nodes, edges, expansion order)
+   - Direct loading of saved mind-maps
 
-## Files Modified Today
-1. `config/orchestration.json` - Added research_agent_model_config section
-2. `theseus-ui/src/pages/Settings.tsx` - Added UI components and logic for research agent configuration
-3. `theseus_insight/api/models.py` - Added research_agent_model_config field + report_text to LiteratureReviewResult
-4. `theseus_insight/agentic_research/agent_loop.py` - **NEW**: Core agent loop implementation + markdown report generation
-5. `theseus_insight/agentic_research/test_agent_loop.py` - **NEW**: Test suite for agent loop
-6. `theseus_insight/api/tasks.py` - Added research agent task runner with progress tracking
-7. `theseus_insight/main.py` - Added comprehensive research agent API endpoints and WebSocket streaming
-8. `theseus_insight/agentic_research/test_api_endpoints.py` - **NEW**: API endpoint test suite
-9. `theseus_insight/data_model/data_handling.py` - **NEW**: Added report_text column to lit_reviews table + fetch_all_literature_reviews method
-10. `theseus_insight/utils/db_migration/db_export.py` - **UPDATED**: Added literature reviews export functionality  
-11. `theseus_insight/utils/db_migration/db_import.py` - **UPDATED**: Added literature reviews import with backward compatibility + fixed SQLite clear operations
+4. **Enhanced User Experience**:
+   - Save button in mind-map explorer
+   - Validation for required fields
+   - Success/error feedback
+   - Consistent design patterns
 
-## Technical Debt & Notes
-- Configuration UI handles nested paths correctly for research agent models
-- Model validation and error handling implemented in UI components
-- Integration follows existing TheseusInsight patterns and infrastructure
-- All existing tests should continue to pass
+#### Backend Status:
+- ✅ **Database schema**: mindmap_reports table created with complete schema
+- ✅ **Database CRUD methods**: All report management methods implemented
+- ✅ **Multi-order expansion workflow logic**: Implemented with conditional routing
+- ✅ **Progress tracking for iterative generation**: Implemented with specialized progress callbacks
 
-## Agent Loop Implementation Details
+## Previously Completed Features
 
-### Core Features Implemented
-- **Iterative Research Coordination**: Boss model guides the research process with contextual prompts
-- **Command Parsing**: Supports `SUMMARY <query>`, `FULL_TEXT <paper_id>`, `ADD_PAPER <id_or_url>`, and `COMPLETE`
-- **Smart Termination**: Stops when target papers reached OR max iterations exceeded
-- **Quality Filtering**: Only papers with relevance score ≥ 0.6 are included in final results
-- **Comprehensive Tracing**: Every model call, search, and decision is logged with timestamps and performance metrics
-- **Error Resilience**: Graceful handling of model failures, missing papers, and network issues
+### Core Infrastructure
+- **Database Integration**: SQLite with comprehensive paper storage and metadata
+- **API Architecture**: FastAPI backend with RESTful endpoints and WebSocket support
+- **Frontend Framework**: React with TypeScript, Material-UI, and React Query
+- **Authentication**: API key management for multiple LLM providers
 
-### Key Components
-1. **ResearchAgentLoop**: Main orchestrator class
-2. **AgentTraceEntry**: Structured logging for all agent decisions
-3. **LiteratureReviewSummary**: Structured paper summaries with relevance scores
-4. **ResearchAgentResult**: Complete review results with success/failure state
-5. **create_research_agent()**: Factory function for easy instantiation
+### Research & Analysis Pipeline
+- **ArXiv Integration**: Automated paper harvesting with taxonomy filtering
+- **Embedding System**: Vector similarity search with multiple embedding models
+- **LLM Integration**: Multi-provider support (OpenAI, Anthropic, Ollama, Gemini)
+- **Research Agent**: Automated literature review with multi-step reasoning
+- **Hybrid Search**: Combined keyword and semantic search capabilities
 
-### Testing & Validation
-- Comprehensive test suite with mocked dependencies
-- Command parsing validation
-- Termination condition testing
-- Database persistence verification
-- Example usage patterns
+### Content Generation
+- **Newsletter Builder**: Automated newsletter generation with email distribution
+- **Podcast Creator**: Text-to-speech podcast generation with multiple voices
+- **Visualizer**: Matrix-style video generation for podcast content
 
-## Ready for Next Development Session
-**Phases 1-6 are now COMPLETE!** The Research Agent system has full backend functionality including:
-- ✅ Data layer foundations and database schema
-- ✅ Local search with hybrid BM25 + vector similarity  
-- ✅ Model routing with configurable boss/worker patterns
-- ✅ Configuration management via UI and JSON
-- ✅ Agent loop with command parsing and iterative coordination
-- ✅ Complete REST API and WebSocket streaming infrastructure
+### User Interface
+- **Papers Management**: Advanced filtering, pagination, and similarity search
+- **Model Catalog**: Centralized model configuration and management
+- **Research Library**: Literature review results management
+- **Run History**: Task tracking and status monitoring
+- **Settings**: Comprehensive configuration management
 
-**✅ CRITICAL: Database Migration Support Added**
-- Updated export scripts to include literature reviews table with full markdown reports
-- Enhanced import scripts with backward compatibility for older exports  
-- Fixed SQLite compatibility issues in clear operations
-- All migration functionality tested and verified working
+### Mind-Map Explorer (Core)
+- **Interactive Visualization**: React Flow-based mind-map rendering
+- **Smart Layouts**: Force-directed positioning with collision detection
+- **Paper Summarization**: LLM-generated summaries for each node
+- **Similarity Connections**: Edge weights based on semantic similarity
+- **Real-time Generation**: WebSocket progress tracking
 
-**Phase 7 (Frontend Integration) is ready to start:**
-- Research Agent page with live logs and progress visualization
-- Task integration with job history dashboard  
-- Scheduler blocking rules during research runs
+### Database Migration & Data Management
+- **Comprehensive Migration System**: Full export/import of all table types
+- **Backwards Compatibility**: Support for older database formats
+- **Verification System**: Migration integrity checking
+- **Command-Line Tools**: CLI interface for database operations
+- **Data Preservation**: Safe handling of binary data and embeddings
 
-Last Updated: December 2024 
+## Current Architecture
+
+### Backend Stack
+- **Framework**: FastAPI with async/await support
+- **Database**: SQLite with custom ORM layer and comprehensive migration support
+- **Task Management**: Background task system with WebSocket notifications
+- **LLM Integration**: Provider-agnostic model configuration
+- **Vector Search**: Embedding-based similarity computation
+- **Migration System**: Full database export/import with backwards compatibility
+
+### Frontend Stack
+- **Framework**: React 18 with TypeScript
+- **UI Library**: Material-UI (MUI) v5
+- **State Management**: React Query for server state, Context for UI state
+- **Routing**: React Router v6
+- **Visualization**: React Flow for mind-maps, custom components for other visualizations
+
+### Key Dependencies
+- **LangGraph**: Workflow orchestration for complex AI tasks
+- **Sentence Transformers**: Embedding generation
+- **OpenAI/Anthropic SDKs**: LLM API integration
+- **React Flow**: Interactive graph visualization
+- **TanStack Query**: Data fetching and caching
+- **NumPy**: Binary data handling for embeddings
+
+## Development Notes
+
+### Code Quality Practices
+- TypeScript for type safety across frontend and backend
+- Comprehensive error handling with user-friendly messages
+- Responsive design with mobile-first approach
+- Performance optimizations with lazy loading and infinite scroll
+- Consistent naming conventions and code organization
+
+### Scalability Considerations
+- Modular architecture allowing easy feature additions
+- Provider-agnostic LLM integration for flexibility
+- Efficient database queries with proper indexing
+- Background task processing to avoid UI blocking
+- Component reusability across different pages
+- Robust migration system for database evolution
+
+### Recent Technical Decisions
+- Multi-order expansion with configurable limits to balance utility and performance
+- Report saving system for persistent mind-map exploration
+- Enhanced settings organization for better user experience
+- Consistent UI patterns across all management pages
+- Backwards-compatible migration system for seamless upgrades
+
+## Next Priorities
+
+### Immediate Focus
+1. **Testing**: Comprehensive testing of new migration system with real data
+2. **Documentation**: Update user documentation for migration capabilities
+3. **Performance**: Optimization for large database migrations
+4. **Integration Testing**: Verify all new table types work correctly in production
+
+### Future Enhancements
+1. **Collaboration**: Multi-user mind-map sharing and commenting
+2. **Export Capabilities**: PDF, PNG, and data export for mind-maps
+3. **Advanced Analytics**: Usage patterns and effectiveness metrics
+4. **Integration**: Connect with external reference managers
+5. **Performance**: Optimization for large-scale mind-map generation
+6. **Cloud Migration**: Support for cloud database backends
+
+## Debug Log
+
+### Current Session: Database Migration System Complete ✅
+- ✅ **Migration Export System**: Updated `db_export.py` to support all 5 new table types
+  - Added `export_research_runs()`, `export_research_agent_state()`, `export_paper_fulltext()`, `export_mindmap_reports()`, `export_model_catalog()` methods
+  - Implemented proper binary embedding handling for `paper_fulltext` table
+  - Added `include_new_tables` parameter for backwards compatibility
+  - Enhanced metadata with version 2.0 and feature detection
+  - Comprehensive error handling with graceful degradation
+  
+- ✅ **Migration Import System**: Updated `db_import.py` to support all new table types
+  - Added corresponding import methods for all 5 new tables
+  - Implemented automatic table detection and optional import handling
+  - Added proper embedding reconstruction from binary data
+  - Enhanced duplicate detection for all table types
+  - Improved progress tracking and error reporting
+  
+- ✅ **Migration Orchestration**: Updated `db_migrate.py` for enhanced coordination
+  - Added `include_new_tables` parameter to all migration methods
+  - Enhanced verification system to check all available tables
+  - Updated CLI with `--exclude-new-tables` option
+  - Improved verification output with table-by-table status
+  
+- ✅ **Documentation & Examples**: Updated migration example with comprehensive demonstrations
+  - Created new `migration_example.py` showing all new capabilities
+  - Added examples for backwards compatibility mode
+  - Demonstrated auto-detection and selective migration
+  - Added cleanup and comprehensive testing examples
+
+### Previous Session: Multi-Order Expansion Implementation Complete ✅
+- ✅ **Mind-Map Reports Database**: Implemented complete database layer for mind-map reports
+- ✅ **Multi-Order Expansion Backend Logic**: Implemented complete multi-order retrieval workflow
+- ✅ **Frontend Integration**: All UI components updated with proper TypeScript interfaces
+
+### Latest Session Issues Resolved
+- Proper handling of binary embedding data in migration system
+- Backwards compatibility maintained for older export formats
+- Enhanced error handling for missing tables during migration
+- Comprehensive CLI interface for all migration operations
+- Automated table detection and validation in import system
+
+### Known Issues
+- Large database migrations may require performance optimization
+- Binary embedding data handling needs thorough testing across platforms
+- CLI help text could be more detailed for complex migration scenarios
+
+### Technical Debt
+- Consider implementing database schema versioning for automatic migrations
+- Evaluate compressed archive formats for large database exports
+- Review error handling patterns across all migration modules
+- Consider adding migration progress persistence for very large operations

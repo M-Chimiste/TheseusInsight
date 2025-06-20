@@ -23,6 +23,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
   - [Script Management](#script-management)
   - [Visualizer Generation](#visualizer-generation)
   - [Similarity Search](#similarity-search)
+  - [Mind-Map Explorer](#mind-map-explorer)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
@@ -33,7 +34,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 
 ## Overview
 
-Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run.
+Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run. The latest version introduces the **Mind-Map Explorer**, an interactive visualization system for exploring multi-order research paper relationships through configurable network graphs, enabling researchers to discover both direct and indirect connections in the academic literature.
 
 ---
 
@@ -70,6 +71,15 @@ This starts Vite on <http://localhost:5173> which proxies API requests to the ba
 - **Real‑time progress** streaming over WebSockets for long running tasks.
 - **SQLite database** (with sqlite-vec) for storing papers, runs and configuration data.
 - **Advanced search capabilities** including semantic similarity via vector embeddings and hybrid search combining semantic understanding with keyword precision.
+- **Cached Summaries & Keywords**: LLM-generated paper summaries and YAKE-extracted top keywords are stored in the database, eliminating redundant generation and dramatically speeding up subsequent mind-map builds.
+- **Mind-Map Explorer**: An interactive visualization tool to explore the intellectual neighborhood of research papers.
+  - **Multi-Order Expansion**: Generate mind-maps with configurable expansion orders (1-5) to explore deeper connections between papers.
+  - **Visual Network Exploration**: Interactive force-directed layouts with similarity-based node positioning and edge weighting.
+  - **Configurable Parameters**: Adjust similarity thresholds (10%-80%), paper count (5-30), and nodes per expansion order (5-50).
+  - **Smart Deduplication**: Automatic duplicate detection and removal across expansion orders for clean visualizations.
+  - **Real-Time Progress Tracking**: WebSocket-powered progress updates with detailed step information during generation.
+  - **Save & Share Reports**: Save mind-map configurations and results for future reference and collaboration.
+  - **Seamless Integration**: Launch from any paper in the research library or similarity search results.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers.
@@ -90,6 +100,7 @@ theseus_insight/
       newsletters_and_podcasts.py  # Content generation
       actions.py          # Visualizer pipeline actions
       database.py         # Import/export functionality
+      mindmap.py          # Mind-map generation and reports
       websockets.py       # WebSocket connections
       __init__.py         # Router registry
     dependencies.py       # Shared dependencies (db, credentials)
@@ -99,6 +110,16 @@ theseus_insight/
   data_model/            # SQLite interactions and pydantic models
   data_processing/       # Arxiv harvesting utilities
   inference/             # LLM and TTS wrappers
+  mindmap/               # Mind-map generation system
+    nodes/               # LangGraph workflow nodes
+      build_mindmap.py   # Mind-map data structure assembly
+      embed_seed.py      # Seed paper embedding generation
+      multi_order_retriever.py  # Multi-order similarity search
+      retriever.py       # Single-order similarity search
+      select_seed.py     # Seed paper selection and validation
+      summariser.py      # Paper summarization for nodes
+    state.py             # Mind-map workflow state management
+    workflow.py          # LangGraph workflow orchestration
   pdf/                   # PDF parsing helpers
   podcast/               # Podcast and visualiser generation
   main.py                # FastAPI entrypoint and app configuration
@@ -239,6 +260,7 @@ Create a `.env` file in the project root containing keys and settings:
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
 | `DATABASE_URL` | Path to the SQLite database file (default `data/theseus.db`) |
 | `SQLITE_VEC_PATH` | Optional path to the `sqlite_vec` extension for vector similarity |
+| `DEBUG` | When set to `true`, `1`, or `yes` globally re-enables verbose `print()` statements and DEBUG-level logger output. Leave unset (default) for a quiet console |
 
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
@@ -494,6 +516,75 @@ The React interface provides an intuitive toggle for enabling hybrid search with
 - **Automatic Migration**: Existing installations automatically update the SQLite schema when new search features are introduced
 
 See [docs/embedding_functionality_README.md](docs/embedding_functionality_README.md) for more details.
+### Mind-Map Explorer
+- **`POST /api/mindmap/expand`** – generate a mind-map from a seed paper.
+- **`GET /api/mindmap/reports`** – list saved mind-map reports.
+- **`POST /api/mindmap/reports`** – save a mind-map report.
+- **`GET /api/mindmap/reports/{report_id}`** – retrieve a specific mind-map report.
+- **`DELETE /api/mindmap/reports/{report_id}`** – delete a mind-map report.
+
+#### Mind-Map Generation Features
+
+The Mind-Map Explorer provides an advanced visualization system for exploring research paper relationships through interactive network graphs. Built on top of the existing similarity search infrastructure, it offers configurable multi-order expansion to discover both direct and indirect connections between papers.
+
+**Core Capabilities:**
+- **Multi-Order Expansion**: Generate mind-maps with 1-5 expansion orders to explore increasingly distant paper relationships
+- **Similarity-Based Clustering**: Papers are automatically arranged in concentric rings based on similarity scores (≥80%, 60-80%, 40-60%, <40%)
+- **Interactive Canvas**: Built with React Flow for smooth panning, zooming, and node interaction
+- **Real-Time Generation**: WebSocket-powered progress tracking with detailed step information
+- **Persistent Storage**: Save mind-map configurations and results as reports for future reference
+
+**Configuration Parameters:**
+- **Expansion Order** (1-5): Controls the depth of exploration (Order 1 = direct similarities, Order 2+ = indirect connections)
+- **Papers per Order** (5-30): Number of similar papers to find at each expansion level
+- **Max Nodes per Order** (5-50): Maximum nodes to include per expansion order for performance optimization
+- **Similarity Threshold** (10%-80%): Minimum similarity score for including papers in the mind-map
+- **Layout Algorithm**: Force-directed positioning with collision detection and edge optimization
+
+**Technical Implementation:**
+- **Deduplication Logic**: Automatic removal of duplicate papers across expansion orders using ID-based tracking
+- **Efficient Routing**: Conditional workflow routing between single-order (`RetrieverNode`) and multi-order (`MultiOrderRetrieverNode`) based on expansion parameters
+- **Progress Callbacks**: Specialized progress tracking for multi-order operations with step-by-step feedback
+- **Database Integration**: Complete CRUD operations for mind-map reports with JSON storage for configurations and results
+
+**Example API Request:**
+```json
+POST /api/mindmap/expand
+{
+  "paper_id": "12345",
+  "k": 15,
+  "similarity_threshold": 0.3,
+  "layout_algorithm": "force",
+  "expansion_order": 2,
+  "max_nodes_per_order": 20
+}
+```
+
+**Example Response:**
+```json
+{
+  "status": "success",
+  "data": {
+    "task_id": "mindmap_abc123",
+    "message": "Mind-map generation started"
+  }
+}
+```
+
+**Frontend Integration:**
+The React interface provides an intuitive dialog for configuring mind-map parameters with real-time validation and helpful tooltips. The interactive canvas supports:
+- **Node Expansion**: Double-click nodes to generate new mind-maps with that paper as the seed
+- **Contextual Actions**: Right-click menus for opening papers, expanding nodes, and accessing additional options
+- **Visual Feedback**: Similarity scores displayed as edge weights and node positioning
+- **Save Functionality**: One-click saving of mind-map configurations and results
+- **Fullscreen Mode**: Dedicated fullscreen view for detailed exploration
+
+**Use Cases:**
+- **Literature Review**: Discover related works and research trends around a specific paper
+- **Research Planning**: Identify gaps and opportunities in research areas
+- **Citation Analysis**: Explore indirect connections between papers through similarity rather than citations
+- **Knowledge Discovery**: Find unexpected connections between seemingly unrelated research areas
+
 ### Theseus Insight Run Orchestration
 - **`POST /api/theseus_insight/run`** – execute the full newsletter and podcast pipeline.
 
@@ -551,7 +642,7 @@ python -m theseus_insight.utils.db_migration.db_migrate migrate \
 - **Compressed archives** - tar.gz format with metadata for easy transfer
 - **Vector embedding preservation** - Maintains exact embeddings during migration
 - **Verification tools** - Compare source and target databases after migration
-- **Flexible import options** - Support for selective imports and batch processing
+- **Summary & Keyword Preservation** – Export/import routines now include the new `summary` and `keywords` columns so cached content moves seamlessly between installations.
 
 For detailed documentation and advanced usage examples, see [`theseus_insight/docs/db_migration_README.md`](theseus_insight/docs/db_migration_README.md).
 

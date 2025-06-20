@@ -23,3 +23,23 @@ from .data_processing import *
 from .pdf import *
 from .data_model import *
 from .constants import *
+
+# -----------------------------------------------------------------------------
+# Global debug / logging configuration
+# -----------------------------------------------------------------------------
+
+import os, builtins, logging
+
+# Enable extra verbosity only if environment variable DEBUG is truthy
+_DEBUG_MODE = os.getenv("DEBUG", "").lower() in ("1", "true", "yes")
+
+# Mute all naked `print()` calls across the codebase unless DEBUG=true
+if not _DEBUG_MODE:
+    builtins.print = lambda *args, **kwargs: None  # type: ignore[arg-type]
+
+# Set a sensible global logging level
+logging.basicConfig(level=logging.DEBUG if _DEBUG_MODE else logging.INFO,
+                    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+
+# Expose DEBUG_MODE for other modules (optional)
+DEBUG_MODE: bool = _DEBUG_MODE

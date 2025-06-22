@@ -110,6 +110,8 @@ interface MindMapCanvasProps {
   onNodeDoubleClick?: (nodeId: string) => void;
   onPaneClick?: () => void;
   isLoading?: boolean;
+  dateRange?: [number, number];
+  connectionThreshold?: number;
 }
 
 // Define custom node and edge types
@@ -121,6 +123,67 @@ const edgeTypes: EdgeTypes = {
   mindMapEdge: MindMapEdge,
 };
 
+// Helper function to generate heat map color based on connection count
+const getHeatMapColor = (connectionCount: number, maxConnections: number): string => {
+  if (maxConnections === 0) return '#e3f2fd'; // light blue for single nodes
+  
+  // Normalize connection count to 0-1 range
+  const intensity = Math.min(connectionCount / maxConnections, 1);
+  
+  // Create gradient from light blue to deep red for better contrast
+  if (intensity === 0) {
+    return '#e3f2fd'; // very light blue
+  } else if (intensity <= 0.2) {
+    return '#bbdefb'; // light blue
+  } else if (intensity <= 0.4) {
+    return '#ff8a65'; // light orange/coral
+  } else if (intensity <= 0.6) {
+    return '#f44336'; // bright red
+  } else if (intensity <= 0.8) {
+    return '#d32f2f'; // deep red
+  } else {
+    return '#b71c1c'; // very deep red/maroon
+  }
+};
+
+// Utility function to process mind map data and add heat map coloring
+const processHeatMapData = (data: MindMapData): MindMapData => {
+  if (!data.nodes || data.nodes.length === 0) {
+    return data;
+  }
+
+  // Calculate connection counts for each node
+  const connectionCounts = new Map<string, number>();
+  data.nodes.forEach(node => {
+    connectionCounts.set(String(node.id), 0);
+  });
+
+  // Count connections for each node
+  if (data.edges) {
+    data.edges.forEach(edge => {
+      const sourceId = String(edge.source_id);
+      const targetId = String(edge.target_id);
+      connectionCounts.set(sourceId, (connectionCounts.get(sourceId) || 0) + 1);
+      connectionCounts.set(targetId, (connectionCounts.get(targetId) || 0) + 1);
+    });
+  }
+
+  // Find maximum connection count for normalization
+  const maxConnections = Math.max(...Array.from(connectionCounts.values()));
+
+  // Add heat map properties to nodes
+  const processedNodes = data.nodes.map(node => ({
+    ...node,
+    connectionCount: connectionCounts.get(String(node.id)) || 0,
+    heatMapColor: getHeatMapColor(connectionCounts.get(String(node.id)) || 0, maxConnections),
+  }));
+
+  return {
+    ...data,
+    nodes: processedNodes,
+  };
+};
+
 const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
   data,
   onNodeClick,
@@ -128,23 +191,68 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
   onNodeDoubleClick,
   onPaneClick,
   isLoading = false,
+  dateRange,
+  connectionThreshold = 0,
 }) => {
   const theme = useTheme();
 
+  // Process the data to add heat map coloring and apply filters
+  const processedData = useMemo(() => {
+    const heatMapData = processHeatMapData(data);
+    
+    // Apply filters if provided
+    if (dateRange || connectionThreshold > 0) {
+      const filteredNodes = heatMapData.nodes.filter(node => {
+        // Date filter
+        if (dateRange) {
+          const nodeYear = node.date ? new Date(node.date).getFullYear() : null;
+          if (nodeYear && (nodeYear < dateRange[0] || nodeYear > dateRange[1])) {
+            return false;
+          }
+        }
+        
+        // Connection threshold filter
+        if (connectionThreshold > 0) {
+          const nodeConnections = (node as any).connectionCount || 0;
+          if (nodeConnections < connectionThreshold) {
+            return false;
+          }
+        }
+        
+        return true;
+      });
+      
+      // Filter edges to only include edges between remaining nodes
+      const nodeIds = new Set(filteredNodes.map(n => String(n.id)));
+      const filteredEdges = heatMapData.edges.filter(edge => 
+        nodeIds.has(String(edge.source_id)) && nodeIds.has(String(edge.target_id))
+      );
+      
+      return {
+        ...heatMapData,
+        nodes: filteredNodes,
+        edges: filteredEdges,
+      };
+    }
+    
+    return heatMapData;
+  }, [data, dateRange, connectionThreshold]);
+
   // Convert mind-map data to React Flow format with better initial positioning
   const initialNodes = useMemo(() => {
-    if (!data.nodes || data.nodes.length === 0) {
+    if (!processedData.nodes || processedData.nodes.length === 0) {
       return [];
     }
 
     // Generate initial positions using concentric similarity bands
-    const posMap = generateConcentricPositions(data.nodes, data.seed_paper_id);
+    const posMap = generateConcentricPositions(processedData.nodes, processedData.seed_paper_id);
     
-    const convertedNodes = data.nodes.map((node): Node => {
+    const convertedNodes = processedData.nodes.map((node): Node => {
       const pos = posMap.get(String(node.id)) ?? { x: 0, y: 0 };
+      const nodeId = String(node.id);
       
       return {
-        id: String(node.id),
+        id: nodeId,
         type: 'mindMapNode',
         position: pos,
         data: {
@@ -157,16 +265,16 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
     });
     
     return convertedNodes;
-  }, [data.nodes, data.seed_paper_id]);
+  }, [processedData.nodes, processedData.seed_paper_id]);
 
   const initialEdges = useMemo(() => {
-    if (!data.edges || data.edges.length === 0 || !initialNodes || initialNodes.length === 0) {
+    if (!processedData.edges || processedData.edges.length === 0 || !initialNodes || initialNodes.length === 0) {
       return [];
     }
 
     const nodeMap = new Map(initialNodes.map(node => [node.id, node]));
 
-    return data.edges.map((edge): Edge => {
+    return processedData.edges.map((edge): Edge => {
       const sourceId = String(edge.source_id);
       const targetId = String(edge.target_id);
       const sourceNode = nodeMap.get(sourceId);
@@ -177,11 +285,22 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         handles = getOptimalHandles(sourceNode, targetNode);
       }
       
-      let colorIndex: number | undefined;
-      const srcCI = sourceNode?.data?.colorIndex;
-      const tgtCI = targetNode?.data?.colorIndex;
-      if (srcCI !== undefined || tgtCI !== undefined) {
-        colorIndex = Math.max(Number(srcCI ?? 0), Number(tgtCI ?? 0));
+      // Use the heat map color from the node with more connections
+      let edgeColor = theme.palette.mode === 'dark' ? '#666' : '#b1b1b7';
+      const sourceHeatColor = (sourceNode?.data as any)?.heatMapColor;
+      const targetHeatColor = (targetNode?.data as any)?.heatMapColor;
+      const sourceConnections = (sourceNode?.data as any)?.connectionCount || 0;
+      const targetConnections = (targetNode?.data as any)?.connectionCount || 0;
+      
+      if (sourceHeatColor && targetHeatColor) {
+        // Use the color of the node with more connections
+        edgeColor = sourceConnections >= targetConnections 
+          ? sourceHeatColor 
+          : targetHeatColor;
+      } else if (sourceHeatColor) {
+        edgeColor = sourceHeatColor;
+      } else if (targetHeatColor) {
+        edgeColor = targetHeatColor;
       }
 
       return {
@@ -193,16 +312,16 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         type: 'mindMapEdge',
         data: {
           similarity_score: edge.similarity_score,
-          ...(colorIndex !== undefined ? { colorIndex } : {}),
+          heatMapColor: edgeColor,
         },
         animated: false,
         style: {
-          stroke: theme.palette.mode === 'dark' ? '#666' : '#b1b1b7',
+          stroke: edgeColor,
           strokeWidth: Math.max(1, edge.similarity_score * 3),
         },
       };
     });
-  }, [data.edges, initialNodes, theme.palette.mode]);
+  }, [processedData.edges, initialNodes, theme.palette.mode]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);

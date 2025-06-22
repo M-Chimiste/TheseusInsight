@@ -4,7 +4,7 @@ import { Chip, useTheme } from '@mui/material';
 
 interface MindMapEdgeData {
   similarity_score: number;
-  colorIndex?: number;
+  heatMapColor?: string;
 }
 
 interface MindMapEdgeProps {
@@ -36,14 +36,13 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
   });
 
   const similarity = data?.similarity_score || 0;
-  const palette = ['#8e24aa','#3949ab','#00897b','#f9a825','#d81b60','#00acc1'];
-  const colorIndex = (data as any)?.colorIndex;
-
+  
+  // Use heat map color if available, otherwise fall back to similarity-based coloring
   let edgeColor: string;
-  if (colorIndex !== undefined) {
-    edgeColor = palette[colorIndex % palette.length];
+  if (data?.heatMapColor) {
+    edgeColor = data.heatMapColor;
   } else {
-    // original similarity-based coloring
+    // fallback similarity-based coloring
     const getEdgeColor = () => {
       if (similarity > 0.75) return theme.palette.primary.main;
       if (similarity > 0.55) return theme.palette.primary.light;

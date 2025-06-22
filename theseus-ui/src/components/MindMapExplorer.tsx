@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -11,10 +11,6 @@ import {
   Alert,
   IconButton,
   Divider,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Slider,
   Chip,
   TextField,
@@ -24,14 +20,14 @@ import {
   Close as CloseIcon,
   Fullscreen as FullscreenIcon,
   FullscreenExit as FullscreenExitIcon,
-  Settings as SettingsIcon,
+  FilterList as FilterListIcon,
   Refresh as RefreshIcon,
   Save as SaveIcon,
 } from '@mui/icons-material';
-import type { SelectChangeEvent } from '@mui/material';
+
 import MindMapCanvas from './MindMapCanvas';
 import { useMindMap } from '../hooks/useMindMap';
-import { mindMapApi, settingsApi } from '../services/api';
+import { mindMapApi } from '../services/api';
 import type { PaperApiResponse, MindMapExpandRequest, MindMapReportSaveRequest } from '../services/api';
 import type { MindMapData } from '../services/api';
 
@@ -54,51 +50,40 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
 }) => {
   const { state, openMindMap, closeMindMap, expandNode, clearError, loadSavedMap } = useMindMap();
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   
-  // Local generation settings.  We start undefined so that we can pull the
-  // true defaults from the global orchestration configuration on first open.
-  const [settings, setSettings] = useState<Partial<MindMapExpandRequest>>({
-    k: initialOptions?.k,
-    similarity_threshold: initialOptions?.similarity_threshold,
-    layout_algorithm: initialOptions?.layout_algorithm,
-    expansion_order: initialOptions?.expansion_order,
-    max_nodes_per_order: initialOptions?.max_nodes_per_order,
-  });
+  // Filter states
+  const [dateRange, setDateRange] = useState<[number, number]>([1990, new Date().getFullYear()]);
+  const [connectionThreshold, setConnectionThreshold] = useState<number>(0);
 
-  // Flag so we only fetch defaults once per dialog open
-  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
-
-  // Pull default Mind-Map parameters from the orchestration settings the first
-  // time the dialog opens.
-  useEffect(() => {
-    if (!open || defaultsLoaded) return;
-
-    (async () => {
-      try {
-        const resp = await settingsApi.getOrchestrationConfig();
-        const cfg = resp.data?.mind_map_config ?? {};
-        setSettings(prev => ({
-          k: prev.k ?? cfg.k ?? 15,
-          similarity_threshold: prev.similarity_threshold ?? cfg.similarity_threshold ?? 0.3,
-          layout_algorithm: prev.layout_algorithm ?? (cfg.layout_algorithm as any) ?? 'force',
-          expansion_order: prev.expansion_order ?? cfg.expansion_order ?? 1,
-          max_nodes_per_order: prev.max_nodes_per_order ?? cfg.max_nodes_per_order ?? 20,
-        }));
-      } catch (e) {
-        /* fallback to hard-coded defaults if request fails */
-        setSettings(prev => ({
-          k: prev.k ?? 15,
-          similarity_threshold: prev.similarity_threshold ?? 0.3,
-          layout_algorithm: prev.layout_algorithm ?? 'force',
-          expansion_order: prev.expansion_order ?? 1,
-          max_nodes_per_order: prev.max_nodes_per_order ?? 20,
-        }));
-      } finally {
-        setDefaultsLoaded(true);
+  // Calculate filtered count for display
+  const filteredNodeCount = useMemo(() => {
+    if (!state.data?.nodes) return 0;
+    
+    return state.data.nodes.filter(node => {
+      // Date filter
+      if (dateRange[0] !== 1990 || dateRange[1] !== new Date().getFullYear()) {
+        const nodeYear = node.date ? new Date(node.date).getFullYear() : null;
+        if (nodeYear && (nodeYear < dateRange[0] || nodeYear > dateRange[1])) {
+          return false;
+        }
       }
-    })();
-  }, [open, defaultsLoaded]);
+      
+      // Connection threshold filter - we need to calculate this temporarily
+      if (connectionThreshold > 0) {
+        const connectionCount = state.data?.edges?.filter(edge => 
+          String(edge.source_id) === String(node.id) || String(edge.target_id) === String(node.id)
+        ).length || 0;
+        if (connectionCount < connectionThreshold) {
+          return false;
+        }
+      }
+      
+      return true;
+    }).length;
+  }, [state.data, dateRange, connectionThreshold]);
+  
+
 
   // Save dialog state
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -127,11 +112,11 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
   // Handle node expansion
   const handleNodeExpand = useCallback((nodeId: string) => {
     setExpandTargetNodeId(nodeId);
-    // Set defaults based on current settings
-    setExpandK(settings.k ?? 10);
-    setExpandThreshold(settings.similarity_threshold ?? 0.3);
+    // Set defaults based on initial options
+    setExpandK(initialOptions?.k ?? 10);
+    setExpandThreshold(initialOptions?.similarity_threshold ?? 0.3);
     setExpandDialogOpen(true);
-  }, [settings]);
+  }, [initialOptions]);
 
   const handleConfirmExpand = useCallback(() => {
     if (expandTargetNodeId) {
@@ -151,23 +136,13 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
     setExpandDialogOpen(false);
   }, []);
 
-  // Handle settings change
-  const handleSettingsChange = useCallback((newSettings: typeof settings) => {
-    console.log('🔧 Settings changed:', { old: settings, new: newSettings });
-    setSettings(newSettings);
-    if (seedPaper) {
-      console.log('🚀 Calling openMindMap with NEW settings:', newSettings);
-      openMindMap(seedPaper, newSettings);
-    }
-  }, [seedPaper, openMindMap]);
-
   // Handle regenerate
   const handleRegenerate = useCallback(() => {
     if (seedPaper) {
-      console.log('🔄 Regenerating with current settings:', settings);
-      openMindMap(seedPaper, settings);
+      console.log('🔄 Regenerating mindmap');
+      openMindMap(seedPaper, initialOptions);
     }
-  }, [seedPaper, openMindMap, settings]);
+  }, [seedPaper, openMindMap, initialOptions]);
 
   // Handle save dialog
   const handleOpenSaveDialog = useCallback(() => {
@@ -191,7 +166,7 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
         description: saveDescription.trim() || undefined,
         mindmap_data: state.data,
         parameters: {
-          ...settings,
+          ...initialOptions,
           seed_paper_id: state.seedPaper.id,
           seed_paper_title: state.seedPaper.title,
         },
@@ -224,7 +199,7 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
     } finally {
       setSaving(false);
     }
-  }, [state.data, state.seedPaper, saveTitle, saveDescription, settings, reportId]);
+  }, [state.data, state.seedPaper, saveTitle, saveDescription, initialOptions, reportId]);
 
   const handleCloseSaveDialog = useCallback(() => {
     setSaveDialogOpen(false);
@@ -238,11 +213,11 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
 
     if (initialData) {
       loadSavedMap(initialData, seedPaper ?? null);
-    } else if (seedPaper && defaultsLoaded && !state.isLoading) {
-      console.log('🎯 Initial dialog open with settings (defaults):', settings);
-      openMindMap(seedPaper, settings);
+    } else if (seedPaper && !state.isLoading) {
+      console.log('🎯 Initial dialog open with options:', initialOptions);
+      openMindMap(seedPaper, initialOptions);
     }
-  }, [open, initialData, seedPaper, defaultsLoaded, state.isOpen, state.isLoading, openMindMap, settings, loadSavedMap]);
+  }, [open, initialData, seedPaper, state.isOpen, state.isLoading, openMindMap, initialOptions, loadSavedMap]);
 
   return (
     <Dialog
@@ -287,10 +262,10 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
             </IconButton>
             <IconButton
               size="small"
-              onClick={() => setShowSettings(!showSettings)}
-              color={showSettings ? 'primary' : 'default'}
+              onClick={() => setShowFilters(!showFilters)}
+              color={showFilters ? 'primary' : 'default'}
             >
-              <SettingsIcon />
+              <FilterListIcon />
             </IconButton>
             <IconButton size="small" onClick={handleRegenerate} disabled={state.isLoading}>
               <RefreshIcon />
@@ -330,124 +305,60 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
         )}
       </DialogTitle>
 
-      {/* Settings Panel */}
-      {showSettings && (
+      {/* Filter Panel */}
+      {showFilters && (
         <>
           <Divider />
           <Box sx={{ p: 2, bgcolor: 'background.default' }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Generation Settings
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+              <Typography variant="subtitle2">
+                Filter Papers
+              </Typography>
+              {state.data && (
+                <Typography variant="caption" color="text.secondary">
+                  Showing {filteredNodeCount} of {state.data.nodes?.length || 0} papers
+                </Typography>
+              )}
+            </Box>
             <Box sx={{ display: 'flex', gap: 3, alignItems: 'center', flexWrap: 'wrap' }}>
-              <FormControl size="small" sx={{ minWidth: 120 }}>
-                <InputLabel>Layout</InputLabel>
-                <Select
-                  value={settings.layout_algorithm}
-                  label="Layout"
-                  onChange={(e: SelectChangeEvent) => 
-                    handleSettingsChange({ 
-                      ...settings, 
-                      layout_algorithm: e.target.value as any 
-                    })
-                  }
-                >
-                  <MenuItem value="force">Force-directed</MenuItem>
-                </Select>
-              </FormControl>
-
-              <Box sx={{ minWidth: 200 }}>
+              <Box sx={{ minWidth: 250 }}>
                 <Typography variant="body2" gutterBottom>
-                  Papers: {settings.k ?? 15}
+                  Publication Year: {dateRange[0]} - {dateRange[1]}
                 </Typography>
                 <Slider
-                  value={settings.k ?? 15}
-                  onChange={(_, value) => 
-                    handleSettingsChange({ 
-                      ...settings, 
-                      k: value as number 
-                    })
-                  }
-                  min={5}
-                  max={30}
+                  value={dateRange}
+                  onChange={(_, value) => setDateRange(value as [number, number])}
+                  min={1990}
+                  max={new Date().getFullYear()}
                   step={1}
                   size="small"
                   marks={[
-                    { value: 5, label: '5' },
-                    { value: 15, label: '15' },
-                    { value: 30, label: '30' },
+                    { value: 1990, label: '1990' },
+                    { value: 2010, label: '2010' },
+                    { value: new Date().getFullYear(), label: new Date().getFullYear().toString() },
                   ]}
+                  valueLabelDisplay="auto"
                 />
               </Box>
 
-              <Box sx={{ minWidth: 200 }}>
+              <Box sx={{ minWidth: 250 }}>
                 <Typography variant="body2" gutterBottom>
-                  Similarity Threshold: {((settings.similarity_threshold ?? 0.3) * 100).toFixed(0)}%
+                  Min Connections: {connectionThreshold}
                 </Typography>
                 <Slider
-                  value={settings.similarity_threshold ?? 0.3}
-                  onChange={(_, value) => 
-                    handleSettingsChange({ 
-                      ...settings, 
-                      similarity_threshold: value as number 
-                    })
-                  }
-                  min={0.1}
-                  max={0.8}
-                  step={0.05}
-                  size="small"
-                  marks={[
-                    { value: 0.1, label: '10%' },
-                    { value: 0.3, label: '30%' },
-                    { value: 0.8, label: '80%' },
-                  ]}
-                />
-              </Box>
-
-              <Box sx={{ minWidth: 200 }}>
-                <Typography variant="body2" gutterBottom>
-                  Expansion Order: {settings.expansion_order ?? 1}
-                </Typography>
-                <Slider
-                  value={settings.expansion_order ?? 1}
-                  onChange={(_, value) => 
-                    handleSettingsChange({ 
-                      ...settings, 
-                      expansion_order: value as number 
-                    })
-                  }
-                  min={1}
-                  max={5}
+                  value={connectionThreshold}
+                  onChange={(_, value) => setConnectionThreshold(value as number)}
+                  min={0}
+                  max={20}
                   step={1}
                   size="small"
                   marks={[
-                    { value: 1, label: '1' },
-                    { value: 3, label: '3' },
+                    { value: 0, label: '0' },
                     { value: 5, label: '5' },
+                    { value: 10, label: '10' },
+                    { value: 20, label: '20+' },
                   ]}
-                />
-              </Box>
-
-              <Box sx={{ minWidth: 200 }}>
-                <Typography variant="body2" gutterBottom>
-                  Max Nodes per Order: {settings.max_nodes_per_order ?? 20}
-                </Typography>
-                <Slider
-                  value={settings.max_nodes_per_order ?? 20}
-                  onChange={(_, value) => 
-                    handleSettingsChange({ 
-                      ...settings, 
-                      max_nodes_per_order: value as number 
-                    })
-                  }
-                  min={5}
-                  max={50}
-                  step={5}
-                  size="small"
-                  marks={[
-                    { value: 5, label: '5' },
-                    { value: 20, label: '20' },
-                    { value: 50, label: '50' },
-                  ]}
+                  valueLabelDisplay="auto"
                 />
               </Box>
             </Box>
@@ -481,6 +392,8 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
             data={state.data}
             onNodeExpand={handleNodeExpand}
             isLoading={state.isLoading}
+            dateRange={dateRange}
+            connectionThreshold={connectionThreshold}
           />
         ) : state.isLoading ? (
           <Box
@@ -525,6 +438,9 @@ const MindMapExplorer: React.FC<MindMapExplorerProps> = ({
       <DialogActions sx={{ p: 2, pt: 1 }}>
         <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
           Double-click nodes to expand • Right-click for options
+          {(dateRange[0] !== 1990 || dateRange[1] !== new Date().getFullYear() || connectionThreshold > 0) && (
+            <> • Filters active: {dateRange[0] !== 1990 || dateRange[1] !== new Date().getFullYear() ? `${dateRange[0]}-${dateRange[1]}` : ''}{connectionThreshold > 0 ? ` ${connectionThreshold}+ connections` : ''}</>
+          )}
         </Typography>
         <Button onClick={handleClose}>Close</Button>
       </DialogActions>

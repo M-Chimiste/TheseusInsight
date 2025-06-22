@@ -72,14 +72,9 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
     setIsExpanded(!isExpanded);
   };
 
-  const colorPalette = [
-    '#8e24aa', // purple
-    '#3949ab', // indigo
-    '#00897b', // teal
-    '#f9a825', // amber
-    '#d81b60', // pink/red
-    '#00acc1', // cyan
-  ];
+  // Use heat map color based on connection count
+  const heatMapColor = (data as any).heatMapColor || theme.palette.primary.main;
+  const connectionCount = (data as any).connectionCount || 0;
 
   const getNodeStyles = () => {
     const borderRadius = typeof theme.shape?.borderRadius === 'number' 
@@ -98,14 +93,11 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
       cursor: 'pointer',
     };
 
-    const colorIdx = data.colorIndex ?? 0;
-    const expansionColor = colorPalette[colorIdx % colorPalette.length];
-
     if (data.is_seed) {
       return {
         ...baseStyles,
-        border: `3px solid ${expansionColor}`,
-        backgroundColor: theme.palette.background.paper,
+        border: `3px solid ${heatMapColor}`,
+        backgroundColor: alpha(heatMapColor, 0.1),
         boxShadow: theme.shadows[3],
         zIndex: 2,
       };
@@ -114,15 +106,16 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
     if (selected || data.isSelected) {
       return {
         ...baseStyles,
-        border: `2px solid ${expansionColor}`,
-        backgroundColor: alpha(expansionColor, 0.05),
+        border: `2px solid ${heatMapColor}`,
+        backgroundColor: alpha(heatMapColor, 0.15),
         boxShadow: theme.shadows[2],
       };
     }
 
     return {
       ...baseStyles,
-      border: `2px solid ${expansionColor}`,
+      border: `2px solid ${heatMapColor}`,
+      backgroundColor: alpha(heatMapColor, 0.08),
     };
   };
 
@@ -285,6 +278,24 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
                 variant="outlined"
                 sx={{ fontSize: '0.6rem', height: 18, minWidth: 'auto' }}
               />
+            )}
+            
+            {/* Connection count indicator */}
+            {connectionCount > 0 && (
+              <Tooltip title={`${connectionCount} connection${connectionCount !== 1 ? 's' : ''}`} TransitionComponent={Fade} TransitionProps={{ timeout: 0 }}>
+                <Chip
+                  label={`${connectionCount}c`}
+                  size="small"
+                  variant="filled"
+                  sx={{ 
+                    fontSize: '0.6rem', 
+                    height: 18, 
+                    minWidth: 'auto',
+                    backgroundColor: heatMapColor,
+                    color: theme.palette.getContrastText(heatMapColor),
+                  }}
+                />
+              </Tooltip>
             )}
             
             <Collapse in={isExpanded} timeout="auto" unmountOnExit>

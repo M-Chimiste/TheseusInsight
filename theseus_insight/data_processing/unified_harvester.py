@@ -153,11 +153,45 @@ class UnifiedArxivHarvester:
         # Check for kaggle.json file
         kaggle_config_path = Path.home() / ".kaggle" / "kaggle.json"
         if kaggle_config_path.exists():
-            self._debug_log(f"Found Kaggle credentials at {kaggle_config_path}")
-            return True
+            try:
+                import json
+                with open(kaggle_config_path, 'r') as f:
+                    config = json.load(f)
+                    if config.get('username') and config.get('key'):
+                        self._debug_log(f"Found valid Kaggle credentials at {kaggle_config_path}")
+                        return True
+                    else:
+                        self._debug_log(f"Invalid Kaggle credentials in {kaggle_config_path}")
+                        return False
+            except Exception as e:
+                self._debug_log(f"Failed to read Kaggle credentials from {kaggle_config_path}: {e}")
+                return False
             
         self._debug_log("No Kaggle credentials found")
         return False
+
+    def _get_credential_status_message(self) -> str:
+        """Get a user-friendly message about credential status.
+        
+        Returns:
+            str: Human-readable credential status and setup instructions
+        """
+        username = os.getenv("KAGGLE_USERNAME")
+        key = os.getenv("KAGGLE_KEY")
+        kaggle_config_path = Path.home() / ".kaggle" / "kaggle.json"
+        
+        if username and key:
+            return "✅ Kaggle credentials found in environment variables"
+        elif kaggle_config_path.exists():
+            return f"✅ Kaggle credentials file found at {kaggle_config_path}"
+        else:
+            return (
+                "❌ Kaggle credentials not configured\n"
+                "   Setup options:\n"
+                "   1. Set KAGGLE_USERNAME and KAGGLE_KEY in Settings → API Credentials\n"
+                "   2. Download kaggle.json from https://www.kaggle.com/account and place in ~/.kaggle/\n"
+                "   3. Manually download dataset from https://www.kaggle.com/datasets/Cornell-University/arxiv"
+            )
 
     def _download_kaggle_dataset(self) -> Optional[str]:
         """Download the Kaggle ArXiv dataset to a temporary directory.
@@ -268,11 +302,24 @@ class UnifiedArxivHarvester:
         """
         # Check if existing file is available
         if self.kaggle_harvester.check_dataset_availability():
+            self._debug_log("Kaggle dataset file is available locally")
             return True
             
         # Check if we can download it
         if self._auto_download:
-            return self._install_kaggle_api() and self._check_kaggle_credentials()
+            api_available = self._install_kaggle_api()
+            creds_available = self._check_kaggle_credentials()
+            
+            if api_available and creds_available:
+                self._debug_log("Kaggle dataset can be downloaded (API and credentials available)")
+                return True
+            elif not api_available:
+                self._debug_log("Kaggle API not available for download")
+            elif not creds_available:
+                self._debug_log("Kaggle credentials not available for download")
+            
+        else:
+            self._debug_log("Auto download is disabled")
             
         return False
 
@@ -282,9 +329,13 @@ class UnifiedArxivHarvester:
         Returns:
             Dict[str, Any]: Status information for both OAI-PMH and Kaggle
         """
+        kaggle_info = self.kaggle_harvester.get_dataset_info()
+        kaggle_info["credentials_available"] = self._check_kaggle_credentials()
+        kaggle_info["credential_status"] = self._get_credential_status_message()
+        
         status = {
             "oai_pmh": {"available": False, "error": None},
-            "kaggle": self.kaggle_harvester.get_dataset_info(),
+            "kaggle": kaggle_info,
             "force_kaggle": self._force_kaggle,
         }
 
@@ -315,6 +366,22 @@ class UnifiedArxivHarvester:
             if self._force_kaggle:
                 self._debug_log("FORCE_KAGGLE=true - using Kaggle dataset directly")
                 self._log("Using Kaggle dataset (forced mode)")
+                
+                # Pre-check availability in forced mode for better error messages
+                if not self.kaggle_harvester.check_dataset_availability() and not self._check_kaggle_credentials():
+                    credential_msg = self._get_credential_status_message()
+                    self._log("⚠️  Forced Kaggle mode enabled but dataset and credentials not available")
+                    self._log(credential_msg)
+                    
+                    raise RuntimeError(
+                        f"FORCE_KAGGLE=true but Kaggle dataset cannot be used.\n\n"
+                        f"{credential_msg}\n\n"
+                        f"Please either:\n"
+                        f"• Configure Kaggle credentials in Settings → API Credentials\n"
+                        f"• Download dataset manually and set KAGGLE_ARXIV_PATH\n"
+                        f"• Remove FORCE_KAGGLE to try OAI-PMH first"
+                    )
+                
                 return self._harvest_with_kaggle()
 
             # Try OAI-PMH first
@@ -369,6 +436,22 @@ class UnifiedArxivHarvester:
             if not self.kaggle_harvester.check_dataset_availability():
                 self._debug_log("Local Kaggle dataset not found - attempting download")
                 
+                # Check credentials before attempting download
+                if not self._check_kaggle_credentials():
+                    credential_msg = self._get_credential_status_message()
+                    self._log("⚠️  Kaggle dataset not found locally and credentials not configured")
+                    self._log(credential_msg)
+                    
+                    raise RuntimeError(
+                        f"ArXiv OAI-PMH API is unavailable and Kaggle fallback cannot be used.\n\n"
+                        f"Kaggle dataset is not available locally and credentials are not configured.\n\n"
+                        f"{credential_msg}\n\n"
+                        f"Alternative options:\n"
+                        f"• Download dataset manually from: https://www.kaggle.com/datasets/Cornell-University/arxiv\n"
+                        f"• Set KAGGLE_ARXIV_PATH to point to existing dataset file\n"
+                        f"• Wait for ArXiv OAI-PMH API to come back online"
+                    )
+                
                 # Try to download the dataset
                 downloaded_path = self._download_kaggle_dataset()
                 if downloaded_path:
@@ -377,13 +460,13 @@ class UnifiedArxivHarvester:
                     self.kaggle_dataset_path = downloaded_path
                     self._debug_log(f"Updated harvester to use downloaded dataset: {downloaded_path}")
                 else:
+                    credential_msg = self._get_credential_status_message()
                     raise RuntimeError(
-                        f"Kaggle dataset not available and download failed.\n"
-                        f"Options:\n"
-                        f"1. Download manually from: https://www.kaggle.com/datasets/Cornell-University/arxiv\n"
-                        f"2. Set KAGGLE_ARXIV_PATH environment variable\n" 
-                        f"3. Configure Kaggle API credentials (KAGGLE_USERNAME, KAGGLE_KEY)\n"
-                        f"4. Place kaggle.json in ~/.kaggle/"
+                        f"Kaggle dataset not available and download failed.\n\n"
+                        f"{credential_msg}\n\n"
+                        f"Alternative options:\n"
+                        f"• Download dataset manually from: https://www.kaggle.com/datasets/Cornell-University/arxiv\n"
+                        f"• Set KAGGLE_ARXIV_PATH to point to existing dataset file"
                     )
 
             self._debug_log("Starting Kaggle dataset harvest")

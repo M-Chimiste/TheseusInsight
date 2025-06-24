@@ -262,7 +262,6 @@ Create a `.env` file in the project root containing keys and settings:
 | `DATABASE_URL` | Path to the SQLite database file (default `data/theseus.db`) |
 | `SQLITE_VEC_PATH` | Optional path to the `sqlite_vec` extension for vector similarity |
 | `DEBUG` | When set to `true`, `1`, or `yes` globally re-enables verbose `print()` statements and DEBUG-level logger output. Leave unset (default) for a quiet console |
-
 | `CLIENT_ID`, `PROJECT_ID`, `CLIENT_SECRET`, `REDIRECT_URI` | OAuth credentials for the YouTube upload helper |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `REGION_NAME` | Credentials for Amazon Polly TTS |
 | `PRODUCTION_FRONTEND_URL` | Allowed origin for CORS when deploying the frontend |

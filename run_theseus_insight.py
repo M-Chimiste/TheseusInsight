@@ -35,7 +35,7 @@ def parse_args():
                        help="Whether to save results to database")
     
     parser.add_argument("--db-url", "--data-path", dest="db_url", type=str,
-                       default="data/theseus.db",
+                       default="postgresql://postgres:postgres@localhost:5432/theseus",
                        help="Database connection URL")
     
     parser.add_argument("--verbose", type=bool, default=True,

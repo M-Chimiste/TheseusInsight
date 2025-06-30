@@ -10,14 +10,14 @@ import uuid
 from datetime import datetime, timedelta
 
 from .api.routers import all_routers, websocket_manager
-from .api.dependencies import db, CREDENTIAL_KEYS
+from .api.dependencies import CREDENTIAL_KEYS
 from .api.tasks import task_manager
 from .api.models import ModelConfig, TTSModelConfig, OrchestrationConfig
+from .data_access import SettingsRepository
 
 from pydantic import BaseModel, Field, ValidationError
 from typing import List
 
-from .data_model.data_handling import PaperDatabase
 from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
@@ -67,9 +67,9 @@ async def lifespan(app_instance: FastAPI):
         # Load credentials from DB (encrypted) and apply to environment
         for key in CREDENTIAL_KEYS:
             if key == "OLLAMA_URL":
-                val = db.get_setting(key)
+                val = SettingsRepository.get(key)
             else:
-                val = db.get_secret_setting(key)
+                val = SettingsRepository.get_secret_setting(key)  # Use encrypted secrets from repository
             if val:
                 os.environ[key] = val
                 if hasattr(ti_module, key):
@@ -105,7 +105,7 @@ async def lifespan(app_instance: FastAPI):
         if missing_vars:
             print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
 
-        if db.get_setting("orchestration") is None:
+        if SettingsRepository.get("orchestration") is None:
             print("INFO:     Orchestration settings not found in DB. Populating from JSON file...")
             orchestration_json_path = get_config_path('orchestration.json')
             if config_file_exists('orchestration.json'):
@@ -128,7 +128,7 @@ async def lifespan(app_instance: FastAPI):
                         podcast_model=ModelConfig(**default_orchestration_data.get('podcast_model', default_podcast_model.dict())) if default_orchestration_data.get('podcast_model') else default_podcast_model,
                         tts_model=TTSModelConfig(**default_orchestration_data.get('tts_model', default_tts_model.dict())) if default_orchestration_data.get('tts_model') else default_tts_model
                     )
-                    db.set_setting("orchestration", orchestration_config.json())
+                    SettingsRepository.set("orchestration", orchestration_config.json())
                     print("INFO:     Successfully populated orchestration settings into DB.")
                 except Exception as e:
                     print(f"ERROR: Failed to load or parse orchestration.json for DB pre-population: {e}")
@@ -136,14 +136,14 @@ async def lifespan(app_instance: FastAPI):
                 print(f"Warning: orchestration.json not found at {orchestration_json_path}.")
         else:
             print("INFO:     Orchestration settings found in DB. Skipping pre-population.")
-        if db.get_setting("research_interests") is None:
+        if SettingsRepository.get("research_interests") is None:
             print("INFO:     Research interests not found in DB. Populating from TXT file...")
             research_txt_path = get_config_path('research_interests.txt')
             if config_file_exists('research_interests.txt'):
                 try:
                     with open(research_txt_path, 'r') as f:
                         default_interests = f.read().strip()
-                    db.set_setting("research_interests", default_interests)
+                    SettingsRepository.set("research_interests", default_interests)
                     print("INFO:     Successfully populated research interests into DB.")
                 except Exception as e:
                     print(f"ERROR: Failed to load research_interests.txt for DB pre-population: {e}")

@@ -12,7 +12,11 @@ from ..models import (
     NewsletterConfig, PodcastGenerationParams, NewsletterRunParams,
     PodcastListItemResponse, PodcastDetailResponse
 )
-from ..dependencies import db, DB_URL
+from ...data_access import (
+    NewsletterRepository,
+    PodcastRepository,
+    TaskRepository,
+)
 from ..tasks import task_manager, TaskStatus
 from ...theseus_insight import TheseusInsight
 
@@ -80,7 +84,7 @@ async def run_newsletter_pipeline_endpoint(
         dict: A dictionary containing the task ID for tracking the pipeline run progress.
     """
     task_id = str(uuid.uuid4())
-    run_db_path = DB_URL
+    run_db_path = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus")
     loop = asyncio.get_event_loop()
 
     def pipeline_progress_callback(stage: str, progress_val: float, message: str):
@@ -229,7 +233,7 @@ async def generate_podcast_pipeline(
             "tts_model_config": generation_params.tts_model_config.dict(),
             "create_visualization": generation_params.create_visualization,
             "db_saving": True, # Default, can be made configurable if needed
-            "data_path": DB_URL, # Global DB URL
+            "data_path": os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus"), # Global DB URL
             "verbose": True, # Default, can be made configurable
             "output_dir_base": "data/podcasts", # Base directory for task outputs
             "task_id": task_id # Pass task_id for organizing outputs
@@ -317,7 +321,7 @@ async def get_podcast_history_list():
         List[PodcastListItemResponse]: A list of podcast history items.
     """
     try:
-        podcasts_data = db.fetch_all_podcasts() # This already sorts by id DESC, which is fine if new IDs are always later dates. If date sorting is strict, we'd sort here.
+        podcasts_data = PodcastRepository.all()
         
         response_items = []
         for p_data in podcasts_data:
@@ -352,7 +356,7 @@ async def get_podcast_detail(podcast_id: int):
         PodcastDetailResponse: A podcast detail object.
     """
     try:
-        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        podcast_data = PodcastRepository.get(podcast_id)
         if not podcast_data:
             raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
         
@@ -379,14 +383,12 @@ async def delete_podcast(podcast_id: int):
     
     try:
         # Check if podcast exists first
-        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        podcast_data = PodcastRepository.get(podcast_id)
         if not podcast_data:
             raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
         
         # Delete the podcast
-        was_deleted = db.delete_podcast_by_id(podcast_id)
-        if not was_deleted:
-            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        PodcastRepository.delete(podcast_id)
         
         return {"status": "success", "message": f"Podcast with ID {podcast_id} has been deleted successfully."}
     except HTTPException:
@@ -408,14 +410,12 @@ async def update_podcast_title(podcast_id: int, title_data: dict):
             raise HTTPException(status_code=400, detail="Title cannot be empty.")
         
         # Check if podcast exists first
-        podcast_data = db.fetch_podcast_by_id(podcast_id)
+        podcast_data = PodcastRepository.get(podcast_id)
         if not podcast_data:
             raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
         
         # Update the podcast title
-        was_updated = db.update_podcast_title(podcast_id, new_title)
-        if not was_updated:
-            raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
+        PodcastRepository.update_title(podcast_id, new_title)
         
         return {"status": "success", "message": f"Podcast title updated successfully.", "title": new_title}
     except HTTPException:

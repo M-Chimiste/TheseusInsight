@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 
-from ..dependencies import db
+from ...data_access import LogsRepository, TaskRepository
 
 router = APIRouter(prefix="/api", tags=["logs"])
 
@@ -50,7 +50,7 @@ async def get_logs_api(
         if from_date and to_date and from_date > to_date:
             raise HTTPException(status_code=400, detail="from_date cannot be after to_date")
         
-        logs_data = db.get_recent_logs(limit=limit, from_date=from_date, to_date=to_date)
+        logs_data = LogsRepository.recent(limit=limit, from_date=from_date, to_date=to_date)
         return [LogEntry(**log) for log in logs_data]
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -75,7 +75,7 @@ async def get_task_history_api(
         if from_date and to_date and from_date > to_date:
             raise HTTPException(status_code=400, detail="from_date cannot be after to_date")
         
-        task_history_data = db.get_recent_task_history(limit=limit, from_date=from_date, to_date=to_date)
+        task_history_data = TaskRepository.recent(limit=limit, from_date=from_date, to_date=to_date)
         return [TaskHistoryEntry(**task) for task in task_history_data]
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

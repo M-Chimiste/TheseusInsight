@@ -9,9 +9,10 @@ from ..models import (
     ModelConfig, TTSModelConfig, ResearchAgentModelConfigApi,
     MindMapConfig
 )
-from ..dependencies import db, CREDENTIAL_KEYS
+from ..dependencies import CREDENTIAL_KEYS
 from ...utils.path_resolver import get_config_path, config_file_exists
 from ... import theseus_insight as ti_module
+from ...data_access import SettingsRepository
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -30,7 +31,7 @@ async def get_orchestration_config_api():
         HTTPException: If an error occurs while fetching the orchestration configuration.
     """
     try:
-        db_config_json = db.get_setting("orchestration")
+        db_config_json = SettingsRepository.get("orchestration")
         loaded_config_data = {}
 
         if db_config_json:
@@ -142,7 +143,7 @@ async def update_orchestration_config_api(config: OrchestrationConfig):
         HTTPException: If an error occurs while updating the orchestration configuration.
     """
     try:
-        db.set_setting("orchestration", config.json())
+        SettingsRepository.set("orchestration", config.json())
         # Also update orchestration.json for legacy/fallback
         config_path = get_config_path('orchestration.json')
         with open(config_path, 'w') as f:
@@ -166,7 +167,7 @@ async def get_arxiv_categories_api():
         HTTPException: If an error occurs while fetching the ArXiv categories.
     """
     try:
-        settings_json = db.get_setting("arxiv_search_categories")
+        settings_json = SettingsRepository.get("arxiv_search_categories")
         if settings_json:
             return ArxivCategoriesConfig.parse_raw(settings_json)
         # Return default ArXivCategoriesConfig if not found in DB
@@ -195,7 +196,7 @@ async def update_arxiv_categories_api(config: ArxivCategoriesConfig):
         HTTPException: If an error occurs while updating the ArXiv categories.
     """
     try:
-        db.set_setting("arxiv_search_categories", config.json())
+        SettingsRepository.set("arxiv_search_categories", config.json())
         return {"status": "success", "message": "ArXiv categories updated successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating ArXiv categories: {str(e)}")
@@ -215,7 +216,7 @@ async def get_research_interests_api():
         HTTPException: If an error occurs while fetching the research interests.
     """
     try:
-        interests = db.get_setting("research_interests")
+        interests = SettingsRepository.get("research_interests")
         if interests is not None: # Check if DB returned a value (could be empty string)
             return ResearchInterests(interests=interests)
         else:
@@ -250,7 +251,7 @@ async def update_research_interests_api(data: ResearchInterests):
     """
     try:
         # Save to DB
-        db.set_setting("research_interests", data.interests)
+        SettingsRepository.set("research_interests", data.interests)
         
         # Save to research_interests.txt
         config_path = get_config_path('research_interests.txt')
@@ -284,7 +285,7 @@ async def get_email_recipients():
         HTTPException: If an error occurs while fetching the email recipients list.
     """
     try:
-        recipients_list = db.get_email_recipients()
+        recipients_list = SettingsRepository.get_email_recipients()
         return EmailRecipients(recipients=recipients_list)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -311,7 +312,7 @@ async def update_email_recipients(data: EmailRecipients):
         for email in data.recipients:
             if "@" not in email or "." not in email: # Basic check
                 raise HTTPException(status_code=400, detail=f"Invalid email address: {email}")
-        db.set_email_recipients(data.recipients)
+        SettingsRepository.set_email_recipients(data.recipients)
         return {"status": "success", "message": "Email recipients updated successfully."}
     except HTTPException:
         raise
@@ -333,7 +334,7 @@ async def get_visualizer_settings():
         HTTPException: If an error occurs while fetching the visualizer settings.
     """
     try:
-        settings = db.get_visualizer_settings()
+        settings = SettingsRepository.get_visualizer_settings()
         if not settings:
             # Return default settings from the model
             return VisualizerSettings().dict()
@@ -415,9 +416,10 @@ async def get_credentials():
         creds = {}
         for key in CREDENTIAL_KEYS:
             if key == "OLLAMA_URL":
-                val = db.get_setting(key) or os.getenv(key, "")
+                val = SettingsRepository.get(key) or os.getenv(key, "")
             else:
-                val = db.get_secret_setting(key) or os.getenv(key, "")
+                # Secret helpers not implemented yet; keep env fallback
+                val = SettingsRepository.get(key) or os.getenv(key, "")
             creds[key] = val
         return creds
     except Exception as e:
@@ -445,9 +447,10 @@ async def update_credentials(data: Dict[str, str]):
             if key not in CREDENTIAL_KEYS:
                 continue
             if key == "OLLAMA_URL":
-                db.set_setting(key, value)
+                SettingsRepository.set(key, value)
             else:
-                db.set_secret_setting(key, value)
+                # Secret helpers not implemented yet; keep env fallback
+                SettingsRepository.set(key, value)
             os.environ[key] = value
             if hasattr(ti_module, key):
                 setattr(ti_module, key, value)

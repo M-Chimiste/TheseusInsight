@@ -18,7 +18,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import markdown2
-from theseus_insight.data_model.data_handling import PaperDatabase
+from ..data_access import SettingsRepository
 
 
 def construct_email_body(content,
@@ -58,17 +58,13 @@ class GmailCommunication:
                 sender_address=None, 
                 receiver_address=None, 
                 app_password=None, 
-                verbose=False,
-                db_path=None):
+                verbose=False):
         self.sender_address = sender_address
         self.app_password = app_password
         self.receiver_address = receiver_address
         self.email_message = None
         self.verbose = verbose
-        if not db_path:
-            db_path = os.getenv('DATABASE_URL', 'data/theseus.db')
-        self.db_path = db_path
-        self.db = PaperDatabase(self.db_path)
+        
         if not self.app_password:
             self.app_password = os.getenv('GMAIL_APP_PASSWORD', None)
             if not self.app_password:
@@ -92,7 +88,7 @@ class GmailCommunication:
         receiver_address = self.receiver_address
         # If receiver_address is not provided, fetch from DB
         if not receiver_address:
-            recipients = self.db.get_email_recipients()
+            recipients = SettingsRepository.get_email_recipients()
             if recipients:
                 receiver_address = recipients
             else:

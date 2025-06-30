@@ -17,7 +17,12 @@ from ...research_agent.workflow import ResearchAgentWorkflow, create_research_wo
 from ...research_agent.tools import UnifiedSearchTool, LocalSearchTool, ExternalSearchTool, SearchConfig
 from ...research_agent.model_router import get_embedding_model
 from ..models import ResearchAgentModelConfigApi
-from ..dependencies import db
+from ...data_access import (
+    ResearchRunRepository, ResearchAgentStateRepository, 
+    TaskRepository, SettingsRepository
+)
+from ...data_model.data_handling import PaperDatabase
+import os
 
 
 # Pydantic models for API requests/responses
@@ -154,7 +159,7 @@ def _mark_orphaned_research_tasks_as_failed():
         current_time = datetime.utcnow().isoformat()
         
         # Get all orphaned research tasks (pending or running)
-        orphaned_runs = db.get_research_runs_by_status(['pending', 'running'])
+        orphaned_runs = ResearchRunRepository.get_research_runs_by_status(['pending', 'running'])
         
         if orphaned_runs:
             logger.info(f"Found {len(orphaned_runs)} orphaned research tasks, marking as failed")
@@ -163,7 +168,7 @@ def _mark_orphaned_research_tasks_as_failed():
                 task_id = run['task_id']
                 
                 # Update research run status
-                db.update_research_run_status(
+                ResearchRunRepository.update_research_run_status(
                     task_id=task_id,
                     status="failed",
                     completed_at=current_time,
@@ -171,7 +176,7 @@ def _mark_orphaned_research_tasks_as_failed():
                 )
                 
                 # Update general task status as well
-                db.update_task_status(
+                TaskRepository.update_task_status(
                     task_id=task_id,
                     status="failed",
                     progress=0.0,
@@ -199,7 +204,7 @@ async def get_research_workflow() -> ResearchAgentWorkflow:
     """
     try:
         # Get embedding model configuration from database
-        orchestration_config_json = db.get_setting("orchestration")
+        orchestration_config_json = SettingsRepository.get("orchestration")
         if orchestration_config_json:
             import json
             orchestration_config = json.loads(orchestration_config_json)
@@ -216,8 +221,10 @@ async def get_research_workflow() -> ResearchAgentWorkflow:
         # Create embedding model using the model router
         embedding_model = get_embedding_model(orchestration_config)
         
-        # Create search tools
-        local_search_tool = LocalSearchTool(db, embedding_model)
+        # Create search tools (LocalSearchTool still uses legacy db temporarily until Phase 2 conversion)
+        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus")
+        temp_db = PaperDatabase(db_url)
+        local_search_tool = LocalSearchTool(temp_db, embedding_model)
         external_search_tool = ExternalSearchTool()
         
         # Create unified search tool without search_config parameter
@@ -310,7 +317,7 @@ async def start_research_task(
         }
         
         # Create task in general tasks table for job history
-        db.insert_task(
+        TaskRepository.insert_task(
             task_id=task_id,
             task_type="research-agent",
             status="pending",
@@ -322,7 +329,7 @@ async def start_research_task(
         )
         
         # Create specific research run entry for Research Library
-        db.insert_research_run(
+        ResearchRunRepository.insert_research_run(
             task_id=task_id,
             research_question=request.research_question,
             status="pending",
@@ -366,7 +373,7 @@ async def get_research_task_status(task_id: str) -> ResearchTaskStatus:
         Current status of the research task
     """
     # Try to get from research runs first (more detailed)
-    research_run = db.get_research_run(task_id)
+    research_run = ResearchRunRepository.get_research_run(task_id)
     if research_run:
         return ResearchTaskStatus(
             task_id=task_id,
@@ -379,7 +386,7 @@ async def get_research_task_status(task_id: str) -> ResearchTaskStatus:
         )
     
     # Fallback to general task table
-    task = db.get_task(task_id)
+    task = TaskRepository.get_task(task_id)
     if task:
         return ResearchTaskStatus(
             task_id=task_id,
@@ -405,7 +412,7 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
     Returns:
         Complete research task results
     """
-    research_run = db.get_research_run(task_id)
+    research_run = ResearchRunRepository.get_research_run(task_id)
     if not research_run:
         raise HTTPException(status_code=404, detail="Research task not found")
     
@@ -450,14 +457,15 @@ async def get_research_history(
     """
     try:
         # Get research runs from database
-        research_runs = db.get_research_runs_history(
+        research_runs = ResearchRunRepository.get_research_runs_history(
             limit=limit,
             offset=offset,
             status_filter=status_filter
         )
         
         # Get total count for pagination
-        with db.get_cursor() as cursor:
+        from ...db import get_cursor
+        with get_cursor() as cursor:
             query = "SELECT COUNT(*) FROM research_runs"
             params = []
             
@@ -503,7 +511,7 @@ async def delete_research_task(task_id: str) -> Dict[str, str]:
     Returns:
         Deletion/cancellation confirmation
     """
-    research_run = db.get_research_run(task_id)
+    research_run = ResearchRunRepository.get_research_run(task_id)
     if not research_run:
         raise HTTPException(status_code=404, detail="Research task not found")
     
@@ -517,13 +525,13 @@ async def delete_research_task(task_id: str) -> Dict[str, str]:
         # Update both tables
         completed_at = datetime.utcnow().isoformat()
         
-        db.update_research_run_status(
+        ResearchRunRepository.update_research_run_status(
             task_id=task_id,
             status="cancelled",
             completed_at=completed_at
         )
         
-        db.update_task_status(
+        TaskRepository.update_task_status(
             task_id=task_id,
             status="cancelled",
             end_time=completed_at,
@@ -542,9 +550,9 @@ async def delete_research_task(task_id: str) -> Dict[str, str]:
         # Delete from both tables using the existing database methods
         try:
             # Delete from research_runs table (and associated state records)
-            db.delete_research_run(task_id)
+            ResearchRunRepository.delete_research_run(task_id)
             # Delete from tasks table
-            db.delete_task(task_id)
+            TaskRepository.delete_task(task_id)
             
             logger.info(f"Deleted research task {task_id}")
             return {"message": f"Research task {task_id} has been deleted"}
@@ -606,7 +614,7 @@ async def _run_research_task(
         # Update task status to running in both tables
         started_at_iso = started_at.isoformat()
         
-        db.update_task_status(
+        TaskRepository.update_task_status(
             task_id=task_id,
             status="running",
             progress=0.1,
@@ -614,7 +622,7 @@ async def _run_research_task(
             message="Research workflow initialized"
         )
         
-        db.update_research_run_status(
+        ResearchRunRepository.update_research_run_status(
             task_id=task_id,
             status="running",
             started_at=started_at_iso
@@ -637,7 +645,7 @@ async def _run_research_task(
             task_results[task_id] = results
             
             # Update general task status (serialize PaperInfo objects in results)
-            db.update_task_status(
+            TaskRepository.update_task_status(
                 task_id=task_id,
                 status="completed",
                 progress=1.0,
@@ -648,14 +656,14 @@ async def _run_research_task(
             )
             
             # Update research run with detailed results
-            db.update_research_run_status(
+            ResearchRunRepository.update_research_run_status(
                 task_id=task_id,
                 status="completed",
                 completed_at=completed_at
             )
             
             # Save detailed results to research library (serialize PaperInfo objects)
-            db.update_research_run_results(
+            ResearchRunRepository.update_research_run_results(
                 task_id=task_id,
                 final_answer=results.get("final_answer"),
                 generation_summary=results.get("generation_summary"),
@@ -681,7 +689,7 @@ async def _run_research_task(
                 research_tasks[task_id]["error_message"] = error_message
             
             # Update general task status
-            db.update_task_status(
+            TaskRepository.update_task_status(
                 task_id=task_id,
                 status="failed",
                 progress=0.0,
@@ -692,7 +700,7 @@ async def _run_research_task(
             )
             
             # Update research run status
-            db.update_research_run_status(
+            ResearchRunRepository.update_research_run_status(
                 task_id=task_id,
                 status="failed",
                 completed_at=completed_at,
@@ -714,7 +722,7 @@ async def _run_research_task(
         completed_at = datetime.utcnow().isoformat()
         error_message = str(e)
         
-        db.update_task_status(
+        TaskRepository.update_task_status(
             task_id=task_id,
             status="failed",
             progress=0.0,
@@ -724,7 +732,7 @@ async def _run_research_task(
             end_time=completed_at
         )
         
-        db.update_research_run_status(
+        ResearchRunRepository.update_research_run_status(
             task_id=task_id,
             status="failed",
             completed_at=completed_at,

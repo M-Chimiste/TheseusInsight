@@ -13,3 +13,6 @@ echo "Setting up pgvector extension for user: $DB_USER, database: $DB_NAME"
 psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 echo "pgvector extension enabled for database \"$DB_NAME\"."
+
+# Apply initial schema
+psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f /docker-entrypoint-initdb.d/init_schema_postgres.sql

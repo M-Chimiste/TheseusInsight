@@ -61,4 +61,4 @@ fastapi
 uvicorn[standard]
 websockets
 python-multipart
-sqlite-vec
+psycopg[binary]

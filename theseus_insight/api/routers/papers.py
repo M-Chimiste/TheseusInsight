@@ -8,7 +8,9 @@ from ..models import (
     SimilarPapersRequest, SimilarPapersResponse,
     HybridSearchRequest, HybridSearchResponse
 )
-from ..dependencies import db
+from ...data_access import (
+    PaperRepository, SettingsRepository
+)
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
 
@@ -50,7 +52,7 @@ async def get_papers(
         """
     try:
         # Use database-level pagination instead of fetching all papers
-        papers_data = db.fetch_papers_paginated(
+        papers_data = PaperRepository.paginate(
             page=page,
             page_size=page_size,
             min_score=score,
@@ -59,7 +61,7 @@ async def get_papers(
             sort_direction=sort_direction or 'desc',
             search=search,
             from_date=from_date,
-            to_date=to_date
+            to_date=to_date,
         )
         
         # Convert to API response format
@@ -105,7 +107,7 @@ async def semantic_similarity_search(request: SimilaritySearchRequest):
     """
     try:
         # Get the orchestration config to load the embedding model
-        orchestration_json = db.get_setting("orchestration")
+        orchestration_json = SettingsRepository.get("orchestration")
         if not orchestration_json:
             raise HTTPException(status_code=500, detail="Orchestration config not found")
         
@@ -122,11 +124,11 @@ async def semantic_similarity_search(request: SimilaritySearchRequest):
         )
         
         # Perform similarity search
-        similar_papers = db.find_papers_by_semantic_search(
+        similar_papers = PaperRepository.semantic_search(
             query_text=request.query_text,
             embedding_model=embedding_model,
             limit=request.limit,
-            similarity_threshold=request.similarity_threshold
+            similarity_threshold=request.similarity_threshold,
         )
         
         # Convert to API response format
@@ -186,7 +188,7 @@ async def hybrid_search_papers(request: HybridSearchRequest):
             raise HTTPException(status_code=400, detail="Query text cannot be empty")
         
         # Get the orchestration config to load the embedding model
-        orchestration_json = db.get_setting("orchestration")
+        orchestration_json = SettingsRepository.get("orchestration")
         if not orchestration_json:
             raise HTTPException(status_code=500, detail="Orchestration config not found")
         
@@ -203,7 +205,7 @@ async def hybrid_search_papers(request: HybridSearchRequest):
         )
         
         # Perform hybrid search
-        search_results = db.hybrid_search_papers(
+        search_results = PaperRepository.hybrid_search(
             query_text=request.query_text,
             embedding_model=embedding_model,
             page=request.page,
@@ -272,7 +274,7 @@ async def get_papers_without_embeddings():
         HTTPException: If an error occurs while fetching the papers.
     """
     try:
-        papers = db.get_papers_without_embeddings()
+        papers = PaperRepository.without_embeddings()
         results = []
         for p in papers:
             results.append(PaperApiResponse(
@@ -307,8 +309,7 @@ async def update_paper_embedding(paper_id: int):
     """
     try:
         # Get the paper details
-        papers = db.fetch_all_papers()
-        paper = next((p for p in papers if p['id'] == paper_id), None)
+        paper = PaperRepository.get_by_id(paper_id)
         if not paper:
             raise HTTPException(status_code=404, detail="Paper not found")
         
@@ -316,7 +317,7 @@ async def update_paper_embedding(paper_id: int):
             return {"message": "Paper already has an embedding", "updated": False}
         
         # Get the orchestration config to load the embedding model
-        orchestration_json = db.get_setting("orchestration")
+        orchestration_json = SettingsRepository.get("orchestration")
         if not orchestration_json:
             raise HTTPException(status_code=500, detail="Orchestration config not found")
         
@@ -340,7 +341,7 @@ async def update_paper_embedding(paper_id: int):
             embedding = list(embedding)
         
         # Update the paper with the new embedding
-        db.update_paper_embedding(paper_id, embedding)
+        PaperRepository.update_embedding(paper_id, embedding)
         
         return {"message": "Embedding updated successfully", "updated": True}
         
@@ -369,7 +370,7 @@ async def find_similar_papers_to_existing(
     """
     try:
         # Find similar papers using the database method
-        result = db.find_similar_papers_to_existing(
+        result = PaperRepository.find_similar_existing(
             paper_id=paper_id,
             limit=limit,
             similarity_threshold=similarity_threshold

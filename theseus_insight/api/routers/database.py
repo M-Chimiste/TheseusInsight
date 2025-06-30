@@ -5,7 +5,6 @@ import uuid
 import os
 from datetime import datetime
 
-from ..dependencies import db, DB_URL
 from ..tasks import task_manager
 
 router = APIRouter(prefix="/api/settings/database", tags=["database"])
@@ -35,6 +34,9 @@ async def export_database(background_tasks: BackgroundTasks):
         
         # Create timestamp for filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Get database URL from environment
+        DB_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
         
         # Create a temporary directory for the export files
         with tempfile.TemporaryDirectory() as temp_dir:

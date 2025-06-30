@@ -1,0 +1,522 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List
+import json
+
+from psycopg import sql
+
+from ..db import get_cursor
+from .base import to_pgvector
+
+VECTOR_DIM = 768  # TODO configurable
+
+
+class PaperRepository:
+    """CRUD and search operations for the `papers` table."""
+
+    # ---------------------------------------------------------------------
+    # Existence helpers
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def exists_by_url(url: str) -> bool:
+        with get_cursor() as cur:
+            cur.execute("SELECT 1 FROM papers WHERE url = %s LIMIT 1", (url,))
+            return cur.fetchone() is not None
+
+    @staticmethod
+    def exists_by_title(title: str) -> bool:
+        with get_cursor() as cur:
+            cur.execute("SELECT 1 FROM papers WHERE title = %s LIMIT 1", (title,))
+            return cur.fetchone() is not None
+
+    # ---------------------------------------------------------------------
+    # Inserts
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def insert(paper: Any, *, skip_duplicates: bool = True) -> bool:
+        """Insert a new paper row.
+
+        The `paper` argument may be a dataclass from existing models or any
+        object exposing the expected attributes.
+        """
+        if skip_duplicates and PaperRepository.exists_by_url(paper.url):
+            return False
+
+        emb_literal = to_pgvector(getattr(paper, "embedding", None))
+
+        with get_cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    INSERT INTO papers
+                        (title, abstract, date, date_run, score, rationale, related,
+                         cosine_similarity, url, embedding_model, embedding, text)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """
+                ),
+                (
+                    paper.title,
+                    paper.abstract,
+                    paper.date,
+                    paper.date_run,
+                    float(paper.score) if paper.score is not None else None,
+                    paper.rationale,
+                    bool(paper.related),
+                    float(paper.cosine_similarity) if paper.cosine_similarity is not None else None,
+                    paper.url,
+                    paper.embedding_model,
+                    emb_literal,
+                    getattr(paper, "text", None),
+                ),
+            )
+        return True
+
+    # ---------------------------------------------------------------------
+    # Retrieval
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_by_id(paper_id: int) -> Dict[str, Any] | None:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT * FROM papers WHERE id = %s", (paper_id,)
+            )
+            return cur.fetchone()
+
+    # ---------------------------------------------------------------------
+    # Similarity search
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def find_similar(
+        query_embedding: List[float],
+        *,
+        limit: int = 10,
+        similarity_threshold: float = 0.7,
+    ) -> List[Dict[str, Any]]:
+        emb_literal = to_pgvector(query_embedding)
+        with get_cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT *, 1 - (embedding <=> %s)::float AS similarity_score
+                    FROM papers
+                    WHERE embedding IS NOT NULL
+                      AND (1 - (embedding <=> %s)::float) >= %s
+                    ORDER BY similarity_score DESC
+                    LIMIT %s
+                    """
+                ),
+                (emb_literal, emb_literal, similarity_threshold, limit),
+            )
+            rows = cur.fetchall()
+
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            row = dict(row)
+            row["similarity_distance"] = 1 - row["similarity_score"]
+            results.append(row)
+        return results
+
+    @staticmethod
+    def find_similar_existing(paper_id: int, *, limit: int = 10, similarity_threshold: float = 0.7):
+        # Get reference paper embedding
+        with get_cursor() as cur:
+            cur.execute("SELECT * FROM papers WHERE id = %s AND embedding IS NOT NULL", (paper_id,))
+            ref = cur.fetchone()
+        if not ref:
+            return None
+
+        ref_embedding = ref["embedding"]
+        if ref_embedding is None:
+            return None
+
+        query_embedding = ref_embedding  # already stored literal string like '[...]'
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT *, 1 - (embedding <=> %s)::float AS similarity_score
+                FROM papers
+                WHERE id != %s AND embedding IS NOT NULL AND (1 - (embedding <=> %s)::float) >= %s
+                ORDER BY similarity_score DESC LIMIT %s
+                """,
+                (query_embedding, paper_id, query_embedding, similarity_threshold, limit),
+            )
+            similars = cur.fetchall()
+
+        return {
+            "reference_paper": ref,
+            "similar_papers": similars,
+            "total_similar": len(similars),
+        }
+
+    # ---------------------------------------------------------------------
+    # Pagination & filtering
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def paginate(
+        *,
+        page: int = 1,
+        page_size: int = 10,
+        min_score: float | None = None,
+        max_score: float | None = None,
+        sort_field: str = "score",
+        sort_direction: str = "desc",
+        search: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> Dict[str, Any]:
+        sql = "SELECT * FROM papers"
+        conditions: List[str] = []
+        params: List[Any] = []
+
+        if min_score is not None:
+            conditions.append("score >= %s")
+            params.append(min_score)
+        if max_score is not None:
+            conditions.append("score <= %s")
+            params.append(max_score)
+        if from_date:
+            conditions.append("date >= %s")
+            params.append(from_date)
+        if to_date:
+            conditions.append("date <= %s")
+            params.append(to_date)
+        if search:
+            conditions.append("fts @@ plainto_tsquery('english', %s)")
+            params.append(search)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        # Sorting
+        if sort_field not in {"score", "date", "id"}:
+            sort_field = "score"
+        direction = "DESC" if sort_direction.lower() == "desc" else "ASC"
+        sql_count = "SELECT count(*) FROM (" + sql + ") AS sub"
+
+        sql += f" ORDER BY {sort_field} {direction} LIMIT %s OFFSET %s"
+        offset = (page - 1) * page_size
+        params_count = list(params)  # copy for count query
+        params.extend([page_size, offset])
+
+        with get_cursor() as cur:
+            cur.execute(sql_count, params_count)
+            total_items = cur.fetchone()["count"]
+            cur.execute(sql, params)
+            items = cur.fetchall()
+
+        total_pages = (total_items + page_size - 1) // page_size if total_items else 0
+        return {
+            "items": items,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "has_next_page": page < total_pages,
+        }
+
+    # ---------------------------------------------------------------------
+    # Embedding helpers
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def without_embeddings() -> List[Dict[str, Any]]:
+        with get_cursor() as cur:
+            cur.execute("SELECT * FROM papers WHERE embedding IS NULL ORDER BY id DESC")
+            return cur.fetchall()
+
+    @staticmethod
+    def update_embedding(paper_id: int, embedding: List[float]):
+        emb_literal = to_pgvector(embedding)
+        with get_cursor() as cur:
+            cur.execute(
+                "UPDATE papers SET embedding = %s WHERE id = %s",
+                (emb_literal, paper_id),
+            )
+
+    # ---------------------------------------------------------------------
+    # Convenience wrappers for router compatibility
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def semantic_search(query_text: str, embedding_model, *, limit: int = 10, similarity_threshold: float = 0.7):
+        query_embedding = embedding_model.invoke(query_text)
+        if hasattr(query_embedding, "tolist"):
+            query_embedding = query_embedding.tolist()
+        return PaperRepository.find_similar(query_embedding, limit=limit, similarity_threshold=similarity_threshold)
+
+    @staticmethod
+    def hybrid_search(
+        query_text: str,
+        embedding_model,
+        *,
+        page: int = 1,
+        page_size: int = 10,
+        semantic_weight: float = 0.6,
+        keyword_weight: float = 0.4,
+        min_score: float | None = None,
+        max_score: float | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        similarity_threshold: float = 0.3,
+    ) -> Dict[str, Any]:
+        query_embedding = embedding_model.invoke(query_text)
+        if hasattr(query_embedding, "tolist"):
+            query_embedding = query_embedding.tolist()
+        emb_literal = to_pgvector(query_embedding)
+
+        sql = """
+        SELECT *, (1 - (embedding <=> %s)::float) AS semantic_score, ts_rank(fts, plainto_tsquery('english', %s)) AS keyword_score
+        FROM papers
+        WHERE embedding IS NOT NULL
+        """
+        params: List[Any] = [emb_literal, query_text]
+        conditions: List[str] = []
+        if min_score is not None:
+            conditions.append("score >= %s")
+            params.append(min_score)
+        if max_score is not None:
+            conditions.append("score <= %s")
+            params.append(max_score)
+        if from_date:
+            conditions.append("date >= %s")
+            params.append(from_date)
+        if to_date:
+            conditions.append("date <= %s")
+            params.append(to_date)
+        if conditions:
+            sql += " AND " + " AND ".join(conditions)
+
+        sql = "SELECT sub.*, (sub.semantic_score * %s + sub.keyword_score * %s) AS hybrid_score FROM (" + sql + ") sub WHERE sub.semantic_score >= %s ORDER BY hybrid_score DESC"
+        params = [semantic_weight, keyword_weight, similarity_threshold] + params
+
+        offset = (page - 1) * page_size
+        sql_paginated = sql + " LIMIT %s OFFSET %s"
+        params_paginated = params + [page_size, offset]
+
+        with get_cursor() as cur:
+            cur.execute("SELECT count(*) FROM (" + sql + ") AS cnt", params)
+            total_items = cur.fetchone()["count"]
+            cur.execute(sql_paginated, params_paginated)
+            items = cur.fetchall()
+
+        total_pages = (total_items + page_size - 1) // page_size if total_items else 0
+        return {
+            "items": items,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "current_page": page,
+        }
+
+    @staticmethod
+    def search_seed(query: str, limit: int = 10):
+        """Search papers by title/abstract for mind-map seed selection."""
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, title, abstract, date, score, url
+                FROM papers
+                WHERE fts @@ plainto_tsquery('english', %s)
+                ORDER BY ts_rank(fts, plainto_tsquery('english', %s)) DESC
+                LIMIT %s
+                """,
+                (query, query, limit),
+            )
+            return cur.fetchall()
+
+    # ---------------------------------------------------------------------
+    # Alias methods for compatibility with legacy code
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def insert_paper(paper: Any, *, skip_duplicates: bool = True) -> bool:
+        """Alias for insert method."""
+        return PaperRepository.insert(paper, skip_duplicates=skip_duplicates)
+
+    @staticmethod
+    def get_by_url(url: str) -> Dict[str, Any] | None:
+        """Get paper by URL."""
+        with get_cursor() as cur:
+            cur.execute("SELECT * FROM papers WHERE url = %s", (url,))
+            return cur.fetchone()
+
+    @staticmethod
+    def get_all() -> List[Dict[str, Any]]:
+        """Get all papers."""
+        with get_cursor() as cur:
+            cur.execute("SELECT * FROM papers ORDER BY id DESC")
+            return cur.fetchall()
+
+    @staticmethod
+    def update_keywords(paper_id: int, keywords: List[str]) -> None:
+        """Update keywords for a paper."""
+        keywords_json = json.dumps(keywords) if keywords else None
+        with get_cursor() as cur:
+            cur.execute(
+                "UPDATE papers SET keywords = %s WHERE id = %s",
+                (keywords_json, paper_id)
+            )
+
+    # For backward compatibility
+    paper_exists_by_url = exists_by_url 
+
+    # ---------------------------------------------------------------------
+    # Mindmap-specific methods
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def find_similar_mindmap(
+        seed_paper_id: int, *, k: int = 15, similarity_threshold: float = 0.3
+    ) -> List[Dict[str, Any]]:
+        """Find similar papers for mindmap generation."""
+        # Get seed paper embedding
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT embedding FROM papers WHERE id = %s AND embedding IS NOT NULL", 
+                (seed_paper_id,)
+            )
+            seed_row = cur.fetchone()
+            
+        if not seed_row or not seed_row["embedding"]:
+            return []
+            
+        seed_embedding = seed_row["embedding"]
+        
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT *, 1 - (embedding <=> %s)::float AS similarity_score
+                FROM papers 
+                WHERE id != %s 
+                  AND embedding IS NOT NULL 
+                  AND (1 - (embedding <=> %s)::float) >= %s
+                ORDER BY similarity_score DESC 
+                LIMIT %s
+                """,
+                (seed_embedding, seed_paper_id, seed_embedding, similarity_threshold, k),
+            )
+            return cur.fetchall()
+
+    @staticmethod
+    def get_keywords(paper_id: int) -> List[str] | None:
+        """Get keywords for a paper."""
+        with get_cursor() as cur:
+            cur.execute("SELECT keywords FROM papers WHERE id = %s", (paper_id,))
+            row = cur.fetchone()
+            if row and row["keywords"]:
+                try:
+                    return json.loads(row["keywords"])
+                except (json.JSONDecodeError, TypeError):
+                    return []
+            return []
+
+    @staticmethod
+    def get_summary(paper_id: int) -> str | None:
+        """Get paper summary/text."""
+        with get_cursor() as cur:
+            cur.execute("SELECT summary FROM papers WHERE id = %s", (paper_id,))
+            row = cur.fetchone()
+            return row["summary"] if row else None
+
+    @staticmethod
+    def update_summary(paper_id: int, summary: str) -> None:
+        """Update paper summary/text."""
+        with get_cursor() as cur:
+            cur.execute(
+                "UPDATE papers SET summary = %s WHERE id = %s",
+                (summary, paper_id)
+            )
+
+    @staticmethod
+    def get_text(paper_id: int) -> str | None:
+        """Get paper full text."""
+        with get_cursor() as cur:
+            cur.execute("SELECT text FROM papers WHERE id = %s", (paper_id,))
+            row = cur.fetchone()
+            return row["text"] if row else None
+
+    @staticmethod
+    def update_text(paper_id: int, text: str) -> None:
+        """Update paper full text."""
+        with get_cursor() as cur:
+            cur.execute(
+                "UPDATE papers SET text = %s WHERE id = %s",
+                (text, paper_id)
+            )
+
+    # ---------------------------------------------------------------------
+    # Legacy compatibility aliases for mindmap conversion
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get(paper_id: int) -> Dict[str, Any] | None:
+        """Alias for get_by_id() - legacy compatibility."""
+        return PaperRepository.get_by_id(paper_id)
+
+    @staticmethod
+    def get_paper_by_id(paper_id: int) -> Dict[str, Any] | None:
+        """Legacy method name - use get_by_id() instead."""
+        return PaperRepository.get_by_id(paper_id)
+
+    @staticmethod
+    def update_paper_embedding(paper_id: int, embedding: List[float]) -> None:
+        """Legacy method name - use update_embedding() instead."""
+        return PaperRepository.update_embedding(paper_id, embedding)
+
+    @staticmethod
+    def get_paper_keywords(paper_id: int) -> List[str] | None:
+        """Legacy method name - use get_keywords() instead."""
+        return PaperRepository.get_keywords(paper_id)
+
+    @staticmethod
+    def update_paper_keywords(paper_id: int, keywords: List[str]) -> None:
+        """Legacy method name - use update_keywords() instead."""
+        return PaperRepository.update_keywords(paper_id, keywords)
+
+    @staticmethod
+    def get_paper_summary(paper_id: int) -> str | None:
+        """Legacy method name - use get_summary() instead."""
+        return PaperRepository.get_summary(paper_id)
+
+    @staticmethod
+    def update_paper_summary(paper_id: int, summary: str) -> None:
+        """Legacy method name - use update_summary() instead."""
+        return PaperRepository.update_summary(paper_id, summary)
+
+    @staticmethod
+    def get_paper_text(paper_id: int) -> str | None:
+        """Legacy method name - use get_text() instead."""
+        return PaperRepository.get_text(paper_id)
+
+    @staticmethod
+    def update_paper_text(paper_id: int, text: str) -> None:
+        """Legacy method name - use update_text() instead."""
+        return PaperRepository.update_text(paper_id, text)
+
+    @staticmethod
+    def find_similar_papers_mindmap(
+        seed_paper_id: int, k: int = 15, similarity_threshold: float = 0.3
+    ) -> List[Dict[str, Any]]:
+        """Legacy method name - use find_similar_mindmap() instead."""
+        return PaperRepository.find_similar_mindmap(
+            seed_paper_id, k=k, similarity_threshold=similarity_threshold
+        )
+
+    # ---------------------------------------------------------------------
+    # Utility script support methods
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def get_papers_without_embeddings() -> List[Dict[str, Any]]:
+        """Get papers that don't have embeddings yet - used by backfill utility."""
+        return PaperRepository.without_embeddings()
+
+    @staticmethod
+    def get_papers_without_keywords() -> List[Dict[str, Any]]:
+        """Get papers that don't have keywords yet - used by backfill utility."""
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT id, title, abstract FROM papers WHERE keywords IS NULL OR keywords = '' ORDER BY id DESC"
+            )
+            return cur.fetchall() 

@@ -5,7 +5,6 @@ import os
 import json
 
 from ..models import VisualizerSettings
-from ..dependencies import db
 from ..tasks import task_manager
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])

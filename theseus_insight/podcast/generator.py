@@ -21,7 +21,8 @@ from ..data_model import (Dialogue,
                           DialogueOutput,
                           PodcastDescription,
                           ContentSummary)
-from ..data_model.data_handling import PaperDatabase, Podcast
+from ..data_model.data_handling import Podcast
+from ..data_access import PodcastRepository
 from ..pdf import SpacyLayoutDocProcessor
 from datetime import datetime, date
 
@@ -55,8 +56,7 @@ class PodcastGenerator:
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
         pause_duration: float = 0.5,
-        verbose: bool = False,
-        db_url: str = None
+        verbose: bool = False
     ):
         """
         Set up the class with your default settings.
@@ -72,7 +72,6 @@ class PodcastGenerator:
             intro_music_path (str): Path to intro music file
             pause_duration (float): Duration of silence in seconds to add between major segments
             verbose (bool): Whether to print verbose output
-            db_url (str): PostgreSQL database connection URL
         """
         self.verbose = verbose
         self.text_model_config = text_model
@@ -81,11 +80,7 @@ class PodcastGenerator:
         self.intro_music_path = intro_music_path
         self.pause_duration = pause_duration
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
-        self.db_url = db_url
-        if self.db_url:
-            self.db = PaperDatabase(self.db_url)
-        else:
-            self.db = None
+        
         # Validate TTS provider
         valid_providers = ['polly', 'openai']
         if self.tts_provider not in valid_providers:
@@ -591,7 +586,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 description=description,
                 script=script_data,  # This will be properly serialized by the insert_podcast method
             )
-            self.db.insert_podcast(podcast_record)
+            PodcastRepository.insert(podcast_record)
             if self.verbose:
                 print(f"Successfully inserted podcast record into database")
         except Exception as e:

@@ -58,7 +58,7 @@ export const settingsApi = {
   getModelProviders: () => api.get('/model-providers'),
   getModels: () => api.get('/models'),
   runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
-  abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
+  abortTask: (taskId: string) => api.post(`/api/tasks/${taskId}/abort`),
   exportDatabase: (onProgress?: (percent: number) => void) =>
     api.get('/settings/database/export', {
       responseType: 'blob',

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS papers (
     cosine_similarity REAL,
     url TEXT UNIQUE,
     embedding_model TEXT,
-    embedding vector(1536),               -- adjust dim later
+    embedding vector(768),                -- modern BERT dimensions
     text TEXT,
     summary TEXT,
     keywords_json JSONB
@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_papers_score ON papers (score DESC);
 -- === Logs ===
 CREATE TABLE IF NOT EXISTS logs (
     id SERIAL PRIMARY KEY,
-    task_id TEXT NOT NULL,
+    task_id TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL,
     datetime_run TIMESTAMPTZ DEFAULT now()
 );
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS paper_fulltext (
     id SERIAL PRIMARY KEY,
     paper_id INTEGER UNIQUE NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    embedding vector(1536),
+    embedding vector(768),
     embedding_model TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );

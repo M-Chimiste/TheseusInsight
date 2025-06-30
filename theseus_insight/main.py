@@ -105,6 +105,13 @@ async def lifespan(app_instance: FastAPI):
         if missing_vars:
             print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
 
+        # Initialize model providers
+        from .data_access import ModelProviderRepository
+        try:
+            ModelProviderRepository.initialize_default_providers()
+        except Exception as e:
+            print(f"ERROR:    Failed to initialize model providers: {e}")
+
         if SettingsRepository.get("orchestration") is None:
             print("INFO:     Orchestration settings not found in DB. Populating from JSON file...")
             orchestration_json_path = get_config_path('orchestration.json')

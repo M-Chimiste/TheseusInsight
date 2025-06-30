@@ -119,7 +119,7 @@ class DatabaseImporter:
     
     def import_papers(self, papers_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
-        Import papers from JSON file.
+        Import papers from JSON file using bulk insert for improved performance.
         
         Args:
             papers_file: Path to papers.json file
@@ -134,25 +134,15 @@ class DatabaseImporter:
         with open(papers_file, 'r', encoding='utf-8') as f:
             papers_data = json.load(f)
         
-        stats = {"total": len(papers_data), "imported": 0, "skipped": 0, "errors": 0}
-
-        seen_titles = set()
-        seen_urls = set()
-
+        print(f"Loading {len(papers_data)} papers for bulk import...")
+        
+        # Convert JSON data to Paper objects
+        papers = []
+        conversion_errors = 0
+        
         for i, paper_data in enumerate(papers_data):
             try:
-                # Skip if paper exists by title or URL in DB or has appeared earlier in this import
-                if skip_duplicates:
-                    if (
-                        PaperRepository.exists_by_url(paper_data["url"]) or
-                        PaperRepository.exists_by_title(paper_data["title"]) or
-                        paper_data["url"] in seen_urls or
-                        paper_data["title"] in seen_titles
-                    ):
-                        stats["skipped"] += 1
-                        continue
-
-                # Create Paper object
+                # Create Paper object (exclude 'id' field if present in backup data)
                 paper = Paper(
                     title=paper_data["title"],
                     abstract=paper_data["abstract"],
@@ -167,47 +157,64 @@ class DatabaseImporter:
                     embedding=paper_data.get("embedding")
                 )
                 
-                seen_titles.add(paper_data["title"])
-                seen_urls.add(paper_data["url"])
-
-                # Insert paper (with duplicate handling)
-                was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=skip_duplicates)
+                # Add summary as text field for PostgreSQL compatibility
+                if paper_data.get("summary"):
+                    paper.text = paper_data["summary"]
                 
-                # Get paper_id for additional updates
-                paper_record = PaperRepository.get_by_url(paper_data["url"])
-                paper_id = paper_record["id"] if paper_record else None
-
-                if was_inserted:
-                    stats["imported"] += 1
-                else:
-                    stats["skipped"] += 1
-                    
-                # Update summary / keywords if available and paper exists
-                if paper_id:
-                    # Handle backward compatibility: 'summary' field maps to 'text' in PostgreSQL
-                    if paper_data.get("summary"):
-                        try:
-                            with get_cursor() as cursor:
-                                cursor.execute("UPDATE papers SET text = %s WHERE id = %s", 
-                                             (paper_data["summary"], paper_id))
-                        except Exception:
-                            pass
-                    if paper_data.get("keywords"):
+                papers.append(paper)
+                
+            except Exception as e:
+                print(f"Error converting paper '{paper_data.get('title', 'Unknown')}': {e}")
+                conversion_errors += 1
+            
+            # Report conversion progress
+            if progress_callback and (i + 1) % 1000 == 0:
+                progress_callback(i + 1, len(papers_data), f"Converting papers to objects: {i + 1}/{len(papers_data)}")
+        
+        print(f"Converted {len(papers)} papers successfully, {conversion_errors} conversion errors")
+        
+        # Use bulk insert for much better performance
+        def bulk_progress_callback(current, total, message):
+            if progress_callback:
+                progress_callback(current, total, message)
+        
+        bulk_stats = PaperRepository.bulk_insert(
+            papers, 
+            skip_duplicates=skip_duplicates, 
+            progress_callback=bulk_progress_callback
+        )
+        
+        # Handle keywords separately for imported papers if available
+        if bulk_stats["imported"] > 0:
+            print("Processing keywords for imported papers...")
+            papers_with_keywords = [p for p in papers_data if p.get("keywords")]
+            if papers_with_keywords:
+                print(f"Found {len(papers_with_keywords)} papers with keywords to process")
+                
+                # Get paper IDs by URL for keyword updates
+                url_to_id = {}
+                with get_cursor() as cursor:
+                    cursor.execute("SELECT id, url FROM papers WHERE url = ANY(%s)", 
+                                 ([p["url"] for p in papers_with_keywords],))
+                    url_to_id = {row["url"]: row["id"] for row in cursor.fetchall()}
+                
+                # Update keywords in batches
+                for i, paper_data in enumerate(papers_with_keywords):
+                    if paper_data["url"] in url_to_id:
+                        paper_id = url_to_id[paper_data["url"]]
                         try:
                             PaperRepository.update_keywords(paper_id, paper_data["keywords"])
-                        except Exception:
-                            pass
-
-            except Exception as e:
-                print(f"Error importing paper '{paper_data.get('title', 'Unknown')}': {e}")
-                stats["errors"] += 1
-            
-            # Report progress
-            if progress_callback and (i + 1) % 10 == 0 or i == len(papers_data) - 1:  # Update every 10 items or at end
-                progress_callback(i + 1, len(papers_data), f"Importing papers: {i + 1}/{len(papers_data)}")
+                        except Exception as e:
+                            print(f"Error updating keywords for paper {paper_id}: {e}")
+                    
+                    if progress_callback and (i + 1) % 100 == 0:
+                        progress_callback(i + 1, len(papers_with_keywords), f"Processing keywords: {i + 1}/{len(papers_with_keywords)}")
         
-        print(f"Papers import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
-        return stats
+        # Add conversion errors to bulk stats
+        bulk_stats["errors"] += conversion_errors
+        
+        print(f"Papers import completed: {bulk_stats['imported']} imported, {bulk_stats['skipped']} skipped, {bulk_stats['errors']} errors")
+        return bulk_stats
     
     def import_podcasts(self, podcasts_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
@@ -234,8 +241,9 @@ class DatabaseImporter:
                 if skip_duplicates:
                     # Check if podcast with same title already exists
                     with get_cursor() as cursor:
-                        cursor.execute("SELECT COUNT(*) FROM podcasts WHERE title = %s", (podcast_data["title"],))
-                        if cursor.fetchone()[0] > 0:
+                        cursor.execute("SELECT COUNT(*) as count FROM podcasts WHERE title = %s", (podcast_data["title"],))
+                        result = cursor.fetchone()
+                        if result and result["count"] > 0:
                             stats["skipped"] += 1
                             continue
                 
@@ -287,10 +295,11 @@ class DatabaseImporter:
                 if skip_duplicates:
                     with get_cursor() as cursor:
                         cursor.execute("""
-                            SELECT COUNT(*) FROM newsletters 
+                            SELECT COUNT(*) as count FROM newsletters 
                             WHERE start_date = %s AND end_date = %s
                         """, (newsletter_data["start_date"], newsletter_data["end_date"]))
-                        if cursor.fetchone()[0] > 0:
+                        result = cursor.fetchone()
+                        if result and result["count"] > 0:
                             stats["skipped"] += 1
                             continue
                 

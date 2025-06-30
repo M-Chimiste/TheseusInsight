@@ -375,26 +375,48 @@ async def get_research_task_status(task_id: str) -> ResearchTaskStatus:
     # Try to get from research runs first (more detailed)
     research_run = ResearchRunRepository.get_research_run(task_id)
     if research_run:
+        # Handle datetime fields - PostgreSQL returns datetime objects directly
+        created_at = research_run["created_at"]
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        
+        started_at = research_run.get("started_at")
+        if started_at and isinstance(started_at, str):
+            started_at = datetime.fromisoformat(started_at)
+        
+        completed_at = research_run.get("completed_at")
+        if completed_at and isinstance(completed_at, str):
+            completed_at = datetime.fromisoformat(completed_at)
+        
         return ResearchTaskStatus(
             task_id=task_id,
             status=research_run["status"],
             progress=research_run.get("progress"),
-            created_at=datetime.fromisoformat(research_run["created_at"]),
-            started_at=datetime.fromisoformat(research_run["started_at"]) if research_run.get("started_at") else None,
-            completed_at=datetime.fromisoformat(research_run["completed_at"]) if research_run.get("completed_at") else None,
+            created_at=created_at,
+            started_at=started_at,
+            completed_at=completed_at,
             error_message=research_run.get("error_message")
         )
     
     # Fallback to general task table
     task = TaskRepository.get_task(task_id)
     if task:
+        # Handle datetime fields - PostgreSQL returns datetime objects directly
+        start_time = task["start_time"]
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time)
+        
+        end_time = task.get("end_time")
+        if end_time and isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time)
+        
         return ResearchTaskStatus(
             task_id=task_id,
             status=task["status"],
             progress={"progress": task.get("progress", 0)},
-            created_at=datetime.fromisoformat(task["start_time"]),
-            started_at=datetime.fromisoformat(task["start_time"]) if task["status"] != "pending" else None,
-            completed_at=datetime.fromisoformat(task["end_time"]) if task.get("end_time") else None,
+            created_at=start_time,
+            started_at=start_time if task["status"] != "pending" else None,
+            completed_at=end_time,
             error_message=task.get("error")
         )
     
@@ -419,6 +441,15 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
     if research_run["status"] not in ["completed", "failed"]:
         raise HTTPException(status_code=400, detail="Research task is not yet completed")
     
+    # Handle datetime fields - PostgreSQL returns datetime objects directly
+    created_at = research_run["created_at"]
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at)
+    
+    completed_at = research_run.get("completed_at")
+    if completed_at and isinstance(completed_at, str):
+        completed_at = datetime.fromisoformat(completed_at)
+    
     return ResearchTaskResult(
         task_id=task_id,
         status=research_run["status"],
@@ -432,8 +463,8 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
         evidence=research_run.get("evidence", []),
         compressed_notes=research_run.get("compressed_notes", ""),
         workflow_messages=research_run.get("workflow_messages", []),
-        created_at=datetime.fromisoformat(research_run["created_at"]),
-        completed_at=datetime.fromisoformat(research_run["completed_at"]) if research_run.get("completed_at") else None,
+        created_at=created_at,
+        completed_at=completed_at,
         error_message=research_run.get("error_message")
     )
 
@@ -470,21 +501,30 @@ async def get_research_history(
             params = []
             
             if status_filter:
-                query += " WHERE status = ?"
+                query += " WHERE status = %s"
                 params.append(status_filter)
             
             cursor.execute(query, params)
-            total = cursor.fetchone()[0]
+            total = cursor.fetchone()["count"]
         
         # Convert to response model
         history_items = []
         for run in research_runs:
+            # Handle datetime fields - PostgreSQL returns datetime objects directly
+            created_at = run["created_at"]
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            
+            completed_at = run.get("completed_at")
+            if completed_at and isinstance(completed_at, str):
+                completed_at = datetime.fromisoformat(completed_at)
+            
             history_items.append(ResearchHistoryItem(
                 task_id=run["task_id"],
                 research_question=run["research_question"],
                 status=run["status"],
-                created_at=datetime.fromisoformat(run["created_at"]),
-                completed_at=datetime.fromisoformat(run["completed_at"]) if run.get("completed_at") else None,
+                created_at=created_at,
+                completed_at=completed_at,
                 statistics=run.get("statistics")
             ))
         

@@ -78,8 +78,10 @@ class TaskManager:
     async def start_worker(self) -> None:
         """Start the background workers that process queued tasks."""
         if self.general_worker_task is None or self.general_worker_task.done():
+            print("INFO:     Starting general task worker")
             self.general_worker_task = asyncio.create_task(self._worker(self.general_task_queue))
         if self.visualizer_worker_task is None or self.visualizer_worker_task.done():
+            print("INFO:     Starting visualizer task worker")
             self.visualizer_worker_task = asyncio.create_task(self._worker(self.visualizer_queue))
 
     async def stop_worker(self) -> None:
@@ -103,6 +105,10 @@ class TaskManager:
             func, task_id = item
             try:
                 await func(task_id)
+            except Exception as e:
+                print(f"Error processing task {task_id}: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
                 queue.task_done()
 
@@ -111,6 +117,9 @@ class TaskManager:
         queue = self.visualizer_queue if visualizer or func == self.run_visualizer_task else self.general_task_queue
         await queue.put((func, task_id))
         
+        # Ensure workers are still running
+        await self.start_worker()
+
     async def cleanup(self):
         """Clean up all asyncio resources."""
         # Stop worker processing
@@ -255,7 +264,7 @@ class TaskManager:
         
                 # Log to the logs table as well
         final_status = status_obj.overallStatus
-        LogsRepository.insert(
+        LogsRepository.upsert(
             task_id=task_id,
             status=final_status,
             datetime_run=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -335,7 +344,7 @@ class TaskManager:
         )
 
         # Persist to logs
-        LogsRepository.insert(task_id=task_id, status=status, datetime_run=timestamp)
+        LogsRepository.upsert(task_id=task_id, status=status, datetime_run=timestamp)
         
         # Notify subscribers synchronously using put_nowait to avoid awaits
         if task_id in self.status_updates:
@@ -715,13 +724,17 @@ class TaskManager:
             task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
-            config = task["config"]
+            
+            print(f"DEBUG: Task retrieved: {task}")
+            # Get the config_json field (already parsed by PostgreSQL driver if it's JSON type)
+            task_config = task.get("config_json", {})
+            print(f"DEBUG: Task config: {task_config}")
             
             from ..utils.db_migration.db_import import DatabaseImporter
             
-            archive_path = config.get("archive_path")
-            import_mode = config.get("import_mode", "merge")
-            filename = config.get("filename", "unknown")
+            archive_path = task_config.get("archive_path")
+            import_mode = task_config.get("import_mode", "merge")
+            filename = task_config.get("filename", "unknown")
             
             print(f"DEBUG: Archive path: {archive_path}, Mode: {import_mode}, Filename: {filename}")
             
@@ -805,6 +818,7 @@ class TaskManager:
                 )
                 
                 # Clear existing data (destructive) with progress tracking
+                print("DEBUG: About to call importer.clear_all_data")
                 deletion_results = await asyncio.to_thread(
                     importer.clear_all_data,
                     clearing_progress_callback
@@ -822,14 +836,21 @@ class TaskManager:
             
             # Import the data
             print(f"DEBUG: Starting import from archive, skip_duplicates: {skip_duplicates}")
-            results = await asyncio.to_thread(
-                importer.import_from_archive,
-                archive_path,
-                skip_duplicates,
-                import_progress_callback
-            )
-            
-            print(f"DEBUG: Import completed with results: {results}")
+            print(f"DEBUG: About to call importer.import_from_archive with args: {archive_path}, {skip_duplicates}")
+            try:
+                results = await asyncio.to_thread(
+                    importer.import_from_archive,
+                    archive_path,
+                    skip_duplicates,
+                    import_progress_callback
+                )
+                print(f"DEBUG: Import completed with results: {results}")
+            except Exception as import_error:
+                print(f"DEBUG: Error during import_from_archive: {import_error}")
+                print(f"DEBUG: Import error type: {type(import_error)}")
+                import traceback
+                traceback.print_exc()
+                raise
             
             # Prepare result summary
             total_imported = sum(r.get("imported", 0) for r in results.values() if isinstance(r, dict))
@@ -872,16 +893,20 @@ class TaskManager:
             
         except Exception as e:
             print(f"DEBUG: Error in database import task {task_id}: {e}")
+            print(f"DEBUG: Error type: {type(e)}")
             import traceback
             traceback.print_exc()
             
             # Clean up temporary file on error
             try:
-                config = task.get("config", {}) if 'task' in locals() else {}
-                archive_path = config.get("archive_path")
-                if archive_path and os.path.exists(archive_path):
-                    os.remove(archive_path)
-            except Exception:
+                if 'task' in locals() and task:
+                    task_config_cleanup = task.get("config_json", {})
+                    archive_path_cleanup = task_config_cleanup.get("archive_path")
+                    if archive_path_cleanup and os.path.exists(archive_path_cleanup):
+                        os.remove(archive_path_cleanup)
+                        print(f"DEBUG: Cleaned up temporary file on error: {archive_path_cleanup}")
+            except Exception as cleanup_error:
+                print(f"DEBUG: Error during cleanup: {cleanup_error}")
                 pass
                 
             await self.update_task_status(
@@ -1061,7 +1086,12 @@ class TaskManager:
                 raise ValueError(f"Task {task_id} not found")
             
             print(f"DEBUG: Task found: {task}")
-            config = task["config"]
+            print(f"DEBUG: config_json type: {type(task['config_json'])}")
+            print(f"DEBUG: config_json value: {task['config_json']}")
+            if isinstance(task["config_json"], str):
+                config = json.loads(task["config_json"])
+            else:
+                config = task["config_json"]
             paper_id = config.get("paper_id")
             k = config.get("k", 15)
             similarity_threshold = config.get("similarity_threshold", 0.3)
@@ -1123,8 +1153,9 @@ class TaskManager:
                 print(f"DEBUG: LLM model config determined: {llm_model_config}")
             
             print(f"DEBUG: Creating mind-map workflow...")
-            # Create workflow (the workflow will create its own db connection)
+            # Create workflow with database connection
             workflow = create_mindmap_workflow(
+                db=None,  # Pass None - workflow nodes will use repositories directly
                 config=orchestration_config
             )
             print(f"DEBUG: Mind-map workflow created successfully")
@@ -1241,7 +1272,10 @@ class TaskManager:
             if not task:
                 raise ValueError(f"Task {task_id} not found")
             
-            config = task["config"]
+            if isinstance(task["config_json"], str):
+                config = json.loads(task["config_json"])
+            else:
+                config = task["config_json"]
             paper_ids = config.get("paper_ids", [])
             
             if not paper_ids:

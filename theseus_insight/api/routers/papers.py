@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 import json
+from datetime import datetime, date
 
 from ..models import (
     PaperApiResponse, PaginatedPapersResponse,
@@ -11,6 +12,18 @@ from ..models import (
 from ...data_access import (
     PaperRepository, SettingsRepository
 )
+
+def _convert_paper_timestamps(paper_data: dict) -> dict:
+    """Convert PostgreSQL datetime objects to ISO strings for API response."""
+    converted = paper_data.copy()
+    
+    # Convert date fields
+    if 'date' in converted and isinstance(converted['date'], (datetime, date)):
+        converted['date'] = converted['date'].isoformat()
+    if 'date_run' in converted and isinstance(converted['date_run'], (datetime, date)):
+        converted['date_run'] = converted['date_run'].isoformat()
+        
+    return converted
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
 
@@ -67,13 +80,14 @@ async def get_papers(
         # Convert to API response format
         papers = []
         for p in papers_data['items']:
+            converted_p = _convert_paper_timestamps(p)
             papers.append(PaperApiResponse(
-                id=p['id'], title=p['title'], abstract=p['abstract'],
-                score=p['score'], date=p['date'], url=p['url'],
-                date_run=p['date_run'], rationale=p['rationale'],
-                related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model'],
-                keywords=p.get('keywords')
+                id=converted_p['id'], title=converted_p['title'], abstract=converted_p['abstract'],
+                score=converted_p['score'], date=converted_p['date'], url=converted_p['url'],
+                date_run=converted_p['date_run'], rationale=converted_p['rationale'],
+                related=converted_p['related'], cosine_similarity=converted_p['cosine_similarity'],
+                embedding_model=converted_p['embedding_model'],
+                keywords=converted_p.get('keywords')
             ))
         
         return PaginatedPapersResponse(
@@ -134,13 +148,14 @@ async def semantic_similarity_search(request: SimilaritySearchRequest):
         # Convert to API response format
         results = []
         for p in similar_papers:
+            converted_p = _convert_paper_timestamps(p)
             paper_response = PaperApiResponse(
-                id=p['id'], title=p['title'], abstract=p['abstract'],
-                score=p['score'], date=p['date'], url=p['url'],
-                date_run=p['date_run'], rationale=p['rationale'],
-                related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model'],
-                keywords=p.get('keywords')
+                id=converted_p['id'], title=converted_p['title'], abstract=converted_p['abstract'],
+                score=converted_p['score'], date=converted_p['date'], url=converted_p['url'],
+                date_run=converted_p['date_run'], rationale=converted_p['rationale'],
+                related=converted_p['related'], cosine_similarity=converted_p['cosine_similarity'],
+                embedding_model=converted_p['embedding_model'],
+                keywords=converted_p.get('keywords')
             )
             # Add similarity score as additional metadata if needed
             if 'similarity_score' in p:
@@ -222,16 +237,17 @@ async def hybrid_search_papers(request: HybridSearchRequest):
         # Convert to API response format
         results = []
         for p in search_results['items']:
+            converted_p = _convert_paper_timestamps(p)
             paper_response = PaperApiResponse(
-                id=p['id'], title=p['title'], abstract=p['abstract'],
-                score=p['score'], date=p['date'], url=p['url'],
-                date_run=p['date_run'], rationale=p['rationale'],
-                related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model'],
-                semantic_score=p.get('semantic_score'),
-                keyword_score=p.get('keyword_score'),
-                hybrid_score=p.get('hybrid_score'),
-                keywords=p.get('keywords')
+                id=converted_p['id'], title=converted_p['title'], abstract=converted_p['abstract'],
+                score=converted_p['score'], date=converted_p['date'], url=converted_p['url'],
+                date_run=converted_p['date_run'], rationale=converted_p['rationale'],
+                related=converted_p['related'], cosine_similarity=converted_p['cosine_similarity'],
+                embedding_model=converted_p['embedding_model'],
+                semantic_score=converted_p.get('semantic_score'),
+                keyword_score=converted_p.get('keyword_score'),
+                hybrid_score=converted_p.get('hybrid_score'),
+                keywords=converted_p.get('keywords')
             )
             results.append(paper_response)
         
@@ -277,13 +293,14 @@ async def get_papers_without_embeddings():
         papers = PaperRepository.without_embeddings()
         results = []
         for p in papers:
+            converted_p = _convert_paper_timestamps(p)
             results.append(PaperApiResponse(
-                id=p['id'], title=p['title'], abstract=p['abstract'],
-                score=p['score'], date=p['date'], url=p['url'],
-                date_run=p['date_run'], rationale=p['rationale'],
-                related=p['related'], cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model'],
-                keywords=p.get('keywords')
+                id=converted_p['id'], title=converted_p['title'], abstract=converted_p['abstract'],
+                score=converted_p['score'], date=converted_p['date'], url=converted_p['url'],
+                date_run=converted_p['date_run'], rationale=converted_p['rationale'],
+                related=converted_p['related'], cosine_similarity=converted_p['cosine_similarity'],
+                embedding_model=converted_p['embedding_model'],
+                keywords=converted_p.get('keywords')
             ))
         return {"papers": results, "count": len(results)}
     except Exception as e:
@@ -384,38 +401,40 @@ async def find_similar_papers_to_existing(
         
         # Convert reference paper to API response format
         ref_paper_data = result['reference_paper']
+        converted_ref = _convert_paper_timestamps(ref_paper_data)
         reference_paper = PaperApiResponse(
-            id=ref_paper_data['id'],
-            title=ref_paper_data['title'],
-            abstract=ref_paper_data['abstract'],
-            score=ref_paper_data['score'],
-            date=ref_paper_data['date'],
-            url=ref_paper_data['url'],
-            date_run=ref_paper_data['date_run'],
-            rationale=ref_paper_data['rationale'],
-            related=ref_paper_data['related'],
-            cosine_similarity=ref_paper_data['cosine_similarity'],
-            embedding_model=ref_paper_data['embedding_model'],
-            keywords=ref_paper_data.get('keywords')
+            id=converted_ref['id'],
+            title=converted_ref['title'],
+            abstract=converted_ref['abstract'],
+            score=converted_ref['score'],
+            date=converted_ref['date'],
+            url=converted_ref['url'],
+            date_run=converted_ref['date_run'],
+            rationale=converted_ref['rationale'],
+            related=converted_ref['related'],
+            cosine_similarity=converted_ref['cosine_similarity'],
+            embedding_model=converted_ref['embedding_model'],
+            keywords=converted_ref.get('keywords')
         )
         
         # Convert similar papers to API response format
         similar_papers = []
         for p in result['similar_papers']:
+            converted_p = _convert_paper_timestamps(p)
             paper_response = PaperApiResponse(
-                id=p['id'],
-                title=p['title'],
-                abstract=p['abstract'],
-                score=p['score'],
-                date=p['date'],
-                url=p['url'],
-                date_run=p['date_run'],
-                rationale=p['rationale'],
-                related=p['related'],
-                cosine_similarity=p['cosine_similarity'],
-                embedding_model=p['embedding_model'],
+                id=converted_p['id'],
+                title=converted_p['title'],
+                abstract=converted_p['abstract'],
+                score=converted_p['score'],
+                date=converted_p['date'],
+                url=converted_p['url'],
+                date_run=converted_p['date_run'],
+                rationale=converted_p['rationale'],
+                related=converted_p['related'],
+                cosine_similarity=converted_p['cosine_similarity'],
+                embedding_model=converted_p['embedding_model'],
                 similarity_score=p['similarity_score'],  # Include the similarity score
-                keywords=p.get('keywords')
+                keywords=converted_p.get('keywords')
             )
             similar_papers.append(paper_response)
         

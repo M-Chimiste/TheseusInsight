@@ -73,6 +73,106 @@ class PaperRepository:
             )
         return True
 
+    @staticmethod
+    def bulk_insert(papers: List[Any], *, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """Bulk insert papers in a single transaction for improved performance.
+        
+        Args:
+            papers: List of Paper objects to insert
+            skip_duplicates: Whether to skip papers that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with statistics: {"total": int, "imported": int, "skipped": int, "errors": int}
+        """
+        stats = {"total": len(papers), "imported": 0, "skipped": 0, "errors": 0}
+        
+        if not papers:
+            return stats
+            
+        # Get existing URLs for duplicate checking if needed
+        existing_urls = set()
+        existing_titles = set()
+        if skip_duplicates:
+            with get_cursor() as cur:
+                cur.execute("SELECT url FROM papers WHERE url IS NOT NULL")
+                existing_urls = {row["url"] for row in cur.fetchall()}
+                cur.execute("SELECT title FROM papers WHERE title IS NOT NULL")  
+                existing_titles = {row["title"] for row in cur.fetchall()}
+        
+        # Process papers in batches to avoid memory issues
+        batch_size = 1000
+        for batch_start in range(0, len(papers), batch_size):
+            batch_end = min(batch_start + batch_size, len(papers))
+            batch = papers[batch_start:batch_end]
+            
+            # Prepare batch data
+            batch_data = []
+            for paper in batch:
+                # Skip duplicates if requested
+                if skip_duplicates:
+                    if (paper.url in existing_urls or paper.title in existing_titles):
+                        stats["skipped"] += 1
+                        continue
+                
+                try:
+                    emb_literal = to_pgvector(getattr(paper, "embedding", None))
+                    batch_data.append((
+                        paper.title,
+                        paper.abstract,
+                        paper.date,
+                        paper.date_run,
+                        float(paper.score) if paper.score is not None else None,
+                        paper.rationale,
+                        bool(paper.related),
+                        float(paper.cosine_similarity) if paper.cosine_similarity is not None else None,
+                        paper.url,
+                        paper.embedding_model,
+                        emb_literal,
+                        getattr(paper, "text", None),
+                    ))
+                    
+                    # Add to existing sets to prevent duplicates within this batch
+                    if skip_duplicates:
+                        existing_urls.add(paper.url)
+                        existing_titles.add(paper.title)
+                        
+                except Exception as e:
+                    print(f"Error preparing paper '{getattr(paper, 'title', 'Unknown')}': {e}")
+                    print(f"Paper data: title={getattr(paper, 'title', None)}, url={getattr(paper, 'url', None)}")
+                    import traceback
+                    print(f"Full traceback: {traceback.format_exc()}")
+                    stats["errors"] += 1
+            
+            # Bulk insert this batch
+            if batch_data:
+                try:
+                    with get_cursor() as cur:
+                        cur.executemany(
+                            """
+                            INSERT INTO papers
+                                (title, abstract, date, date_run, score, rationale, related,
+                                 cosine_similarity, url, embedding_model, embedding, text)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            """,
+                            batch_data
+                        )
+                    stats["imported"] += len(batch_data)
+                except Exception as e:
+                    print(f"Error during batch insert: {e}")
+                    import traceback
+                    print(f"Batch insert traceback: {traceback.format_exc()}")
+                    print(f"Batch size: {len(batch_data)}")
+                    if batch_data:
+                        print(f"Sample batch item: {batch_data[0]}")
+                    stats["errors"] += len(batch_data)
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(batch_end, len(papers), f"Bulk importing papers: {batch_end}/{len(papers)}")
+        
+        return stats
+
     # ---------------------------------------------------------------------
     # Retrieval
     # ---------------------------------------------------------------------
@@ -354,7 +454,7 @@ class PaperRepository:
         keywords_json = json.dumps(keywords) if keywords else None
         with get_cursor() as cur:
             cur.execute(
-                "UPDATE papers SET keywords = %s WHERE id = %s",
+                "UPDATE papers SET keywords_json = %s WHERE id = %s",
                 (keywords_json, paper_id)
             )
 
@@ -402,11 +502,11 @@ class PaperRepository:
     def get_keywords(paper_id: int) -> List[str] | None:
         """Get keywords for a paper."""
         with get_cursor() as cur:
-            cur.execute("SELECT keywords FROM papers WHERE id = %s", (paper_id,))
+            cur.execute("SELECT keywords_json FROM papers WHERE id = %s", (paper_id,))
             row = cur.fetchone()
-            if row and row["keywords"]:
+            if row and row["keywords_json"]:
                 try:
-                    return json.loads(row["keywords"])
+                    return json.loads(row["keywords_json"])
                 except (json.JSONDecodeError, TypeError):
                     return []
             return []
@@ -517,6 +617,6 @@ class PaperRepository:
         """Get papers that don't have keywords yet - used by backfill utility."""
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, title, abstract FROM papers WHERE keywords IS NULL OR keywords = '' ORDER BY id DESC"
+                "SELECT id, title, abstract FROM papers WHERE keywords_json IS NULL OR keywords_json = '' ORDER BY id DESC"
             )
             return cur.fetchall() 

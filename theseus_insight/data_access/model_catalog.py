@@ -78,11 +78,13 @@ class ModelCatalogRepository:
         model_type: str | None = None,
         is_favorite: bool | None = None,
         tags: List[str] | None = None,
-        limit: int = 20,
-    ) -> List[Dict[str, Any]]:
-        sql = "SELECT * FROM model_catalog"
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
         conditions: List[str] = []
         params: List[Any] = []
+        
+        # Build WHERE conditions
         if search:
             conditions.append("(alias ILIKE %s OR model_string ILIKE %s OR description ILIKE %s)")
             pattern = f"%{search}%"
@@ -100,13 +102,32 @@ class ModelCatalogRepository:
             tag_conditions = ["tags_json @> %s"] * len(tags)
             conditions.append("(" + " OR ".join(tag_conditions) + ")")
             params.extend([json.dumps([tag]) for tag in tags])
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY updated_at DESC LIMIT %s"
-        params.append(limit)
+        
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        
         with get_cursor() as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+            # Get total count
+            count_sql = f"SELECT COUNT(*) FROM model_catalog{where_clause}"
+            cur.execute(count_sql, params)
+            total_count = cur.fetchone()["count"]
+            
+            # Get paginated results
+            offset = (page - 1) * page_size
+            data_sql = f"SELECT * FROM model_catalog{where_clause} ORDER BY updated_at DESC LIMIT %s OFFSET %s"
+            data_params = params + [page_size, offset]
+            cur.execute(data_sql, data_params)
+            models = cur.fetchall()
+            
+            # Calculate pagination info
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            return {
+                "models": models,
+                "total_count": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "page_size": page_size
+            }
 
     @staticmethod
     def delete(model_id: int) -> None:

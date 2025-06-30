@@ -1,10 +1,23 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
+from datetime import datetime
 
 from ...data_access import LogsRepository, TaskRepository
 
 router = APIRouter(prefix="/api", tags=["logs"])
+
+def _convert_task_timestamps(task_dict: dict) -> dict:
+    """Convert PostgreSQL datetime objects to ISO strings for Pydantic models."""
+    task_copy = task_dict.copy()
+    
+    # Handle datetime fields - PostgreSQL returns datetime objects directly
+    for field in ['start_time', 'end_time', 'datetime_run']:
+        if task_copy.get(field):
+            if isinstance(task_copy[field], datetime):
+                task_copy[field] = task_copy[field].isoformat()
+    
+    return task_copy
 
 # Pydantic model for Log entries
 class LogEntry(BaseModel):
@@ -51,7 +64,7 @@ async def get_logs_api(
             raise HTTPException(status_code=400, detail="from_date cannot be after to_date")
         
         logs_data = LogsRepository.recent(limit=limit, from_date=from_date, to_date=to_date)
-        return [LogEntry(**log) for log in logs_data]
+        return [LogEntry(**_convert_task_timestamps(log)) for log in logs_data]
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -76,7 +89,7 @@ async def get_task_history_api(
             raise HTTPException(status_code=400, detail="from_date cannot be after to_date")
         
         task_history_data = TaskRepository.recent(limit=limit, from_date=from_date, to_date=to_date)
-        return [TaskHistoryEntry(**task) for task in task_history_data]
+        return [TaskHistoryEntry(**_convert_task_timestamps(task)) for task in task_history_data]
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:

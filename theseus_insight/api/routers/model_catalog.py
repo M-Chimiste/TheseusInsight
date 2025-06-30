@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional, List
 import logging
+from datetime import datetime
 
 from ..models import (
     ModelCatalogEntry,
@@ -15,6 +16,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/model-catalog", tags=["model-catalog"])
 
+
+def _convert_model_timestamps(model_dict: dict) -> dict:
+    """Convert PostgreSQL datetime objects to ISO strings for Pydantic models."""
+    model_copy = model_dict.copy()
+    
+    # Handle datetime fields - PostgreSQL returns datetime objects directly
+    for field in ['created_at', 'updated_at']:
+        if model_copy.get(field):
+            if isinstance(model_copy[field], datetime):
+                model_copy[field] = model_copy[field].isoformat()
+    
+    return model_copy
+
 @router.post("/", response_model=ModelCatalogEntry)
 async def create_model(model_data: ModelCatalogCreateRequest):
     """Create a new model catalog entry."""
@@ -26,7 +40,7 @@ async def create_model(model_data: ModelCatalogCreateRequest):
         if not created_model:
             raise HTTPException(status_code=500, detail="Failed to retrieve created model")
         
-        return ModelCatalogEntry(**created_model)
+        return ModelCatalogEntry(**_convert_model_timestamps(created_model))
     
     except Exception as e:
         logger.error(f"Error creating model catalog entry: {e}")
@@ -40,7 +54,7 @@ async def get_model(model_id: int):
         if not model:
             raise HTTPException(status_code=404, detail="Model not found")
         
-        return ModelCatalogEntry(**model)
+        return ModelCatalogEntry(**_convert_model_timestamps(model))
     
     except HTTPException:
         raise
@@ -65,7 +79,7 @@ async def update_model(model_id: int, model_data: ModelCatalogUpdateRequest):
         
         if not update_data:
             # No fields to update, return existing model
-            return ModelCatalogEntry(**existing_model)
+            return ModelCatalogEntry(**_convert_model_timestamps(existing_model))
         
         # Update the model
         ModelCatalogRepository.update(model_id, update_data)
@@ -75,7 +89,7 @@ async def update_model(model_id: int, model_data: ModelCatalogUpdateRequest):
         if not updated_model:
             raise HTTPException(status_code=500, detail="Failed to retrieve updated model")
         
-        return ModelCatalogEntry(**updated_model)
+        return ModelCatalogEntry(**_convert_model_timestamps(updated_model))
     
     except HTTPException:
         raise
@@ -126,7 +140,7 @@ async def search_models(
         )
         
         # Convert models to Pydantic models
-        models = [ModelCatalogEntry(**model) for model in result['models']]
+        models = [ModelCatalogEntry(**_convert_model_timestamps(model)) for model in result['models']]
         
         return ModelCatalogSearchResponse(
             models=models,
@@ -157,7 +171,7 @@ async def toggle_favorite(model_id: int):
         if not updated_model:
             raise HTTPException(status_code=500, detail="Failed to retrieve updated model")
         
-        return ModelCatalogEntry(**updated_model)
+        return ModelCatalogEntry(**_convert_model_timestamps(updated_model))
     
     except HTTPException:
         raise

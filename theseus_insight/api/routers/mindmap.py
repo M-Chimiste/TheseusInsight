@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Body
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 
 from ..models import (
     MindMapExpandRequest, MindMapExpandResponse,
@@ -20,6 +20,12 @@ from ...data_access import (
 from ..tasks import task_manager
 
 router = APIRouter(prefix="/api/mindmap", tags=["mindmap"])
+
+def _convert_datetime_to_string(value):
+    """Convert datetime/date objects to ISO format strings."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
 
 @router.post("/expand", response_model=MindMapExpandResponse)
 async def expand_mindmap(
@@ -163,8 +169,8 @@ async def search_seed_papers(
                 id=paper_data['id'],
                 title=paper_data['title'],
                 abstract=paper_data['abstract'],
-                date=paper_data['date'],
-                date_run=paper_data.get('date_run', ''),
+                date=_convert_datetime_to_string(paper_data['date']),
+                date_run=_convert_datetime_to_string(paper_data.get('date_run', '')),
                 score=paper_data.get('score', 0.0),
                 rationale=paper_data.get('rationale', ''),
                 related=paper_data.get('related', False),
@@ -207,7 +213,7 @@ async def get_paper_details(paper_id: str):
             "id": paper['id'],
             "title": paper['title'],
             "abstract": paper['abstract'],
-            "date": paper['date'],
+            "date": _convert_datetime_to_string(paper['date']),
             "url": paper.get('url', ''),
             "score": paper.get('score', 0.0),
             "has_fulltext": has_fulltext,

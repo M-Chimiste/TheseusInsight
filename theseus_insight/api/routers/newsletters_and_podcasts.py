@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import ValidationError
 import uuid
 import os
@@ -308,6 +308,19 @@ async def generate_podcast_pipeline(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error processing podcast request: {str(e)}")
 
+def _convert_podcast_timestamps(podcast_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert PostgreSQL datetime objects to ISO format strings for API responses."""
+    converted = podcast_data.copy()
+    
+    # Convert date field if it's a datetime/date object
+    if 'date' in converted and hasattr(converted['date'], 'strftime'):
+        converted['date'] = converted['date'].strftime('%Y-%m-%d')
+    elif 'date' in converted and converted['date'] is not None:
+        # Ensure it's a string
+        converted['date'] = str(converted['date'])
+    
+    return converted
+
 @router.get("/api/podcasts/history", response_model=List[PodcastListItemResponse])
 async def get_podcast_history_list():
     """
@@ -325,12 +338,15 @@ async def get_podcast_history_list():
         
         response_items = []
         for p_data in podcasts_data:
-            description_snippet = (p_data['description'][:150] + '...') if len(p_data['description']) > 150 else p_data['description']
+            # Convert PostgreSQL datetime objects to strings
+            converted_data = _convert_podcast_timestamps(p_data)
+            
+            description_snippet = (converted_data['description'][:150] + '...') if len(converted_data['description']) > 150 else converted_data['description']
             response_items.append(
                 PodcastListItemResponse(
-                    id=p_data['id'],
-                    title=p_data['title'],
-                    date=p_data['date'],
+                    id=converted_data['id'],
+                    title=converted_data['title'],
+                    date=converted_data['date'],
                     description_snippet=description_snippet
                 )
             )
@@ -360,14 +376,17 @@ async def get_podcast_detail(podcast_id: int):
         if not podcast_data:
             raise HTTPException(status_code=404, detail=f"Podcast with ID {podcast_id} not found.")
         
+        # Convert PostgreSQL datetime objects to strings
+        converted_data = _convert_podcast_timestamps(podcast_data)
+        
         # The script from db.fetch_podcast_by_id is already a Python list of dicts
         # Pydantic will validate it against List[PodcastScriptItem]
         return PodcastDetailResponse(
-            id=podcast_data['id'],
-            title=podcast_data['title'],
-            date=podcast_data['date'],
-            description=podcast_data['description'],
-            script=podcast_data['script'] # Pydantic validation happens here
+            id=converted_data['id'],
+            title=converted_data['title'],
+            date=converted_data['date'],
+            description=converted_data['description'],
+            script=converted_data['script'] # Pydantic validation happens here
         )
     except HTTPException: # Re-raise HTTPException directly
         raise

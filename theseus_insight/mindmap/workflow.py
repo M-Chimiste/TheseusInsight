@@ -56,12 +56,12 @@ class MindMapWorkflow:
         self.default_layout = default_layout
         self.logger = logging.getLogger(__name__)
         
-        # Initialize nodes
-        self.select_seed = SelectSeedNode(db)
-        self.embed_seed = EmbedSeedNode(db)
-        self.retriever = RetrieverNode(db)
-        self.multi_order_retriever = MultiOrderRetrieverNode(db)
-        self.summariser = SummariserNode(config, db)
+        # Initialize nodes (nodes now use repositories directly)
+        self.select_seed = SelectSeedNode()
+        self.embed_seed = EmbedSeedNode()
+        self.retriever = RetrieverNode()
+        self.multi_order_retriever = MultiOrderRetrieverNode()
+        self.summariser = SummariserNode(config)
         self.build_mindmap = BuildMindMapNode(config)
         
         # Build the workflow graph

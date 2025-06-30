@@ -205,6 +205,70 @@ function Initialize-Frontend {
     }
 }
 
+# Function to check PostgreSQL installation
+function Test-PostgreSQL {
+    Write-Status "Checking PostgreSQL availability..."
+    
+    if (Test-Command "psql") {
+        Write-Success "PostgreSQL client (psql) is available"
+        return $true
+    }
+    else {
+        Write-Warning "PostgreSQL client (psql) not found in PATH"
+        Write-Host "Database setup will be skipped. You can:"
+        Write-Host "  1. Install PostgreSQL locally and run scripts\setup_database.ps1"
+        Write-Host "  2. Use Docker Compose which includes PostgreSQL"
+        Write-Host "  3. Use an external PostgreSQL instance"
+        return $false
+    }
+}
+
+# Function to setup database
+function Initialize-Database {
+    Write-Status "Setting up PostgreSQL database..."
+    
+    # Check if we should skip database setup
+    if ($env:SKIP_DB_SETUP -eq "true") {
+        Write-Warning "Skipping database setup (SKIP_DB_SETUP=true)"
+        return
+    }
+    
+    # Check if PostgreSQL is available
+    if (-not (Test-PostgreSQL)) {
+        Write-Warning "Skipping database setup - PostgreSQL not available"
+        return
+    }
+    
+    # Check if we're in Docker environment (skip local DB setup)
+    if ($env:RUNNING_IN_DOCKER -eq "true" -or $env:DATABASE_URL) {
+        Write-Status "Docker/external database detected - skipping local database setup"
+        return
+    }
+    
+    # Run the database setup script
+    if (Test-Path "scripts\setup_database.ps1") {
+        Write-Status "Running database setup script..."
+        try {
+            & "scripts\setup_database.ps1"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Database setup completed"
+            }
+            else {
+                Write-Error "Database setup failed"
+                Write-Host "You can run 'scripts\setup_database.ps1' manually later"
+                Write-Host "Or use Docker Compose which includes PostgreSQL"
+            }
+        }
+        catch {
+            Write-Error "Database setup failed: $($_.Exception.Message)"
+            Write-Host "You can run 'scripts\setup_database.ps1' manually later"
+        }
+    }
+    else {
+        Write-Warning "Database setup script not found at scripts\setup_database.ps1"
+    }
+}
+
 # Function to create default config files
 function New-DefaultConfigs {
     Write-Status "Creating default configuration files..."
@@ -222,6 +286,34 @@ function New-DefaultConfigs {
 "@
         $content | Out-File -FilePath "config\research_interests.txt" -Encoding UTF8
         Write-Status "Created default config\research_interests.txt"
+    }
+    
+    if (-not (Test-Path ".env")) {
+        $envContent = @"
+# Theseus Insight Configuration
+# Copy this file to .env and update with your values
+
+# Database Configuration (PostgreSQL)
+DATABASE_URL=postgresql://theseus:theseus@localhost:5432/theseusdb
+
+# API Keys (obtain from respective providers)
+# OPENAI_API_KEY=your_openai_api_key_here
+# ANTHROPIC_API_KEY=your_anthropic_api_key_here
+# GOOGLE_API_KEY=your_google_api_key_here
+
+# Optional: Local Ollama server
+OLLAMA_URL=http://127.0.0.1:11434
+
+# Optional: Gmail for newsletters
+# GMAIL_SENDER_ADDRESS=your_email@gmail.com
+# GMAIL_APP_PASSWORD=your_app_password
+
+# Optional: Debug mode
+# DEBUG=true
+"@
+        $envContent | Out-File -FilePath ".env" -Encoding UTF8
+        Write-Status "Created default .env file"
+        Write-Warning "Please edit .env file with your configuration"
     }
     
     Write-Success "Configuration files ready"
@@ -332,6 +424,9 @@ function Main {
         
         Write-Host ""
         New-DefaultConfigs
+        
+        Write-Host ""
+        Initialize-Database
         
         Write-Host ""
         Write-Success "✅ Installation complete!"

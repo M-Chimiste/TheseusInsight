@@ -57,36 +57,36 @@
   },
   "research_agent_model_config": {
     "boss_model": {
-      "model_name": "gpt-4",
-      "model_type": "openai",
+      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_type": "ollama",
       "max_new_tokens": 4096,
-      "temperature": 0.1,
-      "num_ctx": null,
+      "temperature": 0.2,
+      "num_ctx": 120000,
       "trust_remote_code": null
     },
     "worker_models": {
       "summary": {
-        "model_name": "gpt-4",
-        "model_type": "openai",
-        "max_new_tokens": 2048,
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
+        "max_new_tokens": 1024,
         "temperature": 0.1,
-        "num_ctx": null,
+        "num_ctx": 120000,
         "trust_remote_code": null
       },
       "analysis": {
-        "model_name": "gpt-4",
-        "model_type": "openai",
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
         "max_new_tokens": 2048,
         "temperature": 0.1,
-        "num_ctx": null,
+        "num_ctx": 120000,
         "trust_remote_code": null
       },
       "search": {
-        "model_name": "gpt-4",
-        "model_type": "openai",
+        "model_name": "phi4-mini:3.8b-q8_0",
+        "model_type": "ollama",
         "max_new_tokens": 1024,
         "temperature": 0.1,
-        "num_ctx": null,
+        "num_ctx": 120000,
         "trust_remote_code": null
       }
     },
@@ -97,38 +97,38 @@
     "initial_rerank_top_k": 40,
     "max_research_loops": 3,
     "query_planner_model": {
-      "model_name": "gpt-4",
-      "model_type": "openai",
-      "max_new_tokens": 1024,
-      "temperature": 0.1,
-      "num_ctx": null,
+      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.2,
+      "num_ctx": 120000,
       "trust_remote_code": null
     },
     "evidence_selector_model": {
-      "model_name": "gpt-4",
-      "model_type": "openai",
-      "max_new_tokens": 2048,
-      "temperature": 0.1,
-      "num_ctx": null,
+      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.2,
+      "num_ctx": 120000,
       "trust_remote_code": null
     },
     "compression_model": {
-      "model_name": "gpt-4",
-      "model_type": "openai",
+      "model_name": "phi4-mini:3.8b-q8_0",
+      "model_type": "ollama",
       "max_new_tokens": 4096,
       "temperature": 0.1,
-      "num_ctx": null,
+      "num_ctx": 120000,
       "trust_remote_code": null
     },
     "answer_generator_model": {
-      "model_name": "gpt-4",
-      "model_type": "openai",
+      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_type": "ollama",
       "max_new_tokens": 4096,
-      "temperature": 0.3,
-      "num_ctx": null,
+      "temperature": 0.2,
+      "num_ctx": 120000,
       "trust_remote_code": null
     },
-    "arxiv_rate_limit": 3.0
+    "arxiv_rate_limit": 1.0
   },
   "mind_map_config": {
     "k": 15,

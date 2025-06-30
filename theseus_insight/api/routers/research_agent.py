@@ -85,6 +85,7 @@ class ResearchTaskResult(BaseModel):
     compressed_notes: str = ""
     workflow_messages: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: str
+    started_at: Optional[str] = None
     completed_at: Optional[str] = None
     error_message: Optional[str] = None
 
@@ -95,6 +96,7 @@ class ResearchHistoryItem(BaseModel):
     research_question: str
     status: str
     created_at: str
+    started_at: Optional[str] = None
     completed_at: Optional[str] = None
     statistics: Optional[Dict[str, Any]] = None
 
@@ -327,7 +329,7 @@ async def start_research_task(
             task_id=task_id,
             task_type="research-agent",
             status="pending",
-            config=request.config or {},
+            config_json=request.config or {},
             start_time=created_at.isoformat(),
             progress=0.0,
             current_step="Initializing research workflow",
@@ -439,6 +441,7 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
         compressed_notes=research_run.get("compressed_notes", ""),
         workflow_messages=research_run.get("workflow_messages", []),
         created_at=_convert_datetime_to_string(research_run["created_at"]),
+        started_at=_convert_datetime_to_string(research_run.get("started_at")),
         completed_at=_convert_datetime_to_string(research_run.get("completed_at")),
         error_message=research_run.get("error_message")
     )
@@ -490,6 +493,7 @@ async def get_research_history(
                 research_question=run["research_question"],
                 status=run["status"],
                 created_at=_convert_datetime_to_string(run["created_at"]),
+                started_at=_convert_datetime_to_string(run.get("started_at")),
                 completed_at=_convert_datetime_to_string(run.get("completed_at")),
                 statistics=run.get("statistics")
             ))
@@ -657,7 +661,7 @@ async def _run_research_task(
                 progress=1.0,
                 current_step="Research completed",
                 message="Research workflow completed successfully",
-                result=_serialize_paper_info(results),
+                result_json=_serialize_paper_info(results),
                 end_time=completed_at
             )
             

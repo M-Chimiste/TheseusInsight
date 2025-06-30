@@ -523,6 +523,7 @@ export interface ResearchTaskResult {
   compressed_notes: string;
   workflow_messages: any[];
   created_at: string;
+  started_at?: string;
   completed_at?: string;
   error_message?: string;
 }
@@ -532,6 +533,7 @@ export interface ResearchHistoryItem {
   research_question: string;
   status: string;
   created_at: string;
+  started_at?: string;
   completed_at?: string;
   statistics?: {
     research_loops: number;

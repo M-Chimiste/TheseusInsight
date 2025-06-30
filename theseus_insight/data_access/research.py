@@ -121,7 +121,30 @@ class ResearchRunRepository:
     def get(task_id: str) -> Dict[str, Any] | None:
         with get_cursor() as cur:
             cur.execute("SELECT * FROM research_runs WHERE task_id = %s", (task_id,))
-            return cur.fetchone()
+            result = cur.fetchone()
+            if result:
+                # Parse JSON fields back to Python objects
+                json_fields = ['config_json', 'statistics_json', 'sub_queries_json', 
+                              'sources_gathered_json', 'judged_sources_json', 'evidence_json', 
+                              'workflow_messages_json']
+                for field in json_fields:
+                    if field in result and result[field]:
+                        try:
+                            if isinstance(result[field], str):
+                                result[field] = json.loads(result[field])
+                        except (json.JSONDecodeError, TypeError):
+                            pass  # Keep as string if parsing fails
+                
+                # Create convenient non-JSON field names for API compatibility
+                result['config'] = result.get('config_json')
+                result['statistics'] = result.get('statistics_json')
+                result['sub_queries'] = result.get('sub_queries_json', [])
+                result['sources_gathered'] = result.get('sources_gathered_json', [])
+                result['judged_sources'] = result.get('judged_sources_json', [])
+                result['evidence'] = result.get('evidence_json', [])
+                result['workflow_messages'] = result.get('workflow_messages_json', [])
+                
+            return result
 
     @staticmethod
     def get_research_run(task_id: str) -> Dict[str, Any] | None:
@@ -141,7 +164,32 @@ class ResearchRunRepository:
         
         with get_cursor() as cur:
             cur.execute(sql, params)
-            return cur.fetchall()
+            results = cur.fetchall()
+            
+            # Parse JSON fields for each result
+            json_fields = ['config_json', 'statistics_json', 'sub_queries_json', 
+                          'sources_gathered_json', 'judged_sources_json', 'evidence_json', 
+                          'workflow_messages_json']
+            
+            for result in results:
+                for field in json_fields:
+                    if field in result and result[field]:
+                        try:
+                            if isinstance(result[field], str):
+                                result[field] = json.loads(result[field])
+                        except (json.JSONDecodeError, TypeError):
+                            pass  # Keep as string if parsing fails
+                
+                # Create convenient non-JSON field names for API compatibility
+                result['config'] = result.get('config_json')
+                result['statistics'] = result.get('statistics_json')
+                result['sub_queries'] = result.get('sub_queries_json', [])
+                result['sources_gathered'] = result.get('sources_gathered_json', [])
+                result['judged_sources'] = result.get('judged_sources_json', [])
+                result['evidence'] = result.get('evidence_json', [])
+                result['workflow_messages'] = result.get('workflow_messages_json', [])
+            
+            return results
 
     @staticmethod
     def get_research_runs_history(limit: int = 50, offset: int = 0, status_filter: str | None = None) -> List[Dict[str, Any]]:
@@ -154,7 +202,32 @@ class ResearchRunRepository:
         
         with get_cursor() as cur:
             cur.execute(sql, statuses)
-            return cur.fetchall()
+            results = cur.fetchall()
+            
+            # Parse JSON fields for each result
+            json_fields = ['config_json', 'statistics_json', 'sub_queries_json', 
+                          'sources_gathered_json', 'judged_sources_json', 'evidence_json', 
+                          'workflow_messages_json']
+            
+            for result in results:
+                for field in json_fields:
+                    if field in result and result[field]:
+                        try:
+                            if isinstance(result[field], str):
+                                result[field] = json.loads(result[field])
+                        except (json.JSONDecodeError, TypeError):
+                            pass  # Keep as string if parsing fails
+                
+                # Create convenient non-JSON field names for API compatibility
+                result['config'] = result.get('config_json')
+                result['statistics'] = result.get('statistics_json')
+                result['sub_queries'] = result.get('sub_queries_json', [])
+                result['sources_gathered'] = result.get('sources_gathered_json', [])
+                result['judged_sources'] = result.get('judged_sources_json', [])
+                result['evidence'] = result.get('evidence_json', [])
+                result['workflow_messages'] = result.get('workflow_messages_json', [])
+            
+            return results
 
     @staticmethod
     def get_research_runs_by_status(statuses: List[str]) -> List[Dict[str, Any]]:

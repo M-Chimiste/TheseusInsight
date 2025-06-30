@@ -248,7 +248,7 @@ async def get_mindmap_reports():
                 parameters=report_data.get('parameters', {}),
                 mindmap_data=report_data.get('mindmap_data', {}),
                 statistics=report_data.get('statistics', {}),
-                created_at=report_data['created_at']
+                created_at=_convert_datetime_to_string(report_data['created_at'])
             )
             reports.append(report)
         
@@ -322,7 +322,7 @@ async def get_mindmap_report(report_id: int):
             parameters=report_data.get('parameters', {}),
             mindmap_data=report_data.get('mindmap_data', {}),
             statistics=report_data.get('statistics', {}),
-            created_at=report_data['created_at']
+            created_at=_convert_datetime_to_string(report_data['created_at'])
         )
         
         return report

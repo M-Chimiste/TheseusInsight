@@ -38,13 +38,70 @@ class MindmapReportRepository:
                 "SELECT * FROM mindmap_reports ORDER BY created_at DESC LIMIT %s OFFSET %s",
                 (limit, offset),
             )
-            return cur.fetchall()
+            reports = cur.fetchall()
+            
+            # Parse JSON fields for each report
+            for report in reports:
+                # Handle both string (from database) and already-parsed dict cases
+                mindmap_data_raw = report.get('mindmap_data_json')
+                if isinstance(mindmap_data_raw, str):
+                    report['mindmap_data'] = json.loads(mindmap_data_raw) if mindmap_data_raw else {}
+                elif isinstance(mindmap_data_raw, dict):
+                    report['mindmap_data'] = mindmap_data_raw
+                else:
+                    report['mindmap_data'] = {}
+                    
+                parameters_raw = report.get('parameters_json')
+                if isinstance(parameters_raw, str):
+                    report['parameters'] = json.loads(parameters_raw) if parameters_raw else {}
+                elif isinstance(parameters_raw, dict):
+                    report['parameters'] = parameters_raw
+                else:
+                    report['parameters'] = {}
+                    
+                statistics_raw = report.get('statistics_json')
+                if isinstance(statistics_raw, str):
+                    report['statistics'] = json.loads(statistics_raw) if statistics_raw else {}
+                elif isinstance(statistics_raw, dict):
+                    report['statistics'] = statistics_raw
+                else:
+                    report['statistics'] = {}
+                
+            return reports
 
     @staticmethod
     def get(report_id: int) -> Dict[str, Any] | None:
         with get_cursor() as cur:
             cur.execute("SELECT * FROM mindmap_reports WHERE id = %s", (report_id,))
-            return cur.fetchone()
+            report = cur.fetchone()
+            
+            if report:
+                # Parse JSON fields with type checking
+                mindmap_data_raw = report.get('mindmap_data_json')
+                if isinstance(mindmap_data_raw, str):
+                    report['mindmap_data'] = json.loads(mindmap_data_raw) if mindmap_data_raw else {}
+                elif isinstance(mindmap_data_raw, dict):
+                    report['mindmap_data'] = mindmap_data_raw
+                else:
+                    report['mindmap_data'] = {}
+                    
+                parameters_raw = report.get('parameters_json')
+                if isinstance(parameters_raw, str):
+                    report['parameters'] = json.loads(parameters_raw) if parameters_raw else {}
+                elif isinstance(parameters_raw, dict):
+                    report['parameters'] = parameters_raw
+                else:
+                    report['parameters'] = {}
+                    
+                statistics_raw = report.get('statistics_json')
+                if isinstance(statistics_raw, str):
+                    report['statistics'] = json.loads(statistics_raw) if statistics_raw else {}
+                elif isinstance(statistics_raw, dict):
+                    report['statistics'] = statistics_raw
+                else:
+                    report['statistics'] = {}
+                
+            return report
 
     @staticmethod
     def delete(report_id: int) -> None:

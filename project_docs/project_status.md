@@ -37,9 +37,22 @@
 - **Fixed:** Applied datetime conversion to search results and paper details endpoints
 - **Result:** Mindmap search API returns properly formatted ISO date strings
 
+#### 4. Mindmap Reports Datetime Conversion ✅
+- **Fixed:** Added datetime conversion to `get_mindmap_reports()` and `get_mindmap_report()` endpoints
+- **Applied:** `_convert_datetime_to_string()` helper to `created_at` field in both list and individual report endpoints
+- **Result:** Mindmap reports API now returns properly formatted ISO timestamp strings
+
+#### 5. Mindmap Reports JSON Parsing ✅ 
+- **Problem:** Saved mindmaps showing blank pages with JavaScript error "Cannot read properties of undefined (reading 'filter')"
+- **Root Cause:** JSON fields (`mindmap_data_json`, `parameters_json`, `statistics_json`) stored as strings but not parsed back to objects
+- **Fixed:** Updated `MindmapReportRepository.list()` and `MindmapReportRepository.get()` methods with type-safe JSON parsing
+- **Applied:** Smart parsing that handles both string and already-parsed dict cases from PostgreSQL
+- **Result:** Mindmap reports now return proper data structures with 16 nodes, 15 edges, and complete metadata
+
 **Testing Results:**
 - ✅ **Mindmap Search API:** Successfully returns papers with proper datetime formatting
 - ✅ **Mindmap Expansion:** Successfully generates mindmaps with 6 nodes, 5 edges, and LLM summaries
+- ✅ **Mindmap Reports API:** Successfully lists and retrieves saved mindmap reports with proper timestamps
 - ✅ **Task Status Tracking:** Proper progress reporting through WebSocket connections
 - ✅ **LLM Integration:** Summaries generated using phi4-mini:3.8b-q8_0 model from orchestration config
 - ✅ **Similarity Search:** Vector similarity search working with similarity scores 0.67-0.75 range

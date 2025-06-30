@@ -49,10 +49,23 @@
 - **Applied:** Smart parsing that handles both string and already-parsed dict cases from PostgreSQL
 - **Result:** Mindmap reports now return proper data structures with 16 nodes, 15 edges, and complete metadata
 
+#### 6. Research Agent Endpoints Datetime Conversion ✅
+- **Problem:** Research Agent endpoints using inconsistent manual datetime conversion that was error-prone
+- **Root Cause:** Mixed approach with `isinstance(created_at, str)` checks and manual `fromisoformat()` calls
+- **Fixed:** Added `_convert_datetime_to_string()` helper function and applied consistently across all endpoints
+- **Updated:** All Pydantic models to expect `str` instead of `datetime` for timestamp fields
+- **Endpoints Fixed:** `/history`, `/status/{task_id}`, `/result/{task_id}`, `/run`, `/health`
+- **Result:** All research agent endpoints now return proper ISO string timestamps consistently
+
 **Testing Results:**
 - ✅ **Mindmap Search API:** Successfully returns papers with proper datetime formatting
 - ✅ **Mindmap Expansion:** Successfully generates mindmaps with 6 nodes, 5 edges, and LLM summaries
-- ✅ **Mindmap Reports API:** Successfully lists and retrieves saved mindmap reports with proper timestamps
+- ✅ **Mindmap Reports API:** Successfully lists and retrieves saved mindmap reports with proper timestamps and data structures
+- ✅ **Mindmap Reports UI:** Fixed blank page issue - reports now load properly with 16 nodes, 15 edges, and complete visualization data
+- ✅ **Research Agent History API:** Returns empty list with proper pagination structure (no existing research runs)
+- ✅ **Research Agent Status API:** Proper error handling for non-existent tasks
+- ✅ **Research Agent Health API:** Returns healthy status with proper ISO timestamp
+- ✅ **Research Agent Workflow Info:** Returns complete workflow configuration without datetime issues
 - ✅ **Task Status Tracking:** Proper progress reporting through WebSocket connections
 - ✅ **LLM Integration:** Summaries generated using phi4-mini:3.8b-q8_0 model from orchestration config
 - ✅ **Similarity Search:** Vector similarity search working with similarity scores 0.67-0.75 range

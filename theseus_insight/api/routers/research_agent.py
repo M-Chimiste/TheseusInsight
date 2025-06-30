@@ -8,7 +8,7 @@ task management, status tracking, result retrieval, and history management.
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
@@ -55,7 +55,7 @@ class ResearchTaskResponse(BaseModel):
     """Response model for research task creation."""
     task_id: str = Field(..., description="Unique identifier for the research task")
     status: str = Field(..., description="Current status of the task")
-    created_at: datetime = Field(..., description="Task creation timestamp")
+    created_at: str = Field(..., description="Task creation timestamp")
     research_question: str = Field(..., description="The research question being investigated")
 
 
@@ -64,9 +64,9 @@ class ResearchTaskStatus(BaseModel):
     task_id: str
     status: str  # "pending", "running", "completed", "failed", "cancelled"
     progress: Optional[Dict[str, Any]] = None
-    created_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -84,8 +84,8 @@ class ResearchTaskResult(BaseModel):
     evidence: List[str] = Field(default_factory=list)
     compressed_notes: str = ""
     workflow_messages: List[Dict[str, Any]] = Field(default_factory=list)
-    created_at: datetime
-    completed_at: Optional[datetime] = None
+    created_at: str
+    completed_at: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -94,8 +94,8 @@ class ResearchHistoryItem(BaseModel):
     task_id: str
     research_question: str
     status: str
-    created_at: datetime
-    completed_at: Optional[datetime] = None
+    created_at: str
+    completed_at: Optional[str] = None
     statistics: Optional[Dict[str, Any]] = None
 
 
@@ -110,6 +110,12 @@ class ResearchHistoryResponse(BaseModel):
 # Router setup
 router = APIRouter(prefix="/api/research-agent", tags=["research-agent"])
 logger = logging.getLogger(__name__)
+
+def _convert_datetime_to_string(value):
+    """Convert datetime/date objects to ISO format strings."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
 
 # Global dictionaries for tracking research tasks and results
 # These are used by the workflow and websockets for real-time progress updates
@@ -352,7 +358,7 @@ async def start_research_task(
         return ResearchTaskResponse(
             task_id=task_id,
             status="pending",
-            created_at=created_at,
+            created_at=_convert_datetime_to_string(created_at),
             research_question=request.research_question
         )
         
@@ -375,48 +381,26 @@ async def get_research_task_status(task_id: str) -> ResearchTaskStatus:
     # Try to get from research runs first (more detailed)
     research_run = ResearchRunRepository.get_research_run(task_id)
     if research_run:
-        # Handle datetime fields - PostgreSQL returns datetime objects directly
-        created_at = research_run["created_at"]
-        if isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at)
-        
-        started_at = research_run.get("started_at")
-        if started_at and isinstance(started_at, str):
-            started_at = datetime.fromisoformat(started_at)
-        
-        completed_at = research_run.get("completed_at")
-        if completed_at and isinstance(completed_at, str):
-            completed_at = datetime.fromisoformat(completed_at)
-        
         return ResearchTaskStatus(
             task_id=task_id,
             status=research_run["status"],
             progress=research_run.get("progress"),
-            created_at=created_at,
-            started_at=started_at,
-            completed_at=completed_at,
+            created_at=_convert_datetime_to_string(research_run["created_at"]),
+            started_at=_convert_datetime_to_string(research_run.get("started_at")),
+            completed_at=_convert_datetime_to_string(research_run.get("completed_at")),
             error_message=research_run.get("error_message")
         )
     
     # Fallback to general task table
     task = TaskRepository.get_task(task_id)
     if task:
-        # Handle datetime fields - PostgreSQL returns datetime objects directly
-        start_time = task["start_time"]
-        if isinstance(start_time, str):
-            start_time = datetime.fromisoformat(start_time)
-        
-        end_time = task.get("end_time")
-        if end_time and isinstance(end_time, str):
-            end_time = datetime.fromisoformat(end_time)
-        
         return ResearchTaskStatus(
             task_id=task_id,
             status=task["status"],
             progress={"progress": task.get("progress", 0)},
-            created_at=start_time,
-            started_at=start_time if task["status"] != "pending" else None,
-            completed_at=end_time,
+            created_at=_convert_datetime_to_string(task["start_time"]),
+            started_at=_convert_datetime_to_string(task["start_time"]) if task["status"] != "pending" else None,
+            completed_at=_convert_datetime_to_string(task.get("end_time")),
             error_message=task.get("error")
         )
     
@@ -441,15 +425,6 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
     if research_run["status"] not in ["completed", "failed"]:
         raise HTTPException(status_code=400, detail="Research task is not yet completed")
     
-    # Handle datetime fields - PostgreSQL returns datetime objects directly
-    created_at = research_run["created_at"]
-    if isinstance(created_at, str):
-        created_at = datetime.fromisoformat(created_at)
-    
-    completed_at = research_run.get("completed_at")
-    if completed_at and isinstance(completed_at, str):
-        completed_at = datetime.fromisoformat(completed_at)
-    
     return ResearchTaskResult(
         task_id=task_id,
         status=research_run["status"],
@@ -463,8 +438,8 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
         evidence=research_run.get("evidence", []),
         compressed_notes=research_run.get("compressed_notes", ""),
         workflow_messages=research_run.get("workflow_messages", []),
-        created_at=created_at,
-        completed_at=completed_at,
+        created_at=_convert_datetime_to_string(research_run["created_at"]),
+        completed_at=_convert_datetime_to_string(research_run.get("completed_at")),
         error_message=research_run.get("error_message")
     )
 
@@ -510,21 +485,12 @@ async def get_research_history(
         # Convert to response model
         history_items = []
         for run in research_runs:
-            # Handle datetime fields - PostgreSQL returns datetime objects directly
-            created_at = run["created_at"]
-            if isinstance(created_at, str):
-                created_at = datetime.fromisoformat(created_at)
-            
-            completed_at = run.get("completed_at")
-            if completed_at and isinstance(completed_at, str):
-                completed_at = datetime.fromisoformat(completed_at)
-            
             history_items.append(ResearchHistoryItem(
                 task_id=run["task_id"],
                 research_question=run["research_question"],
                 status=run["status"],
-                created_at=created_at,
-                completed_at=completed_at,
+                created_at=_convert_datetime_to_string(run["created_at"]),
+                completed_at=_convert_datetime_to_string(run.get("completed_at")),
                 statistics=run.get("statistics")
             ))
         
@@ -787,5 +753,5 @@ async def health_check() -> Dict[str, str]:
     return {
         "status": "healthy",
         "service": "research_agent",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": _convert_datetime_to_string(datetime.utcnow())
     } 

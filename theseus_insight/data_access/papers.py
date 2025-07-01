@@ -196,15 +196,17 @@ class PaperRepository:
         limit: int = 10,
         similarity_threshold: float = 0.7,
     ) -> List[Dict[str, Any]]:
+        # Use the same pgvector format as the working insert method
         emb_literal = to_pgvector(query_embedding)
+        
         with get_cursor() as cur:
             cur.execute(
                 sql.SQL(
                     """
-                    SELECT *, 1 - (embedding <=> %s)::float AS similarity_score
+                    SELECT *, (1 - (embedding <=> %s::vector))::float AS similarity_score
                     FROM papers
                     WHERE embedding IS NOT NULL
-                      AND (1 - (embedding <=> %s)::float) >= %s
+                      AND (1 - (embedding <=> %s::vector))::float >= %s
                     ORDER BY similarity_score DESC
                     LIMIT %s
                     """
@@ -364,13 +366,15 @@ class PaperRepository:
         query_embedding = embedding_model.invoke(query_text)
         if hasattr(query_embedding, "tolist"):
             query_embedding = query_embedding.tolist()
-        emb_literal = to_pgvector(query_embedding)
 
-        sql = """
-        SELECT *, (1 - (embedding <=> %s)::float) AS semantic_score, ts_rank(fts, plainto_tsquery('english', %s)) AS keyword_score
-        FROM papers
-        WHERE embedding IS NOT NULL
-        """
+        # Use the same pgvector format as the working insert method
+        emb_literal = to_pgvector(query_embedding)
+        
+        sql_inner = (
+            "SELECT *, (1 - (embedding <=> %s::vector))::float AS semantic_score, "
+            "ts_rank(fts, plainto_tsquery('english', %s)) AS keyword_score "
+            "FROM papers WHERE embedding IS NOT NULL"
+        )
         params: List[Any] = [emb_literal, query_text]
         conditions: List[str] = []
         if min_score is not None:
@@ -386,17 +390,24 @@ class PaperRepository:
             conditions.append("date <= %s")
             params.append(to_date)
         if conditions:
-            sql += " AND " + " AND ".join(conditions)
+            sql_inner += " AND " + " AND ".join(conditions)
 
-        sql = "SELECT sub.*, (sub.semantic_score * %s + sub.keyword_score * %s) AS hybrid_score FROM (" + sql + ") sub WHERE sub.semantic_score >= %s ORDER BY hybrid_score DESC"
-        params = [semantic_weight, keyword_weight, similarity_threshold] + params
+        # Embed scalar weights/threshold directly to avoid placeholder confusion
+        sql_outer = (
+            f"SELECT sub.*, (sub.semantic_score * {semantic_weight} + "
+            f"sub.keyword_score * {keyword_weight}) AS hybrid_score "
+            f"FROM ({sql_inner}) sub WHERE sub.semantic_score >= {similarity_threshold} "
+            "ORDER BY hybrid_score DESC"
+        )
 
         offset = (page - 1) * page_size
-        sql_paginated = sql + " LIMIT %s OFFSET %s"
-        params_paginated = params + [page_size, offset]
+        sql_paginated = sql_outer + " LIMIT %s OFFSET %s"
+
+        params_inner = list(params)  # copy for count query
+        params_paginated = list(params) + [page_size, offset]
 
         with get_cursor() as cur:
-            cur.execute("SELECT count(*) FROM (" + sql + ") AS cnt", params)
+            cur.execute("SELECT count(*) FROM (" + sql_outer + ") AS cnt", params_inner)
             total_items = cur.fetchone()["count"]
             cur.execute(sql_paginated, params_paginated)
             items = cur.fetchall()

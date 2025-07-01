@@ -21,7 +21,7 @@ from ...data_access import (
     ResearchRunRepository, ResearchAgentStateRepository, 
     TaskRepository, SettingsRepository
 )
-from ...data_model.data_handling import PaperDatabase
+from ...data_model.papers import Paper
 import os
 
 
@@ -229,10 +229,8 @@ async def get_research_workflow() -> ResearchAgentWorkflow:
         # Create embedding model using the model router
         embedding_model = get_embedding_model(orchestration_config)
         
-        # Create search tools (LocalSearchTool still uses legacy db temporarily until Phase 2 conversion)
-        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus")
-        temp_db = PaperDatabase(db_url)
-        local_search_tool = LocalSearchTool(temp_db, embedding_model)
+        # Create search tools (LocalSearchTool uses repositories now)
+        local_search_tool = LocalSearchTool(embedding_model)
         external_search_tool = ExternalSearchTool()
         
         # Create unified search tool without search_config parameter

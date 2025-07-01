@@ -84,7 +84,7 @@ async def run_newsletter_pipeline_endpoint(
         dict: A dictionary containing the task ID for tracking the pipeline run progress.
     """
     task_id = str(uuid.uuid4())
-    run_db_path = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus")
+    run_db_path = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
     loop = asyncio.get_event_loop()
 
     def pipeline_progress_callback(stage: str, progress_val: float, message: str):
@@ -233,7 +233,7 @@ async def generate_podcast_pipeline(
             "tts_model_config": generation_params.tts_model_config.dict(),
             "create_visualization": generation_params.create_visualization,
             "db_saving": True, # Default, can be made configurable if needed
-            "data_path": os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus"), # Global DB URL
+            "data_path": os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"), # Global DB URL
             "verbose": True, # Default, can be made configurable
             "output_dir_base": "data/podcasts", # Base directory for task outputs
             "task_id": task_id # Pass task_id for organizing outputs

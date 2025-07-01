@@ -6,11 +6,10 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 
-from ...data_model.data_handling import PaperDatabase
+from ...data_access import PaperRepository
 from ...inference import SentenceTransformerInference
 from ...pdf.processing import MarkitdownDocProcessor
 from ...pdf.parsers import FlatMarkdownParser
-from ...data_access import PaperRepository
 
 
 class BaseSearchTool(ABC):
@@ -98,7 +97,7 @@ class LocalSearchTool(BaseSearchTool):
             # Ensure embeddings are computed for better search results
             self._ensure_recent_embeddings()
             
-            # Use the existing hybrid search from data_handling
+            # Use the existing hybrid search from PaperRepository
             results = PaperRepository.hybrid_search(
                 query_text=query,
                 embedding_model=self.embedding_model,

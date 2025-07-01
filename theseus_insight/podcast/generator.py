@@ -21,7 +21,7 @@ from ..data_model import (Dialogue,
                           DialogueOutput,
                           PodcastDescription,
                           ContentSummary)
-from ..data_model.data_handling import Podcast
+from ..data_model.papers import Podcast
 from ..data_access import PodcastRepository
 from ..pdf import SpacyLayoutDocProcessor
 from datetime import datetime, date

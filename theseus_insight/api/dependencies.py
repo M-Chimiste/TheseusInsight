@@ -2,7 +2,7 @@ import os
 from .tasks import task_manager
 
 # PostgreSQL default instead of SQLite
-DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/theseus")
+DB_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
 
 # List of credential environment variable names
 CREDENTIAL_KEYS = [

@@ -321,7 +321,7 @@ class TheseusInsight:
     def _log_error(self, status_code: int, error: Exception):
         """Helper to log errors to the database and optionally send an email."""
         error_msg = f"{type(error).__name__}: {str(error)}"
-        LogsRepository.insert(
+        LogsRepository.upsert(
             task_id=self.task_id, 
             status=f"ERROR_{status_code}",
             datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -489,7 +489,7 @@ Theseus Insight Team
             """.strip()
         
         # Log the event
-        LogsRepository.insert(
+        LogsRepository.upsert(
             task_id=self.task_id, 
             status=log_status,
             datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -526,7 +526,7 @@ Theseus Insight Team
                     notification_type = "NO_RELEVANT_PAPERS"
                 else:
                     notification_type = "NO_PAPERS_FOUND"
-                LogsRepository.insert(
+                LogsRepository.upsert(
                     task_id=self.task_id, 
                     status=f"EMAIL_{notification_type}_NOTIFICATION: Sent to {self.receiver_address}",
                     datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1159,7 +1159,7 @@ Theseus Insight Team
                     self.communication.compose_message(email_body, self.start_date, self.end_date)
                     self.communication.send_email()
                     # Log successful email
-                    LogsRepository.insert(
+                    LogsRepository.upsert(
                         task_id=self.task_id, 
                         status=f"EMAIL_SUCCESS: Successfully sent newsletter to {self.receiver_address}",
                         datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1304,7 +1304,7 @@ Theseus Insight Team
                     print(f"Failed to purge Ollama cache for some models: {e}")
 
             # Log final success
-            LogsRepository.insert(
+            LogsRepository.upsert(
                 task_id=self.task_id, 
                 status="COMPLETED: Successfully completed Theseus Insight run",
                 datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')

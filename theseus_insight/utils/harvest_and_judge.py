@@ -27,7 +27,7 @@ import yake
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from theseus_insight.data_model.data_handling import PaperDatabase
+from theseus_insight.data_access import PaperRepository, SettingsRepository
 from theseus_insight.data_model.papers import Paper
 from theseus_insight.data_processing.arxiv import ArxivDataProcessor
 from theseus_insight.inference import SentenceTransformerInference
@@ -47,52 +47,41 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 # Helper functions for database operations
 # ---------------------------------------------------------------
 
-def check_paper_exists(db_url: str, paper_data: tuple) -> bool:
+def check_paper_exists(paper_data: tuple) -> bool:
     """Return True if paper already exists, based on URL **or** title."""
-    from theseus_insight.data_model.data_handling import PaperDatabase
-
     idx, paper_url, paper_title = paper_data
-    db = PaperDatabase(db_url)
-    # Normalise URL for comparison
-    exists_by_url = db.paper_exists_by_url(paper_url) if paper_url else False
-    exists_by_title = db.paper_exists_by_title(paper_title)
+    # Check existence using repositories
+    exists_by_url = PaperRepository.exists_by_url(paper_url) if paper_url else False
+    exists_by_title = PaperRepository.exists_by_title(paper_title)
     return exists_by_url or exists_by_title
 
 
-def get_paper_count(db_url: str) -> int:
+def get_paper_count() -> int:
     """
     Get the total number of papers in the database.
-    
-    Args:
-        db_url: Database connection URL
     
     Returns:
         int: Number of papers in database
     """
-    from theseus_insight.data_model.data_handling import PaperDatabase
-    
     try:
-        db = PaperDatabase(db_url)
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM papers")
-            return cursor.fetchone()[0]
+        papers = PaperRepository.get_all()
+        return len(papers)
     except Exception:
         return -1  # Return -1 to indicate error/unknown
 
 
-def should_skip_database_checks(db_url: str, verbose: bool = True) -> bool:
+def should_skip_database_checks(verbose: bool = True) -> bool:
     """
     Determine if we should skip database existence checks.
     
     Args:
-        db_url: Database connection URL
         verbose: Whether to print status messages
     
     Returns:
         bool: True if database checks should be skipped
     """
     try:
-        paper_count = get_paper_count(db_url)
+        paper_count = get_paper_count()
         
         if paper_count == 0:
             if verbose:
@@ -115,7 +104,6 @@ def should_skip_database_checks(db_url: str, verbose: bool = True) -> bool:
 
 def check_existing_papers_parallel(
     df: pd.DataFrame, 
-    db_url: str, 
     max_workers: int = 4,
     verbose: bool = True
 ) -> List[bool]:
@@ -124,7 +112,6 @@ def check_existing_papers_parallel(
     
     Args:
         df: DataFrame with papers to check
-        db_url: Database connection URL
         max_workers: Maximum number of parallel workers
         verbose: Whether to show progress
     
@@ -144,11 +131,10 @@ def check_existing_papers_parallel(
     
     # Use ThreadPoolExecutor for I/O-bound database operations
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        check_func = partial(check_paper_exists, db_url)
         
         # Process in parallel with progress bar
         results = list(tqdm(
-            executor.map(check_func, paper_data),
+            executor.map(check_paper_exists, paper_data),
             total=len(paper_data),
             desc="Checking existing papers (parallel)",
             disable=not verbose
@@ -307,7 +293,6 @@ def embed_papers(
     embedding_model: SentenceTransformerInference, 
     research_interests: str, 
     threshold: float, 
-    db: PaperDatabase, 
     checkpoint_dir: str,
     batch_size: int = 256,
     max_workers: int = 4,
@@ -333,8 +318,7 @@ def embed_papers(
         return df
 
     # Smart database checking with optimization
-    db_url = db.db_path
-    skip_checks = should_skip_database_checks(db_url, verbose)
+    skip_checks = should_skip_database_checks(verbose)
     
     if skip_checks:
         # Skip database checks entirely for speed
@@ -344,7 +328,7 @@ def embed_papers(
     else:
         # Use parallel database checking for speed
         if len(df) > 50 and max_workers > 1:
-            new_mask = check_existing_papers_parallel(df, db_url, max_workers, verbose)
+            new_mask = check_existing_papers_parallel(df, max_workers, verbose)
         else:
             # Fall back to sequential for small datasets
             if verbose:
@@ -352,7 +336,7 @@ def embed_papers(
             new_mask = []
             with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
                 for _, row in pbar:
-                    exists = db.paper_exists_by_url(row["pdf_url"]) or db.paper_exists_by_title(row["title"])
+                    exists = PaperRepository.exists_by_url(row["pdf_url"]) or PaperRepository.exists_by_title(row["title"])
                     new_mask.append(not exists)
         
         new_df = df[new_mask].reset_index(drop=True)
@@ -631,7 +615,6 @@ def insert_papers(
     df: pd.DataFrame, 
     all_df: pd.DataFrame, 
     embedding_model_name: str, 
-    db: PaperDatabase, 
     verbose: bool = True
 ):
     if verbose:
@@ -668,19 +651,19 @@ def insert_papers(
                 embedding=emb,
             )
             
-            inserted = db.insert_paper(paper, skip_duplicates=True)
+            inserted = PaperRepository.insert(paper, skip_duplicates=True)
 
             # Retrieve paper_id whether newly inserted or existing
-            paper_rec = db.get_paper_by_url(row["pdf_url"])
+            paper_rec = PaperRepository.get_by_url(row["pdf_url"])
             if paper_rec:
                 pid = paper_rec["id"]
                 # If keywords missing, generate & store
-                if not db.get_paper_keywords(pid):
+                if not PaperRepository.get_keywords(pid):
                     try:
                         text_kw = f"{row['title']} {row['abstract']}"
                         kw_scores = extractor.extract_keywords(text_kw)
                         keywords = [kw for kw, _ in kw_scores]
-                        db.update_paper_keywords(pid, keywords)
+                        PaperRepository.update_keywords(pid, keywords)
                     except Exception:
                         pass
 
@@ -711,7 +694,6 @@ def harvest_and_judge(
     date_from: str, 
     date_to: str, 
     checkpoint_dir: str, 
-    db_url: str, 
     top_n: int = 5, 
     cosine_threshold: float = 0.5,
     batch_size: int = 256,
@@ -727,14 +709,11 @@ def harvest_and_judge(
         if batch_size > 1:
             print(f"⚡ Embedding batch size: {batch_size}")
         print(f"📁 Checkpoint directory: {checkpoint_dir}")
-        print(f"🗄️ Database: {db_url}")
-    
-    db = PaperDatabase(db_url)
 
     if verbose:
         print(f"\n🔧 Loading configuration...")
     
-    orch_json = db.get_setting("orchestration")
+    orch_json = SettingsRepository.get("orchestration")
     if orch_json:
         orch_cfg = json.loads(orch_json)
         if verbose:
@@ -746,7 +725,7 @@ def harvest_and_judge(
         if verbose:
             print("📝 Using orchestration config from file")
 
-    arxiv_json = db.get_setting("arxiv_search_categories")
+    arxiv_json = SettingsRepository.get("arxiv_search_categories")
     if arxiv_json:
         arxiv_cfg = json.loads(arxiv_json)
         if verbose:
@@ -759,7 +738,7 @@ def harvest_and_judge(
         if verbose:
             print("📝 Using default ArXiv categories")
 
-    research_interests = db.get_setting("research_interests")
+    research_interests = SettingsRepository.get("research_interests")
     if research_interests is None:
         path = PROJECT_ROOT / "config" / "research_interests.txt"
         if path.exists():
@@ -820,7 +799,6 @@ def harvest_and_judge(
         embedding_model,
         research_interests,
         cosine_threshold,
-        db,
         checkpoint_dir,
         batch_size,
         max_workers,
@@ -836,7 +814,7 @@ def harvest_and_judge(
         verbose,
     )
 
-    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], db, verbose)
+    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], verbose)
     
     if verbose:
         print("\n" + "="*60)
@@ -848,11 +826,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Harvest, rank and store papers")
     parser.add_argument("--date-from", required=True, help="Start date YYYY-MM-DD")
     parser.add_argument("--date-to", required=True, help="End date YYYY-MM-DD")
-    parser.add_argument(
-        "--db-url",
-        default=os.getenv("DATABASE_URL", "data/theseus.db"),
-        help="Database connection URL",
-    )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--cosine-threshold", type=float, default=0.5)
@@ -876,7 +849,6 @@ if __name__ == "__main__":
         date_from=args.date_from,
         date_to=args.date_to,
         checkpoint_dir=args.checkpoint_dir,
-        db_url=args.db_url,
         top_n=args.top_n,
         cosine_threshold=args.cosine_threshold,
         batch_size=args.batch_size,

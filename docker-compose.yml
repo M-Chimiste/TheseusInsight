@@ -35,7 +35,7 @@ services:
     #   start_period: 30s # Give some time for the app to start
 
   db:
-    image: postgres:15
+    image: pgvector/pgvector:pg14
     environment:
       POSTGRES_USER: theseus
       POSTGRES_PASSWORD: theseus
@@ -43,6 +43,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
+      - ./scripts/init_schema_postgres.sql:/docker-entrypoint-initdb.d/init_schema_postgres.sql
 
 volumes:
   postgres_data:

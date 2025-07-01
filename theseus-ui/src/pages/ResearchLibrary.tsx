@@ -449,7 +449,7 @@ Task ID: ${result.task_id}
                       )}
 
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Duration: {formatDuration(item.created_at, item.completed_at)}
+                        Duration: {formatDuration(item.started_at || item.created_at, item.completed_at)}
                       </Typography>
                     </CardContent>
                   </CardActionArea>
@@ -803,7 +803,7 @@ Task ID: ${result.task_id}
                   {selectedTask.completed_at && (
                     <>
                       <strong>Completed:</strong> {new Date(selectedTask.completed_at).toLocaleString()}<br />
-                      <strong>Duration:</strong> {formatDuration(selectedTask.created_at, selectedTask.completed_at)}
+                      <strong>Duration:</strong> {formatDuration(selectedTask.started_at || selectedTask.created_at, selectedTask.completed_at)}
                     </>
                   )}
                 </Typography>

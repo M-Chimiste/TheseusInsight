@@ -11,6 +11,7 @@ import asyncio
 
 from ..state import MindMapState, Message
 from ...inference.llm import LLMModelFactory
+from ...data_access import PaperRepository
 
 logger = logging.getLogger(__name__)
 
@@ -23,20 +24,18 @@ class SummariserNode:
     that highlight key contributions and relevance to the seed paper.
     """
     
-    def __init__(self, config: Dict[str, Any], db=None):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the Summariser Node.
         
         Args:
             config: Configuration dictionary containing LLM settings
-            db: Database instance for caching summaries
         """
         self.config = config
         # No hard character cap; rely on LLM token limit
         self.max_summary_length = None
         self.batch_size = config.get("summary_batch_size", 5)
         self.progress_callback = None  # Will be set during workflow execution
-        self.db = db
         
     def __call__(self, state: MindMapState) -> Dict[str, Any]:
         """
@@ -125,19 +124,16 @@ class SummariserNode:
             
             # Attempt to fetch cached summaries from DB if available
             papers_to_summarize = []
-            if self.db is not None:
-                for p in all_papers:
+            for p in all_papers:
+                cached = None
+                try:
+                    cached = PaperRepository.get_paper_summary(p["id"])
+                except Exception:
                     cached = None
-                    try:
-                        cached = self.db.get_paper_summary(p["id"])
-                    except Exception:
-                        cached = None
-                    if cached:
-                        summaries[p["id"]] = cached
-                    else:
-                        papers_to_summarize.append(p)
-            else:
-                papers_to_summarize = all_papers
+                if cached:
+                    summaries[p["id"]] = cached
+                else:
+                    papers_to_summarize.append(p)
             
             if not papers_to_summarize:
                 logger.info("All summaries retrieved from cache; skipping LLM calls")
@@ -161,12 +157,11 @@ class SummariserNode:
                     logger.info(f"Generated summaries for batch {i//self.batch_size + 1}/{(len(papers_to_summarize) + self.batch_size - 1)//self.batch_size}")
                     
                     # Save newly generated summaries to DB if possible
-                    if self.db is not None:
-                        for pid, summ in batch_summaries.items():
-                            try:
-                                self.db.update_paper_summary(pid, summ)
-                            except Exception:
-                                pass
+                    for pid, summ in batch_summaries.items():
+                        try:
+                            PaperRepository.update_paper_summary(pid, summ)
+                        except Exception:
+                            pass
                 
                 logger.info(f"Successfully generated {len(summaries)} summaries")
                 

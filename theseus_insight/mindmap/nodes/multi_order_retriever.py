@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, List, Set
 
 from ..state import MindMapState, Message, create_paper_node, create_mindmap_edge
+from ...data_access import PaperRepository
 import yake
 
 logger = logging.getLogger(__name__)
@@ -26,14 +27,8 @@ class MultiOrderRetrieverNode:
     Controls exponential growth with max_nodes_per_order parameter.
     """
     
-    def __init__(self, db):
-        """
-        Initialize the Multi-Order Retriever Node.
-        
-        Args:
-            db: Database instance (PaperDatabase)
-        """
-        self.db = db
+    def __init__(self):
+        """Initialize the Multi-Order Retriever Node."""
         self.logger = logging.getLogger(__name__)
         self.keyword_extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
         
@@ -100,7 +95,7 @@ class MultiOrderRetrieverNode:
                     
                     try:
                         # Find similar papers for this source
-                        similar_papers_data = self.db.find_similar_papers_mindmap(
+                        similar_papers_data = PaperRepository.find_similar_papers_mindmap(
                             seed_paper_id=source_paper_id,
                             k=k_neighbors,
                             similarity_threshold=similarity_threshold
@@ -131,13 +126,13 @@ class MultiOrderRetrieverNode:
                             )
                             all_edges.append(edge)
 
-                            kw = self.db.get_paper_keywords(paper_id)
+                            kw = PaperRepository.get_paper_keywords(paper_id)
                             if not kw:
                                 try:
                                     text_kw = f"{paper_data['title']} {paper_data['abstract']}"
                                     kw_scores = self.keyword_extractor.extract_keywords(text_kw)
                                     kw = [w for w, _ in kw_scores]
-                                    self.db.update_paper_keywords(paper_id, kw)
+                                    PaperRepository.update_paper_keywords(paper_id, kw)
                                 except Exception:
                                     kw = []
                             paper_node["keywords"] = kw
@@ -209,14 +204,11 @@ class MultiOrderRetrieverNode:
         }
 
 
-def create_multi_order_retriever_node(db) -> MultiOrderRetrieverNode:
+def create_multi_order_retriever_node() -> MultiOrderRetrieverNode:
     """
     Factory function to create a MultiOrderRetrieverNode.
-    
-    Args:
-        db: Database instance
         
     Returns:
         Configured MultiOrderRetrieverNode instance
     """
-    return MultiOrderRetrieverNode(db) 
+    return MultiOrderRetrieverNode() 

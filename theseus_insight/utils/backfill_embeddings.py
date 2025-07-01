@@ -14,12 +14,11 @@ from tqdm import tqdm
 # Add the project root to the path so we can import theseus_insight modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from theseus_insight.data_model.data_handling import PaperDatabase
+from theseus_insight.data_access import PaperRepository, SettingsRepository
 from theseus_insight.inference import SentenceTransformerInference
 
 
 def backfill_embeddings(
-    db_url: str,
     embedding_model_name: Optional[str] = None,
     trust_remote_code: bool = True,
     batch_size: int = 256,
@@ -30,7 +29,6 @@ def backfill_embeddings(
     Backfill embeddings for papers that don't have them.
     
     Args:
-        db_url: Database connection URL
         embedding_model_name: Name of the embedding model to use. If None, tries to get from orchestration config.
         trust_remote_code: Whether to trust remote code for the embedding model
         batch_size: How many papers to process at once (1 = no batching, higher = more efficient)
@@ -38,14 +36,13 @@ def backfill_embeddings(
         verbose: If True, prints detailed progress information
     """
     if verbose:
-        print(f"Connecting to database: {db_url}")
-    db = PaperDatabase(db_url)
+        print("Connecting to database using repository pattern...")
     
     # Get embedding model configuration
     if embedding_model_name is None:
         if verbose:
             print("No embedding model specified, trying to get from orchestration config...")
-        orchestration_json = db.get_setting("orchestration")
+        orchestration_json = SettingsRepository.get("orchestration")
         if not orchestration_json:
             raise ValueError("No orchestration config found in database and no embedding model specified")
         
@@ -60,7 +57,7 @@ def backfill_embeddings(
             print(f"Using embedding model from config: {embedding_model_name}")
     
     # Get papers without embeddings
-    papers_without_embeddings = db.get_papers_without_embeddings()
+    papers_without_embeddings = PaperRepository.get_papers_without_embeddings()
     if verbose:
         print(f"Found {len(papers_without_embeddings)} papers without embeddings")
         if batch_size > 1:
@@ -122,7 +119,7 @@ def backfill_embeddings(
                     embedding = list(embedding)
                 
                 # Update the paper with the new embedding
-                db.update_paper_embedding(paper['id'], embedding)
+                PaperRepository.update_embedding(paper['id'], embedding)
                 processed_count += 1
                 
             except Exception as e:
@@ -167,7 +164,7 @@ def backfill_embeddings(
                         embedding = list(embedding)
                     
                     # Update the paper with the new embedding
-                    db.update_paper_embedding(paper['id'], embedding)
+                    PaperRepository.update_embedding(paper['id'], embedding)
                     processed_count += 1
                     
                 except Exception as e:
@@ -191,14 +188,13 @@ def backfill_embeddings(
                     elif not isinstance(embedding, list):
                         embedding = list(embedding)
                     
-                    db.update_paper_embedding(paper['id'], embedding)
+                    PaperRepository.update_embedding(paper['id'], embedding)
                     processed_count += 1
                     
                 except Exception as e2:
                     if verbose:
                         print(f"\nError processing paper ID {paper['id']} individually: {e2}")
                     error_count += 1
-                    continue
     
     if verbose:
         print(f"\nBackfill complete!")
@@ -213,11 +209,6 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Backfill embeddings for papers without them")
-    parser.add_argument(
-        "--db-url", 
-        default=os.getenv("DATABASE_URL", "data/theseus.db"),
-        help="Database connection URL (default: from DATABASE_URL env var)"
-    )
     parser.add_argument(
         "--embedding-model", 
         help="Embedding model name (default: from orchestration config)"
@@ -258,7 +249,6 @@ def main():
     
     try:
         backfill_embeddings(
-            db_url=args.db_url,
             embedding_model_name=args.embedding_model,
             trust_remote_code=args.trust_remote_code,
             batch_size=args.batch_size,

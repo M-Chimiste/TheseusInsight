@@ -58,7 +58,7 @@ export const settingsApi = {
   getModelProviders: () => api.get('/model-providers'),
   getModels: () => api.get('/models'),
   runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
-  abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
+  abortTask: (taskId: string) => api.post(`/api/tasks/${taskId}/abort`),
   exportDatabase: (onProgress?: (percent: number) => void) =>
     api.get('/settings/database/export', {
       responseType: 'blob',
@@ -523,6 +523,7 @@ export interface ResearchTaskResult {
   compressed_notes: string;
   workflow_messages: any[];
   created_at: string;
+  started_at?: string;
   completed_at?: string;
   error_message?: string;
 }
@@ -532,6 +533,7 @@ export interface ResearchHistoryItem {
   research_question: string;
   status: string;
   created_at: string;
+  started_at?: string;
   completed_at?: string;
   statistics?: {
     research_loops: number;

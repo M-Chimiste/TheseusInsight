@@ -17,8 +17,11 @@ from docling.document_converter import DocumentConverter
 
 # Local application imports
 from theseus_insight.communication import GmailCommunication, construct_email_body, upload_video
-from theseus_insight.data_processing import ArxivDataProcessor, PaperDatabase, Paper, Newsletter, Podcast
-from theseus_insight.data_model import PaperDatabase, Paper, Newsletter, Logs
+from theseus_insight.data_processing import ArxivDataProcessor, Paper, Newsletter, Podcast
+from theseus_insight.data_access import (
+    PaperRepository, LogsRepository, NewsletterRepository, 
+    PodcastRepository, SettingsRepository
+)
 from theseus_insight.inference import SentenceTransformerInference
 from theseus_insight.podcast import PodcastGenerator
 from theseus_insight.prompt import (
@@ -61,7 +64,7 @@ class TheseusInsight:
                  temperature=0.1,
                  cosine_similarity_threshold=0.5,
                  db_saving=True,
-                 data_path=os.getenv("DATABASE_URL", "data/theseus.db"),
+                 data_path=os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus"),
                  generate_podcast=False,
                  intro_music_path=None,
                  output_format: str = "mp3",
@@ -155,8 +158,8 @@ class TheseusInsight:
         self.cosine_similarity_threshold = cosine_similarity_threshold
         self.db_saving = db_saving
         
-        # DB
-        self.papers_db = PaperDatabase(data_path)
+        # Store data_path for reference (repositories handle their own connections)
+        self.data_path = data_path
         
         # Podcast settings
         self.intro_music_path = intro_music_path
@@ -318,8 +321,11 @@ class TheseusInsight:
     def _log_error(self, status_code: int, error: Exception):
         """Helper to log errors to the database and optionally send an email."""
         error_msg = f"{type(error).__name__}: {str(error)}"
-        log = Logs(task_id=self.task_id, status=f"ERROR_{status_code}")
-        self.papers_db.insert_log(log)
+        LogsRepository.upsert(
+            task_id=self.task_id, 
+            status=f"ERROR_{status_code}",
+            datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        )
 
         # Send error notification email only once per run
         if not self.error_notified:
@@ -483,12 +489,11 @@ Theseus Insight Team
             """.strip()
         
         # Log the event
-        log = Logs(
+        LogsRepository.upsert(
             task_id=self.task_id, 
             status=log_status,
             datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
-        self.papers_db.insert_log(log)
         
         # Send notification email if email generation is enabled
         if self.generate_email and self.receiver_address:
@@ -521,12 +526,10 @@ Theseus Insight Team
                     notification_type = "NO_RELEVANT_PAPERS"
                 else:
                     notification_type = "NO_PAPERS_FOUND"
-                self.papers_db.insert_log(
-                    Logs(
-                        task_id=self.task_id, 
-                        status=f"EMAIL_{notification_type}_NOTIFICATION: Sent to {self.receiver_address}",
-                        datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    )
+                LogsRepository.upsert(
+                    task_id=self.task_id, 
+                    status=f"EMAIL_{notification_type}_NOTIFICATION: Sent to {self.receiver_address}",
+                    datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 )
                 
             except Exception as e:
@@ -706,7 +709,7 @@ Theseus Insight Team
                     )
                     
                     # Try to insert paper, tracking duplicates
-                    was_inserted = self.papers_db.insert_paper(paper, skip_duplicates=True)
+                    was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
                     if was_inserted:
                         saved_count += 1
                         # Extract and cache keywords
@@ -719,9 +722,9 @@ Theseus Insight Team
                             kw_scores = extractor.extract_keywords(text_kw)
                             keywords = [w for w, _ in kw_scores]
                             # Retrieve inserted paper ID via URL lookup
-                            inserted_paper = self.papers_db.get_paper_by_url(row['pdf_url'])
+                            inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
                             if inserted_paper and keywords:
-                                self.papers_db.update_paper_keywords(inserted_paper['id'], keywords)
+                                PaperRepository.update_keywords(inserted_paper['id'], keywords)
                         except Exception:
                             pass
                     else:
@@ -843,7 +846,7 @@ Theseus Insight Team
                             existing_urls = []
                             new_papers_mask = []
                             for _, row in data_df.iterrows():
-                                if self.papers_db.paper_exists_by_url(row['pdf_url']):
+                                if PaperRepository.exists_by_url(row['pdf_url']):
                                     existing_urls.append(row['pdf_url'])
                                     new_papers_mask.append(False)
                                 else:
@@ -1116,7 +1119,7 @@ Theseus Insight Team
                             end_date=self.end_date.strftime('%Y-%m-%d'),
                             date_sent=TODAY.strftime('%Y-%m-%d')
                         )
-                        self.papers_db.insert_newsletter(newsletter)
+                        NewsletterRepository.insert(newsletter)
             if progress_callback:
                 progress_callback("newsletter", 80, "Newsletter content generation complete")
 
@@ -1156,8 +1159,10 @@ Theseus Insight Team
                     self.communication.compose_message(email_body, self.start_date, self.end_date)
                     self.communication.send_email()
                     # Log successful email
-                    self.papers_db.insert_log(
-                        Logs(task_id=self.task_id, status=f"EMAIL_SUCCESS: Successfully sent newsletter to {self.receiver_address}")
+                    LogsRepository.upsert(
+                        task_id=self.task_id, 
+                        status=f"EMAIL_SUCCESS: Successfully sent newsletter to {self.receiver_address}",
+                        datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     )
                 except Exception as e:
                     self._log_error(500, e)
@@ -1258,7 +1263,7 @@ Theseus Insight Team
                             script=json.dumps(podcast_content['dict_transcript']),
                             description=podcast_content['description']
                         )
-                        self.papers_db.insert_podcast(podcast)
+                        PodcastRepository.insert(podcast)
 
                     # Part C: Publish to YouTube if requested
                     if self.publish_podcast:
@@ -1299,7 +1304,11 @@ Theseus Insight Team
                     print(f"Failed to purge Ollama cache for some models: {e}")
 
             # Log final success
-            self.papers_db.insert_log(Logs(task_id=self.task_id, status="COMPLETED: Successfully completed Theseus Insight run"))
+            LogsRepository.upsert(
+                task_id=self.task_id, 
+                status="COMPLETED: Successfully completed Theseus Insight run",
+                datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            )
 
             # Optionally remove all checkpoints on success
             self._cleanup_checkpoints()

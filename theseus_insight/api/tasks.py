@@ -7,7 +7,10 @@ from enum import Enum
 from .models import RunStatus, NodeStatus
 from ..theseus_insight import TheseusInsight
 from ..podcast.generator import PodcastGenerator
-from ..data_model import PaperDatabase, Logs
+from ..data_access import (
+    TaskRepository, LogsRepository, SettingsRepository, 
+    PaperRepository, PaperFulltextRepository
+)
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -18,7 +21,7 @@ class TaskStatus(str, Enum):
 class TaskManager:
     def __init__(self):
         self.status_updates: Dict[str, List[asyncio.Queue]] = {}
-        self.db = PaperDatabase(os.getenv("DATABASE_URL", "data/theseus.db"))
+        # Remove legacy db instance - now using repositories directly
 
         # Queues and workers for task processing
         # general_task_queue handles newsletter/podcast/etc.
@@ -29,16 +32,56 @@ class TaskManager:
         self.visualizer_worker_task: Optional[asyncio.Task] = None
 
         # Mark any interrupted tasks as failed on startup
-        self.db.mark_interrupted_tasks_as_failed()
+        self._mark_interrupted_tasks_as_failed()
 
         # Clean up old tasks on startup
-        self.db.cleanup_old_tasks(days_old=7)
+        self._cleanup_old_tasks(days_old=7)
+
+    def _mark_interrupted_tasks_as_failed(self):
+        """Mark interrupted tasks as failed using repository pattern."""
+        # Get all pending/processing tasks and mark them as failed
+        try:
+            active_tasks = TaskRepository.get_active_tasks()
+            current_time = datetime.now().isoformat()
+            
+            for task in active_tasks:
+                TaskRepository.update_task_status(
+                    task_id=task['task_id'],
+                    status="failed",
+                    progress=0.0,
+                    current_step="interrupted",
+                    message="Task was interrupted by server restart",
+                    error="Task was interrupted by server restart",
+                    end_time=current_time
+                )
+        except Exception as e:
+            print(f"Error marking interrupted tasks as failed: {e}")
+
+    def _cleanup_old_tasks(self, days_old: int = 7):
+        """Clean up old tasks using repository pattern."""
+        try:
+            # Get tasks older than specified days and delete them
+            from datetime import timedelta
+            cutoff_date = (datetime.now() - timedelta(days=days_old)).isoformat()
+            
+            # For now, we'll implement this as a simple method
+            # In the future, we could add a proper cleanup method to TaskRepository
+            from ..db import get_cursor
+            with get_cursor() as cur:
+                cur.execute(
+                    "DELETE FROM tasks WHERE start_time < %s AND status IN ('completed', 'failed')",
+                    (cutoff_date,)
+                )
+        except Exception as e:
+            print(f"Error cleaning up old tasks: {e}")
 
     async def start_worker(self) -> None:
         """Start the background workers that process queued tasks."""
         if self.general_worker_task is None or self.general_worker_task.done():
+            print("INFO:     Starting general task worker")
             self.general_worker_task = asyncio.create_task(self._worker(self.general_task_queue))
         if self.visualizer_worker_task is None or self.visualizer_worker_task.done():
+            print("INFO:     Starting visualizer task worker")
             self.visualizer_worker_task = asyncio.create_task(self._worker(self.visualizer_queue))
 
     async def stop_worker(self) -> None:
@@ -62,6 +105,10 @@ class TaskManager:
             func, task_id = item
             try:
                 await func(task_id)
+            except Exception as e:
+                print(f"Error processing task {task_id}: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
                 queue.task_done()
 
@@ -70,6 +117,9 @@ class TaskManager:
         queue = self.visualizer_queue if visualizer or func == self.run_visualizer_task else self.general_task_queue
         await queue.put((func, task_id))
         
+        # Ensure workers are still running
+        await self.start_worker()
+
     async def cleanup(self):
         """Clean up all asyncio resources."""
         # Stop worker processing
@@ -112,12 +162,12 @@ class TaskManager:
         """Create a new task."""
         start_time = datetime.now().isoformat()
         
-        # Store task in database
-        self.db.insert_task(
+        # Store task in database using repository
+        TaskRepository.insert_task(
             task_id=task_id,
             task_type=task_type,
             status=TaskStatus.PENDING.value,
-            config=config,
+            config_json=config,
             start_time=start_time,
             progress=0,
             current_step="initializing",
@@ -129,7 +179,7 @@ class TaskManager:
         
     def get_task_status(self, task_id: str) -> Optional[Dict]:
         """Get the current status of a task."""
-        return self.db.get_task(task_id)
+        return TaskRepository.get_task(task_id)
         
     async def subscribe_to_updates(self, task_id: str) -> asyncio.Queue:
         """Subscribe to status updates for a task."""
@@ -171,23 +221,23 @@ class TaskManager:
     ) -> None:
         """Update task status and notify subscribers."""
         # Check if task exists in database
-        task = self.db.get_task(task_id)
+        task = TaskRepository.get_task(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
         # Calculate final progress based on status
         final_progress = progress if status == TaskStatus.PROCESSING else (100 if status == TaskStatus.COMPLETED else 0)
         
-        # Update task in database
+        # Update task in database using repository
         end_time = datetime.now().isoformat() if status in [TaskStatus.COMPLETED, TaskStatus.FAILED] else None
-        self.db.update_task_status(
+        TaskRepository.update_task_status(
             task_id=task_id,
             status=status.value,
             progress=final_progress,
             current_step=current_step,
             message=message,
             error=error,
-            result=result,
+            result_json=result,
             end_time=end_time
         )
         
@@ -212,12 +262,13 @@ class TaskManager:
             error=error,
         )
         
-        # Log to the logs table as well
+                # Log to the logs table as well
         final_status = status_obj.overallStatus
-        log = Logs(task_id=task_id, 
-                   status=final_status, 
-                   datetime_run=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        self.db.insert_log(log)
+        LogsRepository.upsert(
+            task_id=task_id,
+            status=final_status,
+            datetime_run=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
         
         # Notify all subscribers
         if task_id in self.status_updates:
@@ -261,14 +312,14 @@ class TaskManager:
         """
         # Update DB row immediately
         end_time = datetime.now().isoformat() if status in [TaskStatus.COMPLETED, TaskStatus.FAILED] else None
-        self.db.update_task_status(
+        TaskRepository.update_task_status(
             task_id=task_id,
             status=status.value,
             progress=progress,
             current_step=current_step,
             message=message,
             error=error,
-            result=result,
+            result_json=result,
             end_time=end_time,
         )
 
@@ -293,9 +344,8 @@ class TaskManager:
         )
 
         # Persist to logs
-        log = Logs(task_id=task_id, status=status, datetime_run=timestamp)
-        self.db.insert_log(log)
-
+        LogsRepository.upsert(task_id=task_id, status=status, datetime_run=timestamp)
+        
         # Notify subscribers synchronously using put_nowait to avoid awaits
         if task_id in self.status_updates:
             for queue in list(self.status_updates[task_id]):
@@ -335,42 +385,31 @@ class TaskManager:
     async def run_newsletter_task(self, task_id: str):
         """Run the newsletter generation task."""
         try:
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
             config = task["config"]
             email_recipients = config.get("emailRecipients", None)
             research_interests_override = config.get("researchInterests", None)
-            orchestration_config = self.db.get_setting("orchestration")
+            orchestration_config = SettingsRepository.get("orchestration")
             if not orchestration_config:
                 orchestration_config = "config/orchestration.json"
-            # Extract configuration
-            date_range = config.get("dateRange", {})
-            start_date = date_range.get("from", None)
-            end_date = date_range.get("to", None)
-            
-            # Initialize TheseusInsight with the configuration
-            insight = TheseusInsight(
-                start_date=start_date,
-                end_date=end_date,
-                judge_model_config={
-                    "model_name": config["judgeModel"],
-                    "model_type": "openai",  # You might want to make this configurable
-                    "max_new_tokens": 1024,
-                    "temperature": 0.1
-                },
-                newsletter_model_config={
-                    "model_name": config["newsletterModel"],
-                    "model_type": "openai",  # You might want to make this configurable
-                    "max_new_tokens": 1024,
-                    "temperature": 0.1
+
+            # Create TheseusInsight instance for newsletter generation
+            ti = TheseusInsight(
+                research_interests_override=research_interests_override,
+                orchestration_config=orchestration_config,
+                task_id=task_id,
+                progress_callback=self._progress_callback(task_id),
+                **{
+                    k: v for k, v in config.items() 
+                    if k not in ["emailRecipients", "researchInterests"]
                 },
                 generate_podcast=False,  # We handle podcast generation separately for now
-                data_path=self.db.path,
+                data_path=os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus"),
                 generate_email=True,
                 receiver_address_override=email_recipients,
-                research_interests_override=research_interests_override,
-                orchestration_config=orchestration_config
+                verbose=True
             )
             
             # Run the pipeline with progress tracking
@@ -386,7 +425,7 @@ class TaskManager:
             
             # Run the pipeline
             result = await asyncio.to_thread(
-                insight.run,
+                ti.run,
                 progress_callback=progress_callback
             )
             
@@ -413,7 +452,7 @@ class TaskManager:
     async def run_podcast_task(self, task_id: str):
         """Run the podcast generation task."""
         try:
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
             config = task["config"]
@@ -521,7 +560,7 @@ class TaskManager:
     async def run_visualizer_task(self, task_id: str):
         """Run the audio visualization task."""
         try:
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
             config = task["config"]
@@ -618,7 +657,7 @@ class TaskManager:
         try:
             from ..utils.db_migration.db_export import DatabaseExporter
 
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
 
@@ -633,7 +672,9 @@ class TaskManager:
             export_dir = f"data/temp/{task_id}_export"
             os.makedirs(export_dir, exist_ok=True)
 
-            exporter = DatabaseExporter(self.db.db_path, export_dir)
+            # Get database URL from environment
+            db_url = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
+            exporter = DatabaseExporter(db_url, export_dir)
 
             loop = asyncio.get_event_loop()
 
@@ -680,16 +721,20 @@ class TaskManager:
         """Run the database import task with progress tracking."""
         try:
             print(f"DEBUG: Starting database import task {task_id}")
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
-            config = task["config"]
+            
+            print(f"DEBUG: Task retrieved: {task}")
+            # Get the config_json field (already parsed by PostgreSQL driver if it's JSON type)
+            task_config = task.get("config_json", {})
+            print(f"DEBUG: Task config: {task_config}")
             
             from ..utils.db_migration.db_import import DatabaseImporter
             
-            archive_path = config.get("archive_path")
-            import_mode = config.get("import_mode", "merge")
-            filename = config.get("filename", "unknown")
+            archive_path = task_config.get("archive_path")
+            import_mode = task_config.get("import_mode", "merge")
+            filename = task_config.get("filename", "unknown")
             
             print(f"DEBUG: Archive path: {archive_path}, Mode: {import_mode}, Filename: {filename}")
             
@@ -704,8 +749,9 @@ class TaskManager:
             )
             
             # Initialize importer
-            print(f"DEBUG: Initializing DatabaseImporter with db_path: {self.db.db_path}")
-            importer = DatabaseImporter(self.db.db_path)
+            db_url = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
+            print(f"DEBUG: Initializing DatabaseImporter with db_url: {db_url}")
+            importer = DatabaseImporter(db_url)
             
             # Create progress callback that updates task status
             # Capture the event loop from the main thread before going to thread pool
@@ -772,6 +818,7 @@ class TaskManager:
                 )
                 
                 # Clear existing data (destructive) with progress tracking
+                print("DEBUG: About to call importer.clear_all_data")
                 deletion_results = await asyncio.to_thread(
                     importer.clear_all_data,
                     clearing_progress_callback
@@ -789,14 +836,21 @@ class TaskManager:
             
             # Import the data
             print(f"DEBUG: Starting import from archive, skip_duplicates: {skip_duplicates}")
-            results = await asyncio.to_thread(
-                importer.import_from_archive,
-                archive_path,
-                skip_duplicates,
-                import_progress_callback
-            )
-            
-            print(f"DEBUG: Import completed with results: {results}")
+            print(f"DEBUG: About to call importer.import_from_archive with args: {archive_path}, {skip_duplicates}")
+            try:
+                results = await asyncio.to_thread(
+                    importer.import_from_archive,
+                    archive_path,
+                    skip_duplicates,
+                    import_progress_callback
+                )
+                print(f"DEBUG: Import completed with results: {results}")
+            except Exception as import_error:
+                print(f"DEBUG: Error during import_from_archive: {import_error}")
+                print(f"DEBUG: Import error type: {type(import_error)}")
+                import traceback
+                traceback.print_exc()
+                raise
             
             # Prepare result summary
             total_imported = sum(r.get("imported", 0) for r in results.values() if isinstance(r, dict))
@@ -839,16 +893,20 @@ class TaskManager:
             
         except Exception as e:
             print(f"DEBUG: Error in database import task {task_id}: {e}")
+            print(f"DEBUG: Error type: {type(e)}")
             import traceback
             traceback.print_exc()
             
             # Clean up temporary file on error
             try:
-                config = task.get("config", {}) if 'task' in locals() else {}
-                archive_path = config.get("archive_path")
-                if archive_path and os.path.exists(archive_path):
-                    os.remove(archive_path)
-            except Exception:
+                if 'task' in locals() and task:
+                    task_config_cleanup = task.get("config_json", {})
+                    archive_path_cleanup = task_config_cleanup.get("archive_path")
+                    if archive_path_cleanup and os.path.exists(archive_path_cleanup):
+                        os.remove(archive_path_cleanup)
+                        print(f"DEBUG: Cleaned up temporary file on error: {archive_path_cleanup}")
+            except Exception as cleanup_error:
+                print(f"DEBUG: Error during cleanup: {cleanup_error}")
                 pass
                 
             await self.update_task_status(
@@ -864,7 +922,7 @@ class TaskManager:
     #     """Run the research agent task with progress tracking."""
     #     try:
     #         print(f"DEBUG: Starting research agent task {task_id}")
-    #         task = self.db.get_task(task_id)
+    #         task = TaskRepository.get_task(task_id)
     #         if not task:
     #             raise ValueError(f"Task {task_id} not found")
             
@@ -890,7 +948,7 @@ class TaskManager:
             
     #         # Create research agent
     #         agent = create_research_agent(
-    #             db=self.db,
+    #             db=TaskRepository,
     #             num_papers_target=num_papers_target,
     #             max_steps=max_steps,
     #             enable_pdf_download=enable_pdf_download
@@ -1022,13 +1080,18 @@ class TaskManager:
         """Run the mind-map expansion task."""
         try:
             print(f"DEBUG: Starting mind-map expansion task {task_id}")
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 print(f"DEBUG: Task {task_id} not found in database")
                 raise ValueError(f"Task {task_id} not found")
             
             print(f"DEBUG: Task found: {task}")
-            config = task["config"]
+            print(f"DEBUG: config_json type: {type(task['config_json'])}")
+            print(f"DEBUG: config_json value: {task['config_json']}")
+            if isinstance(task["config_json"], str):
+                config = json.loads(task["config_json"])
+            else:
+                config = task["config_json"]
             paper_id = config.get("paper_id")
             k = config.get("k", 15)
             similarity_threshold = config.get("similarity_threshold", 0.3)
@@ -1047,7 +1110,7 @@ class TaskManager:
             from ..mindmap.workflow import create_mindmap_workflow
             
             # Get configuration from database or fallback file
-            orchestration_json = self.db.get_setting("orchestration")
+            orchestration_json = SettingsRepository.get("orchestration")
             if orchestration_json:
                 print("DEBUG: Loaded orchestration config from DB settings table")
                 orchestration_config = json.loads(orchestration_json)
@@ -1090,9 +1153,9 @@ class TaskManager:
                 print(f"DEBUG: LLM model config determined: {llm_model_config}")
             
             print(f"DEBUG: Creating mind-map workflow...")
-            # Create workflow
+            # Create workflow with database connection
             workflow = create_mindmap_workflow(
-                db=self.db,
+                db=None,  # Pass None - workflow nodes will use repositories directly
                 config=orchestration_config
             )
             print(f"DEBUG: Mind-map workflow created successfully")
@@ -1205,11 +1268,14 @@ class TaskManager:
         """Run the PDF parsing task for mind-map papers."""
         try:
             print(f"DEBUG: Starting mind-map PDF parsing task {task_id}")
-            task = self.db.get_task(task_id)
+            task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
             
-            config = task["config"]
+            if isinstance(task["config_json"], str):
+                config = json.loads(task["config_json"])
+            else:
+                config = task["config_json"]
             paper_ids = config.get("paper_ids", [])
             
             if not paper_ids:
@@ -1228,7 +1294,7 @@ class TaskManager:
             from ..inference.llm import LLMModelFactory
             
             # Get embedding model configuration from orchestration settings
-            orchestration_json = self.db.get_setting("orchestration")
+            orchestration_json = SettingsRepository.get("orchestration")
             orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
             embedding_config = orchestration_config.get("embedding_model", {})
             
@@ -1259,7 +1325,7 @@ class TaskManager:
                     )
                     
                     # Get paper details
-                    paper = self.db.get_paper_by_id(int(paper_id))
+                    paper = PaperRepository.get_by_id(int(paper_id))
                     if not paper:
                         failed_papers.append({"paper_id": paper_id, "error": "Paper not found"})
                         continue
@@ -1283,7 +1349,7 @@ class TaskManager:
                         embedding = embedding_model.invoke(text_content, to_list=True)
                         
                         # Store in database
-                        self.db.insert_paper_fulltext(
+                        PaperFulltextRepository.insert(
                             paper_id=int(paper_id),
                             content=text_content,
                             embedding=embedding,

@@ -150,88 +150,96 @@ class DatabaseMigrator:
         """
         print("Verifying migration...")
         
-        source_exporter = DatabaseExporter(source_db, tempfile.mkdtemp())
-        target_exporter = DatabaseExporter(target_db, tempfile.mkdtemp())
+        from ...data_access import (
+            PaperRepository, NewsletterRepository, PodcastRepository, 
+            LitReviewRepository, ResearchRunRepository, MindmapReportRepository, ModelCatalogRepository
+        )
+        from ...db import get_cursor
         
-        # Get counts from both databases for core tables
-        source_papers = source_exporter.db.fetch_all_papers()
-        source_podcasts = source_exporter.db.fetch_all_podcasts()
-        source_newsletters = source_exporter.db.fetch_all_newsletters()
-        source_lit_reviews = source_exporter.db.fetch_all_literature_reviews()
+        # Helper function to get counts from a database
+        def get_table_counts(db_url: str) -> Dict[str, int]:
+            # Temporarily set DATABASE_URL for this verification
+            import os
+            original_db_url = os.environ.get('DATABASE_URL')
+            os.environ['DATABASE_URL'] = db_url
+            
+            try:
+                counts = {}
+                with get_cursor() as cursor:
+                    # Count core tables
+                    cursor.execute("SELECT COUNT(*) FROM papers")
+                    counts['papers'] = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM podcasts")
+                    counts['podcasts'] = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM newsletters")
+                    counts['newsletters'] = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM lit_reviews")
+                    counts['lit_reviews'] = cursor.fetchone()[0]
+                    
+                    # Count new tables if they exist
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM research_runs")
+                        counts['research_runs'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['research_runs'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM research_agent_state")
+                        counts['research_agent_state'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['research_agent_state'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM paper_fulltext")
+                        counts['paper_fulltext'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['paper_fulltext'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM mindmap_reports")
+                        counts['mindmap_reports'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['mindmap_reports'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM model_catalog")
+                        counts['model_catalog'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['model_catalog'] = 0
+                
+                return counts
+            finally:
+                # Restore original DATABASE_URL
+                if original_db_url:
+                    os.environ['DATABASE_URL'] = original_db_url
+                elif 'DATABASE_URL' in os.environ:
+                    del os.environ['DATABASE_URL']
         
-        target_papers = target_exporter.db.fetch_all_papers()
-        target_podcasts = target_exporter.db.fetch_all_podcasts()
-        target_newsletters = target_exporter.db.fetch_all_newsletters()
-        target_lit_reviews = target_exporter.db.fetch_all_literature_reviews()
+        # Get counts from both databases
+        source_counts = get_table_counts(source_db)
+        target_counts = get_table_counts(target_db)
         
-        verification = {
-            "papers": {
-                "source_count": len(source_papers),
-                "target_count": len(target_papers),
-                "match": len(source_papers) <= len(target_papers)  # Target can have more due to existing data
-            },
-            "podcasts": {
-                "source_count": len(source_podcasts),
-                "target_count": len(target_podcasts),
-                "match": len(source_podcasts) <= len(target_podcasts)
-            },
-            "newsletters": {
-                "source_count": len(source_newsletters),
-                "target_count": len(target_newsletters),
-                "match": len(source_newsletters) <= len(target_newsletters)
-            },
-            "literature_reviews": {
-                "source_count": len(source_lit_reviews),
-                "target_count": len(target_lit_reviews),
-                "match": len(source_lit_reviews) <= len(target_lit_reviews)
+        verification = {}
+        for table in source_counts:
+            verification[table] = {
+                "source_count": source_counts[table],
+                "target_count": target_counts[table],
+                "match": source_counts[table] <= target_counts[table]  # Target can have more due to existing data
             }
-        }
         
-        # Verify new tables if they exist
-        try:
-            source_research_runs = source_exporter.db.get_research_runs_history(limit=10000)
-            target_research_runs = target_exporter.db.get_research_runs_history(limit=10000)
-            verification["research_runs"] = {
-                "source_count": len(source_research_runs),
-                "target_count": len(target_research_runs),
-                "match": len(source_research_runs) <= len(target_research_runs)
-            }
-        except Exception as e:
-            print(f"Note: Could not verify research_runs (table may not exist): {e}")
-            verification["research_runs"] = {"note": "Table not available for verification"}
+        # Overall verification status
+        all_match = all(v["match"] for v in verification.values())
+        verification["overall_status"] = "SUCCESS" if all_match else "MISMATCH"
         
-        try:
-            source_mindmap_reports = source_exporter.db.get_mindmap_reports(limit=10000)
-            target_mindmap_reports = target_exporter.db.get_mindmap_reports(limit=10000)
-            verification["mindmap_reports"] = {
-                "source_count": len(source_mindmap_reports),
-                "target_count": len(target_mindmap_reports),
-                "match": len(source_mindmap_reports) <= len(target_mindmap_reports)
-            }
-        except Exception as e:
-            print(f"Note: Could not verify mindmap_reports (table may not exist): {e}")
-            verification["mindmap_reports"] = {"note": "Table not available for verification"}
+        print(f"Migration verification: {verification['overall_status']}")
+        for table, info in verification.items():
+            if table != "overall_status":
+                status = "✓" if info["match"] else "✗"
+                print(f"  {table}: {status} Source: {info['source_count']}, Target: {info['target_count']}")
         
-        try:
-            source_model_catalog = source_exporter.db.search_model_catalog(page_size=10000)
-            target_model_catalog = target_exporter.db.search_model_catalog(page_size=10000)
-            verification["model_catalog"] = {
-                "source_count": len(source_model_catalog['models']),
-                "target_count": len(target_model_catalog['models']),
-                "match": len(source_model_catalog['models']) <= len(target_model_catalog['models'])
-            }
-        except Exception as e:
-            print(f"Note: Could not verify model_catalog (table may not exist): {e}")
-            verification["model_catalog"] = {"note": "Table not available for verification"}
-        
-        # Count available verification checks (excluding notes)
-        verifiable_tables = [table for table, data in verification.items() 
-                           if isinstance(data, dict) and "match" in data]
-        all_match = all(verification[table]["match"] for table in verifiable_tables)
-        verification["overall_success"] = all_match
-        verification["verified_tables"] = verifiable_tables
-        
-        print("Verification completed")
         return verification
 
 
@@ -315,11 +323,11 @@ def main():
                 verification = migrator.verify_migration(args.source_db, args.target_db)
                 print("\nVerification Results:")
                 for table, stats in verification.items():
-                    if table != "overall_success":
+                    if table != "overall_status":
                         status = "✓" if stats["match"] else "✗"
                         print(f"{status} {table.capitalize()}: {stats['source_count']} → {stats['target_count']}")
                 
-                if verification["overall_success"]:
+                if verification["overall_status"] == "SUCCESS":
                     print("✓ Migration verification passed!")
                 else:
                     print("✗ Migration verification failed!")
@@ -329,11 +337,11 @@ def main():
             result = migrator.verify_migration(args.source_db, args.target_db)
             print("\nVerification Results:")
             for table, stats in result.items():
-                if table != "overall_success":
+                if table != "overall_status":
                     status = "✓" if stats["match"] else "✗"
                     print(f"{status} {table.capitalize()}: {stats['source_count']} → {stats['target_count']}")
             
-            if result["overall_success"]:
+            if result["overall_status"] == "SUCCESS":
                 print("✓ Verification passed!")
             else:
                 print("✗ Verification failed!")

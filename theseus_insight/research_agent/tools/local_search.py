@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 
-from ...data_model.data_handling import PaperDatabase
+from ...data_access import PaperRepository
 from ...inference import SentenceTransformerInference
 from ...pdf.processing import MarkitdownDocProcessor
 from ...pdf.parsers import FlatMarkdownParser
@@ -42,7 +42,6 @@ class LocalSearchTool(BaseSearchTool):
     
     def __init__(
         self,
-        db: PaperDatabase,
         embedding_model: SentenceTransformerInference,
         semantic_weight: float = 0.5,
         keyword_weight: float = 0.5,
@@ -53,14 +52,12 @@ class LocalSearchTool(BaseSearchTool):
         Initialize LocalSearchTool.
         
         Args:
-            db: PaperDatabase instance for data access
             embedding_model: SentenceTransformerInference instance for embeddings
             semantic_weight: Weight for semantic similarity (default 0.5)
             keyword_weight: Weight for keyword/BM25 similarity (default 0.5)
             similarity_threshold: Minimum similarity threshold (default 0.3)
             enable_pdf_download: Enable automatic PDF download and processing (default True)
         """
-        self.db = db
         self.embedding_model = embedding_model
         self.semantic_weight = semantic_weight
         self.keyword_weight = keyword_weight
@@ -100,8 +97,8 @@ class LocalSearchTool(BaseSearchTool):
             # Ensure embeddings are computed for better search results
             self._ensure_recent_embeddings()
             
-            # Use the existing hybrid search from data_handling
-            results = self.db.hybrid_search_papers(
+            # Use the existing hybrid search from PaperRepository
+            results = PaperRepository.hybrid_search(
                 query_text=query,
                 embedding_model=self.embedding_model,
                 page=1,
@@ -202,7 +199,7 @@ class LocalSearchTool(BaseSearchTool):
             paper_id_int = int(paper_id)
             
             # Get paper details
-            paper = self.db.get_paper_by_id(paper_id_int)
+            paper = PaperRepository.get_paper_by_id(paper_id_int)
             if not paper:
                 return f"Paper with ID {paper_id} not found in local database."
             
@@ -256,22 +253,24 @@ class LocalSearchTool(BaseSearchTool):
         )
     
     def get_papers_without_embeddings(self) -> List[Dict[str, Any]]:
-        """Get papers that don't have embeddings computed yet."""
-        return self.db.get_papers_without_embeddings()
+        """Get papers that don't have embeddings computed."""
+        return PaperRepository.without_embeddings()
     
     def compute_and_cache_embedding(self, paper_id: int, text: str) -> None:
-        """
-        Compute and cache embedding for a paper.
-        
-        Args:
-            paper_id: ID of the paper
-            text: Text to embed (usually abstract)
-        """
+        """Compute and cache embedding for a paper."""
         try:
-            embedding = self.embedding_model.invoke(text)
-            self.db.update_paper_embedding(paper_id, embedding.tolist())
+            # Generate embedding
+            embedding = self.embedding_model.invoke(text, normalize=True)
+            
+            # Convert to list if needed
+            if hasattr(embedding, 'tolist'):
+                embedding = embedding.tolist()
+            
+            # Update in database
+            PaperRepository.update_paper_embedding(paper_id, embedding)
+            
         except Exception as e:
-            print(f"Warning: Error computing embedding for paper {paper_id}: {e}")
+            print(f"Warning: Failed to compute embedding for paper {paper_id}: {e}")
     
     def ensure_embeddings_computed(self) -> None:
         """Ensure all papers have embeddings computed (lazy caching)."""
@@ -320,7 +319,7 @@ class LocalSearchTool(BaseSearchTool):
         """
         threshold = min_similarity or self.similarity_threshold
         
-        results = self.db.hybrid_search_papers(
+        results = PaperRepository.hybrid_search(
             query_text=query,
             embedding_model=self.embedding_model,
             page=1,
@@ -392,7 +391,7 @@ class LocalSearchTool(BaseSearchTool):
                     full_text = markdown_text
                 
                 # Store the full text in the database
-                self.db.update_paper_text(paper_id, full_text)
+                PaperRepository.update_paper_text(paper_id, full_text)
                 
                 return self._format_full_text_response(paper, full_text, "downloaded")
                 
@@ -433,9 +432,9 @@ class LocalSearchTool(BaseSearchTool):
         """
         try:
             # Check if paper already exists
-            existing_paper = self.db.get_paper_by_url(url)
+            existing_paper = PaperRepository.get_by_url(url)
             if existing_paper:
-                return f"Paper already exists with ID {existing_paper['id']}: {existing_paper['title']}"
+                return f"Paper already exists in database with ID: {existing_paper['id']}"
             
             # If no metadata provided, we need at least basic info
             if not paper_metadata:
@@ -492,7 +491,7 @@ class LocalSearchTool(BaseSearchTool):
                 )
                 
                 # Insert the paper
-                success = self.db.insert_paper(paper)
+                success = PaperRepository.insert_paper(paper)
                 if success:
                     return f"Successfully added paper from {url}: {paper.title}"
                 else:
@@ -511,9 +510,9 @@ class LocalSearchTool(BaseSearchTool):
     def get_search_stats(self) -> Dict[str, Any]:
         """Get statistics about the local search capabilities."""
         try:
-            total_papers = len(self.db.fetch_all_papers())
-            papers_with_embeddings = total_papers - len(self.get_papers_without_embeddings())
-            papers_with_text = sum(1 for p in self.db.fetch_all_papers() if p.get('text'))
+            total_papers = len(PaperRepository.get_all())
+            papers_with_embeddings = total_papers - len(PaperRepository.without_embeddings())
+            papers_with_text = sum(1 for p in PaperRepository.get_all() if p.get('text'))
             
             return {
                 "total_papers": total_papers,

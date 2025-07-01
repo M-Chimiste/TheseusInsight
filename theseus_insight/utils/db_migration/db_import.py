@@ -19,8 +19,13 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from ...data_model.data_handling import PaperDatabase
+from ...data_access import (
+    PaperRepository, NewsletterRepository, PodcastRepository, 
+    LitReviewRepository, ResearchRunRepository, ResearchAgentStateRepository,
+    PaperFulltextRepository, MindmapReportRepository, ModelCatalogRepository
+)
 from ...data_model.papers import Paper, Podcast, Newsletter
+from ...db import get_cursor
 
 
 class DatabaseImporter:
@@ -31,10 +36,11 @@ class DatabaseImporter:
         Initialize the importer.
         
         Args:
-            db_path: Database connection string
+            db_path: Database connection string (PostgreSQL URL)
         """
-        self.db = PaperDatabase(db_path)
-        
+        # Store the db_path for reference (repositories handle their own connections)
+        self.db_path = db_path
+
     def extract_archive(self, archive_path: str, extract_dir: str) -> str:
         """
         Extract tar.gz archive to a directory.
@@ -113,7 +119,7 @@ class DatabaseImporter:
     
     def import_papers(self, papers_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
-        Import papers from JSON file.
+        Import papers from JSON file using bulk insert for improved performance.
         
         Args:
             papers_file: Path to papers.json file
@@ -128,25 +134,15 @@ class DatabaseImporter:
         with open(papers_file, 'r', encoding='utf-8') as f:
             papers_data = json.load(f)
         
-        stats = {"total": len(papers_data), "imported": 0, "skipped": 0, "errors": 0}
-
-        seen_titles = set()
-        seen_urls = set()
-
+        print(f"Loading {len(papers_data)} papers for bulk import...")
+        
+        # Convert JSON data to Paper objects
+        papers = []
+        conversion_errors = 0
+        
         for i, paper_data in enumerate(papers_data):
             try:
-                # Skip if paper exists by title or URL in DB or has appeared earlier in this import
-                if skip_duplicates:
-                    if (
-                        self.db.paper_exists_by_url(paper_data["url"]) or
-                        self.db.paper_exists_by_title(paper_data["title"]) or
-                        paper_data["url"] in seen_urls or
-                        paper_data["title"] in seen_titles
-                    ):
-                        stats["skipped"] += 1
-                        continue
-
-                # Create Paper object
+                # Create Paper object (exclude 'id' field if present in backup data)
                 paper = Paper(
                     title=paper_data["title"],
                     abstract=paper_data["abstract"],
@@ -161,44 +157,64 @@ class DatabaseImporter:
                     embedding=paper_data.get("embedding")
                 )
                 
-                seen_titles.add(paper_data["title"])
-                seen_urls.add(paper_data["url"])
-
-                # Insert paper (with duplicate handling)
-                was_inserted = self.db.insert_paper(paper, skip_duplicates=skip_duplicates)
+                # Add summary as text field for PostgreSQL compatibility
+                if paper_data.get("summary"):
+                    paper.text = paper_data["summary"]
                 
-                # Determine paper_id (inserted or existing)
-                paper_record = self.db.get_paper_by_url(paper_data["url"])
-                paper_id = paper_record["id"] if paper_record else None
-
-                if was_inserted:
-                    stats["imported"] += 1
-                else:
-                    stats["skipped"] += 1
-                    
-                # Update summary / keywords if available
-                if paper_id:
-                    if paper_data.get("summary"):
-                        try:
-                            self.db.update_paper_summary(paper_id, paper_data["summary"])
-                        except Exception:
-                            pass
-                    if paper_data.get("keywords"):
-                        try:
-                            self.db.update_paper_keywords(paper_id, paper_data["keywords"])
-                        except Exception:
-                            pass
-
+                papers.append(paper)
+                
             except Exception as e:
-                print(f"Error importing paper '{paper_data.get('title', 'Unknown')}': {e}")
-                stats["errors"] += 1
+                print(f"Error converting paper '{paper_data.get('title', 'Unknown')}': {e}")
+                conversion_errors += 1
             
-            # Report progress
-            if progress_callback and (i + 1) % 10 == 0 or i == len(papers_data) - 1:  # Update every 10 items or at end
-                progress_callback(i + 1, len(papers_data), f"Importing papers: {i + 1}/{len(papers_data)}")
+            # Report conversion progress
+            if progress_callback and (i + 1) % 1000 == 0:
+                progress_callback(i + 1, len(papers_data), f"Converting papers to objects: {i + 1}/{len(papers_data)}")
         
-        print(f"Papers import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
-        return stats
+        print(f"Converted {len(papers)} papers successfully, {conversion_errors} conversion errors")
+        
+        # Use bulk insert for much better performance
+        def bulk_progress_callback(current, total, message):
+            if progress_callback:
+                progress_callback(current, total, message)
+        
+        bulk_stats = PaperRepository.bulk_insert(
+            papers, 
+            skip_duplicates=skip_duplicates, 
+            progress_callback=bulk_progress_callback
+        )
+        
+        # Handle keywords separately for imported papers if available
+        if bulk_stats["imported"] > 0:
+            print("Processing keywords for imported papers...")
+            papers_with_keywords = [p for p in papers_data if p.get("keywords")]
+            if papers_with_keywords:
+                print(f"Found {len(papers_with_keywords)} papers with keywords to process")
+                
+                # Get paper IDs by URL for keyword updates
+                url_to_id = {}
+                with get_cursor() as cursor:
+                    cursor.execute("SELECT id, url FROM papers WHERE url = ANY(%s)", 
+                                 ([p["url"] for p in papers_with_keywords],))
+                    url_to_id = {row["url"]: row["id"] for row in cursor.fetchall()}
+                
+                # Update keywords in batches
+                for i, paper_data in enumerate(papers_with_keywords):
+                    if paper_data["url"] in url_to_id:
+                        paper_id = url_to_id[paper_data["url"]]
+                        try:
+                            PaperRepository.update_keywords(paper_id, paper_data["keywords"])
+                        except Exception as e:
+                            print(f"Error updating keywords for paper {paper_id}: {e}")
+                    
+                    if progress_callback and (i + 1) % 100 == 0:
+                        progress_callback(i + 1, len(papers_with_keywords), f"Processing keywords: {i + 1}/{len(papers_with_keywords)}")
+        
+        # Add conversion errors to bulk stats
+        bulk_stats["errors"] += conversion_errors
+        
+        print(f"Papers import completed: {bulk_stats['imported']} imported, {bulk_stats['skipped']} skipped, {bulk_stats['errors']} errors")
+        return bulk_stats
     
     def import_podcasts(self, podcasts_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
@@ -224,10 +240,12 @@ class DatabaseImporter:
                 # Check for duplicates by title if requested
                 if skip_duplicates:
                     # Check if podcast with same title already exists
-                    existing_podcasts = self.db.fetch_all_podcasts()
-                    if any(p["title"] == podcast_data["title"] for p in existing_podcasts):
-                        stats["skipped"] += 1
-                        continue
+                    with get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) as count FROM podcasts WHERE title = %s", (podcast_data["title"],))
+                        result = cursor.fetchone()
+                        if result and result["count"] > 0:
+                            stats["skipped"] += 1
+                            continue
                 
                 # Create Podcast object
                 podcast = Podcast(
@@ -237,8 +255,8 @@ class DatabaseImporter:
                     description=podcast_data["description"]
                 )
                 
-                # Insert podcast
-                self.db.insert_podcast(podcast)
+                # Insert podcast using repository
+                PodcastRepository.insert(podcast)
                 stats["imported"] += 1
                 
             except Exception as e:
@@ -275,11 +293,15 @@ class DatabaseImporter:
             try:
                 # Check for duplicates by date range if requested
                 if skip_duplicates:
-                    existing_newsletters = self.db.fetch_all_newsletters()
-                    if any(n["start_date"] == newsletter_data["start_date"] and 
-                          n["end_date"] == newsletter_data["end_date"] for n in existing_newsletters):
-                        stats["skipped"] += 1
-                        continue
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) as count FROM newsletters 
+                            WHERE start_date = %s AND end_date = %s
+                        """, (newsletter_data["start_date"], newsletter_data["end_date"]))
+                        result = cursor.fetchone()
+                        if result and result["count"] > 0:
+                            stats["skipped"] += 1
+                            continue
                 
                 # Create Newsletter object
                 newsletter = Newsletter(
@@ -289,8 +311,8 @@ class DatabaseImporter:
                     date_sent=newsletter_data["date_sent"]
                 )
                 
-                # Insert newsletter
-                self.db.insert_newsletter(newsletter)
+                # Insert newsletter using repository
+                NewsletterRepository.insert(newsletter)
                 stats["imported"] += 1
                 
             except Exception as e:
@@ -327,14 +349,17 @@ class DatabaseImporter:
             try:
                 # Check for duplicates by research question and creation timestamp if requested
                 if skip_duplicates:
-                    existing_reviews = self.db.get_recent_literature_reviews(1000)  # Get a large batch to check
-                    if any(r["research_question"] == review_data["research_question"] and 
-                          r["created_ts"] == review_data["created_ts"] for r in existing_reviews):
-                        stats["skipped"] += 1
-                        continue
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM lit_reviews 
+                            WHERE research_question = %s AND created_ts = %s
+                        """, (review_data["research_question"], review_data["created_ts"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
                 
-                # Insert literature review (excluding the ID since it's auto-increment)
-                self.db.insert_literature_review(
+                # Insert literature review using repository
+                LitReviewRepository.insert(
                     research_question=review_data["research_question"],
                     summary_json=review_data["summary_json"],
                     trace_json=review_data["trace_json"],
@@ -376,20 +401,20 @@ class DatabaseImporter:
             try:
                 # Check for duplicates by task_id if requested
                 if skip_duplicates:
-                    existing_run = self.db.get_research_run(run_data["task_id"])
+                    existing_run = ResearchRunRepository.get(run_data["task_id"])
                     if existing_run:
                         stats["skipped"] += 1
                         continue
                 
                 # Insert research run - use raw SQL to handle all fields including timestamps
-                with self.db.get_cursor() as cursor:
+                with get_cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO research_runs 
                         (task_id, research_question, status, config_json, created_at, started_at,
                          completed_at, error_message, final_answer, generation_summary, statistics_json,
                          sub_queries_json, sources_gathered_json, judged_sources_json, evidence_json,
                          compressed_notes, workflow_messages_json, research_loop_count, is_sufficient, save_to_library)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         run_data["task_id"],
                         run_data["research_question"],
@@ -409,8 +434,8 @@ class DatabaseImporter:
                         run_data.get("compressed_notes"),
                         json.dumps(run_data.get("workflow_messages", [])),
                         run_data.get("research_loop_count", 0),
-                        int(run_data.get("is_sufficient", False)),
-                        int(run_data.get("save_to_library", True))
+                        run_data.get("is_sufficient", False),
+                        run_data.get("save_to_library", True)
                     ))
                 
                 stats["imported"] += 1
@@ -449,20 +474,20 @@ class DatabaseImporter:
             try:
                 # Check for duplicates if requested
                 if skip_duplicates:
-                    with self.db.get_cursor() as cursor:
+                    with get_cursor() as cursor:
                         cursor.execute("""
                             SELECT COUNT(*) FROM research_agent_state 
-                            WHERE task_id = ? AND node_name = ? AND timestamp = ?
+                            WHERE task_id = %s AND node_name = %s AND timestamp = %s
                         """, (state_record["task_id"], state_record["node_name"], state_record["timestamp"]))
                         if cursor.fetchone()[0] > 0:
                             stats["skipped"] += 1
                             continue
                 
                 # Insert state record
-                with self.db.get_cursor() as cursor:
+                with get_cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO research_agent_state (task_id, node_name, state_json, timestamp)
-                        VALUES (?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s)
                     """, (
                         state_record["task_id"],
                         state_record["node_name"],
@@ -506,37 +531,36 @@ class DatabaseImporter:
             try:
                 # Check for duplicates if requested
                 if skip_duplicates:
-                    if self.db.has_paper_fulltext(fulltext_record["paper_id"]):
+                    if PaperFulltextRepository.exists(fulltext_record["paper_id"]):
                         stats["skipped"] += 1
                         continue
                 
-                # Convert embedding from list to bytes if present
-                embedding_blob = None
+                # Convert embedding from list to pgvector format if present
+                embedding_str = None
                 if fulltext_record.get("embedding"):
                     try:
-                        embedding_array = np.array(fulltext_record["embedding"], dtype=np.float32)
-                        embedding_blob = embedding_array.tobytes()
+                        # Convert list to JSON string for pgvector
+                        embedding_str = json.dumps(fulltext_record["embedding"])
                     except Exception as e:
                         print(f"Warning: Could not convert embedding for paper_id {fulltext_record['paper_id']}: {e}")
                 
-                # Insert full-text record
-                with self.db.get_cursor() as cursor:
-                    cursor.execute("""
-                        INSERT INTO paper_fulltext (paper_id, content, embedding, embedding_model, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        fulltext_record["paper_id"],
-                        fulltext_record["content"],
-                        embedding_blob,
-                        fulltext_record.get("embedding_model"),
-                        fulltext_record.get("created_at")
-                    ))
-                    
-                    # Update FTS index
-                    fulltext_id = cursor.lastrowid
-                    cursor.execute("""
-                        INSERT INTO paper_fulltext_fts (rowid, content) VALUES (?, ?)
-                    """, (fulltext_id, fulltext_record["content"]))
+                # Handle metadata
+                metadata_str = None
+                if fulltext_record.get("metadata"):
+                    try:
+                        metadata_str = json.dumps(fulltext_record["metadata"]) if isinstance(fulltext_record["metadata"], dict) else fulltext_record["metadata"]
+                    except:
+                        metadata_str = str(fulltext_record["metadata"])
+                
+                # Insert full-text record using repository
+                PaperFulltextRepository.insert(
+                    paper_id=fulltext_record["paper_id"],
+                    content=fulltext_record["content"],
+                    embedding=embedding_str,
+                    embedding_model=fulltext_record.get("embedding_model"),
+                    extraction_method=fulltext_record.get("extraction_method", "unknown"),
+                    metadata=metadata_str
+                )
                 
                 stats["imported"] += 1
                 
@@ -574,20 +598,22 @@ class DatabaseImporter:
             try:
                 # Check for duplicates if requested
                 if skip_duplicates:
-                    existing_reports = self.db.get_mindmap_reports(limit=1000)
-                    if any(r["title"] == report_data["title"] and 
-                          r["created_at"] == report_data["created_at"] for r in existing_reports):
-                        stats["skipped"] += 1
-                        continue
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM mindmap_reports 
+                            WHERE title = %s AND created_at = %s
+                        """, (report_data["title"], report_data["created_at"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
                 
-                # Use the database method to save the report (need to reconstruct the full mindmap data)
-                # For import, we'll insert directly to preserve all original data including IDs
-                with self.db.get_cursor() as cursor:
+                # Insert mindmap report directly to preserve all original data including IDs
+                with get_cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO mindmap_reports 
                         (title, description, seed_paper_id, seed_paper_title, mindmap_data_json, 
                          parameters_json, statistics_json, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         report_data["title"],
                         report_data.get("description"),
@@ -635,19 +661,19 @@ class DatabaseImporter:
             try:
                 # Check for duplicates if requested
                 if skip_duplicates:
-                    with self.db.get_cursor() as cursor:
-                        cursor.execute("SELECT COUNT(*) FROM model_catalog WHERE alias = ?", (model_data["alias"],))
+                    with get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM model_catalog WHERE alias = %s", (model_data["alias"],))
                         if cursor.fetchone()[0] > 0:
                             stats["skipped"] += 1
                             continue
                 
                 # Insert model catalog entry
-                with self.db.get_cursor() as cursor:
+                with get_cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO model_catalog 
                         (alias, model_string, provider_name, model_type, description, max_new_tokens,
                          temperature, num_ctx, trust_remote_code, tags_json, is_favorite, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         model_data["alias"],
                         model_data["model_string"],
@@ -657,9 +683,9 @@ class DatabaseImporter:
                         model_data.get("max_new_tokens"),
                         model_data.get("temperature"),
                         model_data.get("num_ctx"),
-                        int(model_data.get("trust_remote_code", False)),
+                        model_data.get("trust_remote_code", False),
                         json.dumps(model_data.get("tags", [])),
-                        int(model_data.get("is_favorite", False)),
+                        model_data.get("is_favorite", False),
                         model_data.get("created_at"),
                         model_data.get("updated_at")
                     ))
@@ -865,7 +891,7 @@ class DatabaseImporter:
         deletion_counts = {}
         total_tables = len(tables_to_clear)
         
-        with self.db.get_cursor() as cursor:
+        with get_cursor() as cursor:
             for i, table in enumerate(tables_to_clear):
                 if progress_callback:
                     progress_callback(i, total_tables, f"Clearing {table} table...")
@@ -875,7 +901,7 @@ class DatabaseImporter:
                     cursor.execute(f"SELECT COUNT(*) FROM {table}")
                     count_before = cursor.fetchone()[0]
                     
-                    # Delete all records (SQLite doesn't support TRUNCATE)
+                    # Delete all records (PostgreSQL doesn't require special syntax)
                     cursor.execute(f"DELETE FROM {table}")
                     deletion_counts[table] = count_before
                     

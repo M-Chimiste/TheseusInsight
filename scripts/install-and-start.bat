@@ -187,6 +187,67 @@ cd ..
 call :print_success "Frontend setup complete"
 goto :eof
 
+REM Function to check PostgreSQL installation
+:check_postgresql
+call :print_status "Checking PostgreSQL availability..."
+
+call :command_exists psql
+if errorlevel 1 (
+    call :print_warning "PostgreSQL client (psql) not found in PATH"
+    echo Database setup will be skipped. You can:
+    echo   1. Install PostgreSQL locally and run scripts\setup_database.bat
+    echo   2. Use Docker Compose which includes PostgreSQL
+    echo   3. Use an external PostgreSQL instance
+    exit /b 1
+) else (
+    call :print_success "PostgreSQL client (psql) is available"
+    exit /b 0
+)
+
+REM Function to setup database
+:setup_database
+call :print_status "Setting up PostgreSQL database..."
+
+REM Check if we should skip database setup
+if "%SKIP_DB_SETUP%"=="true" (
+    call :print_warning "Skipping database setup (SKIP_DB_SETUP=true)"
+    goto :eof
+)
+
+REM Check if PostgreSQL is available
+call :check_postgresql
+if errorlevel 1 (
+    call :print_warning "Skipping database setup - PostgreSQL not available"
+    goto :eof
+)
+
+REM Check if we're in Docker environment (skip local DB setup)
+if "%RUNNING_IN_DOCKER%"=="true" (
+    call :print_status "Docker environment detected - skipping local database setup"
+    goto :eof
+)
+if not "%DATABASE_URL%"=="" (
+    call :print_status "External database detected - skipping local database setup"
+    goto :eof
+)
+
+REM Run the database setup script
+if exist "scripts\setup_database.bat" (
+    call :print_status "Running database setup script..."
+    call scripts\setup_database.bat
+    if errorlevel 1 (
+        call :print_error "Database setup failed"
+        echo You can run 'scripts\setup_database.bat' manually later
+        echo Or use Docker Compose which includes PostgreSQL
+    ) else (
+        call :print_success "Database setup completed"
+    )
+) else (
+    call :print_warning "Database setup script not found at scripts\setup_database.bat"
+)
+
+goto :eof
+
 REM Function to create default config files
 :create_default_configs
 call :print_status "Creating default configuration files..."
@@ -201,6 +262,31 @@ if not exist "config\research_interests.txt" (
     echo # artificial intelligence >> config\research_interests.txt
     echo # deep learning >> config\research_interests.txt
     call :print_status "Created default config\research_interests.txt"
+)
+
+if not exist ".env" (
+    echo # Theseus Insight Configuration > .env
+    echo # Copy this file to .env and update with your values >> .env
+    echo. >> .env
+    echo # Database Configuration (PostgreSQL) >> .env
+    echo DATABASE_URL=postgresql://theseus:theseus@localhost:5432/theseusdb >> .env
+    echo. >> .env
+    echo # API Keys (obtain from respective providers) >> .env
+    echo # OPENAI_API_KEY=your_openai_api_key_here >> .env
+    echo # ANTHROPIC_API_KEY=your_anthropic_api_key_here >> .env
+    echo # GOOGLE_API_KEY=your_google_api_key_here >> .env
+    echo. >> .env
+    echo # Optional: Local Ollama server >> .env
+    echo OLLAMA_URL=http://127.0.0.1:11434 >> .env
+    echo. >> .env
+    echo # Optional: Gmail for newsletters >> .env
+    echo # GMAIL_SENDER_ADDRESS=your_email@gmail.com >> .env
+    echo # GMAIL_APP_PASSWORD=your_app_password >> .env
+    echo. >> .env
+    echo # Optional: Debug mode >> .env
+    echo # DEBUG=true >> .env
+    call :print_status "Created default .env file"
+    call :print_warning "Please edit .env file with your configuration"
 )
 
 call :print_success "Configuration files ready"
@@ -316,6 +402,9 @@ if "%START_ONLY%"=="false" (
     
     echo.
     call :create_default_configs
+    
+    echo.
+    call :setup_database
     
     echo.
     call :print_success "✅ Installation complete!"

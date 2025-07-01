@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, List
 
 from ..state import MindMapState, Message, create_paper_node, create_mindmap_edge
+from ...data_access import PaperRepository
 import yake
 
 logger = logging.getLogger(__name__)
@@ -22,14 +23,8 @@ class RetrieverNode:
     similar to the seed paper based on embedding vectors.
     """
     
-    def __init__(self, db):
-        """
-        Initialize the Retriever Node.
-        
-        Args:
-            db: Database instance (PaperDatabase)
-        """
-        self.db = db
+    def __init__(self):
+        """Initialize the Retriever Node."""
         self.keyword_extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
         
     def __call__(self, state: MindMapState) -> Dict[str, Any]:
@@ -60,7 +55,7 @@ class RetrieverNode:
             
             # Perform similarity search using database method
             try:
-                similar_papers_data = self.db.find_similar_papers_mindmap(
+                similar_papers_data = PaperRepository.find_similar_papers_mindmap(
                     seed_paper_id=seed_paper_id,
                     k=k_neighbors,
                     similarity_threshold=similarity_threshold
@@ -101,13 +96,13 @@ class RetrieverNode:
                     edges.append(edge)
                     
                     # keywords
-                    kw = self.db.get_paper_keywords(paper_node["id"])
+                    kw = PaperRepository.get_paper_keywords(paper_node["id"])
                     if not kw:
                         try:
                             text_kw = f"{paper_node['title']} {paper_node['abstract']}"
                             kw_scores = self.keyword_extractor.extract_keywords(text_kw)
                             kw = [w for w, _ in kw_scores]
-                            self.db.update_paper_keywords(paper_node["id"], kw)
+                            PaperRepository.update_paper_keywords(paper_node["id"], kw)
                         except Exception:
                             kw = []
                     paper_node["keywords"] = kw
@@ -153,14 +148,11 @@ class RetrieverNode:
         }
 
 
-def create_retriever_node(db) -> RetrieverNode:
+def create_retriever_node() -> RetrieverNode:
     """
     Factory function to create a RetrieverNode.
-    
-    Args:
-        db: Database instance
         
     Returns:
         Configured RetrieverNode instance
     """
-    return RetrieverNode(db) 
+    return RetrieverNode() 

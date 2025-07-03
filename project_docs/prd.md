@@ -1,145 +1,123 @@
-# PRD: Migration from SQLite to PostgreSQL 14 with pgvector
+# Topic Evolution & Trend-Forecast Dashboard PRD
 
-## 1 – Background & Motivation
-Theseus Insight currently relies on a local SQLite database (with the `sqlite_vec` extension for vector search). While SQLite is excellent for a lightweight, zero-config experience, it becomes a bottleneck when the dataset grows or when multiple processes need concurrent read/write access. PostgreSQL 14 is the current LTS release and, in conjunction with the `pgvector` extension, offers: 
+## 1\. Summary
 
-* Native vector similarity search that scales horizontally.
-* Mature full-text-search (FTS) capabilities and advanced indexing options.
-* Robust concurrency handling, strong ACID guarantees, and a path toward eventual sharding/cloud-hosted solutions.
+Build an automated dashboard that surfaces **emerging machine-learning topics, their evolution over time, and short-term forecasts** based on the papers harvested by Theseus Insight.  The dashboard helps researchers quickly understand where the field is heading and identify topics worth exploring.
 
-Migrating to PostgreSQL will unlock production-grade scalability while preserving the developer-friendly experience we enjoy today.
+## 2\. Problem Statement
 
----
+ML researchers spend significant time scanning ArXiv, Twitter, blog posts, and conference proceedings to track new trends.  Theseus Insight already collects and embeds thousands of papers but offers no longitudinal view—users see only a snapshot.  Providing temporal visualisations and predictive signals will turn raw paper feeds into **actionable strategic insight**.
 
-## 2 – Goals (✅ = success criteria)
-1. **Seamless Migration Path** – Provide a one-click script (or CLI) that converts an existing SQLite database into a PostgreSQL database with **zero data loss**. ✅
-2. **Feature Parity (1:1 Compatibility)** – All current data access APIs (`PaperDatabase` methods and router endpoints) keep the same signatures and behaviour. ✅
-3. **Easy On-boarding** – New users can spin up the full stack (API, Postgres, pgvector) with a *single* docker-compose command or `./scripts/install-and-start.sh`. ✅
-4. **Containerised Infrastructure** – Docker images/services for `postgres:14-alpine` + `pgvector` are supplied and pre-configured. ✅
-5. **Backward Compatibility** – Import/export utilities migrate data **once** from the old SQLite format; SQLite will no longer be a supported runtime backend after migration. ✅
-6. **Single Engine** – The application codebase runs **exclusively on PostgreSQL 14** (with pgvector). No hybrid or fallback mode. ✅
+## 3\. Goals & Success Metrics
 
----
+| Goal | Metric |
+| :---- | :---- |
+| Surface top emerging topics | Top-10 topic chart auto-updates daily |
+| Show historical popularity curves | At least 12 months of back-filled data rendered within 2 s |
+| Forecast near-term growth | ±15 % MAE on 3-month topic frequency prediction benchmark |
+| Drive usage | ≥30 % of weekly active users open the Trends page in first 3 months |
 
-## 3 – Non-Goals
-* Re-architecting domain logic or changing existing API contracts beyond what is strictly required for PostgreSQL compatibility.
-* Sharding/High-availability Postgres setups (can be tackled later).
-* Supporting SQLite as a runtime backend after the migration is **out of scope** (we will remove it).
+## 4\. Non-Goals
 
----
+* Predict paper *citations* (complex, long-term).  
+* Support non-ML domains (biology, medicine, etc.).
 
-## 4 – Personas & Use-Cases
-1. **New Developer** – Clones the repo, runs one command, and gets a local Postgres with pgvector seeded.
-2. **Existing User** – Has months of data in SQLite; runs a migration script to upgrade in-place (or side-by-side) without schema edits.
-3. **DevOps Engineer** – Deploys Theseus Insight in staging/production via Docker/Kubernetes using an external Postgres service.
-4. **Data Scientist** – Executes complex vector + keyword queries benefiting from pgvector performance.
+## 5\. User Stories
 
----
+1. **Sarah, PhD student** – wants to see "Diffusion models" popularity over the last 18 months to justify her research direction.  
+2. **Alex, ML engineer** – needs a weekly digest of rising topics (e.g., "LLM alignment") for roadmap planning.  
+3. **Conference reviewer** – compares saturation levels of "Graph Neural Networks" vs "Transformers" to calibrate acceptance criteria.  
+4. **Maria, a research lead,** spots 'Federated Learning for Edge AI' is a surging topic. She clicks to generate a mind-map of its core papers to understand the sub-domains, then generates a one-off newsletter digest to share with her team.
 
-## 5 – Assumptions
-* PostgreSQL 14 is available (locally via Docker or remote).
-* `pgvector` extension is installable via `CREATE EXTENSION IF NOT EXISTS pgvector;`.
-* We can rely on standard extensions such as `pg_trgm` or `unaccent` for FTS if needed.
-* Python drivers: `psycopg[binary]==3.x` will be our default Postgres driver.
-* We *may* introduce an ORM (SQLAlchemy) but will first prefer a minimal adapter layer to keep the diff small.
+## 6\. Functional Requirements
 
----
+### 6.1 Data Pipeline
 
-## 6 – Functional Requirements
-| ID | Requirement |
-|-----|-------------|
-| FR-1 | Provide `docker-compose.postgres.yml` with a Postgres 14 service, pre-installed pgvector, correct locale/encoding. |
-| FR-2 | Add an init script that creates the database, required schemas, tables, indexes, and the `vector` columns mirroring the existing schema. |
-| FR-3 | Replace all SQLite FTS5 queries with PostgreSQL full-text search (`tsvector`, `GIN/GIST` indexes). |
-| FR-4 | Replace `sqlite_vec` cosine-similarity calls with `pgvector` equivalents (`embedding <=> query_embedding`). |
-| FR-5 | Implement a **migration CLI** (`python -m scripts.migrate_sqlite_to_postgres <sqlite_path> <connection_url>`) that: a) introspects SQLite schema; b) creates equivalent tables in Postgres; c) batches data insertions; d) rebuilds indexes. |
-| FR-6 | Update import/export utilities (`db_export.py`, `db_import.py`) so they can **read SQLite and write Postgres** during migration, then operate solely on Postgres afterwards. |
-| FR-7 | Introduce a configuration layer exposing Postgres connection details (host, port, user, password, database). *No engine toggle will remain after migration.* |
-| FR-8 | Refactor `PaperDatabase` to target Postgres-only queries while preserving the external API surface. |
-| FR-9 | Automated tests proving the same query results between engines for a representative dataset. |
-| FR-10 | Update CI pipeline to spin up Postgres service & run tests against it. |
+* **Nightly Scheduled Job** — A nightly APScheduler job inside the existing backend container clusters *all new* paper embeddings by week/month/quarter.  The same code path can also be triggered **on-demand** via the `POST /api/trends/recompute` endpoint.
+* Use **BERTopic** (HDBSCAN + c-TF-IDF) for topic extraction with configurable granularity.  
+* Persist `topics` table: `(topic_id, label, keywords, created_at)` and `topic_metrics` table: `(topic_id, period, doc_count, avg_embedding)`.  
+* Optional: Vectorise topic centroids for similarity queries.  
+* Ensure new tables are covered by the DB creation scripts **and** import/export utilities so older exports continue to load without errors.
 
----
+### 6.2 Forecasting Module
 
-## 7 – Non-Functional Requirements
-* **Performance** – Vector search latency ≤ 200 ms for 100k embeddings (128-D) on a 2-CPU local machine.
-* **Scalability** – Schema & indexes should comfortably handle 5 million papers.
-* **Reliability** – Migration tool aborts on first error, provides resumable checkpoints.
-* **Security** – Credentials stored via env vars or Docker secrets; no hard-coded passwords.
-* **Observability** – DB connection pool metrics exposed via existing `/metrics` endpoint (future work).
-* **Operational Overhead** – Postgres requires memory/disk; users with ultra-light needs will still be able to *export* their data but must run Postgres going forward.
+* Apply **Prophet** (Python package) as the primary forecasting model for each topic.  
+* Store 1-, 3-, 6-month forecast values (`forecast_doc_count`).  
+* Trigger re-training nightly (as part of the scheduled job) or ad-hoc via the Admin endpoint.
 
----
+### 6.3 API Endpoints (FastAPI)
 
-## 8 – Acceptance Criteria
-1. Running `make dev` (or script) on a clean checkout starts API & Postgres and passes the full test suite.
-2. Migrating a real SQLite DB (≥ 10k papers) results in identical record counts per table and identical random sample queries.
-3. Vector similarity & hybrid search endpoints return *numerically close* (±0.001 cosine) results versus SQLite for the same inputs.
-4. Documentation (`docs/installation_README.md`) updated to reflect new prerequisites.
+| Method | Route | Purpose |
+| :---- | :---- | :---- |
+| `GET` | `/api/trends` | List top *N* topics with current metrics |
+| `GET` | `/api/trends/{topic_id}` | Historical curve \+ forecast \+ representative papers |
+| `POST` | `/api/trends/recompute` | (Admin) Force pipeline rerun |
+| `GET` | `/api/papers` | Add `?topic_id=` query param for filtering |
+| `POST` | `/api/mindmap/expand` | Add `?topic_id=` to seed from a topic |
+| `POST` | `/api/newsletter/generate` | Add `?topic_id=` to source papers from a topic |
 
----
+### 6.4 React UI
 
-## 9 – Risks & Mitigations
-* **Data Type Mismatches** – Certain columns (`BOOLEAN`, `BLOB`, `TEXT`) differ; we will run automated validation after import.  
-* **FTS Ranking Differences** – PostgreSQL's ranking differs from SQLite's `bm25`; we will normalise scores or offer deterministic order when equal.  
-* **Migration Downtime** – Provide side-by-side migration to minimise downtime, with a final cut-over flag.
+* New **"Trends"** page accessible from sidebar.  
+* Components:  
+  * Topic heat-map grid (sparkline + growth %).  
+  * Detail drawer with interactive line chart (**D3**), key papers list, and action buttons ("Create Mind-Map", "Generate Newsletter").  
+  * Configurable keyword trendlines showing popularity over weeks (similar to financial charts like candlestick charts)  
+  * Filter controls: date range, min doc count, include sub-topics.  
+  * Search for specific topics  
+* **Component Updates:**  
+  * `PaperCard.tsx` / `PaperRowCard.tsx`: Display topic tags (e.g., `LLM Alignment 🔥`) that link to the Trends dashboard.  
+  * `Papers.tsx`: Add "Filter by Topic" and "Sort by Trend" controls.
 
----
+### 6.5 Notifications
 
-## 10 – Open Questions
-1. (Removed – decision made to deprecate SQLite entirely.)
-2. Which ORM/driver strategy: raw SQL (`psycopg`), lightweight query builder (`SQLModel`), or full SQLAlchemy Core?
-3. Do we want to support cloud Postgres providers out-of-the-box (AWS RDS, Supabase) and how do we manage SSL certs?
-4. Should we version-control DB migrations via Alembic for future schema changes?
+* Optional weekly email/webhook summarising top 3 surging topics. Job should be added as part of the newsletter pipeline as its own section.
 
----
+## 7\. Integration with Existing Features
 
-## 11 – Phased Implementation Plan
+### 7.1 Research Library & Search
 
-### Phase 0 – Planning & PRD *(current)*
-* Draft & sign off PRD, collect feedback, freeze scope.
+* **From Trends to Papers:** The trend detail view will list representative papers. A button ("Explore all papers") will link to the Research Library, pre-filtered for that topic.  
+* **From Papers to Trends:** Paper cards will display clickable topic tags, allowing users to pivot from a specific paper to its broader trend context.  
+* **Trend-Aware Search:** Users can filter their library by topic and sort results by trend dynamics (e.g., "Surging First") to surface papers in accelerating fields.
 
-### Phase 1 – Infrastructure Setup (⏱ 1-2 days)
-* Add `docker-compose.postgres.yml` (Postgres 14 + `pgvector`).
-* Provide `scripts/setup_postgres.sh` to create DB, user, extensions.
-* Update docs + CI to spin up the new service.
+### 7.2 Mind-Map Explorer
 
-### Phase 2 – Abstraction Layer (⏱ 2-3 days)
-* Refactor `PaperDatabase` and related modules to use `psycopg` / Postgres-specific SQL. Remove SQLite-specific logic (`_check_sqlite_vec`, FTS5 calls, etc.).
-* Ensure unit tests cover the new Postgres code path end-to-end.
+* **Launch Mind-Map from Topic:** A button on the trend detail page will generate a mind-map seeded from the topic's most representative papers, providing an instant view of its intellectual structure.  
+* **Trend-Annotated Mind-Maps:** Nodes on the mind-map canvas can be visually annotated (e.g., with a colored halo or icon) to indicate the trendiness of the topics they belong to.
 
-### Phase 3 – Schema Translation & Migration Tooling (⏱ 3-4 days)
-* Write SQL schema for Postgres mirroring tables, constraints, indexes.
-* Map FTS5 → `tsvector` columns & triggers.
-* Implement CLI migration script with chunked inserts & progress bar.
-* Test migration on sample dataset, include validation step.
+### 7.3 Content Generation (Newsletters & Podcasts)
 
-### Phase 4 – Feature Parity Updates (⏱ 3-5 days)
-* Re-implement vector similarity queries using `pgvector` syntax.
-* Replace FTS queries with `to_tsvector`, `plainto_tsquery` or ranked `websearch_to_tsquery`.
-* Ensure hybrid search weighting logic matches current behaviour.
+* **"Trend Digest" Generation:** Users can generate a one-off newsletter or podcast directly from a trend page, using its core papers as the source material for a focused summary.
 
-### Phase 5 – Import/Export Enhancements (⏱ 1-2 days)
-* Extend existing `db_export.py` / `db_import.py` to detect engine & use COPY for Postgres.
-* Add option to export as JSONL for portability.
+## 8\. Non-Functional Requirements
 
-### Phase 6 – DX & Documentation (⏱ 1 day)
-* Update `README.md`, `docs/*_README.md`, and `scripts/install-*`.
-* Provide quick-start video/gif (optional).
+* End-to-end pipeline completes \<15 min for 1.5 M papers.  
+* Dashboard loads \<2 s P95, even on low-spec laptops.  
+* Forecast accuracy logged; auto-alert if MAE \>30 %.
 
-### Phase 7 – Backward Compatibility & Deprecation (⏱ 0.5 day)
-* Delete residual SQLite code, scripts, and env flags. Update docs to state Postgres is **mandatory** as of this release.
+## 9\. Technical Approach
 
-### Phase 8 – Final Testing & Release (⏱ 1 day)
-* Regression testing across all endpoints (API + UI).
-* Performance benchmarks vs SQLite.
-* Tag release `vX.Y.0` and announce migration guide.
+1. **Batch Processor** (`theseus_insight/data_processing/trends.py`) runs as a **nightly APScheduler job** *and* can be invoked on-demand via `/api/trends/recompute`.  
+2. Re-use existing embedding store → group by calendar period, run BERTopic.  
+3. Append results into **Postgres** tables (`topics`, `topic_metrics`) and ensure import/export scripts handle the new data gracefully.  
+4. Expose via new router `api/routers/trends.py` (similar style to `mindmap.py`), updating existing routers to handle topic-based actions.  
+5. Frontend: Create `pages/Trends.tsx`, update existing components (`PaperCard.tsx`, `Papers.tsx`) to display and link trend data.  Leverage **D3** for visualisations; state managed via existing context hooks.
 
-_Total estimated effort: **~12-17 person-days**._
+## 10\. Open Questions / Risks
 
----
+* **Topic Granularity** – Automatic vs manual merging of similar clusters?  
+* **Model Dependencies** – BERTopic requires HDBSCAN & Prophet requires CmdStan; ensure wheels/binaries available for Apple Silicon and are sized appropriately for Docker layers.  
+* **Database Size** – Use existing Postgres and PG Vector implementation.  
+* **UI Complexity** – Adding topic filters and sorting to the search page must be done without cluttering the interface.
 
-## 12 – Next Steps
-1. Circulate this PRD for feedback (contributors & stakeholders).
-2. Address open questions & lock down decisions (ORM, deprecation strategy).
-3. Kick-off Phase 1 once approved.
+## 11\. Milestones & Timeline (tentative)
+
+| Phase | Milestone |
+| :---- | :---- |
+| 1 | Schema design & Alembic migration |
+| 2 | Back-fill pipeline \+ unit tests |
+| 3 | Forecast module & metrics logging |
+| 4 | API endpoints & Swagger docs (including integrations) |
+| 5 | React UI (MVP Dashboard) |
+| 6 | React UI (Integrations with existing pages) |

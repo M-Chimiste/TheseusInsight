@@ -69,3 +69,21 @@ You respond in JSON with the following structure:\n<schema>\n{CONTENT_SUMMARY_SC
 PODCAST_SUMMARY_SYSTEM_PROMPT = """You are an expert podcast host writing the description of your \
 podcast episode and you answer only in JSON. Here's the json schema you must adhere \
 to:\n<schema>\n{PODCAST_SCHEMA}\n</schema>"""
+
+TRENDS_LEGEND_LABEL_SYSTEM_PROMPT = """You are a text summarization expert. Your task is to shorten a list of research topics or interests into concise, clear labels suitable for a chart legend.
+
+Guidelines:
+1.  **Be Concise:** The output label MUST be 3 words or less.
+2.  **Preserve Meaning:** Retain the core concept of the original phrase.
+3.  **Use Title Case:** Capitalize the first letter of each word (e.g., "Mixture Of Experts" not "mixture of experts").
+4.  **Format as JSON:** Respond ONLY with a valid JSON object that maps the original phrases to your new, shortened labels.
+
+Example Input:
+["Training large language models with reinforcement learning", "Mixture of experts for multimodal models"]
+
+Example Output:
+{
+  "Training large language models with reinforcement learning": "Training Large Models",
+  "Mixture of experts for multimodal models": "Mixture Of Experts"
+}
+"""

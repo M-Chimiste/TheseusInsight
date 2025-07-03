@@ -284,12 +284,12 @@ const MindMapReports: React.FC = () => {
 
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
                     <Chip 
-                      label={`${report.statistics.nodes_count || 0} nodes`} 
+                      label={`${report.statistics.nodes_count || report.statistics.nodes_created || 0} nodes`} 
                       size="small" 
                       variant="outlined" 
                     />
                     <Chip 
-                      label={`${report.statistics.edges_count || 0} edges`} 
+                      label={`${report.statistics.edges_count || report.statistics.edges_created || 0} edges`} 
                       size="small" 
                       variant="outlined" 
                     />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -45,11 +46,15 @@ interface FilterState {
   fromDate: Date | null;
   toDate: Date | null;
   search: string;
+  topicId: number | null;
 }
 
 const Papers: React.FC = () => {
   // Layout context for responsive sidebar
   const { currentDrawerWidth } = useLayout();
+  
+  // URL parameters for initial filtering
+  const [searchParams] = useSearchParams();
   
   // Keep track of all fetched papers for infinite scroll
   const [allPapers, setAllPapers] = useState<PaperApiResponse[]>([]); 
@@ -71,22 +76,29 @@ const Papers: React.FC = () => {
   const [mindMapOpen, setMindMapOpen] = useState<boolean>(false);
   const [mindMapSeedPaper, setMindMapSeedPaper] = useState<PaperApiResponse | null>(null);
   
+  // Initialize filters from URL parameters
+  const getInitialFilters = useCallback((): FilterState => {
+    const topicId = searchParams.get('topic_id');
+    const search = searchParams.get('search');
+    const minScore = searchParams.get('min_score');
+    const maxScore = searchParams.get('max_score');
+    const fromDate = searchParams.get('from_date');
+    const toDate = searchParams.get('to_date');
+    
+    return {
+      minScore: minScore ? parseFloat(minScore) : 0,
+      maxScore: maxScore ? parseFloat(maxScore) : 10,
+      fromDate: fromDate ? new Date(fromDate) : null,
+      toDate: toDate ? new Date(toDate) : null,
+      search: search || '',
+      topicId: topicId ? parseInt(topicId) : null
+    };
+  }, [searchParams]);
+
   // Filter state
-  const [filters, setFilters] = useState<FilterState>({
-    minScore: 0,
-    maxScore: 10,
-    fromDate: null,
-    toDate: null,
-    search: ''
-  });
+  const [filters, setFilters] = useState<FilterState>(getInitialFilters);
   const [showFilters, setShowFilters] = useState<boolean>(false);
-  const [appliedFilters, setAppliedFilters] = useState<FilterState>({
-    minScore: 0,
-    maxScore: 10,
-    fromDate: null,
-    toDate: null,
-    search: ''
-  });
+  const [appliedFilters, setAppliedFilters] = useState<FilterState>(getInitialFilters);
   
   // Hybrid search state
   const [useHybridSearch, setUseHybridSearch] = useState<boolean>(false);
@@ -94,6 +106,20 @@ const Papers: React.FC = () => {
   const [keywordWeight, setKeywordWeight] = useState<number>(0.4);
 
   const loader = useRef<HTMLDivElement>(null); // For Intersection Observer
+
+  // Show filters panel if URL parameters are present
+  useEffect(() => {
+    const hasUrlParams = searchParams.get('topic_id') || 
+                        searchParams.get('search') || 
+                        searchParams.get('min_score') || 
+                        searchParams.get('max_score') || 
+                        searchParams.get('from_date') || 
+                        searchParams.get('to_date');
+    
+    if (hasUrlParams) {
+      setShowFilters(true);
+    }
+  }, [searchParams]);
 
   const fetchPapers = useCallback(async (page: number, size: number, isInitialLoad: boolean = false) => {
     if (!hasNextPage && !isInitialLoad) return; // Don't fetch if no more pages, unless it's the very first load
@@ -138,7 +164,8 @@ const Papers: React.FC = () => {
           appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
           appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
           appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
-          appliedFilters.search || undefined
+          appliedFilters.search || undefined,
+          appliedFilters.topicId || undefined
         );
       }
       setAllPapers(prevPapers => isInitialLoad ? data.items : [...prevPapers, ...data.items]);
@@ -289,6 +316,13 @@ const Papers: React.FC = () => {
     setMindMapSeedPaper(null);
   };
 
+  const handleTopicClick = (topicId: number) => {
+    // Update filters to include the topic and apply them
+    const newFilters = { ...filters, topicId };
+    setFilters(newFilters);
+    setAppliedFilters(newFilters);
+  };
+
   const handleApplyFilters = () => {
     setAppliedFilters({ ...filters });
     setShowFilters(false);
@@ -307,7 +341,8 @@ const Papers: React.FC = () => {
       maxScore: 10,
       fromDate: null,
       toDate: null,
-      search: ''
+      search: '',
+      topicId: null
     };
     setFilters(resetFilters);
     setAppliedFilters(resetFilters);
@@ -318,7 +353,8 @@ const Papers: React.FC = () => {
            appliedFilters.maxScore < 10 || 
            appliedFilters.fromDate !== null || 
            appliedFilters.toDate !== null || 
-           appliedFilters.search !== '';
+           appliedFilters.search !== '' ||
+           appliedFilters.topicId !== null;
   }, [appliedFilters]);
 
   const getActiveFilterChips = () => {
@@ -337,6 +373,9 @@ const Papers: React.FC = () => {
     }
     if (appliedFilters.search) {
       chips.push(`Search: "${appliedFilters.search}"`);
+    }
+    if (appliedFilters.topicId) {
+      chips.push(`Filtered by Topic/Interest: ${appliedFilters.topicId}`);
     }
     return chips;
   };
@@ -433,19 +472,22 @@ const Papers: React.FC = () => {
                       Filter Papers
                     </Typography>
                     
-                    {/* Search and Hybrid Toggle Row */}
+                    {/* Search Row */}
                     <Box sx={{ mb: 2 }}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Search in title and abstract"
-                        value={filters.search}
-                        onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                        onKeyDown={handleSearchKeyDown}
-                        placeholder="Enter keywords..."
-                        helperText={useHybridSearch ? "Hybrid search: combines semantic similarity with keyword matching" : "Keyword search only"}
-                        sx={{ mb: 1.5 }}
-                      />
+                      <Grid container spacing={2} sx={{ mb: 1.5 }}>
+                        <Grid size={{ xs: 12 }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Search in title and abstract"
+                            value={filters.search}
+                            onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                            onKeyDown={handleSearchKeyDown}
+                            placeholder="Enter keywords..."
+                            helperText={useHybridSearch ? "Hybrid search: combines semantic similarity with keyword matching" : "Keyword search only"}
+                          />
+                        </Grid>
+                      </Grid>
                       
                       {/* Hybrid Search Toggle */}
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: useHybridSearch ? 1.5 : 0 }}>
@@ -642,6 +684,7 @@ const Papers: React.FC = () => {
                       paper={paper} 
                       onFindSimilar={handleFindSimilar}
                       onOpenMindMap={handleOpenMindMap}
+                      onTopicClick={handleTopicClick}
                     />
                   </Grid>
                 ))}
@@ -654,6 +697,7 @@ const Papers: React.FC = () => {
                     paper={paper} 
                     onFindSimilar={handleFindSimilar}
                     onOpenMindMap={handleOpenMindMap}
+                    onTopicClick={handleTopicClick}
                   />
                 ))}
               </Box>

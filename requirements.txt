@@ -16,6 +16,12 @@ unidecode
 # Embeddings & Vector Search
 sentence-transformers
 
+# Topic Modeling & Trend Analysis
+bertopic>=0.16.0
+hdbscan>=0.8.33
+prophet>=1.1.5
+apscheduler>=3.10.4
+
 # Research Agent Dependencies
 arxiv>=1.4.7
 simhash>=2.1.0
@@ -62,3 +68,6 @@ uvicorn[standard]
 websockets
 python-multipart
 psycopg[binary]
+
+# System monitoring
+psutil>=5.9.0

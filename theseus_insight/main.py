@@ -7,11 +7,12 @@ import os
 import pathlib
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from .api.routers import all_routers, websocket_manager
 from .api.dependencies import CREDENTIAL_KEYS
 from .api.tasks import task_manager
+from .scheduler import scheduler
 from .api.models import ModelConfig, TTSModelConfig, OrchestrationConfig
 from .data_access import SettingsRepository
 
@@ -176,6 +177,14 @@ async def lifespan(app_instance: FastAPI):
         except Exception as e:
             print(f"Warning: Media file cleanup encountered an error: {e}")
             # Continue startup even if cleanup fails
+        
+        # Start scheduler for nightly jobs
+        print("INFO:     Starting scheduler for nightly jobs...")
+        try:
+            await scheduler.start()
+            print("INFO:     Scheduler started successfully.")
+        except Exception as e:
+            print(f"Error starting scheduler: {e}")
             
     except Exception as e:
         print(f"Error during startup: {e}")
@@ -184,6 +193,10 @@ async def lifespan(app_instance: FastAPI):
     # Shutdown logic
     print("INFO:     Shutting down Theseus Insight API...")
     try:
+        # Stop scheduler
+        await scheduler.stop()
+        print("INFO:     Scheduler stopped.")
+        
         # Clean up TaskManager resources
         await task_manager.cleanup()
         print("INFO:     TaskManager cleanup completed.")
@@ -364,4 +377,204 @@ def cleanup_old_media_files(max_age_days: int = 30):
             
     except Exception as e:
         print(f"ERROR: Failed to run media file cleanup: {e}")
-        # Don't raise the error - we don't want cleanup failure to prevent API startup 
+        # Don't raise the error - we don't want cleanup failure to prevent API startup
+
+# Scheduler diagnostic endpoints
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    """Get the current status of the scheduler and its jobs."""
+    try:
+        # Get basic scheduler status
+        scheduler_status = scheduler.get_job_status()
+        
+        # Add additional diagnostic information
+        from .data_processing.trends import TrendsProcessor
+        from .data_access import PaperRepository, TopicMetricsRepository
+        
+        # Check recent papers count
+        cutoff_date = (datetime.now() - timedelta(days=30)).date()
+        recent_papers_count = len(PaperRepository.get_papers_with_embeddings(limit=10000))
+        
+        # Check if we have any topic metrics
+        latest_period_end = TopicMetricsRepository.get_latest_period_end("week")
+        
+        # Get recent logs for scheduler-related tasks
+        from .data_access import LogsRepository
+        recent_logs = LogsRepository.recent(limit=10)
+        scheduler_logs = [log for log in recent_logs if 'trend' in log.get('task_id', '').lower()]
+        
+        return {
+            "scheduler_status": scheduler_status,
+            "diagnostics": {
+                "recent_papers_count": recent_papers_count,
+                "latest_metric_period": latest_period_end.isoformat() if latest_period_end else None,
+                "recent_scheduler_logs": scheduler_logs,
+                "next_scheduled_run": None,  # Will be filled if scheduler is running
+                "minimum_papers_required": 100,
+                "server_time": datetime.now().isoformat(),
+                "timezone": "UTC"
+            }
+        }
+    except Exception as e:
+        return {"error": f"Failed to get scheduler status: {str(e)}"}
+
+@app.post("/api/scheduler/run-trends-now")
+async def run_trends_now(background_tasks: BackgroundTasks):
+    """Manually trigger the trends recomputation job."""
+    try:
+        # Run the trends recomputation manually
+        background_tasks.add_task(scheduler._run_nightly_trends_recomputation)
+        
+        return {
+            "message": "Trends recomputation started manually", 
+            "status": "running"
+        }
+    except Exception as e:
+        return {"error": f"Failed to run trends manually: {str(e)}"}
+
+@app.get("/api/scheduler/logs")
+async def get_scheduler_logs():
+    """Get recent scheduler-related logs."""
+    try:
+        from .data_access import LogsRepository
+        all_logs = LogsRepository.recent(limit=50)
+        
+        # Filter for scheduler-related logs
+        scheduler_logs = [
+            log for log in all_logs 
+            if any(keyword in log.get('task_id', '').lower() or keyword in log.get('status', '').lower() 
+                   for keyword in ['trend', 'schedule', 'nightly', 'cleanup'])
+        ]
+        
+        return {"logs": scheduler_logs}
+    except Exception as e:
+        return {"error": f"Failed to get scheduler logs: {str(e)}"}
+
+@app.post("/api/scheduler/test")
+async def test_scheduler():
+    """Test the scheduler by running a simple test job."""
+    try:
+        result = scheduler.schedule_test_job()
+        return result
+    except Exception as e:
+        return {"error": f"Failed to schedule test job: {str(e)}"}
+
+@app.get("/api/scheduler/diagnostics")
+async def get_scheduler_diagnostics():
+    """Get comprehensive diagnostics to understand why scheduler might not be processing."""
+    try:
+        from .data_access import (
+            PaperRepository, TopicMetricsRepository, 
+            PaperTopicsRepository, TrendsRepository,
+            SettingsRepository
+        )
+        
+        # Check papers data
+        cutoff_date_30 = (datetime.now() - timedelta(days=30)).date()
+        cutoff_date_7 = (datetime.now() - timedelta(days=7)).date()
+        
+        # Get papers with embeddings
+        all_papers = PaperRepository.get_papers_with_embeddings(limit=10000)
+        
+        # Count papers by date ranges
+        recent_papers_30d = [p for p in all_papers if p.get('date') and 
+                            (isinstance(p['date'], date) and p['date'] >= cutoff_date_30 or
+                             isinstance(p['date'], str) and datetime.strptime(p['date'], '%Y-%m-%d').date() >= cutoff_date_30)]
+        
+        recent_papers_7d = [p for p in all_papers if p.get('date') and 
+                           (isinstance(p['date'], date) and p['date'] >= cutoff_date_7 or
+                            isinstance(p['date'], str) and datetime.strptime(p['date'], '%Y-%m-%d').date() >= cutoff_date_7)]
+        
+        # Check topic assignments
+        papers_needing_topics = PaperTopicsRepository.get_papers_needing_topic_assignment()
+        
+        # Check latest metrics
+        latest_weekly_metrics = TopicMetricsRepository.get_latest_period_end("week")
+        latest_monthly_metrics = TopicMetricsRepository.get_latest_period_end("month")
+        
+        # Check configuration
+        orchestration_config = SettingsRepository.get("orchestration")
+        research_interests = SettingsRepository.get("research_interests")
+        
+        # Check for errors in recent logs
+        from .data_access import LogsRepository
+        recent_logs = LogsRepository.recent(limit=100)
+        error_logs = [log for log in recent_logs if 'error' in log.get('status', '').lower() or 'failed' in log.get('status', '').lower()]
+        
+        # Analyze potential issues
+        issues = []
+        recommendations = []
+        
+        if len(recent_papers_30d) < 100:
+            issues.append(f"Low paper count: Only {len(recent_papers_30d)} papers in last 30 days (minimum required: 100)")
+            recommendations.append("Consider reducing the minimum papers threshold or harvesting more papers")
+        
+        if len(recent_papers_7d) < 10:
+            issues.append(f"Very low recent activity: Only {len(recent_papers_7d)} papers in last 7 days")
+            recommendations.append("Check if paper harvesting is working correctly")
+        
+        if len(papers_needing_topics) > 100:
+            issues.append(f"Many papers without topics: {len(papers_needing_topics)} papers need topic assignment")
+            recommendations.append("Consider running manual trends recomputation")
+        
+        if not orchestration_config:
+            issues.append("Missing orchestration configuration")
+            recommendations.append("Configure orchestration settings via /api/settings")
+        
+        if not research_interests:
+            issues.append("Missing research interests configuration")
+            recommendations.append("Configure research interests via /api/settings")
+        
+        if latest_weekly_metrics is None:
+            issues.append("No weekly metrics found - trends system may never have run")
+            recommendations.append("Run manual trends recomputation to initialize the system")
+        
+        if error_logs:
+            issues.append(f"Recent errors detected: {len(error_logs)} error logs found")
+            recommendations.append("Check error logs for detailed failure information")
+        
+        # Status assessment
+        if len(issues) == 0:
+            status = "healthy"
+        elif len(issues) <= 2:
+            status = "warning"
+        else:
+            status = "critical"
+        
+        return {
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+            "paper_data": {
+                "total_papers_with_embeddings": len(all_papers),
+                "papers_last_30_days": len(recent_papers_30d),
+                "papers_last_7_days": len(recent_papers_7d),
+                "papers_needing_topics": len(papers_needing_topics),
+                "minimum_required_for_processing": 100
+            },
+            "metrics_data": {
+                "latest_weekly_metrics": latest_weekly_metrics.isoformat() if latest_weekly_metrics else None,
+                "latest_monthly_metrics": latest_monthly_metrics.isoformat() if latest_monthly_metrics else None,
+                "has_historical_data": latest_weekly_metrics is not None
+            },
+            "configuration": {
+                "has_orchestration_config": orchestration_config is not None,
+                "has_research_interests": research_interests is not None,
+                "orchestration_config_length": len(orchestration_config) if orchestration_config else 0,
+                "research_interests_length": len(research_interests) if research_interests else 0
+            },
+            "recent_activity": {
+                "total_recent_logs": len(recent_logs),
+                "error_logs": len(error_logs),
+                "recent_errors": error_logs[:5]  # Show first 5 errors
+            },
+            "issues": issues,
+            "recommendations": recommendations,
+            "next_steps": [
+                "Check /api/scheduler/status for job scheduling details",
+                "Review /api/scheduler/logs for scheduler-specific logs",
+                "Test scheduler with /api/scheduler/test",
+                "Run manual trends with /api/scheduler/run-trends-now if needed"
+            ]
+        }
+    except Exception as e:
+        return {"error": f"Failed to get scheduler diagnostics: {str(e)}"} 

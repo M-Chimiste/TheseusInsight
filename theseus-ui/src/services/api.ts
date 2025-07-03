@@ -34,6 +34,38 @@ export interface OrchestrationConfig {
   mind_map_config?: MindMapConfig;
 }
 
+// Trends API Parameter Interfaces
+export interface GetTrendingTopicsParams {
+  limit?: number;
+  period_type?: string;
+  duration_months?: number;
+  min_doc_count?: number;
+  sort_by?: string;
+}
+
+export interface SearchTopicsParams {
+  query: string;
+  limit?: number;
+}
+
+export interface GetTopicDetailParams {
+  period_type?: string;
+  timeline_limit?: number;
+  papers_limit?: number;
+}
+
+export interface GetTopicPapersParams {
+  limit?: number;
+  min_relevance?: number;
+  sort_by?: 'relevance' | 'score' | 'date';
+}
+
+export interface GetResearchInterestPapersParams {
+    limit?: number;
+    min_similarity?: number;
+    sort_by?: 'similarity' | 'score' | 'date';
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -58,7 +90,7 @@ export const settingsApi = {
   getModelProviders: () => api.get('/model-providers'),
   getModels: () => api.get('/models'),
   runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
-  abortTask: (taskId: string) => api.post(`/api/tasks/${taskId}/abort`),
+  abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
   exportDatabase: (onProgress?: (percent: number) => void) =>
     api.get('/settings/database/export', {
       responseType: 'blob',
@@ -230,7 +262,7 @@ export const mindMapApi = {
 };
 
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent' | 'mindmap' | 'mindmap-pdf-parse') => {
+export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent' | 'mindmap' | 'mindmap-pdf-parse' | 'trends') => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };
@@ -393,7 +425,8 @@ export const papersApi = {
         maxScore?: number,
         fromDate?: string,
         toDate?: string,
-        search?: string
+        search?: string,
+        topicId?: number
     ): Promise<PaginatedPapersResponse> => {
         const params: Record<string, any> = {
             page,
@@ -407,6 +440,7 @@ export const papersApi = {
         if (fromDate) params.from_date = fromDate;
         if (toDate) params.to_date = toDate;
         if (search) params.search = search;
+        if (topicId !== undefined) params.topic_id = topicId;
 
         const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
             params
@@ -594,7 +628,8 @@ export interface MindMapData {
 }
 
 export interface MindMapExpandRequest {
-  paper_id: string;
+  paper_id?: string;
+  topic_id?: number;
   k?: number;
   similarity_threshold?: number;
   layout_algorithm?: 'force' | 'circular' | 'hierarchical';
@@ -673,4 +708,280 @@ export interface MindMapReportSaveResponse {
 export interface MindMapReportListResponse {
   reports: MindMapReport[];
   total_count: number;
-} 
+}
+
+// === Trends API Interfaces ===
+
+export interface TopicApiResponse {
+  id: number;
+  label: string;
+  keywords: string[];
+  embedding_model?: string;
+  created_at: string;
+  updated_at: string;
+  latest_doc_count?: number;
+  latest_growth_rate?: number;
+  total_papers?: number;
+  forecast_1m?: number;
+  forecast_3m?: number;
+  forecast_6m?: number;
+}
+
+export interface TopicMetricResponse {
+  id: number;
+  topic_id: number;
+  period_start: string;
+  period_end: string;
+  period_type: string;
+  doc_count: number;
+  avg_score?: number;
+  growth_rate?: number;
+  forecast_1m?: number;
+  forecast_3m?: number;
+  forecast_6m?: number;
+  created_at: string;
+}
+
+export interface TopicDetailResponse {
+  topic: TopicApiResponse;
+  timeline: TopicMetricResponse[];
+  representative_papers: PaperApiResponse[];
+  total_papers: number;
+}
+
+export interface TrendsListResponse {
+  topics: TopicApiResponse[];
+  total_topics: number;
+  total_papers_with_topics: number;
+  period_type: string;
+  duration_months: number;
+}
+
+export interface TrendsSearchResponse {
+  query: string;
+  topics: TopicApiResponse[];
+  total_results: number;
+}
+
+export interface TrendsRecomputeRequest {
+  lookback_months: number;
+  duration_months: number;
+  min_papers: number;
+  force_full_recalc: boolean;
+  validate_accuracy: boolean;
+  clear_all_data: boolean;
+}
+
+export interface TrendsRecomputeResponse {
+  task_id: string;
+  message: string;
+  estimated_duration_minutes: number;
+}
+
+export interface TopicPapersResponse {
+  topic_id: number;
+  topic_label: string;
+  papers: PaperApiResponse[];
+  total_papers: number;
+}
+
+export interface ResearchInterestPapersResponse {
+    research_interest_id: number;
+    interest_text: string;
+    papers: PaperApiResponse[];
+    total_papers: number;
+}
+
+// Trends API
+export const trendsApi = {
+  getTrendingTopics: async (params?: GetTrendingTopicsParams): Promise<AxiosResponse<TrendsListResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.period_type) searchParams.append('period_type', params.period_type);
+    if (params?.duration_months) searchParams.append('duration_months', params.duration_months.toString());
+    if (params?.min_doc_count) searchParams.append('min_doc_count', params.min_doc_count.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    
+    return api.get(`/trends?${searchParams.toString()}`);
+  },
+
+  searchTopics: async (params: SearchTopicsParams): Promise<AxiosResponse<TrendsSearchResponse>> => {
+    const searchParams = new URLSearchParams();
+    searchParams.append('query', params.query);
+    if (params.limit) searchParams.append('limit', params.limit.toString());
+    
+    return api.get(`/trends/search?${searchParams.toString()}`);
+  },
+
+  getTopicDetail: async (topicId: number, params?: GetTopicDetailParams): Promise<AxiosResponse<TopicDetailResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.period_type) searchParams.append('period_type', params.period_type);
+    if (params?.timeline_limit) searchParams.append('timeline_limit', params.timeline_limit.toString());
+    if (params?.papers_limit) searchParams.append('papers_limit', params.papers_limit.toString());
+    
+    return api.get(`/trends/${topicId}?${searchParams.toString()}`);
+  },
+
+  recomputeTrends: async (params: TrendsRecomputeRequest): Promise<AxiosResponse<TrendsRecomputeResponse>> => {
+    return api.post('/trends/recompute', params);
+  },
+
+  getTopicPapers: async (topicId: number, params?: GetTopicPapersParams): Promise<AxiosResponse<TopicPapersResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.min_relevance) searchParams.append('min_relevance', params.min_relevance.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    return api.get(`/trends/${topicId}/papers?${searchParams.toString()}`);
+  },
+
+  summarizeLabels: async (labels: string[]): Promise<AxiosResponse<Record<string, string>>> => {
+    return api.post('/trends/summarize-labels', labels);
+  },
+
+  getResearchInterestPapers: async (interestId: number, params?: GetResearchInterestPapersParams): Promise<AxiosResponse<ResearchInterestPapersResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.min_similarity) searchParams.append('min_similarity', params.min_similarity.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    return api.get(`/trends/research-interests/${interestId}/papers`, { params: searchParams });
+  },
+};
+
+// Research Interest Clustering API
+export const researchInterestsApi = {
+  getResearchInterests: async (params?: GetTrendingTopicsParams): Promise<AxiosResponse<TrendsListResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.period_type) searchParams.append('period_type', params.period_type);
+    if (params?.duration_months) searchParams.append('duration_months', params.duration_months.toString());
+    if (params?.min_doc_count) searchParams.append('min_doc_count', params.min_doc_count.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    
+    return api.get(`/trends/research-interests?${searchParams.toString()}`);
+  },
+
+  searchResearchInterests: async (params: SearchTopicsParams): Promise<AxiosResponse<TrendsSearchResponse>> => {
+    const searchParams = new URLSearchParams();
+    searchParams.append('query', params.query);
+    if (params.limit) searchParams.append('limit', params.limit.toString());
+    
+    return api.get(`/trends/research-interests/search?${searchParams.toString()}`);
+  },
+
+  getResearchInterestDetail: async (interestId: number, params?: GetTopicDetailParams): Promise<AxiosResponse<ResearchInterestDetailResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.period_type) searchParams.append('period_type', params.period_type);
+    if (params?.timeline_limit) searchParams.append('timeline_limit', params.timeline_limit.toString());
+    if (params?.papers_limit) searchParams.append('papers_limit', params.papers_limit.toString());
+    
+    return api.get(`/trends/research-interests/${interestId}?${searchParams.toString()}`);
+  },
+
+  recomputeResearchInterests: async (params: TrendsRecomputeRequest): Promise<AxiosResponse<TrendsRecomputeResponse>> => {
+    return api.post('/trends/research-interests/recompute', params);
+  },
+
+  getResearchInterestPapers: async (interestId: number, params?: GetResearchInterestPapersParams): Promise<AxiosResponse<ResearchInterestPapersResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.min_similarity) searchParams.append('min_similarity', params.min_similarity.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    return api.get(`/trends/research-interests/${interestId}/papers`, { params: searchParams });
+  },
+};
+
+// === Research Interest Clustering API Interfaces ===
+
+export interface ResearchInterestApiResponse {
+  id: number;
+  interest_text: string;
+  embedding_model?: string;
+  created_at: string;
+  updated_at?: string;
+  latest_doc_count?: number;
+  latest_growth_rate?: number;
+  total_papers?: number;
+  latest_avg_relevance?: number;
+  latest_avg_score?: number;
+  forecast_1m?: number;
+  forecast_3m?: number;
+  forecast_6m?: number;
+}
+
+export interface ResearchInterestMetricResponse {
+  id: number;
+  research_interest_id: number;
+  period_start: string;
+  period_end: string;
+  period_type: string;
+  doc_count: number;
+  avg_relevance_score?: number;
+  avg_paper_score?: number;
+  growth_rate?: number;
+  forecast_1m?: number;
+  forecast_3m?: number;
+  forecast_6m?: number;
+  created_at: string;
+}
+
+export interface ResearchInterestDetailResponse {
+  interest: ResearchInterestApiResponse;
+  timeline: ResearchInterestMetricResponse[];
+  representative_papers: PaperApiResponse[];
+  total_papers: number;
+}
+
+// Union type for detail responses to handle both topics and research interests
+export type EntityDetailResponse = TopicDetailResponse | ResearchInterestDetailResponse;
+
+// Type guards to differentiate between topic and research interest responses
+export function isTopicDetailResponse(response: EntityDetailResponse): response is TopicDetailResponse {
+  return 'topic' in response;
+}
+
+export function isResearchInterestDetailResponse(response: EntityDetailResponse): response is ResearchInterestDetailResponse {
+  return 'interest' in response;
+}
+
+// Performance Configuration interfaces
+export interface PerformanceConfig {
+  max_cores: number;
+  max_memory_gb: number;
+  hdbscan_n_jobs: number;
+  clustering_batch_size: number;
+  embedding_batch_size: number;
+  vector_processing_workers: number;
+  enable_memory_mapping: boolean;
+  cache_embeddings: boolean;
+  aggressive_garbage_collection: boolean;
+  development_mode: boolean;
+  development_max_papers: number;
+}
+
+export interface SystemInfo {
+  cpu_count_physical: number;
+  cpu_count_logical: number;
+  memory_total_gb: number;
+  memory_available_gb: number;
+  gpu_available: boolean;
+  gpu_name?: string;
+  recommended_config: PerformanceConfig;
+}
+
+// Performance Configuration API
+export const performanceApi = {
+  getSystemInfo: async (): Promise<SystemInfo> => {
+    const response = await api.get('/trends/system-info');
+    return response.data;
+  },
+
+  getPerformanceConfig: async (): Promise<PerformanceConfig> => {
+    const response = await api.get('/trends/performance-config');
+    return response.data;
+  },
+
+  updatePerformanceConfig: async (config: PerformanceConfig): Promise<{ status: string; message: string }> => {
+    const response = await api.post('/trends/performance-config', config);
+    return response.data;
+  },
+}; 

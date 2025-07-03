@@ -25,6 +25,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
   - [Visualizer Generation](#visualizer-generation)
   - [Similarity Search](#similarity-search)
   - [Mind-Map Explorer](#mind-map-explorer)
+  - [Topic Evolution & Trend-Forecast Dashboard](#topic-evolution--trend-forecast-dashboard)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
@@ -40,6 +41,8 @@ Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or pro
 **🔄 Now Powered by PostgreSQL:** The latest version has been fully migrated from SQLite to PostgreSQL with pgvector, enabling advanced vector similarity search, improved performance, and enhanced scalability for large research paper collections.
 
 The system introduces the **Mind-Map Explorer**, an interactive visualization system for exploring multi-order research paper relationships through configurable network graphs, enabling researchers to discover both direct and indirect connections in the academic literature.
+
+**NEW: Topic Evolution & Trend-Forecast Dashboard** - An automated analytics platform that surfaces emerging machine learning topics, tracks their evolution over time, and provides short-term forecasts to help researchers identify trending areas and strategic research opportunities.
 
 ---
 
@@ -112,6 +115,16 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **Real-Time Progress Tracking**: WebSocket-powered progress updates with detailed step information during generation.
   - **Save & Share Reports**: Save mind-map configurations and results for future reference and collaboration.
   - **Seamless Integration**: Launch from any paper in the research library or similarity search results.
+- **Topic Evolution & Trend-Forecast Dashboard**: Automated trend analysis and forecasting for machine learning research.
+  - **Automated Topic Discovery**: Uses BERTopic with HDBSCAN clustering to identify emerging research topics from paper embeddings.
+  - **Temporal Analysis**: Tracks topic popularity over weekly, monthly, and quarterly periods with growth rate calculations.
+  - **Forecasting Engine**: Prophet-based time series forecasting with 1, 3, and 6-month predictions and accuracy validation.
+  - **Interactive Visualizations**: D3.js-powered timeline charts, topic heatmaps, and growth rate visualizations.
+  - **Smart Label Summarization**: AI-generated concise topic labels using configured LLM models with database caching.
+  - **Research Interest Analysis**: Alternative clustering mode based on user-configured research interests rather than automatic discovery.
+  - **Cross-Feature Integration**: Generate mind-maps and newsletters directly from trending topics.
+  - **Performance Optimization**: Configurable processing parameters with system hardware detection and recommendations.
+  - **Scheduled Automation**: Nightly recomputation with incremental processing and comprehensive accuracy tracking.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers with PostgreSQL.
@@ -324,6 +337,80 @@ Theseus Insight features advanced hybrid search capabilities that combine the pr
 - **PostgreSQL Integration**: Complete CRUD operations for mind-map reports with JSON storage for configurations and results
 - **Vector Similarity**: Uses pgvector for efficient similarity calculations across large paper collections
 - **Performance Optimization**: Leverages PostgreSQL's indexing for fast paper retrieval and similarity computation
+
+---
+
+## Key Endpoints
+
+### Topic Evolution & Trend-Forecast Dashboard
+
+The trends system provides comprehensive API endpoints for topic discovery, analysis, and forecasting:
+
+#### Core Topic Endpoints
+
+**`GET /api/trends`** - List trending topics with metrics
+- **Parameters**: `limit`, `period_type` (week/month/quarter), `duration_months`, `min_doc_count`, `sort_by`
+- **Returns**: Trending topics with growth rates, document counts, and forecasts
+- **Example**: `/api/trends?period_type=month&duration_months=6&sort_by=growth_rate`
+
+**`GET /api/trends/{topic_id}`** - Get detailed topic information
+- **Parameters**: `period_type`, `timeline_limit`, `papers_limit`
+- **Returns**: Topic details, timeline data, representative papers, and forecasts
+- **Features**: Interactive timeline data for visualizations
+
+**`GET /api/trends/search`** - Search topics by keywords
+- **Parameters**: `query`, `limit`
+- **Returns**: Topics matching search criteria with relevance scoring
+
+**`GET /api/trends/{topic_id}/papers`** - Get papers for a specific topic
+- **Parameters**: `limit`, `min_relevance`, `sort_by` (relevance/score/date)
+- **Returns**: Papers associated with the topic, sorted by relevance or other criteria
+
+#### Administrative Endpoints
+
+**`POST /api/trends/recompute`** - Trigger trends recomputation
+- **Parameters**: `lookback_months`, `duration_months`, `min_papers`, `force_full_recalc`, `clear_all_data`
+- **Returns**: Task ID for background processing with WebSocket progress tracking
+- **Features**: Incremental processing, nuclear option for complete recalculation
+
+**`POST /api/trends/validate-accuracy`** - Validate forecast accuracy
+- **Parameters**: `period_type`
+- **Returns**: Accuracy metrics (MAE, MSE, RMSE, MAPE, R²) with automated alerting
+
+**`GET /api/trends/system-info`** - Get system hardware information
+- **Returns**: CPU, memory, GPU info with recommended performance configuration
+
+#### Research Interest Endpoints
+
+**`GET /api/trends/research-interests`** - Analyze trends based on configured research interests
+- **Parameters**: Similar to main trends endpoint
+- **Returns**: Trends clustered against user's research interests rather than automatic topic discovery
+
+**`POST /api/trends/research-interests/recompute`** - Recompute research interest clustering
+- **Parameters**: `similarity_threshold`, `lookback_months`, `duration_months`
+- **Features**: Alternative to BERTopic using explicit research interest matching
+
+#### Label Summarization
+
+**`POST /api/trends/summarize-labels`** - Generate AI summaries for topic labels
+- **Parameters**: List of topic labels
+- **Returns**: Concise, AI-generated summaries using configured LLM
+- **Features**: Database caching, configurable model selection
+
+**`GET /api/trends/label-cache/stats`** - View label cache statistics
+**`DELETE /api/trends/label-cache`** - Clear cached label summaries
+
+#### Integration with Other Features
+
+The trends system integrates seamlessly with existing Theseus Insight features:
+
+- **Papers API**: Enhanced with `?topic_id=` parameter for topic-based filtering
+- **Mind-Map API**: Enhanced with `topic_id` support for topic-seeded mind-map generation
+- **Newsletter API**: Enhanced with `topic_id` support for topic-focused newsletter generation
+
+📖 **[Complete Trends API Documentation](docs/trends_api_spec.md)** - Detailed API specification with examples and response schemas.
+
+---
 
 ## Database Migration
 

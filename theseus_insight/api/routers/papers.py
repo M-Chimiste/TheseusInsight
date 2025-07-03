@@ -37,13 +37,14 @@ async def get_papers(
     search: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    page_size: int = Query(10, gt=0, le=100)
+    page_size: int = Query(10, gt=0, le=100),
+    topic_id: Optional[int] = Query(None, description="Filter papers by topic ID")
 ):
     """
     Retrieves a paginated list of papers based on various filters and sorting options.
 
     This endpoint fetches a paginated list of papers from the database, allowing for filtering by score range, 
-    date range, and search query. The results can be sorted by date or score in ascending or descending order.
+    date range, search query, and topic. The results can be sorted by date or score in ascending or descending order.
 
     Args:
         page (int): The page number to fetch. Defaults to 1.
@@ -55,6 +56,7 @@ async def get_papers(
         from_date (Optional[str]): The start date for filtering papers. Defaults to None.
         to_date (Optional[str]): The end date for filtering papers. Defaults to None.
         page_size (int): The number of papers to fetch per page. Defaults to 10.
+        topic_id (Optional[int]): Filter papers by topic ID. Defaults to None.
 
     Returns:
         PaginatedPapersResponse: A response object containing the list of papers, total items, total pages, 
@@ -64,18 +66,130 @@ async def get_papers(
         HTTPException: If an error occurs while fetching the papers.
         """
     try:
-        # Use database-level pagination instead of fetching all papers
-        papers_data = PaperRepository.paginate(
-            page=page,
-            page_size=page_size,
-            min_score=score,
-            max_score=max_score,
-            sort_field=sort_field or 'score',
-            sort_direction=sort_direction or 'desc',
-            search=search,
-            from_date=from_date,
-            to_date=to_date,
-        )
+        # Handle topic filtering vs regular pagination
+        if topic_id is not None:
+            # Import repositories for filtering (both topics and research interests)
+            from ...data_access import (
+                PaperTopicsRepository, TopicsRepository,
+                PaperResearchInterestsRepository, ResearchInterestsRepository
+            )
+            
+            # Check if it's a topic ID first, then research interest ID
+            topic_data = TopicsRepository.get(topic_id)
+            research_interest_data = None
+            
+            if topic_data:
+                # It's a topic - get papers for this topic
+                all_topic_papers = PaperTopicsRepository.get_papers_for_topic(
+                    topic_id, limit=page_size * 10, min_relevance=0.0  # Get more papers for pagination
+                )
+            else:
+                # Check if it's a research interest
+                research_interest_data = ResearchInterestsRepository.get(topic_id)
+                if research_interest_data:
+                    # It's a research interest - get papers for this research interest
+                    all_topic_papers = PaperResearchInterestsRepository.get_papers_for_interest(
+                        topic_id, limit=page_size * 10, min_similarity=0.0  # Get more papers for pagination
+                    )
+                else:
+                    raise HTTPException(status_code=404, detail=f"Topic or Research Interest {topic_id} not found")
+            
+            # Apply additional filters if provided
+            filtered_papers = []
+            for paper in all_topic_papers:
+                # Apply score filters
+                if score is not None and paper.get('score', 0) < score:
+                    continue
+                if max_score is not None and paper.get('score', 0) > max_score:
+                    continue
+                    
+                # Apply date filters
+                if from_date is not None:
+                    paper_date = paper.get('date')
+                    if isinstance(paper_date, str):
+                        paper_date = datetime.strptime(paper_date, '%Y-%m-%d').date()
+                    elif isinstance(paper_date, datetime):
+                        paper_date = paper_date.date()
+                    
+                    if paper_date < datetime.strptime(from_date, '%Y-%m-%d').date():
+                        continue
+                        
+                if to_date is not None:
+                    paper_date = paper.get('date')
+                    if isinstance(paper_date, str):
+                        paper_date = datetime.strptime(paper_date, '%Y-%m-%d').date()
+                    elif isinstance(paper_date, datetime):
+                        paper_date = paper_date.date()
+                    
+                    if paper_date > datetime.strptime(to_date, '%Y-%m-%d').date():
+                        continue
+                        
+                # Apply search filter
+                if search is not None:
+                    search_lower = search.lower()
+                    title = paper.get('title', '').lower()
+                    abstract = paper.get('abstract', '').lower()
+                    if search_lower not in title and search_lower not in abstract:
+                        continue
+                
+                filtered_papers.append(paper)
+            
+            # Apply sorting
+            if sort_field == 'date':
+                filtered_papers.sort(
+                    key=lambda x: x.get('date', ''), 
+                    reverse=(sort_direction == 'desc')
+                )
+            elif sort_field == 'score':
+                filtered_papers.sort(
+                    key=lambda x: x.get('score', 0), 
+                    reverse=(sort_direction == 'desc')
+                )
+            else:
+                # Default sort by relevance/similarity score (highest first)
+                # Use relevance_score for topics, similarity_score for research interests
+                if topic_data:
+                    # Topic - sort by relevance_score
+                    filtered_papers.sort(
+                        key=lambda x: x.get('relevance_score', 0), 
+                        reverse=True
+                    )
+                else:
+                    # Research interest - sort by similarity_score  
+                    filtered_papers.sort(
+                        key=lambda x: x.get('similarity_score', 0), 
+                        reverse=True
+                    )
+            
+            # Apply pagination
+            total_items = len(filtered_papers)
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated_papers = filtered_papers[start_idx:end_idx]
+            
+            # Calculate pagination metadata
+            total_pages = (total_items + page_size - 1) // page_size
+            has_next_page = page < total_pages
+            
+            papers_data = {
+                'items': paginated_papers,
+                'total_items': total_items,
+                'total_pages': total_pages,
+                'has_next_page': has_next_page
+            }
+        else:
+            # Use regular database-level pagination
+            papers_data = PaperRepository.paginate(
+                page=page,
+                page_size=page_size,
+                min_score=score,
+                max_score=max_score,
+                sort_field=sort_field or 'score',
+                sort_direction=sort_direction or 'desc',
+                search=search,
+                from_date=from_date,
+                to_date=to_date,
+            )
         
         # Convert to API response format
         papers = []

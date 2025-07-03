@@ -1093,6 +1093,7 @@ class TaskManager:
             else:
                 config = task["config_json"]
             paper_id = config.get("paper_id")
+            topic_id = config.get("topic_id")  # Extract topic_id for auto-save functionality
             k = config.get("k", 15)
             similarity_threshold = config.get("similarity_threshold", 0.3)
             expansion_order = config.get("expansion_order", 1)
@@ -1225,6 +1226,57 @@ class TaskManager:
             nodes = mindmap_data.get("nodes", [])
             edges = mindmap_data.get("edges", [])
             
+            # Auto-save the mind-map as a report if generated from a topic
+            report_id = None
+            topic_id = config.get("topic_id")
+            if topic_id and mindmap_data:
+                try:
+                    print(f"DEBUG: Auto-saving mind-map for topic {topic_id}")
+                    from ..data_access import TopicsRepository, MindmapReportRepository
+                    
+                    # Get topic details for report title
+                    topic_data = TopicsRepository.get(topic_id)
+                    topic_label = topic_data['label'] if topic_data else f"Topic {topic_id}"
+                    
+                    # Create auto-save title
+                    auto_title = f"Mind-Map: {topic_label[:60]}..." if len(topic_label) > 60 else f"Mind-Map: {topic_label}"
+                    
+                    # Get seed paper for report
+                    seed_paper = PaperRepository.get_by_id(int(paper_id))
+                    seed_paper_title = seed_paper['title'] if seed_paper else f"Paper {paper_id}"
+                    
+                    # Prepare parameters from config and result
+                    save_parameters = {
+                        "k": config.get("k", 10),
+                        "similarity_threshold": config.get("similarity_threshold", 0.3),
+                        "layout_algorithm": layout_algorithm,
+                        "expansion_order": config.get("expansion_order", 2),
+                        "max_nodes_per_order": config.get("max_nodes_per_order", 5),
+                        "generated_from": "topic",
+                        "topic_id": topic_id,
+                        "auto_generated": True
+                    }
+                    
+                    # Save as report
+                    report_id = MindmapReportRepository.insert(
+                        title=auto_title,
+                        description=f"Auto-generated mind-map from topic '{topic_label}' using seed paper: {seed_paper_title}",
+                        seed_paper_id=int(paper_id),
+                        seed_paper_title=seed_paper_title,
+                        mindmap_data=mindmap_data,
+                        parameters=save_parameters,
+                        statistics=result.get('statistics', {
+                            "nodes_count": len(nodes),
+                            "edges_count": len(edges), 
+                            "layout_algorithm": layout_algorithm
+                        })
+                    )
+                    print(f"DEBUG: Mind-map auto-saved as report {report_id}")
+                    
+                except Exception as save_error:
+                    print(f"DEBUG: Failed to auto-save mind-map: {save_error}")
+                    # Don't fail the task if save fails, just log it
+            
             print(f"DEBUG: About to send completion status update")
             # Add a small delay to ensure WebSocket has time to connect
             await asyncio.sleep(0.5)
@@ -1235,17 +1287,26 @@ class TaskManager:
                 "seed_paper_id": paper_id,
                 "nodes_count": len(nodes),
                 "edges_count": len(edges),
-                "layout_algorithm": layout_algorithm
+                "layout_algorithm": layout_algorithm,
+                "report_id": report_id,  # Include the saved report ID
+                "auto_saved": report_id is not None
             }
             print(f"DEBUG: Completion result structure: {list(completion_result.keys())}")
             print(f"DEBUG: Mindmap data structure being sent: {list(mindmap_data.keys()) if mindmap_data else 'None'}")
             if mindmap_data and 'nodes' in mindmap_data:
                 print(f"DEBUG: First node sample: {mindmap_data['nodes'][0] if mindmap_data['nodes'] else 'No nodes'}")
             
+            # Create completion message
+            base_message = f"Mind-map generated successfully with {len(nodes)} nodes and {len(edges)} edges"
+            if report_id:
+                completion_message = f"{base_message} and auto-saved as report #{report_id}"
+            else:
+                completion_message = base_message
+            
             await self.update_task_status(
                 task_id,
                 TaskStatus.COMPLETED,
-                f"Mind-map generated successfully with {len(nodes)} nodes and {len(edges)} edges",
+                completion_message,
                 progress=100,
                 current_step="generation_complete",
                 result=completion_result,

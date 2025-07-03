@@ -553,8 +553,8 @@ class MindMapWorkflow:
             "mindmap_data": mindmap_data,
             "generation_summary": generation_summary,
             "statistics": {
-                "nodes_created": len(mindmap_data.get("nodes", [])),
-                "edges_created": len(mindmap_data.get("edges", [])),
+                "nodes_count": len(mindmap_data.get("nodes", [])),
+                "edges_count": len(mindmap_data.get("edges", [])),
                 "summaries_generated": len(final_state.get("summaries", {})),
                 "layout_algorithm": final_state.get("layout_algorithm", "force")
             },

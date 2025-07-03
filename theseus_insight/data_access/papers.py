@@ -630,4 +630,21 @@ class PaperRepository:
             cur.execute(
                 "SELECT id, title, abstract FROM papers WHERE keywords_json IS NULL OR keywords_json = '' ORDER BY id DESC"
             )
+            return cur.fetchall()
+
+    @staticmethod
+    def get_papers_with_embeddings(limit: int = 10000, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get papers that have embeddings for trend analysis."""
+        with get_cursor() as cur:
+            # If limit is very large (100000+), remove it to get all papers
+            if limit >= 100000:
+                cur.execute(
+                    "SELECT * FROM papers WHERE embedding IS NOT NULL ORDER BY date DESC OFFSET %s",
+                    (offset,)
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM papers WHERE embedding IS NOT NULL ORDER BY date DESC LIMIT %s OFFSET %s",
+                    (limit, offset)
+                )
             return cur.fetchall() 

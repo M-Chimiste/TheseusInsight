@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 from datetime import date, timedelta
 
@@ -177,6 +177,7 @@ class NewsletterConfig(BaseModel):
     max_papers_to_select: int = Field(10, gt=0)
     min_score_threshold: float = Field(0.5, ge=0, le=1)
     search_query: Optional[str] = None
+    topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers")
     send_email: bool = False
     intro_music_path: Optional[str] = None # Path to intro music file if any
 
@@ -260,6 +261,7 @@ class NewsletterRunParams(BaseModel):
     end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
     email_recipients: List[str] = Field(default_factory=list, example=["test@example.com"])
     research_interests: str = Field(..., example="AI in healthcare")
+    topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers (overrides research_interests filtering)")
     generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
 
 # Models for Papers Page
@@ -515,13 +517,25 @@ class MindMapData(BaseModel):
 
 class MindMapExpandRequest(BaseModel):
     """Request model for expanding a mind-map."""
-    paper_id: str = Field(..., description="Seed paper ID")
+    paper_id: Optional[str] = Field(None, description="Seed paper ID (required if topic_id not provided)")
+    topic_id: Optional[int] = Field(None, description="Seed from topic's representative papers (required if paper_id not provided)")
     k: int = Field(15, ge=1, le=50, description="Number of similar papers to retrieve")
     similarity_threshold: float = Field(0.3, ge=0.0, le=1.0, description="Minimum similarity threshold")
     layout_algorithm: str = Field("force", description="Layout algorithm: force, circular, hierarchical")
     model_config_override: Optional[ModelConfig] = Field(None, description="Override default summarization model")
     expansion_order: int = Field(1, ge=1, le=5, description="Order of expansion (1-5). Higher orders expand from each retrieved paper.")
     max_nodes_per_order: int = Field(20, ge=5, le=50, description="Maximum number of nodes to expand from each paper in multi-order expansion")
+    
+    @model_validator(mode='after')
+    def validate_seed_input(self):
+        """Ensure either paper_id or topic_id is provided, but not both."""
+        if not self.paper_id and not self.topic_id:
+            raise ValueError('Either paper_id or topic_id must be provided')
+        
+        if self.paper_id and self.topic_id:
+            raise ValueError('Cannot specify both paper_id and topic_id - choose one')
+        
+        return self
 
 class MindMapExpandResponse(BaseModel):
     """Response model for mind-map expansion."""
@@ -579,3 +593,263 @@ class MindMapReportSaveResponse(BaseModel):
     id: int = Field(..., description="Saved report ID")
     title: str = Field(..., description="Report title")
     message: str = Field(..., description="Success message")
+
+# === Topic Evolution & Trends Models ===
+
+class TopicApiResponse(BaseModel):
+    """API response model for a topic."""
+    id: int = Field(..., description="Topic ID")
+    label: str = Field(..., description="Topic label")
+    keywords: List[str] = Field(..., description="Top keywords for the topic")
+    embedding_model: Optional[str] = Field(None, description="Embedding model used")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+    
+    # Latest metrics (if available)
+    latest_doc_count: Optional[int] = Field(None, description="Most recent document count")
+    latest_growth_rate: Optional[float] = Field(None, description="Most recent growth rate")
+    total_papers: Optional[int] = Field(None, description="Total papers associated with topic")
+    
+    # Forecasts (if available)
+    forecast_1m: Optional[int] = Field(None, description="1-month forecast")
+    forecast_3m: Optional[int] = Field(None, description="3-month forecast")
+    forecast_6m: Optional[int] = Field(None, description="6-month forecast")
+
+class TopicMetricResponse(BaseModel):
+    """API response model for topic metrics over time."""
+    id: int = Field(..., description="Metric ID")
+    topic_id: int = Field(..., description="Topic ID")
+    period_start: str = Field(..., description="Period start date")
+    period_end: str = Field(..., description="Period end date")
+    period_type: str = Field(..., description="Period type (week/month/quarter)")
+    doc_count: int = Field(..., description="Number of documents in this period")
+    avg_score: Optional[float] = Field(None, description="Average score of papers")
+    growth_rate: Optional[float] = Field(None, description="Growth rate compared to previous period")
+    forecast_1m: Optional[int] = Field(None, description="1-month forecast")
+    forecast_3m: Optional[int] = Field(None, description="3-month forecast")
+    forecast_6m: Optional[int] = Field(None, description="6-month forecast")
+    created_at: str = Field(..., description="Creation timestamp")
+
+class TopicDetailResponse(BaseModel):
+    """Detailed response for a specific topic including timeline and papers."""
+    topic: TopicApiResponse = Field(..., description="Topic information")
+    timeline: List[TopicMetricResponse] = Field(..., description="Historical metrics")
+    representative_papers: List[PaperApiResponse] = Field(..., description="Most relevant papers")
+    total_papers: int = Field(..., description="Total papers for this topic")
+
+class TrendsListRequest(BaseModel):
+    """Request model for listing trending topics."""
+    limit: int = Field(20, ge=1, le=100, description="Maximum number of topics to return")
+    period_type: str = Field("month", description="Display granularity: week, month, quarter")
+    duration_months: int = Field(6, ge=1, le=24, description="Duration to analyze: 1, 3, 6, 12, 24 months")
+    min_doc_count: int = Field(5, ge=1, description="Minimum document count filter")
+    sort_by: str = Field("growth_rate", description="Sort by: growth_rate, doc_count, forecast_3m")
+
+class TrendsListResponse(BaseModel):
+    """Response model for trending topics list."""
+    topics: List[TopicApiResponse] = Field(..., description="List of trending topics")
+    total_topics: int = Field(..., description="Total number of topics in system")
+    total_papers_with_topics: int = Field(..., description="Total papers with topic assignments")
+    period_type: str = Field(..., description="Display granularity used")
+    duration_months: int = Field(..., description="Duration analyzed")
+
+class TrendsSearchRequest(BaseModel):
+    """Request model for searching topics."""
+    query: str = Field(..., min_length=1, description="Search query")
+    limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
+
+class TrendsSearchResponse(BaseModel):
+    """Response model for topic search."""
+    query: str = Field(..., description="Search query used")
+    topics: List[TopicApiResponse] = Field(..., description="Matching topics")
+    total_results: int = Field(..., description="Total number of results")
+
+class TrendsRecomputeRequest(BaseModel):
+    """Request model for trends recomputation with weekly-first analysis."""
+    lookback_months: int = Field(24, ge=1, le=48, description="Months of historical data to analyze")
+    duration_months: int = Field(6, ge=1, le=24, description="Duration for analysis views (1, 3, 6, 12, 24 months)")
+    min_papers: int = Field(100, ge=10, description="Minimum papers required to run analysis")
+    validate_accuracy: bool = Field(True, description="Whether to validate forecast accuracy")
+    force_full_recalc: bool = Field(False, description="Force full recalculation instead of incremental processing")
+    clear_all_data: bool = Field(False, description="NUCLEAR OPTION: Clear all topics, metrics, and relationships before recalculation (for development/testing)")
+
+class TrendsRecomputeResponse(BaseModel):
+    """Response model for trends recomputation."""
+    task_id: str = Field(..., description="Task ID for tracking progress")
+    message: str = Field(..., description="Status message")
+    estimated_duration_minutes: int = Field(..., description="Estimated processing time")
+
+class TopicPapersRequest(BaseModel):
+    """Request model for getting papers for a topic."""
+    limit: int = Field(50, ge=1, le=200, description="Maximum number of papers")
+    min_relevance: float = Field(0.1, ge=0.0, le=1.0, description="Minimum relevance score")
+    sort_by: str = Field("relevance", description="Sort by: relevance, score, date")
+
+class TopicPapersResponse(BaseModel):
+    """Response model for topic papers."""
+    topic_id: int = Field(..., description="Topic ID")
+    topic_label: str = Field(..., description="Topic label")
+    papers: List[PaperApiResponse] = Field(..., description="Papers for this topic")
+    total_papers: int = Field(..., description="Total papers for this topic")
+
+class TrendsValidateAccuracyRequest(BaseModel):
+    """Request model for forecast accuracy validation."""
+    period_type: str = Field(default="month", description="Period type for validation")
+
+# Performance Configuration Models
+class PerformanceConfig(BaseModel):
+    """Performance configuration for computationally intensive operations."""
+    
+    # Hardware Resources
+    max_cores: int = Field(default=4, ge=1, le=128, description="Maximum CPU cores to use")
+    max_memory_gb: int = Field(default=16, ge=4, le=2048, description="Maximum memory in GB")
+    
+    # HDBSCAN Clustering Optimization
+    hdbscan_n_jobs: int = Field(default=-1, ge=-1, le=128, description="HDBSCAN parallel jobs (-1 = use all cores)")
+    clustering_batch_size: int = Field(default=50000, ge=1000, le=1000000, description="Batch size for clustering operations")
+    
+    # Embedding & Vector Operations
+    embedding_batch_size: int = Field(default=512, ge=32, le=2048, description="Embedding batch size")
+    vector_processing_workers: int = Field(default=8, ge=1, le=64, description="Workers for vector processing")
+    
+    # Memory Management
+    enable_memory_mapping: bool = Field(default=True, description="Use memory mapping for large datasets")
+    cache_embeddings: bool = Field(default=True, description="Cache embeddings in memory")
+    aggressive_garbage_collection: bool = Field(default=False, description="Force garbage collection between stages")
+    
+    # Development vs Production Mode
+    development_mode: bool = Field(default=False, description="Enable development optimizations (smaller datasets, faster iterations)")
+    development_max_papers: int = Field(default=5000, ge=100, le=50000, description="Max papers in development mode")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "max_cores": 16,
+                "max_memory_gb": 128,
+                "hdbscan_n_jobs": -1,
+                "clustering_batch_size": 100000,
+                "embedding_batch_size": 1024,
+                "vector_processing_workers": 16,
+                "enable_memory_mapping": True,
+                "cache_embeddings": True,
+                "aggressive_garbage_collection": False,
+                "development_mode": False,
+                "development_max_papers": 5000
+            }
+        }
+
+class SystemInfoResponse(BaseModel):
+    """System hardware information for performance configuration."""
+    cpu_count_physical: int = Field(description="Physical CPU cores")
+    cpu_count_logical: int = Field(description="Logical CPU cores (with hyperthreading)")
+    memory_total_gb: float = Field(description="Total system memory in GB")
+    memory_available_gb: float = Field(description="Available system memory in GB")
+    gpu_available: bool = Field(description="GPU acceleration available")
+    gpu_name: Optional[str] = Field(default=None, description="GPU name if available")
+    recommended_config: PerformanceConfig = Field(description="Recommended performance configuration")
+
+# === Research Interest Clustering API Models ===
+# Separate from automatic topic discovery, these handle research interest based analysis
+
+class ResearchInterestApiResponse(BaseModel):
+    """Response model for research interest data."""
+    id: int
+    interest_text: str
+    embedding_model: Optional[str] = None
+    created_at: str
+    updated_at: Optional[str] = None
+    latest_doc_count: Optional[int] = 0
+    latest_growth_rate: Optional[float] = None
+    total_papers: int = 0
+    latest_avg_relevance: Optional[float] = None
+    latest_avg_score: Optional[float] = None
+    forecast_1m: Optional[int] = None
+    forecast_3m: Optional[int] = None
+    forecast_6m: Optional[int] = None
+
+
+class ResearchInterestMetricResponse(BaseModel):
+    """Response model for research interest metrics."""
+    id: int
+    research_interest_id: int
+    period_start: str
+    period_end: str
+    period_type: str
+    doc_count: int
+    avg_relevance_score: Optional[float] = None
+    avg_paper_score: Optional[float] = None
+    growth_rate: Optional[float] = None
+    forecast_1m: Optional[int] = None
+    forecast_3m: Optional[int] = None
+    forecast_6m: Optional[int] = None
+    created_at: str
+
+
+class ResearchInterestDetailResponse(BaseModel):
+    """Response model for detailed research interest information."""
+    interest: ResearchInterestApiResponse
+    timeline: List[ResearchInterestMetricResponse]
+    representative_papers: List[PaperApiResponse]
+    total_papers: int
+
+
+class ResearchInterestsListRequest(BaseModel):
+    """Request model for listing research interests."""
+    limit: int = Field(20, ge=1, le=100, description="Maximum number of interests to return")
+    period_type: str = Field("week", description="Display granularity: week, month, quarter")
+    duration_months: int = Field(6, ge=1, le=24, description="Duration to analyze: 1, 3, 6, 12, 24 months")
+    min_doc_count: int = Field(1, ge=1, description="Minimum document count filter")
+    sort_by: str = Field("growth_rate", description="Sort by: growth_rate, doc_count, avg_relevance, forecast_3m")
+
+
+class ResearchInterestsListResponse(BaseModel):
+    """Response model for research interests list."""
+    interests: List[ResearchInterestApiResponse]
+    total_interests: int
+    total_papers_with_interests: int
+    period_type: str
+    duration_months: int
+
+
+class ResearchInterestsSearchRequest(BaseModel):
+    """Request model for searching research interests."""
+    query: str = Field(..., min_length=1, description="Search query")
+    limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
+
+
+class ResearchInterestsSearchResponse(BaseModel):
+    """Response model for research interest search results."""
+    query: str
+    interests: List[ResearchInterestApiResponse]
+    total_results: int
+
+
+class ResearchInterestRecomputeRequest(BaseModel):
+    """Request model for research interest recomputation."""
+    lookback_months: int = Field(24, ge=1, le=60, description="Historical data window (months)")
+    duration_months: int = Field(6, ge=1, le=24, description="Analysis duration (1, 3, 6, 12, 24 months)")
+    min_papers: int = Field(100, ge=50, le=10000, description="Minimum papers required")
+    similarity_threshold: float = Field(0.3, ge=0.1, le=1.0, description="Minimum similarity threshold")
+    clear_all_data: bool = Field(False, description="NUCLEAR: Clear all research interest data")
+
+
+class ResearchInterestRecomputeResponse(BaseModel):
+    """Response model for research interest recomputation."""
+    task_id: str
+    message: str
+    estimated_duration_minutes: int
+
+
+class ResearchInterestPapersRequest(BaseModel):
+    """Request model for getting papers for a research interest."""
+    limit: int = Field(50, ge=1, le=200, description="Maximum number of papers")
+    min_similarity: float = Field(0.1, ge=0.0, le=1.0, description="Minimum similarity score")
+    sort_by: str = Field("similarity", description="Sort by: similarity, score, date")
+
+
+class ResearchInterestPapersResponse(BaseModel):
+    """Response model for research interest papers."""
+    research_interest_id: int
+    interest_text: str
+    papers: List[PaperApiResponse]
+    total_papers: int

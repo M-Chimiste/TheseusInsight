@@ -33,11 +33,12 @@ async def expand_mindmap(
     request: MindMapExpandRequest
 ):
     """
-    Generate a mind-map around a seed paper.
+    Generate a mind-map around a seed paper or topic.
     
     This endpoint creates a background task to generate a mind-map visualization
-    around a specified seed paper. The process includes:
-    1. Validating the seed paper exists
+    around either a specified seed paper or from representative papers of a topic. 
+    The process includes:
+    1. Validating the seed paper/topic exists
     2. Finding similar papers using vector similarity
     3. Generating LLM summaries for each paper
     4. Building the mind-map with specified layout algorithm
@@ -45,17 +46,58 @@ async def expand_mindmap(
     The task progress can be tracked via WebSocket at /ws/mindmap/{task_id}
     """
     try:
-        # Validate seed paper exists
-        seed_paper = PaperRepository.get_by_id(int(request.paper_id))
-        if not seed_paper:
-            raise HTTPException(status_code=404, detail=f"Paper {request.paper_id} not found")
+        # Determine seed paper(s) based on input type
+        seed_paper_id = None
+        seed_paper = None
+        
+        if request.paper_id:
+            # Direct paper seed
+            seed_paper = PaperRepository.get_by_id(int(request.paper_id))
+            if not seed_paper:
+                raise HTTPException(status_code=404, detail=f"Paper {request.paper_id} not found")
+            seed_paper_id = request.paper_id
+            
+        elif request.topic_id:
+            # Topic-based seed - get representative papers from topic
+            from ...data_access import TopicsRepository, PaperTopicsRepository
+            
+            # Validate topic exists
+            topic_data = TopicsRepository.get(request.topic_id)
+            if not topic_data:
+                raise HTTPException(status_code=404, detail=f"Topic {request.topic_id} not found")
+            
+            # Get most relevant papers for this topic (limit to top 3-5 for seed selection)
+            topic_papers = PaperTopicsRepository.get_papers_for_topic(
+                request.topic_id, limit=5, min_relevance=0.3
+            )
+            
+            if not topic_papers:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"No papers found for topic {request.topic_id} ('{topic_data['label']}')"
+                )
+            
+            # Use the most relevant paper as the primary seed
+            top_paper = topic_papers[0]
+            seed_paper = PaperRepository.get_by_id(int(top_paper['id']))
+            if not seed_paper:
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Failed to retrieve top paper {top_paper['id']} for topic"
+                )
+            seed_paper_id = str(top_paper['id'])
+            
+        else:
+            # This should be caught by pydantic validation, but just in case
+            raise HTTPException(status_code=400, detail="Either paper_id or topic_id must be provided")
         
         # Generate unique task ID
         task_id = str(uuid.uuid4())
         
         # Create task configuration
         config = {
-            "paper_id": request.paper_id,
+            "paper_id": seed_paper_id,
+            "topic_id": request.topic_id,  # Include topic_id for reference
             "k": request.k,
             "similarity_threshold": request.similarity_threshold,
             "layout_algorithm": request.layout_algorithm,
@@ -70,9 +112,15 @@ async def expand_mindmap(
         # Enqueue background task
         await task_manager.enqueue_task(task_manager.run_mindmap_expand_task, task_id)
         
+        # Create response message based on input type
+        if request.paper_id:
+            message = f"Mind-map generation started for paper {seed_paper_id}"
+        else:
+            message = f"Mind-map generation started for topic {request.topic_id} (using paper {seed_paper_id} as seed)"
+        
         return MindMapExpandResponse(
             task_id=task_id,
-            message=f"Mind-map generation started for paper {request.paper_id}"
+            message=message
         )
         
     except HTTPException:

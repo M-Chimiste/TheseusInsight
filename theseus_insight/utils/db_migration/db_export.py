@@ -416,21 +416,271 @@ class DatabaseExporter:
         print(f"Exported {len(models)} model catalog entries to {output_file}")
         return str(output_file)
     
+    def export_topics(self) -> str:
+        """Export all topics to JSON file."""
+        print("Exporting topics...")
+        
+        topics = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, label, keywords, centroid_embedding, embedding_model, created_at, updated_at
+                FROM topics ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                # Handle embedding conversion from pgvector to list
+                embedding = None
+                if row['centroid_embedding']:
+                    try:
+                        if isinstance(row['centroid_embedding'], str):
+                            embedding = json.loads(row['centroid_embedding'])
+                        elif hasattr(row['centroid_embedding'], 'tolist'):
+                            embedding = row['centroid_embedding'].tolist()
+                        elif isinstance(row['centroid_embedding'], (list, tuple)):
+                            embedding = list(row['centroid_embedding'])
+                    except Exception as e:
+                        print(f"Warning: Could not convert embedding for topic {row['id']}: {e}")
+                        embedding = None
+
+                topics.append({
+                    'id': row['id'],
+                    'label': row['label'],
+                    'keywords': list(row['keywords']) if row['keywords'] else [],
+                    'centroid_embedding': embedding,
+                    'embedding_model': row['embedding_model'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+        
+        output_file = self.output_dir / "topics.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(topics, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(topics)} topics to {output_file}")
+        return str(output_file)
+    
+    def export_topic_metrics(self) -> str:
+        """Export all topic metrics to JSON file."""
+        print("Exporting topic metrics...")
+        
+        metrics = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, topic_id, period_start, period_end, period_type, doc_count, 
+                       avg_score, growth_rate, forecast_1m, forecast_3m, forecast_6m, created_at
+                FROM topic_metrics ORDER BY topic_id, period_start DESC
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                metrics.append({
+                    'id': row['id'],
+                    'topic_id': row['topic_id'],
+                    'period_start': row['period_start'].isoformat() if row['period_start'] else None,
+                    'period_end': row['period_end'].isoformat() if row['period_end'] else None,
+                    'period_type': row['period_type'],
+                    'doc_count': row['doc_count'],
+                    'avg_score': row['avg_score'],
+                    'growth_rate': row['growth_rate'],
+                    'forecast_1m': row['forecast_1m'],
+                    'forecast_3m': row['forecast_3m'],
+                    'forecast_6m': row['forecast_6m'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+        
+        output_file = self.output_dir / "topic_metrics.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(metrics)} topic metrics to {output_file}")
+        return str(output_file)
+    
+    def export_paper_topics(self) -> str:
+        """Export all paper-topic relationships to JSON file."""
+        print("Exporting paper-topic relationships...")
+        
+        relationships = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, paper_id, topic_id, relevance_score, created_at
+                FROM paper_topics ORDER BY paper_id, topic_id
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                relationships.append({
+                    'id': row['id'],
+                    'paper_id': row['paper_id'],
+                    'topic_id': row['topic_id'],
+                    'relevance_score': row['relevance_score'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+        
+        output_file = self.output_dir / "paper_topics.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(relationships, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(relationships)} paper-topic relationships to {output_file}")
+        return str(output_file)
+    
+    def export_research_interests(self) -> str:
+        """Export all research interests to JSON file."""
+        print("Exporting research interests...")
+        
+        interests = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, interest_text, embedding, embedding_model, created_at, updated_at
+                FROM research_interests ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                # Handle embedding conversion from pgvector to list
+                embedding = None
+                if row['embedding']:
+                    try:
+                        if isinstance(row['embedding'], str):
+                            embedding = json.loads(row['embedding'])
+                        elif hasattr(row['embedding'], 'tolist'):
+                            embedding = row['embedding'].tolist()
+                        elif isinstance(row['embedding'], (list, tuple)):
+                            embedding = list(row['embedding'])
+                    except Exception as e:
+                        print(f"Warning: Could not convert embedding for research interest {row['id']}: {e}")
+                        embedding = None
+
+                interests.append({
+                    'id': row['id'],
+                    'interest_text': row['interest_text'],
+                    'embedding': embedding,
+                    'embedding_model': row['embedding_model'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+        
+        output_file = self.output_dir / "research_interests.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(interests, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(interests)} research interests to {output_file}")
+        return str(output_file)
+    
+    def export_research_interest_metrics(self) -> str:
+        """Export all research interest metrics to JSON file."""
+        print("Exporting research interest metrics...")
+        
+        metrics = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, research_interest_id, period_start, period_end, period_type, 
+                       doc_count, avg_relevance_score, avg_paper_score, growth_rate, 
+                       forecast_1m, forecast_3m, forecast_6m, created_at
+                FROM research_interest_metrics ORDER BY research_interest_id, period_start DESC
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                metrics.append({
+                    'id': row['id'],
+                    'research_interest_id': row['research_interest_id'],
+                    'period_start': row['period_start'].isoformat() if row['period_start'] else None,
+                    'period_end': row['period_end'].isoformat() if row['period_end'] else None,
+                    'period_type': row['period_type'],
+                    'doc_count': row['doc_count'],
+                    'avg_relevance_score': row['avg_relevance_score'],
+                    'avg_paper_score': row['avg_paper_score'],
+                    'growth_rate': row['growth_rate'],
+                    'forecast_1m': row['forecast_1m'],
+                    'forecast_3m': row['forecast_3m'],
+                    'forecast_6m': row['forecast_6m'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+        
+        output_file = self.output_dir / "research_interest_metrics.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(metrics)} research interest metrics to {output_file}")
+        return str(output_file)
+    
+    def export_paper_research_interests(self) -> str:
+        """Export all paper-research interest relationships to JSON file."""
+        print("Exporting paper-research interest relationships...")
+        
+        relationships = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, paper_id, research_interest_id, similarity_score, created_at
+                FROM paper_research_interests ORDER BY paper_id, research_interest_id
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                relationships.append({
+                    'id': row['id'],
+                    'paper_id': row['paper_id'],
+                    'research_interest_id': row['research_interest_id'],
+                    'similarity_score': row['similarity_score'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+        
+        output_file = self.output_dir / "paper_research_interests.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(relationships, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(relationships)} paper-research interest relationships to {output_file}")
+        return str(output_file)
+    
+    def export_label_summaries(self) -> str:
+        """Export all label summaries to JSON file."""
+        print("Exporting label summaries...")
+        
+        summaries = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, original_label, summarized_label, model_used, created_at, updated_at
+                FROM label_summaries ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                summaries.append({
+                    'id': row['id'],
+                    'original_label': row['original_label'],
+                    'summarized_label': row['summarized_label'],
+                    'model_used': row['model_used'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+        
+        output_file = self.output_dir / "label_summaries.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(summaries, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(summaries)} label summaries to {output_file}")
+        return str(output_file)
+    
     def create_metadata(self) -> str:
         """Create metadata file with export information."""
         metadata = {
             "export_timestamp": datetime.datetime.now().isoformat(),
-            "export_version": "2.0",  # Incremented version for new tables
+            "export_version": "3.0",  # Incremented version for trends and research interest tables
             "tables_exported": [
                 "papers", "podcasts", "newsletters", "literature_reviews",
                 "research_runs", "research_agent_state", "paper_fulltext", 
-                "mindmap_reports", "model_catalog"
+                "mindmap_reports", "model_catalog", "topics", "topic_metrics",
+                "paper_topics", "research_interests", "research_interest_metrics",
+                "paper_research_interests", "label_summaries"
             ],
-            "description": "Theseus Insight database export with MindMap and Research Agent data",
+            "description": "Theseus Insight database export with Trends, Research Interests, and full feature set",
             "backwards_compatible": True,
             "new_features": [
                 "research_runs", "research_agent_state", "paper_fulltext",
-                "mindmap_reports", "model_catalog"
+                "mindmap_reports", "model_catalog", "topics", "topic_metrics",
+                "paper_topics", "research_interests", "research_interest_metrics",
+                "paper_research_interests", "label_summaries"
             ]
         }
         
@@ -553,10 +803,66 @@ class DatabaseExporter:
                 result["files"]["model_catalog"] = model_catalog_file
             except Exception as e:
                 print(f"Warning: Could not export model catalog: {e}")
+            
+            try:
+                topics_file = self.export_topics()
+                if progress_callback:
+                    progress_callback(91, "topics_exported")
+                result["files"]["topics"] = topics_file
+            except Exception as e:
+                print(f"Warning: Could not export topics: {e}")
+            
+            try:
+                topic_metrics_file = self.export_topic_metrics()
+                if progress_callback:
+                    progress_callback(92, "topic_metrics_exported")
+                result["files"]["topic_metrics"] = topic_metrics_file
+            except Exception as e:
+                print(f"Warning: Could not export topic metrics: {e}")
+            
+            try:
+                paper_topics_file = self.export_paper_topics()
+                if progress_callback:
+                    progress_callback(93, "paper_topics_exported")
+                result["files"]["paper_topics"] = paper_topics_file
+            except Exception as e:
+                print(f"Warning: Could not export paper topics: {e}")
+            
+            try:
+                research_interests_file = self.export_research_interests()
+                if progress_callback:
+                    progress_callback(94, "research_interests_exported")
+                result["files"]["research_interests"] = research_interests_file
+            except Exception as e:
+                print(f"Warning: Could not export research interests: {e}")
+            
+            try:
+                research_interest_metrics_file = self.export_research_interest_metrics()
+                if progress_callback:
+                    progress_callback(95, "research_interest_metrics_exported")
+                result["files"]["research_interest_metrics"] = research_interest_metrics_file
+            except Exception as e:
+                print(f"Warning: Could not export research interest metrics: {e}")
+            
+            try:
+                paper_research_interests_file = self.export_paper_research_interests()
+                if progress_callback:
+                    progress_callback(96, "paper_research_interests_exported")
+                result["files"]["paper_research_interests"] = paper_research_interests_file
+            except Exception as e:
+                print(f"Warning: Could not export paper research interests: {e}")
+            
+            try:
+                label_summaries_file = self.export_label_summaries()
+                if progress_callback:
+                    progress_callback(97, "label_summaries_exported")
+                result["files"]["label_summaries"] = label_summaries_file
+            except Exception as e:
+                print(f"Warning: Could not export label summaries: {e}")
         
         metadata_file = self.create_metadata()
         if progress_callback:
-            progress_callback(95, "metadata_created")
+            progress_callback(98, "metadata_created")
         result["files"]["metadata"] = metadata_file
         
         if create_archive:

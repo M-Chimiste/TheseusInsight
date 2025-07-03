@@ -703,6 +703,439 @@ class DatabaseImporter:
         print(f"Model catalog import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
 
+    def import_topics(self, topics_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import topics from JSON file.
+        
+        Args:
+            topics_file: Path to topics.json file
+            skip_duplicates: Whether to skip topics that already exist (by label)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing topics...")
+        
+        with open(topics_file, 'r', encoding='utf-8') as f:
+            topics_data = json.load(f)
+        
+        stats = {"total": len(topics_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, topic_data in enumerate(topics_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM topics WHERE label = %s", (topic_data["label"],))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Convert embedding from list to pgvector format if present
+                embedding_str = None
+                if topic_data.get("centroid_embedding"):
+                    try:
+                        embedding_str = json.dumps(topic_data["centroid_embedding"])
+                    except Exception as e:
+                        print(f"Warning: Could not convert embedding for topic {topic_data['label']}: {e}")
+                
+                # Insert topic
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO topics (label, keywords, centroid_embedding, embedding_model, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        topic_data["label"],
+                        topic_data.get("keywords", []),
+                        embedding_str,
+                        topic_data.get("embedding_model"),
+                        topic_data.get("created_at"),
+                        topic_data.get("updated_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing topic '{topic_data.get('label', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(topics_data), f"Importing topics: {i + 1}/{len(topics_data)}")
+        
+        print(f"Topics import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_topic_metrics(self, topic_metrics_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import topic metrics from JSON file.
+        
+        Args:
+            topic_metrics_file: Path to topic_metrics.json file
+            skip_duplicates: Whether to skip topic metrics that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing topic metrics...")
+        
+        with open(topic_metrics_file, 'r', encoding='utf-8') as f:
+            metrics_data = json.load(f)
+        
+        stats = {"total": len(metrics_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, metric_data in enumerate(metrics_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM topic_metrics 
+                            WHERE topic_id = %s AND period_start = %s AND period_end = %s AND period_type = %s
+                        """, (metric_data["topic_id"], metric_data["period_start"], 
+                              metric_data["period_end"], metric_data["period_type"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert topic metric
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO topic_metrics 
+                        (topic_id, period_start, period_end, period_type, doc_count, avg_score, 
+                         growth_rate, forecast_1m, forecast_3m, forecast_6m, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        metric_data["topic_id"],
+                        metric_data["period_start"],
+                        metric_data["period_end"],
+                        metric_data["period_type"],
+                        metric_data["doc_count"],
+                        metric_data.get("avg_score"),
+                        metric_data.get("growth_rate"),
+                        metric_data.get("forecast_1m"),
+                        metric_data.get("forecast_3m"),
+                        metric_data.get("forecast_6m"),
+                        metric_data.get("created_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing topic metric for topic_id '{metric_data.get('topic_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(metrics_data), f"Importing topic metrics: {i + 1}/{len(metrics_data)}")
+        
+        print(f"Topic metrics import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_paper_topics(self, paper_topics_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import paper-topic relationships from JSON file.
+        
+        Args:
+            paper_topics_file: Path to paper_topics.json file
+            skip_duplicates: Whether to skip relationships that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing paper-topic relationships...")
+        
+        with open(paper_topics_file, 'r', encoding='utf-8') as f:
+            relationships_data = json.load(f)
+        
+        stats = {"total": len(relationships_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, rel_data in enumerate(relationships_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM paper_topics 
+                            WHERE paper_id = %s AND topic_id = %s
+                        """, (rel_data["paper_id"], rel_data["topic_id"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert paper-topic relationship
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO paper_topics (paper_id, topic_id, relevance_score, created_at)
+                        VALUES (%s, %s, %s, %s)
+                    """, (
+                        rel_data["paper_id"],
+                        rel_data["topic_id"],
+                        rel_data.get("relevance_score", 0.0),
+                        rel_data.get("created_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing paper-topic relationship for paper_id '{rel_data.get('paper_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(relationships_data), f"Importing paper-topic relationships: {i + 1}/{len(relationships_data)}")
+        
+        print(f"Paper-topic relationships import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_research_interests(self, research_interests_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import research interests from JSON file.
+        
+        Args:
+            research_interests_file: Path to research_interests.json file
+            skip_duplicates: Whether to skip research interests that already exist (by interest_text)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing research interests...")
+        
+        with open(research_interests_file, 'r', encoding='utf-8') as f:
+            interests_data = json.load(f)
+        
+        stats = {"total": len(interests_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, interest_data in enumerate(interests_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM research_interests WHERE interest_text = %s", 
+                                     (interest_data["interest_text"],))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Convert embedding from list to pgvector format if present
+                embedding_str = None
+                if interest_data.get("embedding"):
+                    try:
+                        embedding_str = json.dumps(interest_data["embedding"])
+                    except Exception as e:
+                        print(f"Warning: Could not convert embedding for research interest {interest_data['interest_text']}: {e}")
+                
+                # Insert research interest
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO research_interests (interest_text, embedding, embedding_model, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (
+                        interest_data["interest_text"],
+                        embedding_str,
+                        interest_data.get("embedding_model"),
+                        interest_data.get("created_at"),
+                        interest_data.get("updated_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing research interest '{interest_data.get('interest_text', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(interests_data), f"Importing research interests: {i + 1}/{len(interests_data)}")
+        
+        print(f"Research interests import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_research_interest_metrics(self, research_interest_metrics_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import research interest metrics from JSON file.
+        
+        Args:
+            research_interest_metrics_file: Path to research_interest_metrics.json file
+            skip_duplicates: Whether to skip metrics that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing research interest metrics...")
+        
+        with open(research_interest_metrics_file, 'r', encoding='utf-8') as f:
+            metrics_data = json.load(f)
+        
+        stats = {"total": len(metrics_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, metric_data in enumerate(metrics_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM research_interest_metrics 
+                            WHERE research_interest_id = %s AND period_start = %s AND period_end = %s AND period_type = %s
+                        """, (metric_data["research_interest_id"], metric_data["period_start"], 
+                              metric_data["period_end"], metric_data["period_type"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert research interest metric
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO research_interest_metrics 
+                        (research_interest_id, period_start, period_end, period_type, doc_count, 
+                         avg_relevance_score, avg_paper_score, growth_rate, forecast_1m, forecast_3m, forecast_6m, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        metric_data["research_interest_id"],
+                        metric_data["period_start"],
+                        metric_data["period_end"],
+                        metric_data["period_type"],
+                        metric_data["doc_count"],
+                        metric_data.get("avg_relevance_score"),
+                        metric_data.get("avg_paper_score"),
+                        metric_data.get("growth_rate"),
+                        metric_data.get("forecast_1m"),
+                        metric_data.get("forecast_3m"),
+                        metric_data.get("forecast_6m"),
+                        metric_data.get("created_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing research interest metric for research_interest_id '{metric_data.get('research_interest_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(metrics_data), f"Importing research interest metrics: {i + 1}/{len(metrics_data)}")
+        
+        print(f"Research interest metrics import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_paper_research_interests(self, paper_research_interests_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import paper-research interest relationships from JSON file.
+        
+        Args:
+            paper_research_interests_file: Path to paper_research_interests.json file
+            skip_duplicates: Whether to skip relationships that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing paper-research interest relationships...")
+        
+        with open(paper_research_interests_file, 'r', encoding='utf-8') as f:
+            relationships_data = json.load(f)
+        
+        stats = {"total": len(relationships_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, rel_data in enumerate(relationships_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM paper_research_interests 
+                            WHERE paper_id = %s AND research_interest_id = %s
+                        """, (rel_data["paper_id"], rel_data["research_interest_id"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert paper-research interest relationship
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO paper_research_interests (paper_id, research_interest_id, similarity_score, created_at)
+                        VALUES (%s, %s, %s, %s)
+                    """, (
+                        rel_data["paper_id"],
+                        rel_data["research_interest_id"],
+                        rel_data.get("similarity_score", 0.0),
+                        rel_data.get("created_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing paper-research interest relationship for paper_id '{rel_data.get('paper_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(relationships_data), f"Importing paper-research interest relationships: {i + 1}/{len(relationships_data)}")
+        
+        print(f"Paper-research interest relationships import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_label_summaries(self, label_summaries_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import label summaries from JSON file.
+        
+        Args:
+            label_summaries_file: Path to label_summaries.json file
+            skip_duplicates: Whether to skip label summaries that already exist (by original_label)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing label summaries...")
+        
+        with open(label_summaries_file, 'r', encoding='utf-8') as f:
+            summaries_data = json.load(f)
+        
+        stats = {"total": len(summaries_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, summary_data in enumerate(summaries_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM label_summaries WHERE original_label = %s", 
+                                     (summary_data["original_label"],))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert label summary
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO label_summaries (original_label, summarized_label, model_used, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (
+                        summary_data["original_label"],
+                        summary_data["summarized_label"],
+                        summary_data.get("model_used"),
+                        summary_data.get("created_at"),
+                        summary_data.get("updated_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing label summary '{summary_data.get('original_label', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(summaries_data), f"Importing label summaries: {i + 1}/{len(summaries_data)}")
+        
+        print(f"Label summaries import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
     def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
@@ -737,7 +1170,14 @@ class DatabaseImporter:
             "research_agent_state": "research_agent_state.json",
             "paper_fulltext": "paper_fulltext.json",
             "mindmap_reports": "mindmap_reports.json",
-            "model_catalog": "model_catalog.json"
+            "model_catalog": "model_catalog.json",
+            "topics": "topics.json",
+            "topic_metrics": "topic_metrics.json",
+            "paper_topics": "paper_topics.json",
+            "research_interests": "research_interests.json",
+            "research_interest_metrics": "research_interest_metrics.json",
+            "paper_research_interests": "paper_research_interests.json",
+            "label_summaries": "label_summaries.json"
         }
         
         for table_name, filename in file_map.items():
@@ -799,6 +1239,34 @@ class DatabaseImporter:
                     )
                 elif table_name == "model_catalog":
                     results[table_name] = self.import_model_catalog(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "topics":
+                    results[table_name] = self.import_topics(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "topic_metrics":
+                    results[table_name] = self.import_topic_metrics(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "paper_topics":
+                    results[table_name] = self.import_paper_topics(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "research_interests":
+                    results[table_name] = self.import_research_interests(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "research_interest_metrics":
+                    results[table_name] = self.import_research_interest_metrics(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "paper_research_interests":
+                    results[table_name] = self.import_paper_research_interests(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "label_summaries":
+                    results[table_name] = self.import_label_summaries(
                         str(file_path), skip_duplicates, create_progress_callback(i, table_name)
                     )
             except Exception as e:
@@ -886,7 +1354,9 @@ class DatabaseImporter:
         # Tables to clear in order (respecting potential foreign key constraints)
         tables_to_clear = [
             'logs', 'tasks', 'research_agent_state', 'research_runs', 'lit_reviews', 
-            'mindmap_reports', 'model_catalog', 'paper_fulltext', 'newsletters', 'podcasts', 'papers'
+            'mindmap_reports', 'model_catalog', 'paper_fulltext', 'newsletters', 'podcasts', 
+            'paper_topics', 'topic_metrics', 'topics', 'paper_research_interests', 
+            'research_interest_metrics', 'research_interests', 'label_summaries', 'papers'
         ]
         deletion_counts = {}
         total_tables = len(tables_to_clear)

@@ -209,6 +209,48 @@ class DatabaseMigrator:
                         counts['model_catalog'] = cursor.fetchone()[0]
                     except Exception:
                         counts['model_catalog'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM topics")
+                        counts['topics'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['topics'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM topic_metrics")
+                        counts['topic_metrics'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['topic_metrics'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM paper_topics")
+                        counts['paper_topics'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['paper_topics'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM research_interests")
+                        counts['research_interests'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['research_interests'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM research_interest_metrics")
+                        counts['research_interest_metrics'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['research_interest_metrics'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM paper_research_interests")
+                        counts['paper_research_interests'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['paper_research_interests'] = 0
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM label_summaries")
+                        counts['label_summaries'] = cursor.fetchone()[0]
+                    except Exception:
+                        counts['label_summaries'] = 0
                 
                 return counts
             finally:

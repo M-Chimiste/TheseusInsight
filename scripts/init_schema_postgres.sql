@@ -143,7 +143,9 @@ CREATE TABLE IF NOT EXISTS paper_fulltext (
     content TEXT NOT NULL,
     embedding vector(768),
     embedding_model TEXT,
-    created_at TIMESTAMPTZ DEFAULT now()
+    created_at TIMESTAMPTZ DEFAULT now(),
+    extraction_method TEXT DEFAULT 'unknown',
+    metadata JSONB
 );
 
 -- FTS for fulltext content

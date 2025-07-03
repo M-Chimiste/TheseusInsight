@@ -188,4 +188,106 @@ CREATE INDEX IF NOT EXISTS idx_model_catalog_provider ON model_catalog (provider
 CREATE INDEX IF NOT EXISTS idx_model_catalog_type ON model_catalog (model_type);
 CREATE INDEX IF NOT EXISTS idx_model_catalog_favorite ON model_catalog (is_favorite);
 
--- Additional tables to be ported later (tasks, mindmap, research_* etc.) 
+-- === Topic Evolution & Trends ===
+CREATE TABLE IF NOT EXISTS topics (
+    id SERIAL PRIMARY KEY,
+    label TEXT NOT NULL,
+    keywords TEXT[] NOT NULL,
+    centroid_embedding vector(768),
+    embedding_model TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_topics_label ON topics (label);
+CREATE INDEX IF NOT EXISTS idx_topics_created_at ON topics (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS topic_metrics (
+    id SERIAL PRIMARY KEY,
+    topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    period_type TEXT NOT NULL CHECK (period_type IN ('week', 'month', 'quarter')),
+    doc_count INTEGER NOT NULL DEFAULT 0,
+    avg_score REAL,
+    growth_rate REAL,
+    forecast_1m INTEGER,
+    forecast_3m INTEGER,
+    forecast_6m INTEGER,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(topic_id, period_start, period_end, period_type)
+);
+CREATE INDEX IF NOT EXISTS idx_topic_metrics_topic_id ON topic_metrics (topic_id);
+CREATE INDEX IF NOT EXISTS idx_topic_metrics_period ON topic_metrics (period_start DESC);
+CREATE INDEX IF NOT EXISTS idx_topic_metrics_doc_count ON topic_metrics (doc_count DESC);
+
+-- Junction table for paper-topic relationships
+CREATE TABLE IF NOT EXISTS paper_topics (
+    id SERIAL PRIMARY KEY,
+    paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    relevance_score REAL NOT NULL DEFAULT 0.0,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(paper_id, topic_id)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_topics_paper_id ON paper_topics (paper_id);
+CREATE INDEX IF NOT EXISTS idx_paper_topics_topic_id ON paper_topics (topic_id);
+CREATE INDEX IF NOT EXISTS idx_paper_topics_relevance ON paper_topics (relevance_score DESC);
+
+-- === Research Interest Based Clustering ===
+-- Separate from automatic topic discovery, this analyzes papers against user's research interests
+CREATE TABLE IF NOT EXISTS research_interests (
+    id SERIAL PRIMARY KEY,
+    interest_text TEXT NOT NULL,
+    embedding vector(768),
+    embedding_model TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_research_interests_created_at ON research_interests (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS research_interest_metrics (
+    id SERIAL PRIMARY KEY,
+    research_interest_id INTEGER NOT NULL REFERENCES research_interests(id) ON DELETE CASCADE,
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    period_type TEXT NOT NULL CHECK (period_type IN ('week', 'month', 'quarter')),
+    doc_count INTEGER NOT NULL DEFAULT 0,
+    avg_relevance_score REAL,
+    avg_paper_score REAL,
+    growth_rate REAL,
+    forecast_1m INTEGER,
+    forecast_3m INTEGER,
+    forecast_6m INTEGER,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(research_interest_id, period_start, period_end, period_type)
+);
+CREATE INDEX IF NOT EXISTS idx_research_interest_metrics_ri_id ON research_interest_metrics (research_interest_id);
+CREATE INDEX IF NOT EXISTS idx_research_interest_metrics_period ON research_interest_metrics (period_start DESC);
+CREATE INDEX IF NOT EXISTS idx_research_interest_metrics_doc_count ON research_interest_metrics (doc_count DESC);
+
+-- Junction table for paper-research_interest relationships
+CREATE TABLE IF NOT EXISTS paper_research_interests (
+    id SERIAL PRIMARY KEY,
+    paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    research_interest_id INTEGER NOT NULL REFERENCES research_interests(id) ON DELETE CASCADE,
+    similarity_score REAL NOT NULL DEFAULT 0.0,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(paper_id, research_interest_id)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_research_interests_paper_id ON paper_research_interests (paper_id);
+CREATE INDEX IF NOT EXISTS idx_paper_research_interests_ri_id ON paper_research_interests (research_interest_id);
+CREATE INDEX IF NOT EXISTS idx_paper_research_interests_similarity ON paper_research_interests (similarity_score DESC);
+
+-- === Label Summaries Cache ===
+CREATE TABLE IF NOT EXISTS label_summaries (
+    id SERIAL PRIMARY KEY,
+    original_label TEXT NOT NULL UNIQUE,
+    summarized_label TEXT NOT NULL,
+    model_used TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_label_summaries_original ON label_summaries (original_label);
+CREATE INDEX IF NOT EXISTS idx_label_summaries_created_at ON label_summaries (created_at DESC);
+
+-- End of schema 

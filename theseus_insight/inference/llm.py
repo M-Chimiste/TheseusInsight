@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional, Iterator
 from pydantic import BaseModel
 import numpy as np
+import inspect
 
 class InferenceModel(ABC):
     """
@@ -761,7 +762,7 @@ class LLMModelFactory:
         'anthropic': AnthropicInference,
         'openai': OpenAIInference,
         'gemini': GeminiInference,
-        'custom-oai': CustomOAIInference,
+        'custom_oai': CustomOAIInference,
         'sentence-transformer': SentenceTransformerInference,
         'ollama-embed': OllamaEmbedInference,
         'llamacpp': LlamacppInference
@@ -770,18 +771,28 @@ class LLMModelFactory:
     @classmethod
     def create_model(cls, model_type: str, **kwargs) -> InferenceModel:
         """
-        Create and return an instance of the specified model type.
-        
-        Args:
-            model_type: The type of model to create ('ollama', 'anthropic', etc.)
-            **kwargs: Additional arguments to pass to the model constructor
-            
-        Returns:
-            An instance of the specified model type
+        Create and return an instance of the specified inference model.
+        This method inspects the model's constructor and only passes arguments
+        that it can accept, preventing TypeErrors for unexpected keywords.
         """
         model_class = cls._models.get(model_type.lower())
         if not model_class:
             raise ValueError(f"Unknown model type: {model_type}")
-        return model_class(**kwargs)
+
+        # Inspect the constructor signature to filter out unexpected arguments
+        sig = inspect.signature(model_class.__init__)
+        allowed_args = {p.name for p in sig.parameters.values()}
+        
+        # Check if the constructor accepts arbitrary keyword arguments (**kwargs)
+        has_kwargs = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+
+        if has_kwargs:
+            # If it does, no need to filter.
+            filtered_kwargs = kwargs
+        else:
+            # Otherwise, filter to only include arguments present in the signature.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_args}
+
+        return model_class(**filtered_kwargs)
         
         

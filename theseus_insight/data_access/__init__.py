@@ -9,4 +9,10 @@ from .research import ResearchRunRepository, ResearchAgentStateRepository
 from .mindmap import MindmapReportRepository
 from .paper_fulltext import PaperFulltextRepository
 from .model_catalog import ModelCatalogRepository
-from .lit_reviews import LitReviewRepository 
+from .lit_reviews import LitReviewRepository
+from .trends import (
+    TopicsRepository, TopicMetricsRepository, PaperTopicsRepository, TrendsRepository,
+    ResearchInterestTrendsRepository, ResearchInterestsRepository, ResearchInterestMetricsRepository,
+    PaperResearchInterestsRepository
+)
+from .label_summaries import LabelSummariesRepository 

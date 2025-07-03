@@ -33,13 +33,23 @@ import os, builtins, logging
 # Enable extra verbosity only if environment variable DEBUG is truthy
 _DEBUG_MODE = os.getenv("DEBUG", "").lower() in ("1", "true", "yes")
 
-# Mute all naked `print()` calls across the codebase unless DEBUG=true
-if not _DEBUG_MODE:
-    builtins.print = lambda *args, **kwargs: None  # type: ignore[arg-type]
+# -----------------------------------------------------------------------------
+# Logging configuration
+# -----------------------------------------------------------------------------
+
+# Instead of globally monkey-patching `print`, which breaks libraries that
+# introspect built-ins (Numba, TensorFlow, etc.), we simply encourage use of
+# the standard `logging` module and leave `print` untouched.
+#
+# We do not globally redefine `print`; third-party packages relying on built-in
+# introspection (e.g. Numba) keep working.  Use the standard `logging` module
+# for runtime diagnostics instead.
 
 # Set a sensible global logging level
-logging.basicConfig(level=logging.DEBUG if _DEBUG_MODE else logging.INFO,
-                    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+logging.basicConfig(
+    level=logging.DEBUG if _DEBUG_MODE else logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 # Expose DEBUG_MODE for other modules (optional)
 DEBUG_MODE: bool = _DEBUG_MODE

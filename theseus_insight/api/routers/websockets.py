@@ -184,6 +184,8 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
             await websocket.send_json(status.dict())
 
             if status.overallStatus in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                # Add small delay to ensure message is sent before closing
+                await asyncio.sleep(0.1)
                 break
 
     except WebSocketDisconnect:
@@ -202,6 +204,11 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
         if status_queue:
             await task_manager.unsubscribe_from_updates(task_id, status_queue)
         manager.disconnect(task_id, websocket)
+        # Ensure the connection is properly closed
+        try:
+            await websocket.close(code=1000)
+        except Exception:
+            pass
 
 async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
     """Specialized WebSocket handler for research agent tasks.
@@ -330,4 +337,9 @@ async def mindmap_expand_status(websocket: WebSocket, task_id: str):
 @router.websocket("/ws/mindmap-pdf-parse/{task_id}")
 async def mindmap_pdf_parse_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for mind-map PDF parsing task status updates."""
-    await handle_websocket_connection(websocket, task_id, "mindmap_pdf_parse") 
+    await handle_websocket_connection(websocket, task_id, "mindmap_pdf_parse")
+
+@router.websocket("/ws/trends/{task_id}")
+async def trends_recompute_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for trends recomputation status updates."""
+    await handle_websocket_connection(websocket, task_id, "trends") 

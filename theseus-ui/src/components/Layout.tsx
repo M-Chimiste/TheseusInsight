@@ -32,6 +32,7 @@ import {
   LibraryBooks as LibraryBooksIcon,
   Storage as StorageIcon,
   AccountTree as AccountTreeIcon,
+  TrendingUp as TrendingUpIcon,
 } from '@mui/icons-material';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
@@ -83,6 +84,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
     { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
     { text: 'Mind-Map Reports', icon: <AccountTreeIcon />, path: '/mindmap-reports' },
+    { text: 'Trends', icon: <TrendingUpIcon />, path: '/trends' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },

@@ -43,6 +43,13 @@ async def run_newsletter(
         newsletter_config = NewsletterConfig.model_validate_json(config)
         task_id = str(uuid.uuid4())
         
+        # Validate topic_id if provided
+        if newsletter_config.topic_id is not None:
+            from ...data_access import TopicsRepository
+            topic_data = TopicsRepository.get(newsletter_config.topic_id)
+            if not topic_data:
+                raise HTTPException(status_code=404, detail=f"Topic {newsletter_config.topic_id} not found")
+        
         # Save intro music file if provided
         if intro_music_file:
             file_path = f"data/temp/{task_id}/intro_music{os.path.splitext(intro_music_file.filename)[1]}"
@@ -83,6 +90,13 @@ async def run_newsletter_pipeline_endpoint(
     Returns:
         dict: A dictionary containing the task ID for tracking the pipeline run progress.
     """
+    # Validate topic_id if provided
+    if params.topic_id is not None:
+        from ...data_access import TopicsRepository
+        topic_data = TopicsRepository.get(params.topic_id)
+        if not topic_data:
+            raise HTTPException(status_code=404, detail=f"Topic {params.topic_id} not found")
+    
     task_id = str(uuid.uuid4())
     run_db_path = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
     loop = asyncio.get_event_loop()
@@ -161,6 +175,7 @@ async def run_newsletter_pipeline_endpoint(
                 start_date_override=params.start_date,
                 end_date_override=params.end_date,
                 receiver_address_override=params.email_recipients,
+                topic_id_override=params.topic_id,  # Add topic_id support
                 generate_podcast=params.generate_podcast_run,
                 db_saving=True, 
                 data_path=run_db_path,

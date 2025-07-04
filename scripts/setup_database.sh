@@ -32,6 +32,65 @@ echo "Setting up pgvector extension for user: $DB_USER, database: $DB_NAME"
 if [ "$ENVIRONMENT" = "local" ]; then
     echo "🔧 Checking local PostgreSQL setup..."
     
+    # Check if we're on macOS
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "🍎 Detected macOS environment"
+        
+        # Check if PostgreSQL is installed via Homebrew
+        if command -v brew >/dev/null 2>&1; then
+            echo "🍺 Homebrew detected, checking PostgreSQL installation..."
+            
+            if brew list postgresql@17 >/dev/null 2>&1; then
+                PG_VERSION="17"
+                echo "✅ Found PostgreSQL 17 via Homebrew"
+            elif brew list postgresql@16 >/dev/null 2>&1; then
+                PG_VERSION="16"
+                echo "✅ Found PostgreSQL 16 via Homebrew"
+            elif brew list postgresql@15 >/dev/null 2>&1; then
+                PG_VERSION="15"
+                echo "✅ Found PostgreSQL 15 via Homebrew"
+            elif brew list postgresql >/dev/null 2>&1; then
+                PG_VERSION="latest"
+                echo "✅ Found PostgreSQL (latest) via Homebrew"
+            else
+                echo "❌ PostgreSQL not found via Homebrew"
+                echo "💡 To install PostgreSQL on macOS:"
+                echo "   brew install postgresql@17"
+                echo "   brew install pgvector"
+                exit 1
+            fi
+            
+            # Check if pgvector is installed
+            if ! brew list pgvector >/dev/null 2>&1; then
+                echo "❌ pgvector not found via Homebrew"
+                echo "💡 To install pgvector on macOS:"
+                echo "   brew install pgvector"
+                exit 1
+            fi
+            echo "✅ pgvector found via Homebrew"
+            
+            # Check if PostgreSQL service is running
+            if brew services list | grep -q "postgresql.*started"; then
+                echo "✅ PostgreSQL service is running"
+            else
+                echo "🚀 Starting PostgreSQL service..."
+                if [[ "$PG_VERSION" == "latest" ]]; then
+                    brew services start postgresql
+                else
+                    brew services start postgresql@$PG_VERSION
+                fi
+                echo "✅ PostgreSQL service started"
+                
+                # Give it a moment to start up
+                sleep 2
+            fi
+        else
+            echo "❌ Homebrew not found. This script is optimized for Homebrew installations."
+            echo "💡 Install Homebrew first: https://brew.sh/"
+            exit 1
+        fi
+    fi
+    
     # Try to detect available superuser (postgres, current user, etc.)
     SUPERUSER=""
     CURRENT_USER=$(whoami)
@@ -63,6 +122,17 @@ if [ "$ENVIRONMENT" = "local" ]; then
     
     if [ "$USER_EXISTS" = "1" ]; then
         echo "✅ User '$DB_USER' already exists"
+        
+        # Update user password and ensure it has CREATEDB privilege
+        echo "🔐 Updating user '$DB_USER' password and privileges..."
+        psql -U "$SUPERUSER" -d postgres -c "
+            ALTER USER $DB_USER WITH PASSWORD '$DB_PASS';
+            ALTER USER $DB_USER CREATEDB;
+        " || {
+            echo "❌ Error: Failed to update user '$DB_USER'"
+            exit 1
+        }
+        echo "✅ User '$DB_USER' updated successfully"
     else
         echo "➕ Creating user '$DB_USER'..."
         psql -U "$SUPERUSER" -d postgres -c "
@@ -81,6 +151,12 @@ if [ "$ENVIRONMENT" = "local" ]; then
     
     if [ "$DB_EXISTS" = "1" ]; then
         echo "✅ Database '$DB_NAME' already exists"
+        
+        # Make sure the database owner is correct
+        echo "🔐 Ensuring database '$DB_NAME' is owned by '$DB_USER'..."
+        psql -U "$SUPERUSER" -d postgres -c "ALTER DATABASE $DB_NAME OWNER TO $DB_USER;" || {
+            echo "⚠️  Warning: Could not change database owner, but continuing..."
+        }
     else
         echo "➕ Creating database '$DB_NAME'..."
         psql -U "$SUPERUSER" -d postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" || {
@@ -98,6 +174,11 @@ if [ "$ENVIRONMENT" = "local" ]; then
         GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
         GRANT CREATE ON SCHEMA public TO $DB_USER;
         ALTER SCHEMA public OWNER TO $DB_USER;
+        
+        -- Grant default privileges for future objects
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO $DB_USER;
     " || {
         echo "⚠️  Warning: Some privilege grants may have failed, but continuing..."
     }
@@ -112,14 +193,31 @@ if [ "$ENVIRONMENT" = "local" ]; then
     fi
 fi
 
-# Enable pgvector extension on the database
+# Enable pgvector extension on the database (requires superuser privileges)
 echo "🔌 Enabling pgvector extension..."
-psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;" || {
-    echo "❌ Error: Failed to create pgvector extension"
-    echo "   Make sure pgvector is installed on your PostgreSQL instance"
-    echo "   See: https://github.com/pgvector/pgvector#installation"
-    exit 1
-}
+if [ "$ENVIRONMENT" = "local" ]; then
+    # Use superuser for extension creation in local environment
+    psql -v ON_ERROR_STOP=1 -U "$SUPERUSER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;" || {
+        echo "❌ Error: Failed to create pgvector extension"
+        echo "   Make sure pgvector is installed on your PostgreSQL instance"
+        echo "   See: https://github.com/pgvector/pgvector#installation"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            echo "   For macOS with Homebrew: brew install pgvector"
+        fi
+        exit 1
+    }
+else
+    # In Docker environment, use the regular user (should have superuser privileges)
+    psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;" || {
+        echo "❌ Error: Failed to create pgvector extension"
+        echo "   Make sure pgvector is installed on your PostgreSQL instance"
+        echo "   See: https://github.com/pgvector/pgvector#installation"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            echo "   For macOS with Homebrew: brew install pgvector"
+        fi
+        exit 1
+    }
+fi
 
 echo "✅ pgvector extension enabled for database \"$DB_NAME\"."
 
@@ -144,4 +242,11 @@ if [ "$ENVIRONMENT" = "local" ]; then
     echo ""
     echo "💻 Test connection:"
     echo "   psql -U $DB_USER -d $DB_NAME -h localhost"
+    echo ""
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "🍎 macOS Notes:"
+        echo "   - PostgreSQL service: brew services start/stop postgresql"
+        echo "   - Config location: $(brew --prefix)/var/postgres/"
+        echo "   - Logs: $(brew --prefix)/var/log/postgres.log"
+    fi
 fi

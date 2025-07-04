@@ -19,8 +19,6 @@ import {
   Settings as SettingsIcon,
   Article as ArticleIcon,
   Podcasts as PodcastIcon,
-  Brightness4 as DarkModeIcon,
-  Brightness7 as LightModeIcon,
   Movie as MovieIcon,
   History as HistoryIcon,
   ListAlt as ListAltIcon,
@@ -33,11 +31,16 @@ import {
   Storage as StorageIcon,
   AccountTree as AccountTreeIcon,
   TrendingUp as TrendingUpIcon,
+  People as PeopleIcon,
+  WorkOutline as WorkOutlineIcon,
 } from '@mui/icons-material';
+
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
 import { useLayout } from '../contexts/LayoutContext';
+import { useProfile } from '../contexts/ProfileContext';
 import { settingsApi } from '../services/api';
+import ProfileSelector from './ProfileSelector';
 
 const REQUIRED_KEYS = [
   'OPENAI_API_KEY',
@@ -55,8 +58,9 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isDarkMode, toggleTheme } = useCustomTheme();
+  const { isDarkMode } = useCustomTheme();
   const { isDrawerOpen, currentDrawerWidth, toggleDrawer } = useLayout();
+  useProfile(); // Initialize profile context
   const theme = useTheme();
 
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
@@ -85,6 +89,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
     { text: 'Mind-Map Reports', icon: <AccountTreeIcon />, path: '/mindmap-reports' },
     { text: 'Trends', icon: <TrendingUpIcon />, path: '/trends' },
+    { text: 'Profile Management', icon: <PeopleIcon />, path: '/profile-management' },
+    { text: 'Bulk Operations', icon: <WorkOutlineIcon />, path: '/bulk-operations' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
@@ -107,7 +113,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           transition: 'width 0.3s, margin 0.3s',
         }}
       >
-        <Toolbar>
+        <Toolbar sx={{ pl: 0 }}>
           <IconButton
             onClick={toggleDrawer}
             color="inherit"
@@ -115,13 +121,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           >
             {isDrawerOpen ? <ChevronLeftIcon /> : <MenuIcon />}
           </IconButton>
-          <img src="/logo.png" alt="Theseus Insight Logo" style={{ height: 84, marginRight: 8 }} />
+          <ProfileSelector
+            allowMultiple={true}
+            label="Profile"
+            compact={true}
+          />
+          <img src="/logo.png" alt="Theseus Insight Logo" style={{ height: 84, marginRight: 8, marginLeft: 16 }} />
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             Theseus Insight
           </Typography>
-          <IconButton onClick={toggleTheme} color="inherit">
-            {isDarkMode ? <LightModeIcon /> : <DarkModeIcon />}
-          </IconButton>
         </Toolbar>
       </AppBar>
       <Drawer

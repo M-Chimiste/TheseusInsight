@@ -21,7 +21,6 @@ import {
   Tooltip,
   IconButton,
   Autocomplete,
-  Chip,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -40,8 +39,11 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import SpeedIcon from '@mui/icons-material/Speed';
 import MemoryIcon from '@mui/icons-material/Memory';
 import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
-import taxonomy from '../arxiv_taxonomy.json';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
+import Brightness7Icon from '@mui/icons-material/Brightness7';
+import PaletteIcon from '@mui/icons-material/Palette';
 import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
+import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -221,15 +223,11 @@ const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
 
 const Settings: React.FC = () => {
   const queryClient = useQueryClient();
-  // Alias taxonomy as any to allow dynamic indexing
-  const taxonomyAny = taxonomy as any;
+  const { isDarkMode, toggleTheme } = useCustomTheme();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
-  const [selectedArxivMain, setSelectedArxivMain] = useState<string>('');
-  const [selectedArxivSubs, setSelectedArxivSubs] = useState<string[]>([]);
-  const [researchInterestsInput, setResearchInterestsInput] = useState<string>('');
-  const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
+
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
   const [editedResearchAgentConfig, setEditedResearchAgentConfig] = useState<any | null>(null);
@@ -253,20 +251,9 @@ const Settings: React.FC = () => {
     queryFn: () => settingsApi.getOrchestrationConfig().then(res => res.data),
   });
 
-  const { data: arxivCategories, isLoading: isLoadingArxiv } = useQuery({
-    queryKey: ['arxivCategories'],
-    queryFn: () => settingsApi.getArxivCategories().then(res => res.data),
-  });
 
-  const { data: researchInterests, isLoading: isLoadingResearch } = useQuery({
-    queryKey: ['researchInterests'],
-    queryFn: () => settingsApi.getResearchInterests().then(res => res.data),
-  });
 
-  const { data: emailRecipients, isLoading: isLoadingEmail } = useQuery({
-    queryKey: ['emailRecipients'],
-    queryFn: () => settingsApi.getEmailRecipients().then(res => res.data),
-  });
+
 
   const { data: modelProviders, isLoading: isLoadingProviders, isError: isErrorProviders } = useQuery<any[], Error>({
     queryKey: ['modelProviders'],
@@ -292,46 +279,9 @@ const Settings: React.FC = () => {
     onError: (error: any) => setError(error.message || 'Failed to update orchestration config'),
   });
 
-  const updateArxivCategoriesMutation = useMutation({
-    mutationFn: (config: any) => settingsApi.updateArxivCategories(config),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['arxivCategories'] });
-      setSuccess('ArXiv categories updated successfully');
-    },
-    onError: (error: any) => setError(error.message),
-  });
 
-  const updateResearchInterestsMutation = useMutation({
-    mutationFn: (data: any) => settingsApi.updateResearchInterests(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['researchInterests'] });
-      setSuccess('Research interests updated successfully');
-    },
-    onError: (error: any) => setError(error.message),
-  });
-
-  const updateEmailRecipientsMutation = useMutation({
-    mutationFn: (data: any) => settingsApi.updateEmailRecipients(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['emailRecipients'] });
-      setSuccess('Email recipients updated successfully');
-    },
-    onError: (error: any) => setError(error.message),
-  });
 
   const [appPasswordFailed, setAppPasswordFailed] = useState(false);
-
-  const sendTestEmailMutation = useMutation({
-    mutationFn: () => settingsApi.sendTestEmail(),
-    onSuccess: () => setSuccess('Test email sent successfully'),
-    onError: (error: any) => {
-      const message = error?.response?.data?.detail || error.message;
-      if (message && /application\-specific|authentication/i.test(message)) {
-        setAppPasswordFailed(true);
-      }
-      setError(message);
-    },
-  });
 
   const { data: credentials } = useQuery({
     queryKey: ['credentials'],
@@ -724,38 +674,9 @@ const Settings: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (arxivCategories) {
-      const mainCat = arxivCategories.main_category || '';
-      setSelectedArxivMain(mainCat);
-      // Map DB subcategories (lowercase) to taxonomy keys (uppercase)
-      const subs = (arxivCategories.filter_categories || [])
-        .map((code: string) => {
-          const parts = code.split('.');
-          if (parts.length !== 2) return null;
-          const [mc, sc] = parts;
-          const upper = sc.toUpperCase();
-          if (taxonomyAny[mc] && taxonomyAny[mc][upper]) {
-            return `${mc}.${upper}`;
-          }
-          return null;
-        })
-        .filter((v: string | null): v is string => !!v);
-      setSelectedArxivSubs(subs);
-    }
-  }, [arxivCategories]);
 
-  useEffect(() => {
-    if (researchInterests) {
-      setResearchInterestsInput(researchInterests.interests || '');
-    }
-  }, [researchInterests]);
 
-  useEffect(() => {
-    if (emailRecipients) {
-      setEmailRecipientsInput(emailRecipients.recipients?.join('\n') || '');
-    }
-  }, [emailRecipients]);
+
 
   const handleDatabaseImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1430,7 +1351,7 @@ const Settings: React.FC = () => {
     );
   };
 
-  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders || isCheckingDbTasks) {
+  if (isLoadingOrchestration || isLoadingProviders || isCheckingDbTasks) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
@@ -1903,7 +1824,13 @@ const Settings: React.FC = () => {
 
           {/* System Information */}
           {systemInfo && (
-            <Paper sx={{ p: 3, mb: 3, bgcolor: 'grey.50' }}>
+            <Paper sx={{ 
+              p: 3, 
+              mb: 3, 
+              bgcolor: 'background.default',
+              border: '1px solid',
+              borderColor: 'divider'
+            }}>
               <Typography variant="h6" gutterBottom>
                 <MemoryIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 System Information
@@ -2164,155 +2091,65 @@ const Settings: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* ArXiv Categories Section */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              ArXiv Settings
-            </Typography>
-            <Tooltip title="Configure the ArXiv categories to use for paper selection.">
-              <InfoOutlinedIcon color="action" />
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Configure the ArXiv categories to use for paper selection.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            {/* Main Category Selector */}
-            <Autocomplete
-              options={Object.entries(taxonomyAny.main_categories).map(([value, label]) => ({ value: value as string, label: label as string }))}
-              getOptionLabel={(option) => option.label as string}
-              value={taxonomyAny.main_categories[selectedArxivMain] ? { value: selectedArxivMain, label: `${selectedArxivMain} - ${taxonomyAny.main_categories[selectedArxivMain]}` } : null}
-              onChange={(_, newValue) => {
-                setSelectedArxivMain(newValue?.value || '');
-                setSelectedArxivSubs([]);
-              }}
-              renderInput={(params) => <TextField {...params} label="Main Category" fullWidth />}
-            />
-            {/* Subcategories Multi-Select */}
-            <Autocomplete
-              multiple
-              filterSelectedOptions
-              isOptionEqualToValue={(option, value) => option.value === value.value}
-              options={Object.entries(taxonomyAny[selectedArxivMain] || {}).map(([sub, desc]) => ({ value: `${selectedArxivMain}.${sub}`, label: `${selectedArxivMain}.${sub} - ${desc}` }))}
-              getOptionLabel={(option) => option.label as string}
-              value={Object.entries(taxonomyAny[selectedArxivMain] || {})
-                .map(([sub, desc]) => ({ value: `${selectedArxivMain}.${sub}`, label: `${selectedArxivMain}.${sub} - ${desc}` }))
-                .filter(opt => selectedArxivSubs.includes(opt.value))
-              }
-              onChange={(_, newValues) => setSelectedArxivSubs((newValues as any[]).map(opt => opt.value))}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => {
-                  const tagProps = getTagProps({ index });
-                  const { key, ...otherProps } = tagProps;
-                  return <Chip key={key} label={option.label as string} {...otherProps} />;
-                })
-              }
-              renderInput={(params) => <TextField {...params} label="Subcategories" placeholder="Select subcategories" fullWidth />}
-            />
-            {/* Save Button */}
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  const lowerSubs = selectedArxivSubs.map((v: string) => {
-                    const parts = v.split('.');
-                    return parts.length === 2 ? `${parts[0]}.${parts[1].toLowerCase()}` : v;
-                  });
-                  updateArxivCategoriesMutation.mutate({ main_category: selectedArxivMain, filter_categories: lowerSubs });
-                }}
-                disabled={updateArxivCategoriesMutation.isPending}
-              >
-                Save ArXiv Settings
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
 
-      {/* Research Interests Section */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              Research Interests
-            </Typography>
-            <Tooltip title="Provide a detailed description of your research interests. This will be used to guide paper discovery and analysis.">
-              <InfoOutlinedIcon color="action" />
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Provide a detailed description of your research interests. This will be used to guide paper discovery and analysis.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            <TextField
-              fullWidth
-              multiline
-              rows={5}
-              label="Your Research Interests"
-              value={researchInterestsInput}
-              onChange={(e) => setResearchInterestsInput(e.target.value)}
-              helperText="Describe your research interests."
-            />
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  updateResearchInterestsMutation.mutate({ interests: researchInterestsInput });
-                }}
-                disabled={updateResearchInterestsMutation.isPending}
-              >
-                Save Research Interests
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
 
-      {/* Email Configuration Section */}
+
+
+
+
+      {/* Theme Preferences Section */}
       <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              Email Recipients
+              <PaletteIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+              Theme Preferences
             </Typography>
-            <Tooltip title="Enter email addresses below, one per line. These recipients will receive generated newsletters.">
+            <Tooltip title="Choose between dark and light theme for the application interface.">
               <InfoOutlinedIcon color="action" />
             </Tooltip>
           </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Enter email addresses below, one per line. These recipients will receive generated newsletters.
+          <Typography variant="body2" sx={{ mb: 3 }}>
+            Customize the appearance of Theseus Insight to match your preferences.
           </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Email Recipients"
-              value={emailRecipientsInput}
-              onChange={(e) => setEmailRecipientsInput(e.target.value)}
-              helperText="Enter one email address per line."
-            />
-            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  updateEmailRecipientsMutation.mutate({ recipients: emailRecipientsInput.split('\n').map((s: string) => s.trim()).filter(Boolean) });
-                }}
-                disabled={updateEmailRecipientsMutation.isPending}
-              >
-                Save Email Recipients
-              </Button>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={() => sendTestEmailMutation.mutate()}
-                disabled={sendTestEmailMutation.isPending}
-              >
-                Send Test Email
-              </Button>
+
+          <Box sx={{ 
+            p: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 2,
+            maxWidth: 400
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {isDarkMode ? (
+                  <Brightness4Icon sx={{ color: 'warning.main' }} />
+                ) : (
+                  <Brightness7Icon sx={{ color: 'orange' }} />
+                )}
+                <Typography variant="h6">
+                  {isDarkMode ? 'Dark Mode' : 'Light Mode'}
+                </Typography>
+              </Box>
+              <Box sx={{ flex: 1 }} />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={isDarkMode}
+                    onChange={toggleTheme}
+                    color="primary"
+                  />
+                }
+                label=""
+                sx={{ m: 0 }}
+              />
             </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              {isDarkMode 
+                ? 'Switch to light mode for a brighter interface'
+                : 'Switch to dark mode for easier viewing in low-light environments'
+              }
+            </Typography>
           </Box>
         </CardContent>
       </Card>

@@ -94,6 +94,13 @@ async def expand_mindmap(
         # Generate unique task ID
         task_id = str(uuid.uuid4())
         
+        # Resolve profile parameters
+        profile_ids_list = None
+        if request.profile_ids:
+            profile_ids_list = request.profile_ids
+        elif request.profile_id:
+            profile_ids_list = [request.profile_id]
+        
         # Create task configuration
         config = {
             "paper_id": seed_paper_id,
@@ -103,7 +110,11 @@ async def expand_mindmap(
             "layout_algorithm": request.layout_algorithm,
             "model_config_override": request.model_config_override.dict() if request.model_config_override else None,
             "expansion_order": request.expansion_order,
-            "max_nodes_per_order": request.max_nodes_per_order
+            "max_nodes_per_order": request.max_nodes_per_order,
+            "profile_id": request.profile_id,
+            "profile_ids": profile_ids_list,
+            "profile_tag": request.profile_tag,
+            "profile_tags": request.profile_tags
         }
         
         # Create task in database

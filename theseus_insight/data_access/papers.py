@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import json
 
 from psycopg import sql
@@ -270,35 +270,112 @@ class PaperRepository:
         search: str | None = None,
         from_date: str | None = None,
         to_date: str | None = None,
+        profile_ids: List[int] | None = None,
+        min_profile_score: float | None = None,
+        max_profile_score: float | None = None,
+        profile_related_only: bool = False,
     ) -> Dict[str, Any]:
-        sql = "SELECT * FROM papers"
+        
+        # Determine if we need profile filtering
+        has_profile_filters = (
+            profile_ids is not None or 
+            min_profile_score is not None or 
+            max_profile_score is not None or 
+            profile_related_only
+        )
+        
+        if has_profile_filters:
+            # Use profile-aware query with joins
+            if profile_ids:
+                # Join with paper_profile_scores for specific profiles
+                sql = """
+                    SELECT DISTINCT p.*, 
+                           pps.score as profile_score,
+                           pps.related as profile_related,
+                           pps.rationale as profile_rationale,
+                           pps.date_scored as profile_date_scored,
+                           pps.judge_model as profile_judge_model,
+                           pps.profile_id
+                    FROM papers p
+                    INNER JOIN paper_profile_scores pps ON p.id = pps.paper_id
+                """
+            else:
+                # Just regular papers query - profile filters will be ignored
+                sql = "SELECT * FROM papers"
+        else:
+            # Regular papers query without profile data
+            sql = "SELECT * FROM papers"
+        
         conditions: List[str] = []
         params: List[Any] = []
 
+        # Regular paper filters
         if min_score is not None:
-            conditions.append("score >= %s")
+            conditions.append("p.score >= %s" if has_profile_filters and profile_ids else "score >= %s")
             params.append(min_score)
         if max_score is not None:
-            conditions.append("score <= %s")
+            conditions.append("p.score <= %s" if has_profile_filters and profile_ids else "score <= %s")
             params.append(max_score)
         if from_date:
-            conditions.append("date >= %s")
+            conditions.append("p.date >= %s" if has_profile_filters and profile_ids else "date >= %s")
             params.append(from_date)
         if to_date:
-            conditions.append("date <= %s")
+            conditions.append("p.date <= %s" if has_profile_filters and profile_ids else "date <= %s")
             params.append(to_date)
         if search:
-            conditions.append("fts @@ plainto_tsquery('english', %s)")
+            conditions.append("p.fts @@ plainto_tsquery('english', %s)" if has_profile_filters and profile_ids else "fts @@ plainto_tsquery('english', %s)")
             params.append(search)
+        
+        # Profile-specific filters
+        if has_profile_filters and profile_ids:
+            # Filter by specific profiles
+            placeholders = ', '.join(['%s'] * len(profile_ids))
+            conditions.append(f"pps.profile_id IN ({placeholders})")
+            params.extend(profile_ids)
+            
+            # Profile score filters
+            if min_profile_score is not None:
+                conditions.append("pps.score >= %s")
+                params.append(min_profile_score)
+            if max_profile_score is not None:
+                conditions.append("pps.score <= %s")
+                params.append(max_profile_score)
+            if profile_related_only:
+                conditions.append("pps.related = TRUE")
+        
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
 
-        # Sorting
-        if sort_field not in {"score", "date", "id"}:
-            sort_field = "score"
-        direction = "DESC" if sort_direction.lower() == "desc" else "ASC"
-        sql_count = "SELECT count(*) FROM (" + sql + ") AS sub"
+        # Build count query separately to avoid string replacement issues
+        if has_profile_filters and profile_ids:
+            sql_count = """
+                SELECT COUNT(DISTINCT p.id) as count
+                FROM papers p
+                INNER JOIN paper_profile_scores pps ON p.id = pps.paper_id
+            """
+        else:
+            sql_count = "SELECT COUNT(*) as count FROM papers"
+        
+        # Add the same WHERE conditions to count query
+        if conditions:
+            sql_count += " WHERE " + " AND ".join(conditions)
 
+        # Sorting
+        if sort_field not in {"score", "date", "id", "profile_score"}:
+            sort_field = "score"
+        
+        # Adjust sort field for profile queries
+        if has_profile_filters and profile_ids:
+            if sort_field == "score":
+                sort_field = "p.score"
+            elif sort_field == "date":
+                sort_field = "p.date"
+            elif sort_field == "id":
+                sort_field = "p.id"
+            elif sort_field == "profile_score":
+                sort_field = "pps.score"
+        
+        direction = "DESC" if sort_direction.lower() == "desc" else "ASC"
         sql += f" ORDER BY {sort_field} {direction} LIMIT %s OFFSET %s"
         offset = (page - 1) * page_size
         params_count = list(params)  # copy for count query
@@ -478,9 +555,10 @@ class PaperRepository:
 
     @staticmethod
     def find_similar_mindmap(
-        seed_paper_id: int, *, k: int = 15, similarity_threshold: float = 0.3
+        seed_paper_id: int, *, k: int = 15, similarity_threshold: float = 0.3,
+        profile_ids: Optional[List[int]] = None, min_profile_score: Optional[float] = None
     ) -> List[Dict[str, Any]]:
-        """Find similar papers for mindmap generation."""
+        """Find similar papers for mindmap generation with optional profile filtering."""
         # Get seed paper embedding
         with get_cursor() as cur:
             cur.execute(
@@ -494,9 +572,30 @@ class PaperRepository:
             
         seed_embedding = seed_row["embedding"]
         
-        with get_cursor() as cur:
-            cur.execute(
-                """
+        # Base query for similarity search
+        if profile_ids:
+            # Profile-filtered query
+            query = """
+                SELECT DISTINCT p.*, 1 - (p.embedding <=> %s)::float AS similarity_score,
+                       pps.score as profile_score, pps.related as profile_related
+                FROM papers p
+                INNER JOIN paper_profile_scores pps ON p.id = pps.paper_id
+                WHERE p.id != %s 
+                  AND p.embedding IS NOT NULL 
+                  AND (1 - (p.embedding <=> %s)::float) >= %s
+                  AND pps.profile_id = ANY(%s)
+            """
+            params = [seed_embedding, seed_paper_id, seed_embedding, similarity_threshold, profile_ids]
+            
+            if min_profile_score is not None:
+                query += " AND pps.score >= %s"
+                params.append(min_profile_score)
+                
+            query += " ORDER BY similarity_score DESC LIMIT %s"
+            params.append(k)
+        else:
+            # Regular similarity search without profile filtering
+            query = """
                 SELECT *, 1 - (embedding <=> %s)::float AS similarity_score
                 FROM papers 
                 WHERE id != %s 
@@ -504,9 +603,11 @@ class PaperRepository:
                   AND (1 - (embedding <=> %s)::float) >= %s
                 ORDER BY similarity_score DESC 
                 LIMIT %s
-                """,
-                (seed_embedding, seed_paper_id, seed_embedding, similarity_threshold, k),
-            )
+            """
+            params = [seed_embedding, seed_paper_id, seed_embedding, similarity_threshold, k]
+        
+        with get_cursor() as cur:
+            cur.execute(query, params)
             return cur.fetchall()
 
     @staticmethod
@@ -607,11 +708,13 @@ class PaperRepository:
 
     @staticmethod
     def find_similar_papers_mindmap(
-        seed_paper_id: int, k: int = 15, similarity_threshold: float = 0.3
+        seed_paper_id: int, k: int = 15, similarity_threshold: float = 0.3,
+        profile_ids: Optional[List[int]] = None, min_profile_score: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """Legacy method name - use find_similar_mindmap() instead."""
         return PaperRepository.find_similar_mindmap(
-            seed_paper_id, k=k, similarity_threshold=similarity_threshold
+            seed_paper_id, k=k, similarity_threshold=similarity_threshold,
+            profile_ids=profile_ids, min_profile_score=min_profile_score
         )
 
     # ---------------------------------------------------------------------
@@ -647,4 +750,55 @@ class PaperRepository:
                     "SELECT * FROM papers WHERE embedding IS NOT NULL ORDER BY date DESC LIMIT %s OFFSET %s",
                     (limit, offset)
                 )
-            return cur.fetchall() 
+            return cur.fetchall()
+
+    @staticmethod
+    def get_papers_in_date_range(start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get papers within a date range.
+        
+        Args:
+            start_date: Start date in YYYY-MM-DD format (inclusive)
+            end_date: End date in YYYY-MM-DD format (inclusive)
+            
+        Returns:
+            List of paper dictionaries
+        """
+        with get_cursor() as cur:
+            query = """
+                SELECT id, title, abstract, date, url, score, related, rationale, 
+                       cosine_similarity, embedding_model, date_run
+                FROM papers 
+                WHERE 1=1
+            """
+            params = []
+            
+            if start_date:
+                query += " AND date >= %s"
+                params.append(start_date)
+                
+            if end_date:
+                query += " AND date <= %s"
+                params.append(end_date)
+                
+            query += " ORDER BY date DESC"
+            
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'abstract': row[2],
+                    'date': row[3],
+                    'url': row[4],
+                    'score': row[5],
+                    'related': row[6],
+                    'rationale': row[7],
+                    'cosine_similarity': row[8],
+                    'embedding_model': row[9],
+                    'date_run': row[10]
+                }
+                for row in rows
+            ] 

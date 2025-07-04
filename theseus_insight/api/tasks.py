@@ -391,6 +391,57 @@ class TaskManager:
             config = task["config"]
             email_recipients = config.get("emailRecipients", None)
             research_interests_override = config.get("researchInterests", None)
+            
+            # Profile filtering parameters
+            profile_id = config.get("profile_id")
+            profile_ids = config.get("profile_ids")
+            profile_tag = config.get("profile_tag")
+            profile_tags = config.get("profile_tags")
+            use_profile_recipients = config.get("use_profile_recipients", False)
+            
+            # Resolve profile context
+            resolved_profile_ids = None
+            profile_recipients = None
+            
+            if profile_id or profile_ids or profile_tag or profile_tags:
+                from ..data_access import ProfileRepository
+                
+                # Resolve profile IDs from tags if provided
+                if profile_tag or profile_tags:
+                    tag_list = []
+                    if profile_tag:
+                        tag_list.append(profile_tag)
+                    if profile_tags:
+                        tag_list.extend(profile_tags)
+                    
+                    tag_profiles = ProfileRepository.get_by_tags(tag_list)
+                    tag_profile_ids = [p['id'] for p in tag_profiles]
+                    
+                    if profile_ids:
+                        # Combine explicit profile_ids with tag-resolved IDs
+                        resolved_profile_ids = list(set(profile_ids + tag_profile_ids))
+                    else:
+                        resolved_profile_ids = tag_profile_ids
+                elif profile_ids:
+                    resolved_profile_ids = profile_ids
+                elif profile_id:
+                    resolved_profile_ids = [profile_id]
+                
+                # Get profile-specific email recipients if requested
+                if use_profile_recipients and resolved_profile_ids:
+                    profile_recipients = []
+                    for pid in resolved_profile_ids:
+                        profile = ProfileRepository.get_by_id(pid)
+                        if profile and profile.get('email_recipients'):
+                            profile_recipients.extend(profile['email_recipients'])
+                    
+                    # Remove duplicates while preserving order
+                    profile_recipients = list(dict.fromkeys(profile_recipients))
+                    
+                    # Use profile recipients if available, otherwise fall back to config recipients
+                    if profile_recipients:
+                        email_recipients = profile_recipients
+            
             orchestration_config = SettingsRepository.get("orchestration")
             if not orchestration_config:
                 orchestration_config = "config/orchestration.json"
@@ -401,9 +452,10 @@ class TaskManager:
                 orchestration_config=orchestration_config,
                 task_id=task_id,
                 progress_callback=self._progress_callback(task_id),
+                profile_ids_override=resolved_profile_ids,  # Pass resolved profile IDs
                 **{
                     k: v for k, v in config.items() 
-                    if k not in ["emailRecipients", "researchInterests"]
+                    if k not in ["emailRecipients", "researchInterests", "profile_id", "profile_ids", "profile_tag", "profile_tags", "use_profile_recipients"]
                 },
                 generate_podcast=False,  # We handle podcast generation separately for now
                 data_path=os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus"),
@@ -918,164 +970,6 @@ class TaskManager:
             )
             raise
 
-    # async def run_research_agent_task(self, task_id: str):
-    #     """Run the research agent task with progress tracking."""
-    #     try:
-    #         print(f"DEBUG: Starting research agent task {task_id}")
-    #         task = TaskRepository.get_task(task_id)
-    #         if not task:
-    #             raise ValueError(f"Task {task_id} not found")
-            
-    #         config = task["config"]
-    #         research_question = config.get("research_question")
-    #         num_papers_target = config.get("num_papers_target", 5)
-    #         max_steps = config.get("max_steps", 10)
-    #         enable_pdf_download = config.get("enable_pdf_download", True)
-            
-    #         if not research_question:
-    #             raise ValueError("Research question is required")
-            
-    #         await self.update_task_status(
-    #             task_id,
-    #             TaskStatus.PROCESSING,
-    #             f"Starting literature review: {research_question}",
-    #             progress=5,
-    #             current_step="initializing_agent",
-    #         )
-            
-    #         # Import research agent here to avoid circular imports
-    #         from ..agentic_research.agent_loop import create_research_agent
-            
-    #         # Create research agent
-    #         agent = create_research_agent(
-    #             db=TaskRepository,
-    #             num_papers_target=num_papers_target,
-    #             max_steps=max_steps,
-    #             enable_pdf_download=enable_pdf_download
-    #         )
-            
-    #         await self.update_task_status(
-    #             task_id,
-    #             TaskStatus.PROCESSING,
-    #             "Research agent initialized. Starting literature review...",
-    #             progress=10,
-    #             current_step="starting_review",
-    #         )
-            
-    #         # Custom progress tracking for agent iterations
-    #         class ProgressTracker:
-    #             def __init__(self, task_manager, task_id, max_steps, num_papers_target):
-    #                 self.task_manager = task_manager
-    #                 self.task_id = task_id
-    #                 self.max_steps = max_steps
-    #                 self.num_papers_target = num_papers_target
-    #                 self.last_update_time = 0
-                    
-    #             async def update_progress(self, iteration, summaries_count, current_action=""):
-    #                 # Calculate progress: 10% (start) + 80% (main work) + 10% (completion)
-    #                 iteration_progress = min(iteration / self.max_steps, 1.0) * 0.6  # 60% for iterations
-    #                 summary_progress = min(summaries_count / self.num_papers_target, 1.0) * 0.2  # 20% for summaries
-    #                 total_progress = 10 + (iteration_progress + summary_progress) * 80
-                    
-    #                 message = f"Iteration {iteration}/{self.max_steps}, Found {summaries_count}/{self.num_papers_target} papers"
-    #                 if current_action:
-    #                     message += f". {current_action}"
-                        
-    #                 await self.task_manager.update_task_status(
-    #                     self.task_id,
-    #                     TaskStatus.PROCESSING,
-    #                     message,
-    #                     progress=total_progress,
-    #                     current_step=f"iteration_{iteration}",
-    #                 )
-            
-    #         progress_tracker = ProgressTracker(self, task_id, max_steps, num_papers_target)
-            
-    #         # Add a custom progress callback to the agent
-    #         original_add_trace_entry = agent._add_trace_entry
-            
-    #         def enhanced_add_trace_entry(action_type, details, model_used=None, duration_seconds=None):
-    #             # Call original method
-    #             original_add_trace_entry(action_type, details, model_used, duration_seconds)
-                
-    #             # Update progress for key milestones
-    #             if action_type in ["agent_response", "search_execution", "summary_extracted"]:
-    #                 asyncio.create_task(progress_tracker.update_progress(
-    #                     agent.current_iteration,
-    #                     len(agent.collected_summaries),
-    #                     action_type.replace("_", " ").title()
-    #                 ))
-            
-    #         # Monkey-patch the trace entry method for progress updates
-    #         agent._add_trace_entry = enhanced_add_trace_entry
-            
-    #         # Run the literature review
-    #         result = agent.run_literature_review(research_question)
-            
-    #         if result.success:
-    #             await self.update_task_status(
-    #                 task_id,
-    #                 TaskStatus.PROCESSING,
-    #                 "Literature review completed. Saving results...",
-    #                 progress=90,
-    #                 current_step="saving_results",
-    #             )
-                
-    #             # Save results to database
-    #             review_id = agent.save_results(result)
-                
-    #             await self.update_task_status(
-    #                 task_id,
-    #                 TaskStatus.COMPLETED,
-    #                 f"Literature review completed successfully! Found {len(result.summaries)} papers in {result.total_iterations} iterations.",
-    #                 progress=100,
-    #                 current_step="review_complete",
-    #                 result={
-    #                     "review_id": review_id,
-    #                     "research_question": result.research_question,
-    #                     "papers_found": len(result.summaries),
-    #                     "iterations_used": result.total_iterations,
-    #                     "success": result.success,
-    #                     "summaries": [
-    #                         {
-    #                             "paper_id": s.paper_id,
-    #                             "title": s.title,
-    #                             "summary": s.summary,
-    #                             "rationale": s.rationale,
-    #                             "relevance_score": s.relevance_score
-    #                         }
-    #                         for s in result.summaries
-    #                     ],
-    #                     "trace_entries_count": len(result.trace_entries)
-    #                 },
-    #             )
-    #         else:
-    #             await self.update_task_status(
-    #                 task_id,
-    #                 TaskStatus.FAILED,
-    #                 f"Literature review failed: {result.error or 'Unknown error'}",
-    #                 error=result.error,
-    #                 current_step="review_failed",
-    #                 result={
-    #                     "papers_found": len(result.summaries),
-    #                     "iterations_used": result.total_iterations,
-    #                     "success": result.success,
-    #                     "error": result.error
-    #                 },
-    #             )
-                
-    #     except Exception as e:
-    #         import traceback
-    #         traceback.print_exc()
-    #         await self.update_task_status(
-    #             task_id,
-    #             TaskStatus.FAILED,
-    #             f"Research agent task failed: {str(e)}",
-    #             error=str(e),
-    #             current_step="task_failed",
-    #         )
-    #         raise
-
     async def run_mindmap_expand_task(self, task_id: str):
         """Run the mind-map expansion task."""
         try:
@@ -1100,6 +994,11 @@ class TaskManager:
             max_nodes_per_order = config.get("max_nodes_per_order", 20)
             layout_algorithm = config.get("layout_algorithm", "force")
             model_config_override = config.get("model_config_override")
+            # Profile filtering parameters
+            profile_id = config.get("profile_id")
+            profile_ids = config.get("profile_ids")
+            profile_tag = config.get("profile_tag")
+            profile_tags = config.get("profile_tags")
             
             print(f"DEBUG: Task config - paper_id: {paper_id}, k: {k}, threshold: {similarity_threshold}, expansion_order: {expansion_order}, max_nodes_per_order: {max_nodes_per_order}")
             
@@ -1189,6 +1088,7 @@ class TaskManager:
             
             # Run the mind-map workflow synchronously
             print(f"DEBUG: About to call workflow.generate_mindmap_sync for task {task_id}")
+            print(f"DEBUG: Profile parameters - ID: {profile_id}, IDs: {profile_ids}, tag: {profile_tag}, tags: {profile_tags}")
             result = workflow.generate_mindmap_sync(
                 seed_paper_id=int(paper_id),
                 k_neighbors=k,
@@ -1199,7 +1099,11 @@ class TaskManager:
                 embedding_model_config=None,  # Will be pulled from config
                 llm_model_config=llm_model_config,
                 task_id=task_id,  # Use the actual task ID
-                progress_callback=sync_progress_callback  # Pass the sync progress callback
+                progress_callback=sync_progress_callback,  # Pass the sync progress callback
+                profile_id=profile_id,
+                profile_ids=profile_ids,
+                profile_tag=profile_tag,
+                profile_tags=profile_tags
             )
             print(f"DEBUG: workflow.generate_mindmap_sync completed for task {task_id}")
             print(f"DEBUG: Result success: {result.get('success', False)}")
@@ -1453,6 +1357,218 @@ class TaskManager:
                 task_id,
                 TaskStatus.FAILED,
                 f"PDF parsing task failed: {str(e)}",
+                error=str(e),
+                current_step="task_failed",
+            )
+            raise
+
+    async def run_profile_aware_ingest_task(self, task_id: str):
+        """Run profile-aware paper ingestion task."""
+        try:
+            print(f"DEBUG: Starting profile-aware ingestion task {task_id}")
+            task = TaskRepository.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            
+            if isinstance(task["config_json"], str):
+                config = json.loads(task["config_json"])
+            else:
+                config = task["config_json"]
+            
+            # Extract configuration parameters
+            start_date = config.get("start_date")
+            end_date = config.get("end_date")
+            profile_ids = config.get("profile_ids", [])
+            profile_tags = config.get("profile_tags", [])
+            score_all_profiles = config.get("score_all_profiles", False)
+            overwrite_existing = config.get("overwrite_existing", False)
+            cosine_threshold = config.get("cosine_threshold", 0.5)
+            arxiv_categories = config.get("arxiv_categories", [])
+            batch_size = config.get("batch_size", 10)
+            send_error_notifications = config.get("send_error_notifications", False)
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Starting profile-aware paper ingestion",
+                progress=5,
+                current_step="initializing",
+            )
+            
+            # Resolve target profiles
+            from ..data_access.profiles import ProfileRepository
+            target_profiles = []
+            
+            if profile_ids:
+                for profile_id in profile_ids:
+                    profile = ProfileRepository.get_by_id(profile_id)
+                    if profile and profile['is_active']:
+                        target_profiles.append(profile)
+            
+            if profile_tags:
+                tag_profiles = ProfileRepository.get_by_tags(profile_tags)
+                for profile in tag_profiles:
+                    if profile['is_active'] and profile not in target_profiles:
+                        target_profiles.append(profile)
+            
+            if score_all_profiles and not target_profiles:
+                target_profiles = ProfileRepository.get_all_active()
+            
+            if not target_profiles:
+                raise ValueError("No active profiles found matching the criteria")
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Resolved {len(target_profiles)} target profiles",
+                progress=10,
+                current_step="profiles_resolved",
+            )
+            
+            # Stage 1: Run paper ingestion pipeline
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Running paper ingestion pipeline",
+                progress=15,
+                current_step="ingestion_start",
+            )
+            
+            # Create progress callback for pipeline
+            def pipeline_progress_callback(stage: str, progress: float, message: str = ""):
+                # Convert pipeline progress to task progress (15% - 60%)
+                task_progress = 15 + (progress * 0.45)
+                
+                # Use sync version of update_task_status to avoid event loop issues
+                self.update_task_status_sync(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    f"Ingestion: {stage} - {message}",
+                    progress=task_progress,
+                    current_step=f"ingestion_{stage}",
+                )
+            
+            # Get orchestration config and update ArXiv categories if specified
+            orchestration_json = SettingsRepository.get("orchestration")
+            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            
+            # Update ArXiv categories if specified
+            if arxiv_categories:
+                if 'arxiv_search_categories' not in orchestration_config:
+                    orchestration_config['arxiv_search_categories'] = {}
+                orchestration_config['arxiv_search_categories']['filter_categories'] = arxiv_categories
+            
+            # Run profile-aware ingestion pipeline
+            theseus_insight = TheseusInsight(
+                start_date_override=start_date,
+                end_date_override=end_date,
+                cosine_similarity_threshold=cosine_threshold,
+                db_saving=True,
+                verbose=True,
+                orchestration_config=orchestration_config,
+                task_id=task_id,
+                send_error_notifications=send_error_notifications
+            )
+            
+            # Run the profiles pipeline (stores all papers without scoring)
+            ingestion_result = theseus_insight.run_profiles_pipeline(
+                progress_callback=pipeline_progress_callback
+            )
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Ingestion completed: {ingestion_result.get('saved_count', 0)} papers saved",
+                progress=60,
+                current_step="ingestion_complete",
+            )
+            
+            # Stage 2: Run profile-aware scoring
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Starting profile-aware scoring",
+                progress=65,
+                current_step="scoring_start",
+            )
+            
+            # Create bulk judge runner
+            judge_config = orchestration_config.get("judge_model", {})
+            
+            from ..data_access.bulk_judge import BulkJudgeRunner
+            bulk_judge = BulkJudgeRunner(judge_config, verbose=True)
+            
+            # Create bulk judge request
+            from ..api.models import BulkJudgeRunRequest
+            judge_request = BulkJudgeRunRequest(
+                profile_ids=profile_ids if profile_ids else None,
+                profile_tags=profile_tags if profile_tags else None,
+                date_from=start_date,
+                date_to=end_date,
+                batch_size=batch_size,
+                overwrite_existing=overwrite_existing
+            )
+            
+            # Scoring progress callback
+            def scoring_progress_callback(stage: str, current: int, total: int):
+                # Convert scoring progress to task progress (65% - 95%)
+                scoring_progress = (current / total) * 100 if total > 0 else 0
+                task_progress = 65 + (scoring_progress * 0.30)
+                
+                # Use sync version of update_task_status to avoid event loop issues
+                self.update_task_status_sync(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    f"Scoring: {stage} ({current}/{total})",
+                    progress=task_progress,
+                    current_step=f"scoring_{stage}",
+                )
+            
+            # Run bulk judge scoring
+            judge_result = bulk_judge.run_bulk_judge(
+                judge_request,
+                progress_callback=scoring_progress_callback
+            )
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Profile-aware scoring completed",
+                progress=95,
+                current_step="scoring_complete",
+            )
+            
+            # Create final result
+            final_result = {
+                "ingestion_result": ingestion_result,
+                "scoring_result": {
+                    "job_id": judge_result.job_id,
+                    "status": judge_result.status,
+                    "profile_count": judge_result.profile_count,
+                    "estimated_papers": judge_result.estimated_papers,
+                    "message": judge_result.message
+                },
+                "target_profiles": [p['name'] for p in target_profiles],
+                "papers_ingested": ingestion_result.get('saved_count', 0),
+                "papers_scored": judge_result.estimated_papers
+            }
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                f"Profile-aware ingestion completed: {ingestion_result.get('saved_count', 0)} papers ingested, {judge_result.profile_count} profiles scored",
+                progress=100,
+                current_step="task_complete",
+                result=final_result,
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await self.update_task_status(
+                task_id,
+                TaskStatus.FAILED,
+                f"Profile-aware ingestion task failed: {str(e)}",
                 error=str(e),
                 current_step="task_failed",
             )

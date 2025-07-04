@@ -10,6 +10,7 @@ from .research_agent import router as research_agent_router
 from .model_catalog import router as model_catalog_router
 from .mindmap import router as mindmap_router
 from .trends import router as trends_router
+from .profiles import router as profiles_router
 from .websockets import router as websockets_router, manager as websocket_manager
 
 # List of all routers for easy importing in main.py
@@ -26,6 +27,7 @@ all_routers = [
     model_catalog_router,
     mindmap_router,
     trends_router,
+    profiles_router,
     websockets_router
 ]
 
@@ -42,6 +44,7 @@ __all__ = [
     "model_catalog_router",
     "mindmap_router",
     "trends_router",
+    "profiles_router",
     "websockets_router",
     "websocket_manager",
     "all_routers"

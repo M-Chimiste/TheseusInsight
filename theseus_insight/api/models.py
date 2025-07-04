@@ -263,6 +263,13 @@ class NewsletterRunParams(BaseModel):
     research_interests: str = Field(..., example="AI in healthcare")
     topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers (overrides research_interests filtering)")
     generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
+    
+    # Profile filtering parameters
+    profile_id: Optional[int] = Field(None, description="Generate newsletter for specific profile")
+    profile_ids: Optional[List[int]] = Field(None, description="Generate newsletter for multiple profiles")
+    profile_tag: Optional[str] = Field(None, description="Generate newsletter for profiles with specific tag")
+    profile_tags: Optional[List[str]] = Field(None, description="Generate newsletter for profiles with any of the tags")
+    use_profile_recipients: bool = Field(False, description="Use profile-specific email recipients instead of email_recipients")
 
 # Models for Papers Page
 class PaperApiResponse(BaseModel):
@@ -525,6 +532,11 @@ class MindMapExpandRequest(BaseModel):
     model_config_override: Optional[ModelConfig] = Field(None, description="Override default summarization model")
     expansion_order: int = Field(1, ge=1, le=5, description="Order of expansion (1-5). Higher orders expand from each retrieved paper.")
     max_nodes_per_order: int = Field(20, ge=5, le=50, description="Maximum number of nodes to expand from each paper in multi-order expansion")
+    # Profile filtering parameters
+    profile_id: Optional[int] = Field(None, description="Filter papers to specific profile ID")
+    profile_ids: Optional[List[int]] = Field(None, description="Filter papers to multiple profile IDs")
+    profile_tag: Optional[str] = Field(None, description="Filter papers to profiles with specific tag")
+    profile_tags: Optional[List[str]] = Field(None, description="Filter papers to profiles with any of these tags")
     
     @model_validator(mode='after')
     def validate_seed_input(self):
@@ -853,3 +865,117 @@ class ResearchInterestPapersResponse(BaseModel):
     interest_text: str
     papers: List[PaperApiResponse]
     total_papers: int
+
+
+# =====================================================================
+# Research Profiles Models
+# =====================================================================
+
+class ProfileResponse(BaseModel):
+    """Response model for research profiles."""
+    id: int = Field(..., description="Profile ID")
+    name: str = Field(..., description="Profile name")
+    description: Optional[str] = Field(None, description="Profile description")
+    color: Optional[str] = Field(None, description="UI color coding")
+    tags: Optional[List[str]] = Field(None, description="Organization tags")
+    email_recipients: Optional[List[str]] = Field(None, description="Email distribution list")
+    arxiv_filters: Optional[Dict[str, Any]] = Field(None, description="ArXiv category filters")
+    is_active: bool = Field(True, description="Whether profile is active")
+    is_default: bool = Field(False, description="Whether this is the default profile")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+    total_papers: Optional[int] = Field(None, description="Total papers scored for this profile")
+
+
+class ProfileWithStatsResponse(ProfileResponse):
+    """Profile response with statistics."""
+    interest_count: int = Field(0, description="Number of research interests")
+    total_scored_papers: int = Field(0, description="Total papers scored for this profile")
+    relevant_papers: int = Field(0, description="Papers marked as relevant")
+    average_score: Optional[float] = Field(None, description="Average relevance score")
+    research_interests: List[str] = Field(default_factory=list, description="List of research interest texts")
+
+
+class ProfileCreateRequest(BaseModel):
+    """Request model for creating a profile."""
+    name: str = Field(..., min_length=1, max_length=100, description="Profile name")
+    description: Optional[str] = Field(None, max_length=500, description="Profile description")
+    color: Optional[str] = Field(None, description="UI color coding")
+    tags: Optional[List[str]] = Field(None, description="Organization tags")
+    email_recipients: Optional[List[str]] = Field(None, description="Email distribution list")
+    arxiv_filters: Optional[Dict[str, Any]] = Field(None, description="ArXiv category filters")
+    research_interests: Optional[List[str]] = Field(None, description="Initial research interests")
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Request model for updating a profile."""
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Profile name")
+    description: Optional[str] = Field(None, max_length=500, description="Profile description")
+    color: Optional[str] = Field(None, description="UI color coding")
+    tags: Optional[List[str]] = Field(None, description="Organization tags")
+    email_recipients: Optional[List[str]] = Field(None, description="Email distribution list")
+    arxiv_filters: Optional[Dict[str, Any]] = Field(None, description="ArXiv category filters")
+    is_active: Optional[bool] = Field(None, description="Whether profile is active")
+    research_interests: Optional[List[str]] = Field(None, description="Research interests")
+
+
+class ProfileTagSearchResponse(BaseModel):
+    """Response model for tag search/auto-complete."""
+    query: str = Field(..., description="Search query")
+    suggestions: List[Dict[str, Any]] = Field(..., description="Tag suggestions with usage counts")
+    exact_match: bool = Field(..., description="Whether an exact match was found")
+
+
+class ProfileInterestResponse(BaseModel):
+    """Response model for profile research interests."""
+    id: int = Field(..., description="Interest ID")
+    interest_text: str = Field(..., description="Interest text")
+    embedding_model: Optional[str] = Field(None, description="Embedding model used")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+
+
+class ProfileInterestCreateRequest(BaseModel):
+    """Request model for creating a research interest."""
+    interest_text: str = Field(..., min_length=1, max_length=500, description="Research interest text")
+
+
+class BulkJudgeRunRequest(BaseModel):
+    """Request model for bulk LLM judge runs across profiles."""
+    profile_ids: Optional[List[int]] = Field(None, description="Specific profile IDs to process")
+    profile_tags: Optional[List[str]] = Field(None, description="Process profiles with these tags")
+    from_date: Optional[str] = Field(None, description="Start date for paper filtering (YYYY-MM-DD)")
+    to_date: Optional[str] = Field(None, description="End date for paper filtering (YYYY-MM-DD)")
+    batch_size: int = Field(100, ge=10, le=1000, description="Papers to process per batch")
+    overwrite_existing: bool = Field(False, description="Overwrite existing scores")
+
+
+class BulkJudgeRunResponse(BaseModel):
+    """Response model for bulk judge run initiation."""
+    job_id: str = Field(..., description="Job tracking ID")
+    status: str = Field(..., description="Job status")
+    profile_count: int = Field(..., description="Number of profiles to process")
+    estimated_papers: int = Field(..., description="Estimated papers to score")
+    message: str = Field(..., description="Status message")
+
+
+class ProfileAwareIngestRequest(BaseModel):
+    """Request model for profile-aware paper ingestion."""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    profile_ids: Optional[List[int]] = None
+    profile_tags: Optional[List[str]] = None
+    score_all_profiles: bool = False
+    overwrite_existing: bool = False
+    cosine_threshold: float = 0.5
+    arxiv_categories: Optional[List[str]] = None
+    batch_size: int = 10
+    send_error_notifications: bool = False
+
+class ProfileAwareIngestResponse(BaseModel):
+    """Response model for profile-aware paper ingestion."""
+    task_id: str
+    message: str
+    profile_count: int
+    estimated_papers: int
+    status: str

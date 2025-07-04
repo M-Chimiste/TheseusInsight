@@ -63,6 +63,13 @@ class MindMapState(TypedDict):
     max_nodes_per_order: int  # Maximum nodes to expand from each paper
     current_expansion_order: int  # Current order being processed
     
+    # Profile filtering context
+    profile_id: Optional[int]  # Single profile filter
+    profile_ids: Optional[List[int]]  # Multiple profile filter
+    profile_tag: Optional[str]  # Single tag filter
+    profile_tags: Optional[List[str]]  # Multiple tag filter
+    resolved_profile_ids: Optional[List[int]]  # Final resolved profile IDs from tags
+    
     # Retrieved papers and relationships
     similar_papers: List[PaperNode]
     edges: List[MindMapEdge]
@@ -103,7 +110,11 @@ def create_initial_mindmap_state(
     max_nodes_per_order: int = 20,
     task_id: str = "",
     embedding_model_config: Dict[str, Any] = None,
-    llm_model_config: Dict[str, Any] = None
+    llm_model_config: Dict[str, Any] = None,
+    profile_id: Optional[int] = None,
+    profile_ids: Optional[List[int]] = None,
+    profile_tag: Optional[str] = None,
+    profile_tags: Optional[List[str]] = None
 ) -> MindMapState:
     """Create an initial state for the mind-map workflow."""
     return MindMapState(
@@ -115,6 +126,11 @@ def create_initial_mindmap_state(
         expansion_order=expansion_order,
         max_nodes_per_order=max_nodes_per_order,
         current_expansion_order=1,
+        profile_id=profile_id,
+        profile_ids=profile_ids,
+        profile_tag=profile_tag,
+        profile_tags=profile_tags,
+        resolved_profile_ids=None,
         similar_papers=[],
         edges=[],
         all_papers={},

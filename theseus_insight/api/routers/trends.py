@@ -31,7 +31,7 @@ from ...data_access import (
     TopicsRepository, TopicMetricsRepository, PaperTopicsRepository, 
     TrendsRepository, PaperRepository, SettingsRepository,
     ResearchInterestTrendsRepository, ResearchInterestsRepository, ResearchInterestMetricsRepository,
-    PaperResearchInterestsRepository, LabelSummariesRepository
+    PaperResearchInterestsRepository, LabelSummariesRepository, ProfileRepository
 )
 from ...data_processing.trends import TrendsProcessor
 from ..tasks import task_manager, TaskStatus
@@ -131,7 +131,11 @@ async def get_trending_topics(
     period_type: str = Query("month", description="Display granularity: week, month, quarter"),
     duration_months: int = Query(6, ge=1, le=24, description="Duration to analyze: 1, 3, 6, 12, 24 months"),
     min_doc_count: int = Query(5, ge=1, description="Minimum document count filter"),
-    sort_by: str = Query("growth_rate", description="Sort by: growth_rate, doc_count, forecast_3m")
+    sort_by: str = Query("growth_rate", description="Sort by: growth_rate, doc_count, forecast_3m"),
+    profile_id: Optional[int] = Query(None, description="Filter by specific profile ID"),
+    profile_ids: Optional[str] = Query(None, description="Filter by multiple profile IDs (comma-separated)"),
+    profile_tag: Optional[str] = Query(None, description="Filter by profiles with specific tag"),
+    profile_tags: Optional[str] = Query(None, description="Filter by profiles with any of these tags (comma-separated)")
 ):
     """
     Get a list of trending topics with their latest metrics for a specific duration.
@@ -148,11 +152,41 @@ async def get_trending_topics(
         if duration_months not in [1, 3, 6, 12, 24]:
             raise HTTPException(status_code=400, detail="Invalid duration_months. Must be 1, 3, 6, 12, or 24")
         
+        # Handle profile filtering
+        resolved_profile_ids = None
+        
+        # Parse profile_ids from comma-separated string
+        if profile_ids:
+            try:
+                resolved_profile_ids = [int(pid.strip()) for pid in profile_ids.split(',')]
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid profile_ids format. Must be comma-separated integers.")
+        
+        # Handle tag-based profile filtering
+        if profile_tag or profile_tags:
+            tag_list = []
+            if profile_tag:
+                tag_list.append(profile_tag)
+            if profile_tags:
+                tag_list.extend([tag.strip() for tag in profile_tags.split(',')])
+            
+            # Get profiles with these tags
+            profiles_with_tags = ProfileRepository.get_by_tags(tag_list)
+            tag_based_profile_ids = [p['id'] for p in profiles_with_tags]
+            
+            # Combine with explicit profile IDs if provided
+            if resolved_profile_ids:
+                resolved_profile_ids = list(set(resolved_profile_ids) & set(tag_based_profile_ids))
+            else:
+                resolved_profile_ids = tag_based_profile_ids
+        
         # Get dashboard data using the requested period type (which may be aggregated from weekly data)
         dashboard_data = TrendsRepository.get_dashboard_data(
             limit=limit, 
             period_type=period_type,
-            duration_months=duration_months
+            duration_months=duration_months,
+            profile_id=profile_id,
+            profile_ids=resolved_profile_ids
         )
         
         # Format topics for response
@@ -376,7 +410,7 @@ async def update_performance_config(config: PerformanceConfig) -> Dict[str, Any]
     try:
         config_dict = config.dict()
         config_json = json.dumps(config_dict)
-        SettingsRepository.upsert("performance_config", config_json)
+        SettingsRepository.set("performance_config", config_json)
         
         return {
             "status": "success",

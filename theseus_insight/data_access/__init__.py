@@ -15,4 +15,5 @@ from .trends import (
     ResearchInterestTrendsRepository, ResearchInterestsRepository, ResearchInterestMetricsRepository,
     PaperResearchInterestsRepository
 )
-from .label_summaries import LabelSummariesRepository 
+from .label_summaries import LabelSummariesRepository
+from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository 

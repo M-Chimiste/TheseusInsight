@@ -10,7 +10,7 @@ import pandas as pd
 from tqdm import tqdm
 from dotenv import load_dotenv
 import json_repair
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 import yake
 
 from docling.document_converter import DocumentConverter
@@ -60,6 +60,7 @@ class TheseusInsight:
                  orchestration_config="config/orchestration.json",
                  receiver_address_override=None,
                  research_interests_override=None,
+                 profile_ids_override=None,
                  max_new_tokens=1024,
                  temperature=0.1,
                  cosine_similarity_threshold=0.5,
@@ -96,7 +97,8 @@ class TheseusInsight:
                  visualizer=True,
                  save_dialogue=True,
                  checkpoint_dir="checkpoints",
-                 task_id=None):
+                 task_id=None,
+                 send_error_notifications=True):
         
         # Store task_id for logging
         self.task_id = task_id or f"theseus_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -195,6 +197,9 @@ class TheseusInsight:
             with open(research_interests_path, 'r') as f:
                 self.research_interests = f.read().strip()
         
+        # Store profile filtering context
+        self.profile_ids_override = profile_ids_override
+        
         # Inference models
         if isinstance(orchestration_config, str):
             # first see if this is a json string or a path to a file
@@ -277,6 +282,7 @@ class TheseusInsight:
         # 4) Arxiv search categories
         self.arxiv_main_category = self.orchestration_config['arxiv_search_categories']['main_category']
         self.arxiv_filter_categories = self.orchestration_config['arxiv_search_categories']['filter_categories']
+        self.send_error_notifications = send_error_notifications
         self.error_notified = False
 
     def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
@@ -327,8 +333,8 @@ class TheseusInsight:
             datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
 
-        # Send error notification email only once per run
-        if not self.error_notified:
+        # Send error notification email only once per run (if enabled)
+        if self.send_error_notifications and not self.error_notified:
             try:
                 self.communication.send_error_notification(error_msg)
                 self.error_notified = True
@@ -752,6 +758,171 @@ Theseus Insight Team
             self._log_error(500, e)
             raise
 
+    def get_profile_papers(self, profile_ids: List[int], min_score: float = 0.5) -> pd.DataFrame:
+        """
+        Retrieve papers scored by specific profiles for newsletter generation.
+        
+        Args:
+            profile_ids: List of profile IDs to filter by
+            min_score: Minimum profile score threshold
+            
+        Returns:
+            DataFrame with papers formatted for newsletter generation
+        """
+        try:
+            if self.verbose:
+                print(f"\n📋 RETRIEVING PROFILE PAPERS")
+                print(f"Profile IDs: {profile_ids}")
+                print(f"Min score: {min_score}")
+                print("="*60)
+            
+            from .data_access import PaperRepository
+            from .db import get_cursor
+            import pandas as pd
+            
+            # Get papers with profile scores
+            papers_data = []
+            with get_cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT p.*, pps.score, pps.related, pps.rationale
+                    FROM papers p
+                    INNER JOIN paper_profile_scores pps ON p.id = pps.paper_id
+                    WHERE pps.profile_id = ANY(%s)
+                      AND pps.score >= %s
+                      AND p.date >= %s
+                      AND p.date <= %s
+                    ORDER BY pps.score DESC, p.date DESC
+                    LIMIT %s
+                """, (profile_ids, min_score, self.start_date, self.end_date, self.top_n * 3))  # Get more than needed for ranking
+                
+                papers_data = cur.fetchall()
+            
+            if not papers_data:
+                if self.verbose:
+                    print("No papers found for the specified profiles and criteria")
+                return pd.DataFrame()
+            
+            # Convert to DataFrame format expected by newsletter generation
+            papers_list = []
+            for paper in papers_data:
+                papers_list.append({
+                    'title': paper['title'],
+                    'abstract': paper['abstract'],
+                    'pdf_url': paper['url'],
+                    'date': paper['date'],
+                    'score': paper['score'],  # Use profile score
+                    'related': paper['related'],
+                    'rationale': paper['rationale'],
+                    'cosine_similarity': 1.0,  # Set high since profile already filtered
+                    'abstract_embedding': None  # Not needed for profile-based approach
+                })
+            
+            df = pd.DataFrame(papers_list)
+            
+            # Take top N papers by profile score
+            top_df = df.head(self.top_n)
+            
+            if self.verbose:
+                print(f"✅ Retrieved {len(top_df)} profile-scored papers")
+                if len(top_df) > 0:
+                    print(f"Score range: {top_df['score'].min():.2f} - {top_df['score'].max():.2f}")
+            
+            return top_df
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error retrieving profile papers: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+
+    def store_papers_without_scoring(self, data_df):
+        """Store all papers without LLM judge scoring for profiles feature."""
+        try:
+            if self.verbose:
+                print(f"\n💾 STORING {len(data_df)} PAPERS WITHOUT SCORING")
+                print("="*60)
+                
+            # Save all papers to DB with null scores for later profile-specific scoring
+            saved_count = 0
+            duplicate_count = 0
+            duplicate_urls = []
+            
+            # Use YAKE keyword extractor
+            try:
+                extractor = getattr(self, '_yake_extractor', None)
+                if extractor is None:
+                    import yake
+                    extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+                    self._yake_extractor = extractor  # cache for reuse
+            except ImportError:
+                extractor = None
+                if self.verbose:
+                    print("YAKE not available, skipping keyword extraction")
+            
+            for _, row in tqdm(data_df.iterrows(), total=len(data_df), 
+                              desc="Storing papers", disable=not self.verbose):
+                # Convert numpy array to list if needed for embedding
+                embedding = row['abstract_embedding']
+                if hasattr(embedding, 'tolist'):
+                    embedding = embedding.tolist()
+                elif not isinstance(embedding, list):
+                    embedding = list(embedding)
+                
+                paper = Paper(
+                    title=row['title'],
+                    abstract=row['abstract'],
+                    url=row['pdf_url'],
+                    date_run=None,  # No judge run date yet
+                    date=row['date'].strftime('%Y-%m-%d'),
+                    score=None,  # No score yet - will be added per profile
+                    related=None,  # No related flag yet - will be added per profile
+                    rationale=None,  # No rationale yet - will be added per profile
+                    cosine_similarity=row['cosine_similarity'],
+                    embedding_model=self.embedding_model_name,
+                    embedding=embedding
+                )
+                
+                # Try to insert paper, tracking duplicates
+                was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
+                if was_inserted:
+                    saved_count += 1
+                    
+                    # Extract and cache keywords if YAKE is available
+                    if extractor:
+                        try:
+                            text_kw = f"{row['title']} {row['abstract']}"
+                            kw_scores = extractor.extract_keywords(text_kw)
+                            keywords = [w for w, _ in kw_scores]
+                            
+                            # Retrieve inserted paper ID via URL lookup
+                            inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
+                            if inserted_paper and keywords:
+                                PaperRepository.update_keywords(inserted_paper['id'], keywords)
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"Warning: Failed to extract keywords for {row['title']}: {e}")
+                else:
+                    duplicate_count += 1
+                    duplicate_urls.append(row['pdf_url'])
+                    if self.verbose and duplicate_count <= 10:  # Only show first 10 duplicates
+                        print(f"Skipped duplicate paper: {row['title']}")
+            
+            if self.verbose:
+                print(f"✅ Storage complete: {saved_count} new papers saved, {duplicate_count} duplicates skipped")
+                if duplicate_count > 10:
+                    print(f"... and {duplicate_count - 10} more duplicates skipped")
+                
+            return {
+                'saved_count': saved_count,
+                'duplicate_count': duplicate_count,
+                'total_processed': len(data_df)
+            }
+            
+        except Exception as e:
+            self._log_error(500, e)
+            raise
+
     def run(self, 
             start_from: str | None = None, 
             progress_callback: Callable[[str, float, str], None]|None = None
@@ -935,7 +1106,7 @@ Theseus Insight Team
                 progress_callback("embed", 15, "Paper embedding complete")
 
             # -----------
-            # Stage 3: Rank Papers
+            # Stage 3: Rank Papers (or Get Profile Papers)
             # -----------
             if progress_callback:
                 progress_callback("rank", 20, "Starting paper ranking")
@@ -943,21 +1114,31 @@ Theseus Insight Team
             if start_from is None or start_from in ['papers_embedded', 'papers_ranked']:
                 top_n_df = self._load_checkpoint('papers_ranked')
                 if top_n_df is None:
-                    if embedded_df is None:
-                        embedded_df = self._load_checkpoint('papers_embedded')
-                        if embedded_df is None:
-                            raise ValueError("No embedded papers found to rank.")
-                    
-                    # Check if we have any papers to rank
-                    if len(embedded_df) == 0:
+                    # Check if we should use profile-based paper retrieval
+                    if self.profile_ids_override:
                         if self.verbose:
-                            print("No new papers to rank (all papers already exist in database)")
-                        # Create empty top_n_df
-                        top_n_df = embedded_df.copy()  # Empty dataframe with same structure
+                            print(f"Using profile-based paper retrieval for profiles: {self.profile_ids_override}")
+                        top_n_df = self.get_profile_papers(
+                            profile_ids=self.profile_ids_override,
+                            min_score=0.5  # Configurable threshold
+                        )
                     else:
-                        if self.verbose:
-                            print("Ranking papers...")
-                        top_n_df = self.rank_papers(embedded_df)
+                        # Use traditional embedding-based approach
+                        if embedded_df is None:
+                            embedded_df = self._load_checkpoint('papers_embedded')
+                            if embedded_df is None:
+                                raise ValueError("No embedded papers found to rank.")
+                        
+                        # Check if we have any papers to rank
+                        if len(embedded_df) == 0:
+                            if self.verbose:
+                                print("No new papers to rank (all papers already exist in database)")
+                            # Create empty top_n_df
+                            top_n_df = embedded_df.copy()  # Empty dataframe with same structure
+                        else:
+                            if self.verbose:
+                                print("Ranking papers...")
+                            top_n_df = self.rank_papers(embedded_df)
                     
                     self._save_checkpoint('papers_ranked', top_n_df)
 
@@ -1318,3 +1499,178 @@ Theseus Insight Team
             raise
         finally:
             self._cleanup_temp_data()
+
+    def run_profiles_pipeline(self, progress_callback: Callable[[str, float, str], None]|None = None):
+        """
+        Run paper ingestion pipeline for profiles feature - stores ALL papers without LLM scoring.
+        
+        This method downloads papers, embeds them, and stores them all in the database
+        without applying LLM judge filtering. Papers can be scored later per profile.
+        """
+        try:
+            if self.verbose:
+                print("🚀 STARTING PROFILES-AWARE PAPER INGESTION")
+                print("="*60)
+                print("Note: This pipeline stores ALL papers without LLM judge filtering")
+                print("Papers will be scored later on a per-profile basis")
+                print("="*60)
+            
+            # -----------
+            # Stage 1: Download Papers
+            # -----------
+            if progress_callback:
+                progress_callback("download", 0, "Starting paper download")
+                
+            data_df = self._load_checkpoint('papers_downloaded')
+            if data_df is None:
+                if self.verbose:
+                    print("📥 STAGE 1: DOWNLOADING PAPERS")
+                    print("="*40)
+                
+                # Get ArXiv categories from orchestration config
+                arxiv_config = self.orchestration_config.get('arxiv_search_categories', {})
+                category = arxiv_config.get('main_category', 'cs')
+                subcategories = arxiv_config.get('filter_categories', ['cs.ai', 'cs.cl', 'cs.lg', 'cs.ir', 'cs.ma', 'cs.cv'])
+                
+                process_data = ArxivDataProcessor(
+                    start_date=self.start_date, 
+                    end_date=self.end_date,
+                    category=category,
+                    subcategories=subcategories
+                )
+                data_df = process_data.download_and_process_data()
+                
+                # Check if no papers were found and handle gracefully
+                if data_df.empty:
+                    self._handle_no_papers_found()
+                    return  # Exit early since there's nothing to process
+                
+                self._save_checkpoint('papers_downloaded', data_df)
+                if self.verbose:
+                    print(f"✅ Downloaded {len(data_df)} papers from ArXiv")
+            else:
+                if self.verbose:
+                    print(f"📥 Using cached papers: {len(data_df)} papers")
+
+            if progress_callback:
+                progress_callback("download", 20, "Paper download complete")
+
+            # -----------
+            # Stage 2: Embed Papers
+            # -----------
+            if progress_callback:
+                progress_callback("embed", 21, "Starting paper embedding")
+                
+            embedded_df = self._load_checkpoint('papers_embedded')
+            if embedded_df is None:
+                if self.verbose:
+                    print("\n🧠 STAGE 2: EMBEDDING PAPERS")
+                    print("="*40)
+                
+                # Filter out papers with missing abstracts first
+                original_count = len(data_df)
+                abstract_mask = data_df['abstract'].notna() & (data_df['abstract'].str.strip() != '')
+                data_df = data_df[abstract_mask].reset_index(drop=True)
+                
+                if self.verbose and original_count != len(data_df):
+                    filtered_out = original_count - len(data_df)
+                    print(f"⚠️ Filtered out {filtered_out} papers with missing/empty abstracts")
+                
+                if data_df.empty:
+                    if self.verbose:
+                        print("❌ No papers with valid abstracts to process")
+                    return
+                
+                # Check for existing papers to avoid duplicate processing
+                new_mask = []
+                if self.verbose:
+                    print("🔍 Checking for existing papers in database...")
+                
+                for _, row in tqdm(data_df.iterrows(), total=len(data_df), 
+                                  desc="Checking existing papers", disable=not self.verbose):
+                    exists = (PaperRepository.exists_by_url(row["pdf_url"]) or 
+                             PaperRepository.exists_by_title(row["title"]))
+                    new_mask.append(not exists)
+                
+                new_df = data_df[new_mask].reset_index(drop=True)
+                
+                if self.verbose:
+                    existing_count = len(data_df) - len(new_df)
+                    print(f"📝 Found {existing_count} existing papers, {len(new_df)} new papers to process")
+
+                if new_df.empty:
+                    if self.verbose:
+                        print("✅ All papers already exist in database")
+                    return {
+                        'saved_count': 0,
+                        'duplicate_count': len(data_df),
+                        'total_processed': len(data_df)
+                    }
+                
+                # Embed abstracts
+                abstracts = list(new_df['abstract'])
+                embeddings = self.embedding_model.batch_invoke(abstracts)
+                new_df['abstract_embedding'] = embeddings
+                
+                # Calculate cosine similarity with research interests
+                if self.research_interests and self.research_interests.strip():
+                    research_embedding = self.embedding_model.invoke(self.research_interests)
+                    if hasattr(research_embedding, 'tolist'):
+                        research_embedding = research_embedding.tolist()
+                    
+                    similarities = []
+                    for embedding in embeddings:
+                        if hasattr(embedding, 'tolist'):
+                            embedding = embedding.tolist()
+                        sim = cosine_similarity(research_embedding, embedding)
+                        similarities.append(sim)
+                    
+                    new_df['cosine_similarity'] = similarities
+                else:
+                    new_df['cosine_similarity'] = [0.0] * len(new_df)
+                
+                embedded_df = new_df
+                self._save_checkpoint('papers_embedded', embedded_df)
+                
+                if self.verbose:
+                    print(f"✅ Embedded {len(embedded_df)} new papers")
+            else:
+                if self.verbose:
+                    print(f"🧠 Using cached embeddings: {len(embedded_df)} papers")
+
+            if progress_callback:
+                progress_callback("embed", 60, "Paper embedding complete")
+
+            # -----------
+            # Stage 3: Store Papers (No Scoring)
+            # -----------
+            if progress_callback:
+                progress_callback("store", 61, "Storing papers to database")
+                
+            storage_result = self._load_checkpoint('papers_stored')
+            if storage_result is None:
+                storage_result = self.store_papers_without_scoring(embedded_df)
+                self._save_checkpoint('papers_stored', storage_result)
+            else:
+                if self.verbose:
+                    print(f"💾 Using cached storage result: {storage_result}")
+
+            if progress_callback:
+                progress_callback("store", 100, "Paper storage complete")
+
+            # Clean up checkpoints after successful completion
+            self._cleanup_checkpoints()
+            
+            if self.verbose:
+                print("\n🎉 PROFILES PIPELINE COMPLETE!")
+                print("="*60)
+                print(f"✅ Processed {storage_result['total_processed']} papers")
+                print(f"💾 Saved {storage_result['saved_count']} new papers")
+                print(f"🔄 Skipped {storage_result['duplicate_count']} duplicates")
+                print("📝 Papers are ready for profile-specific scoring")
+                
+            return storage_result
+            
+        except Exception as e:
+            self._log_error(500, e)
+            raise

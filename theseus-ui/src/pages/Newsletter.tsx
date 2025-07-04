@@ -21,8 +21,11 @@ import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import StopIcon from '@mui/icons-material/Stop';
-import { settingsApi } from '../services/api';
+import { profileApi, settingsApi } from '../services/api';
 import { useTaskState } from '../hooks/useTaskState';
+import { useProfile } from '../contexts/ProfileContext';
+import ProfileSelector from '../components/ProfileSelector';
+import { useQuery } from '@tanstack/react-query';
 
 // Helper to get date N days ago or N days from now
 const getDateByOffset = (days: number, fromDate: Date = new Date()): Date => {
@@ -36,8 +39,6 @@ const getDaysDifference = (date1: Date, date2: Date): number => {
   const diffTime = Math.abs(date2.getTime() - date1.getTime());
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end day
 };
-
-// Interfaces for form data
 
 const Newsletter = () => {
   const today = new Date();
@@ -53,22 +54,52 @@ const Newsletter = () => {
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
   const [isAborting, setIsAborting] = useState<boolean>(false);
   
+  // Use profile context
+  const { getSelectedProfiles } = useProfile();
+  const selectedProfiles = getSelectedProfiles();
+  const primaryProfile = selectedProfiles[0]; // Use first selected profile
+  
   // Use the new task state hook
   const { taskState, setTaskId, isCheckingForActiveTasks } = useTaskState('newsletter');
 
-  // Fetch default settings
-  useEffect(() => {
-    settingsApi.getEmailRecipients()
-      .then(response => {
-        setEmailRecipients(response.data.recipients || []);
-        setEmailRecipientsInput((response.data.recipients || []).join('\\n'));
-      })
-      .catch(err => console.error("Failed to load email recipients:", err));
+  // Load profile interests for all selected profiles
+  const { data: allProfileInterests } = useQuery({
+    queryKey: ['all-profile-interests', selectedProfiles.map(p => p.id).sort().join(',')],
+    queryFn: async () => {
+      if (selectedProfiles.length === 0) return [];
+      
+      const interestsPromises = selectedProfiles.map(async (profile) => {
+        const response = await profileApi.getProfileInterests(profile.id);
+        return response.data;
+      });
+      
+      const allInterests = await Promise.all(interestsPromises);
+      return allInterests.flat();
+    },
+    enabled: selectedProfiles.length > 0,
+  });
 
-    settingsApi.getResearchInterests()
-      .then(response => setResearchInterests(response.data.interests || ''))
-      .catch(err => console.error("Failed to load research interests:", err));
-  }, []);
+  // Update form data when profiles change
+  useEffect(() => {
+    if (selectedProfiles.length > 0) {
+      // Combine email recipients from all selected profiles (remove duplicates)
+      const allRecipients = selectedProfiles.flatMap(profile => profile.email_recipients || []);
+      const uniqueRecipients = Array.from(new Set(allRecipients));
+      setEmailRecipients(uniqueRecipients);
+      setEmailRecipientsInput(uniqueRecipients.join('\n'));
+      
+      // Load research interests from all selected profiles
+      if (allProfileInterests && allProfileInterests.length > 0) {
+        const interestsText = allProfileInterests.map(interest => interest.interest_text).join('\n');
+        setResearchInterests(interestsText);
+      }
+    } else {
+      // Clear form if no profiles selected
+      setEmailRecipients([]);
+      setEmailRecipientsInput('');
+      setResearchInterests('');
+    }
+  }, [selectedProfiles, allProfileInterests]);
   
   // Date logic handlers
   useEffect(() => {
@@ -124,7 +155,7 @@ const Newsletter = () => {
   const handleDeleteEmail = (emailToDelete: string) => {
     const updatedEmails = emailRecipients.filter(email => email !== emailToDelete);
     setEmailRecipients(updatedEmails);
-    setEmailRecipientsInput(updatedEmails.join('\\n'));
+    setEmailRecipientsInput(updatedEmails.join('\n'));
   };
 
   // Update status messages when task state changes
@@ -136,8 +167,12 @@ const Newsletter = () => {
   }, [taskState.message, taskState.stage, taskState.taskId]);
 
   const handleGenerateNewsletter = async () => {
+    if (selectedProfiles.length === 0) {
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Please select at least one profile first.`]);
+      return;
+    }
+
     if (!researchInterests.trim()) {
-      // Show error in status messages
       setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: Research Interests cannot be empty.`]);
       return;
     }
@@ -151,7 +186,10 @@ const Newsletter = () => {
         email_recipients: emailRecipients,
         research_interests: researchInterests,
       };
-      const response = await settingsApi.runNewsletterPipeline(params);
+      
+      // Use profile-specific newsletter generation API with primary profile
+      // In the future, this could be enhanced to support multi-profile newsletters
+      const response = await profileApi.generateProfileNewsletter(primaryProfile.id, params);
       setTaskId(response.data.task_id);
     } catch (err: any) {
       console.error("Failed to start newsletter pipeline:", err);
@@ -184,6 +222,34 @@ const Newsletter = () => {
         <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
           <RocketLaunchIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> New Theseus Insight Newsletter Run
         </Typography>
+
+        {/* Profile Selection */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" fontWeight={600} sx={{ flexGrow: 1 }}>
+                👤 Profile Selection
+              </Typography>
+              <Tooltip title="Select which profile to use for this newsletter. The profile's email recipients and research interests will be loaded automatically.">
+                <InfoOutlinedIcon color="action" />
+              </Tooltip>
+            </Box>
+                         <ProfileSelector
+               allowMultiple={true}
+               showSmartBar={true}
+               defaultExpanded={false}
+               onProfileChange={(_profileIds) => {
+                 // Newsletter can work with multiple profiles but we'll use the first one as primary
+                 // The UI will show all selected profiles in the smart bar
+               }}
+             />
+            {selectedProfiles.length === 0 && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                Please select at least one profile to continue. The newsletter will use the profile's email recipients and research interests.
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Date Range Section */}
         <Card sx={{ mb: 3 }}>
@@ -234,20 +300,24 @@ const Newsletter = () => {
                 <Typography variant="h6" fontWeight={600} sx={{ flexGrow: 1 }}>
                 🎯 Targeting and Content Focus
                 </Typography>
-                <Tooltip title="Define your target audience and the specific research areas for this newsletter.">
+                <Tooltip title="Email recipients and research interests are loaded from the selected profile. You can modify them for this specific newsletter run.">
                     <InfoOutlinedIcon color="action" />
                 </Tooltip>
             </Box>
             <TextField
               fullWidth
-              label="Email Recipients (for this run)"
+              label={`Email Recipients (${emailRecipients.length} total${selectedProfiles.length > 1 ? ' from all profiles' : ''})`}
               value={emailRecipientsInput}
               onChange={handleEmailInputChange}
               onBlur={handleEmailInputBlur}
               multiline
               rows={3}
-              helperText="Enter emails separated by commas, spaces, or line breaks. Valid emails will appear as tags below in real-time."
+              helperText={selectedProfiles.length > 1 ? 
+                "Email recipients combined from all selected profiles. You can modify them for this run." :
+                "Email recipients loaded from selected profile. You can modify them for this run."
+              }
               sx={{ mb: 1 }}
+              disabled={selectedProfiles.length === 0}
             />
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2, minHeight: '30px' }}>
               {emailRecipients.map((email) => (
@@ -262,13 +332,17 @@ const Newsletter = () => {
             </Box>
             <TextField
               fullWidth
-              label="Research Interests (for this run)"
+              label={`Research Interests${selectedProfiles.length > 1 ? ' (from all profiles)' : ''}`}
               value={researchInterests}
               onChange={(e) => setResearchInterests(e.target.value)}
               multiline
               rows={5}
-              helperText="Provide a detailed description of your research interests."
+              helperText={selectedProfiles.length > 1 ? 
+                "Research interests combined from all selected profiles. You can modify them for this run." :
+                "Research interests loaded from selected profile. You can modify them for this run."
+              }
               sx={{ mb: 2 }}
+              disabled={selectedProfiles.length === 0}
             />
           </CardContent>
         </Card>
@@ -282,11 +356,12 @@ const Newsletter = () => {
             size="large"
             startIcon={isCheckingForActiveTasks ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
             onClick={handleGenerateNewsletter}
-            disabled={taskState.isRunning || isCheckingForActiveTasks}
+            disabled={taskState.isRunning || isCheckingForActiveTasks || selectedProfiles.length === 0}
             sx={{ py: 1.5, fontSize: '1.1rem' }}
           >
             {isCheckingForActiveTasks ? 'Checking for active tasks...' :
              taskState.isRunning ? `Generating... (${taskState.stage} ${taskState.progress.toFixed(0)}%)` : 
+             selectedProfiles.length === 0 ? 'Select at least one profile to generate newsletter' :
              '🚀 Generate Newsletter'}
           </Button>
           

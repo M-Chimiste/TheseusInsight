@@ -13,17 +13,17 @@ class TopicsRepository:
     """CRUD operations for the topics table."""
 
     @staticmethod
-    def insert(label: str, keywords: List[str], centroid_embedding: List[float] | None = None, 
+    def insert(label: str, keywords: List[str], profile_id: int, centroid_embedding: List[float] | None = None, 
                embedding_model: str | None = None) -> int:
         """Insert a new topic and return its ID."""
         with get_cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO topics (label, keywords, centroid_embedding, embedding_model)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO topics (label, keywords, profile_id, centroid_embedding, embedding_model)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (label, keywords, to_pgvector(centroid_embedding), embedding_model)
+                (label, keywords, profile_id, to_pgvector(centroid_embedding), embedding_model)
             )
             row = cur.fetchone()
             return row["id"] if row else 0
@@ -36,13 +36,25 @@ class TopicsRepository:
             return cur.fetchone()
 
     @staticmethod
-    def get_all(limit: int = 100) -> List[Dict[str, Any]]:
-        """Get all topics ordered by creation date."""
+    def get_all(limit: int = 100, profile_id: Optional[int] = None, profile_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+        """Get all topics ordered by creation date, optionally filtered by profile(s)."""
         with get_cursor() as cur:
-            cur.execute(
-                "SELECT * FROM topics ORDER BY created_at DESC LIMIT %s",
-                (limit,)
-            )
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                cur.execute(
+                    f"SELECT * FROM topics WHERE profile_id IN ({placeholders}) ORDER BY created_at DESC LIMIT %s",
+                    (*profile_ids, limit)
+                )
+            elif profile_id:
+                cur.execute(
+                    "SELECT * FROM topics WHERE profile_id = %s ORDER BY created_at DESC LIMIT %s",
+                    (profile_id, limit)
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM topics ORDER BY created_at DESC LIMIT %s",
+                    (limit,)
+                )
             return cur.fetchall()
 
     @staticmethod
@@ -74,19 +86,43 @@ class TopicsRepository:
             cur.execute("DELETE FROM topics WHERE id = %s", (topic_id,))
 
     @staticmethod
-    def search_by_keywords(keywords: List[str], limit: int = 10) -> List[Dict[str, Any]]:
-        """Search topics by keywords overlap."""
+    def search_by_keywords(keywords: List[str], limit: int = 10, profile_id: Optional[int] = None, profile_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+        """Search topics by keywords overlap, optionally filtered by profile(s)."""
         with get_cursor() as cur:
-            cur.execute(
-                """
-                SELECT *, array_length(keywords && %s, 1) as keyword_matches
-                FROM topics 
-                WHERE keywords && %s
-                ORDER BY keyword_matches DESC, created_at DESC
-                LIMIT %s
-                """,
-                (keywords, keywords, limit)
-            )
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                cur.execute(
+                    f"""
+                    SELECT *, array_length(keywords && %s, 1) as keyword_matches
+                    FROM topics 
+                    WHERE keywords && %s AND profile_id IN ({placeholders})
+                    ORDER BY keyword_matches DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (keywords, keywords, *profile_ids, limit)
+                )
+            elif profile_id:
+                cur.execute(
+                    """
+                    SELECT *, array_length(keywords && %s, 1) as keyword_matches
+                    FROM topics 
+                    WHERE keywords && %s AND profile_id = %s
+                    ORDER BY keyword_matches DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (keywords, keywords, profile_id, limit)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT *, array_length(keywords && %s, 1) as keyword_matches
+                    FROM topics 
+                    WHERE keywords && %s
+                    ORDER BY keyword_matches DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (keywords, keywords, limit)
+                )
             return cur.fetchall()
 
 
@@ -141,50 +177,128 @@ class TopicMetricsRepository:
 
     @staticmethod
     def get_trending_topics(period_type: str = "month", limit: int = 10,
-                           min_doc_count: int = 5) -> List[Dict[str, Any]]:
-        """Get topics with highest growth rates in the latest period."""
+                           min_doc_count: int = 5, profile_id: Optional[int] = None, profile_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+        """Get topics with highest growth rates in the latest period, optionally filtered by profile(s)."""
         with get_cursor() as cur:
-            cur.execute(
-                """
-                WITH latest_metrics AS (
-                    SELECT DISTINCT ON (topic_id) 
-                        tm.*, t.label, t.keywords
-                    FROM topic_metrics tm
-                    JOIN topics t ON tm.topic_id = t.id
-                    WHERE tm.period_type = %s AND tm.doc_count >= %s
-                    ORDER BY topic_id, period_start DESC
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                cur.execute(
+                    f"""
+                    WITH latest_metrics AS (
+                        SELECT DISTINCT ON (topic_id) 
+                            tm.*, t.label, t.keywords, t.profile_id
+                        FROM topic_metrics tm
+                        JOIN topics t ON tm.topic_id = t.id
+                        WHERE tm.period_type = %s AND tm.doc_count >= %s AND t.profile_id IN ({placeholders})
+                        ORDER BY topic_id, period_start DESC
+                    )
+                    SELECT * FROM latest_metrics
+                    ORDER BY growth_rate DESC NULLS LAST, doc_count DESC
+                    LIMIT %s
+                    """,
+                    (period_type, min_doc_count, *profile_ids, limit)
                 )
-                SELECT * FROM latest_metrics
-                ORDER BY growth_rate DESC NULLS LAST, doc_count DESC
-                LIMIT %s
-                """,
-                (period_type, min_doc_count, limit)
-            )
+            elif profile_id:
+                cur.execute(
+                    """
+                    WITH latest_metrics AS (
+                        SELECT DISTINCT ON (topic_id) 
+                            tm.*, t.label, t.keywords, t.profile_id
+                        FROM topic_metrics tm
+                        JOIN topics t ON tm.topic_id = t.id
+                        WHERE tm.period_type = %s AND tm.doc_count >= %s AND t.profile_id = %s
+                        ORDER BY topic_id, period_start DESC
+                    )
+                    SELECT * FROM latest_metrics
+                    ORDER BY growth_rate DESC NULLS LAST, doc_count DESC
+                    LIMIT %s
+                    """,
+                    (period_type, min_doc_count, profile_id, limit)
+                )
+            else:
+                cur.execute(
+                    """
+                    WITH latest_metrics AS (
+                        SELECT DISTINCT ON (topic_id) 
+                            tm.*, t.label, t.keywords, t.profile_id
+                        FROM topic_metrics tm
+                        JOIN topics t ON tm.topic_id = t.id
+                        WHERE tm.period_type = %s AND tm.doc_count >= %s
+                        ORDER BY topic_id, period_start DESC
+                    )
+                    SELECT * FROM latest_metrics
+                    ORDER BY growth_rate DESC NULLS LAST, doc_count DESC
+                    LIMIT %s
+                    """,
+                    (period_type, min_doc_count, limit)
+                )
             return cur.fetchall()
 
     @staticmethod
     def get_emerging_topics(period_type: str = "month", limit: int = 10,
-                           min_growth_rate: float = 0.5) -> List[Dict[str, Any]]:
-        """Get topics with high growth rates and forecasts."""
+                           min_growth_rate: float = 0.5, profile_id: Optional[int] = None, profile_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+        """Get topics with high growth rates and forecasts, optionally filtered by profile(s)."""
         with get_cursor() as cur:
-            cur.execute(
-                """
-                WITH latest_metrics AS (
-                    SELECT DISTINCT ON (topic_id) 
-                        tm.*, t.label, t.keywords
-                    FROM topic_metrics tm
-                    JOIN topics t ON tm.topic_id = t.id
-                    WHERE tm.period_type = %s 
-                    AND tm.growth_rate >= %s
-                    AND tm.forecast_3m IS NOT NULL
-                    ORDER BY topic_id, period_start DESC
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                cur.execute(
+                    f"""
+                    WITH latest_metrics AS (
+                        SELECT DISTINCT ON (topic_id) 
+                            tm.*, t.label, t.keywords, t.profile_id
+                        FROM topic_metrics tm
+                        JOIN topics t ON tm.topic_id = t.id
+                        WHERE tm.period_type = %s 
+                        AND tm.growth_rate >= %s
+                        AND tm.forecast_3m IS NOT NULL
+                        AND t.profile_id IN ({placeholders})
+                        ORDER BY topic_id, period_start DESC
+                    )
+                    SELECT * FROM latest_metrics
+                    ORDER BY (growth_rate * forecast_3m) DESC, doc_count DESC
+                    LIMIT %s
+                    """,
+                    (period_type, min_growth_rate, *profile_ids, limit)
                 )
-                SELECT * FROM latest_metrics
-                ORDER BY (growth_rate * forecast_3m) DESC, doc_count DESC
-                LIMIT %s
-                """,
-                (period_type, min_growth_rate, limit)
-            )
+            elif profile_id:
+                cur.execute(
+                    """
+                    WITH latest_metrics AS (
+                        SELECT DISTINCT ON (topic_id) 
+                            tm.*, t.label, t.keywords, t.profile_id
+                        FROM topic_metrics tm
+                        JOIN topics t ON tm.topic_id = t.id
+                        WHERE tm.period_type = %s 
+                        AND tm.growth_rate >= %s
+                        AND tm.forecast_3m IS NOT NULL
+                        AND t.profile_id = %s
+                        ORDER BY topic_id, period_start DESC
+                    )
+                    SELECT * FROM latest_metrics
+                    ORDER BY (growth_rate * forecast_3m) DESC, doc_count DESC
+                    LIMIT %s
+                    """,
+                    (period_type, min_growth_rate, profile_id, limit)
+                )
+            else:
+                cur.execute(
+                    """
+                    WITH latest_metrics AS (
+                        SELECT DISTINCT ON (topic_id) 
+                            tm.*, t.label, t.keywords, t.profile_id
+                        FROM topic_metrics tm
+                        JOIN topics t ON tm.topic_id = t.id
+                        WHERE tm.period_type = %s 
+                        AND tm.growth_rate >= %s
+                        AND tm.forecast_3m IS NOT NULL
+                        ORDER BY topic_id, period_start DESC
+                    )
+                    SELECT * FROM latest_metrics
+                    ORDER BY (growth_rate * forecast_3m) DESC, doc_count DESC
+                    LIMIT %s
+                    """,
+                    (period_type, min_growth_rate, limit)
+                )
             return cur.fetchall()
 
     @staticmethod
@@ -395,24 +509,30 @@ class TrendsRepository:
     """High-level operations combining topics and metrics."""
 
     @staticmethod
-    def get_dashboard_data(limit: int = 20, period_type: str = "month", duration_months: int = 6) -> Dict[str, Any]:
-        """Get comprehensive dashboard data for trends page with duration filtering."""
+    def get_dashboard_data(limit: int = 20, period_type: str = "month", duration_months: int = 6, 
+                          profile_id: Optional[int] = None, profile_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+        """Get comprehensive dashboard data for trends page with duration filtering, optionally filtered by profile(s)."""
         with get_cursor() as cur:
-            # Get trending topics with latest metrics (simplified working version)
-            cur.execute(
-                """
+            # Build SQL query with proper parameter handling
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                query = f"""
                 WITH latest_metrics AS (
                     SELECT DISTINCT ON (tm.topic_id) 
-                        tm.*, t.label, t.keywords
+                        tm.id, tm.topic_id, tm.period_start, tm.period_end, tm.period_type,
+                        tm.doc_count, tm.avg_score, tm.growth_rate, tm.forecast_1m, tm.forecast_3m, tm.forecast_6m,
+                        tm.created_at, t.label, t.keywords, t.profile_id
                     FROM topic_metrics tm
                     JOIN topics t ON tm.topic_id = t.id
-                    WHERE tm.period_type = %s
+                    WHERE tm.period_type = %s AND t.profile_id IN ({placeholders})
                     ORDER BY tm.topic_id, tm.period_start DESC
                 ),
                 topic_paper_counts AS (
-                    SELECT topic_id, COUNT(*) as total_papers
-                    FROM paper_topics
-                    GROUP BY topic_id
+                    SELECT pt.topic_id, COUNT(*) as total_papers
+                    FROM paper_topics pt
+                    JOIN topics t ON pt.topic_id = t.id
+                    WHERE t.profile_id IN ({placeholders})
+                    GROUP BY pt.topic_id
                 )
                 SELECT 
                     lm.id,
@@ -429,6 +549,7 @@ class TrendsRepository:
                     lm.created_at,
                     lm.label,
                     lm.keywords,
+                    lm.profile_id,
                     COALESCE(tpc.total_papers, 0) as total_papers,
                     lm.doc_count as latest_doc_count,
                     lm.growth_rate as latest_growth_rate
@@ -437,21 +558,141 @@ class TrendsRepository:
                 WHERE lm.doc_count > 0
                 ORDER BY lm.doc_count DESC, lm.growth_rate DESC NULLS LAST
                 LIMIT %s
-                """,
-                (period_type, limit)
-            )
+                """
+                params = [period_type] + profile_ids + profile_ids + [limit]
+            elif profile_id:
+                query = """
+                WITH latest_metrics AS (
+                    SELECT DISTINCT ON (tm.topic_id) 
+                        tm.id, tm.topic_id, tm.period_start, tm.period_end, tm.period_type,
+                        tm.doc_count, tm.avg_score, tm.growth_rate, tm.forecast_1m, tm.forecast_3m, tm.forecast_6m,
+                        tm.created_at, t.label, t.keywords, t.profile_id
+                    FROM topic_metrics tm
+                    JOIN topics t ON tm.topic_id = t.id
+                    WHERE tm.period_type = %s AND t.profile_id = %s
+                    ORDER BY tm.topic_id, tm.period_start DESC
+                ),
+                topic_paper_counts AS (
+                    SELECT pt.topic_id, COUNT(*) as total_papers
+                    FROM paper_topics pt
+                    JOIN topics t ON pt.topic_id = t.id
+                    WHERE t.profile_id = %s
+                    GROUP BY pt.topic_id
+                )
+                SELECT 
+                    lm.id,
+                    lm.topic_id,
+                    lm.period_start,
+                    lm.period_end,
+                    lm.period_type,
+                    lm.doc_count,
+                    lm.avg_score,
+                    lm.growth_rate,
+                    lm.forecast_1m,
+                    lm.forecast_3m,
+                    lm.forecast_6m,
+                    lm.created_at,
+                    lm.label,
+                    lm.keywords,
+                    lm.profile_id,
+                    COALESCE(tpc.total_papers, 0) as total_papers,
+                    lm.doc_count as latest_doc_count,
+                    lm.growth_rate as latest_growth_rate
+                FROM latest_metrics lm
+                LEFT JOIN topic_paper_counts tpc ON lm.topic_id = tpc.topic_id
+                WHERE lm.doc_count > 0
+                ORDER BY lm.doc_count DESC, lm.growth_rate DESC NULLS LAST
+                LIMIT %s
+                """
+                params = [period_type, profile_id, profile_id, limit]
+            else:
+                query = """
+                WITH latest_metrics AS (
+                    SELECT DISTINCT ON (tm.topic_id) 
+                        tm.id, tm.topic_id, tm.period_start, tm.period_end, tm.period_type,
+                        tm.doc_count, tm.avg_score, tm.growth_rate, tm.forecast_1m, tm.forecast_3m, tm.forecast_6m,
+                        tm.created_at, t.label, t.keywords, t.profile_id
+                    FROM topic_metrics tm
+                    JOIN topics t ON tm.topic_id = t.id
+                    WHERE tm.period_type = %s
+                    ORDER BY tm.topic_id, tm.period_start DESC
+                ),
+                topic_paper_counts AS (
+                    SELECT pt.topic_id, COUNT(*) as total_papers
+                    FROM paper_topics pt
+                    GROUP BY pt.topic_id
+                )
+                SELECT 
+                    lm.id,
+                    lm.topic_id,
+                    lm.period_start,
+                    lm.period_end,
+                    lm.period_type,
+                    lm.doc_count,
+                    lm.avg_score,
+                    lm.growth_rate,
+                    lm.forecast_1m,
+                    lm.forecast_3m,
+                    lm.forecast_6m,
+                    lm.created_at,
+                    lm.label,
+                    lm.keywords,
+                    lm.profile_id,
+                    COALESCE(tpc.total_papers, 0) as total_papers,
+                    lm.doc_count as latest_doc_count,
+                    lm.growth_rate as latest_growth_rate
+                FROM latest_metrics lm
+                LEFT JOIN topic_paper_counts tpc ON lm.topic_id = tpc.topic_id
+                WHERE lm.doc_count > 0
+                ORDER BY lm.doc_count DESC, lm.growth_rate DESC NULLS LAST
+                LIMIT %s
+                """
+                params = [period_type, limit]
+            
+            cur.execute(query, params)
             trending_topics = cur.fetchall()
 
-            # Get overall statistics
-            cur.execute("SELECT COUNT(*) as total_topics FROM topics")
+            # Get overall statistics with profile filtering
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                cur.execute(f"SELECT COUNT(*) as total_topics FROM topics WHERE profile_id IN ({placeholders})", profile_ids)
+            elif profile_id:
+                cur.execute("SELECT COUNT(*) as total_topics FROM topics WHERE profile_id = %s", (profile_id,))
+            else:
+                cur.execute("SELECT COUNT(*) as total_topics FROM topics")
             total_topics = cur.fetchone()["total_topics"]
 
-            cur.execute(
-                """
-                SELECT COUNT(*) as total_papers_with_topics 
-                FROM (SELECT DISTINCT paper_id FROM paper_topics) pt
-                """
-            )
+            # Count papers with topics, filtered by profile
+            if profile_ids:
+                placeholders = ','.join(['%s'] * len(profile_ids))
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) as total_papers_with_topics 
+                    FROM (SELECT DISTINCT pt.paper_id 
+                          FROM paper_topics pt 
+                          JOIN topics t ON pt.topic_id = t.id 
+                          WHERE t.profile_id IN ({placeholders})) pt
+                    """,
+                    profile_ids
+                )
+            elif profile_id:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) as total_papers_with_topics 
+                    FROM (SELECT DISTINCT pt.paper_id 
+                          FROM paper_topics pt 
+                          JOIN topics t ON pt.topic_id = t.id 
+                          WHERE t.profile_id = %s) pt
+                    """,
+                    (profile_id,)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) as total_papers_with_topics 
+                    FROM (SELECT DISTINCT paper_id FROM paper_topics) pt
+                    """
+                )
             total_papers_with_topics = cur.fetchone()["total_papers_with_topics"]
 
             return {
@@ -459,7 +700,9 @@ class TrendsRepository:
                 "total_topics": total_topics,
                 "total_papers_with_topics": total_papers_with_topics,
                 "period_type": period_type,
-                "duration_months": duration_months
+                "duration_months": duration_months,
+                "profile_id": profile_id,
+                "profile_ids": profile_ids
             }
 
     @staticmethod

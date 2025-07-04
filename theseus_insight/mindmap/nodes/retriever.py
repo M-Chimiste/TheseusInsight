@@ -50,15 +50,20 @@ class RetrieverNode:
             seed_paper_id = seed_paper["id"]
             k_neighbors = state.get("k_neighbors", 15)
             similarity_threshold = state.get("similarity_threshold", 0.3)
+            resolved_profile_ids = state.get("resolved_profile_ids")
             
             logger.info(f"Retrieving {k_neighbors} similar papers for seed {seed_paper_id} (threshold: {similarity_threshold})")
+            if resolved_profile_ids:
+                logger.info(f"Using profile filtering: {resolved_profile_ids}")
             
             # Perform similarity search using database method
             try:
                 similar_papers_data = PaperRepository.find_similar_papers_mindmap(
                     seed_paper_id=seed_paper_id,
                     k=k_neighbors,
-                    similarity_threshold=similarity_threshold
+                    similarity_threshold=similarity_threshold,
+                    profile_ids=resolved_profile_ids,
+                    min_profile_score=0.5 if resolved_profile_ids else None
                 )
                 
                 if not similar_papers_data:

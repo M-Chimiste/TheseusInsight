@@ -7,7 +7,8 @@ from ..models import (
     PaperApiResponse, PaginatedPapersResponse,
     SimilaritySearchRequest, SimilaritySearchResponse,
     SimilarPapersRequest, SimilarPapersResponse,
-    HybridSearchRequest, HybridSearchResponse
+    HybridSearchRequest, HybridSearchResponse,
+    ProfileAwareIngestRequest, ProfileAwareIngestResponse
 )
 from ...data_access import (
     PaperRepository, SettingsRepository
@@ -38,7 +39,14 @@ async def get_papers(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     page_size: int = Query(10, gt=0, le=100),
-    topic_id: Optional[int] = Query(None, description="Filter papers by topic ID")
+    topic_id: Optional[int] = Query(None, description="Filter papers by topic ID"),
+    profile_id: Optional[int] = Query(None, description="Filter papers by profile ID"),
+    profile_ids: Optional[str] = Query(None, description="Filter papers by multiple profile IDs (comma-separated)"),
+    profile_tag: Optional[str] = Query(None, description="Filter papers by profiles with specific tag"),
+    profile_tags: Optional[str] = Query(None, description="Filter papers by profiles with any of the tags (comma-separated)"),
+    min_profile_score: Optional[float] = Query(None, description="Minimum profile-specific score"),
+    max_profile_score: Optional[float] = Query(None, description="Maximum profile-specific score"),
+    profile_related_only: bool = Query(False, description="Only show papers marked as related by profiles")
 ):
     """
     Retrieves a paginated list of papers based on various filters and sorting options.
@@ -57,6 +65,13 @@ async def get_papers(
         to_date (Optional[str]): The end date for filtering papers. Defaults to None.
         page_size (int): The number of papers to fetch per page. Defaults to 10.
         topic_id (Optional[int]): Filter papers by topic ID. Defaults to None.
+        profile_id (Optional[int]): Filter papers by profile ID. Defaults to None.
+        profile_ids (Optional[str]): Filter papers by multiple profile IDs (comma-separated). Defaults to None.
+        profile_tag (Optional[str]): Filter papers by profiles with specific tag. Defaults to None.
+        profile_tags (Optional[str]): Filter papers by profiles with any of the tags (comma-separated). Defaults to None.
+        min_profile_score (Optional[float]): Minimum profile-specific score. Defaults to None.
+        max_profile_score (Optional[float]): Maximum profile-specific score. Defaults to None.
+        profile_related_only (bool): Only show papers marked as related by profiles. Defaults to False.
 
     Returns:
         PaginatedPapersResponse: A response object containing the list of papers, total items, total pages, 
@@ -66,6 +81,52 @@ async def get_papers(
         HTTPException: If an error occurs while fetching the papers.
         """
     try:
+        # Parse profile filtering parameters
+        profile_filter_params = {}
+        
+        # Handle profile ID filtering
+        if profile_id is not None:
+            profile_filter_params['profile_ids'] = [profile_id]
+        elif profile_ids is not None:
+            # Parse comma-separated profile IDs
+            try:
+                profile_filter_params['profile_ids'] = [
+                    int(id.strip()) for id in profile_ids.split(',') if id.strip()
+                ]
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid profile IDs format")
+        
+        # Handle profile tag filtering - need to resolve tags to profile IDs
+        if profile_tag is not None or profile_tags is not None:
+            from ...data_access.profiles import ProfileRepository
+            
+            tags_to_search = []
+            if profile_tag:
+                tags_to_search.append(profile_tag)
+            if profile_tags:
+                tags_to_search.extend([tag.strip() for tag in profile_tags.split(',') if tag.strip()])
+            
+            if tags_to_search:
+                tag_profiles = ProfileRepository.get_by_tags(tags_to_search)
+                tag_profile_ids = [p['id'] for p in tag_profiles if p['is_active']]
+                
+                # Merge with existing profile IDs if any
+                existing_profile_ids = profile_filter_params.get('profile_ids', [])
+                if existing_profile_ids:
+                    # Intersection - only profiles that match both criteria
+                    profile_filter_params['profile_ids'] = list(set(existing_profile_ids) & set(tag_profile_ids))
+                else:
+                    # Union - all profiles with the specified tags
+                    profile_filter_params['profile_ids'] = tag_profile_ids
+        
+        # Add profile score filtering
+        if min_profile_score is not None:
+            profile_filter_params['min_profile_score'] = min_profile_score
+        if max_profile_score is not None:
+            profile_filter_params['max_profile_score'] = max_profile_score
+        if profile_related_only:
+            profile_filter_params['profile_related_only'] = True
+
         # Handle topic filtering vs regular pagination
         if topic_id is not None:
             # Import repositories for filtering (both topics and research interests)
@@ -189,6 +250,7 @@ async def get_papers(
                 search=search,
                 from_date=from_date,
                 to_date=to_date,
+                **profile_filter_params  # Include profile filtering parameters
             )
         
         # Convert to API response format
@@ -561,4 +623,108 @@ async def find_similar_papers_to_existing(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/profile-aware-ingest", response_model=ProfileAwareIngestResponse)
+async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
+    """
+    Start a profile-aware paper ingestion task.
+    
+    This endpoint initiates a comprehensive paper ingestion process that:
+    1. Downloads papers from ArXiv based on date range and categories
+    2. Embeds and stores all papers without initial LLM filtering
+    3. Automatically scores papers against specified profiles using LLM judge
+    
+    The process runs asynchronously and returns a task ID for monitoring progress.
+    """
+    try:
+        import uuid
+        from ..tasks import task_manager
+        from ...data_access.profiles import ProfileRepository
+        
+        # Validate profiles exist if specified
+        if request.profile_ids:
+            for profile_id in request.profile_ids:
+                profile = ProfileRepository.get_by_id(profile_id)
+                if not profile:
+                    raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+                if not profile['is_active']:
+                    raise HTTPException(status_code=400, detail=f"Profile {profile_id} is not active")
+        
+        # Validate tags exist if specified
+        if request.profile_tags:
+            profiles_with_tags = ProfileRepository.get_by_tags(request.profile_tags)
+            if not profiles_with_tags:
+                raise HTTPException(status_code=404, detail=f"No profiles found with tags: {request.profile_tags}")
+        
+        # If no profiles specified but score_all_profiles is False, get active profiles
+        if not request.profile_ids and not request.profile_tags and not request.score_all_profiles:
+            active_profiles = ProfileRepository.get_all_active()
+            if not active_profiles:
+                raise HTTPException(status_code=400, detail="No active profiles found. Please create profiles or set score_all_profiles=true")
+        
+        # Create task ID and configuration
+        task_id = str(uuid.uuid4())
+        
+        # Prepare task configuration
+        config = {
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+            "profile_ids": request.profile_ids,
+            "profile_tags": request.profile_tags,
+            "score_all_profiles": request.score_all_profiles,
+            "overwrite_existing": request.overwrite_existing,
+            "cosine_threshold": request.cosine_threshold,
+            "arxiv_categories": request.arxiv_categories,
+            "batch_size": request.batch_size,
+            "send_error_notifications": request.send_error_notifications
+        }
+        
+        # Create task in database
+        await task_manager.create_task(task_id, "profile_aware_ingest", config)
+        
+        # Enqueue task for processing
+        await task_manager.enqueue_task(task_manager.run_profile_aware_ingest_task, task_id)
+        
+        # Estimate target profiles and papers
+        target_profiles = []
+        if request.profile_ids:
+            target_profiles.extend([ProfileRepository.get_by_id(pid) for pid in request.profile_ids])
+        if request.profile_tags:
+            target_profiles.extend(ProfileRepository.get_by_tags(request.profile_tags))
+        if request.score_all_profiles and not target_profiles:
+            target_profiles = ProfileRepository.get_all_active()
+        
+        # Filter active profiles and remove duplicates
+        active_profiles = [p for p in target_profiles if p and p['is_active']]
+        unique_profiles = []
+        seen_ids = set()
+        for p in active_profiles:
+            if p['id'] not in seen_ids:
+                unique_profiles.append(p)
+                seen_ids.add(p['id'])
+        
+        # Estimate papers (rough calculation based on typical ArXiv daily volume)
+        from datetime import datetime, timedelta
+        if request.start_date and request.end_date:
+            start = datetime.strptime(request.start_date, '%Y-%m-%d')
+            end = datetime.strptime(request.end_date, '%Y-%m-%d')
+            days = (end - start).days + 1
+        else:
+            days = 7  # Default to 7 days if not specified
+        
+        # Rough estimate: 200-300 papers per day from ArXiv
+        estimated_papers = days * 250
+        
+        return ProfileAwareIngestResponse(
+            task_id=task_id,
+            message=f"Profile-aware ingestion task started successfully. Processing {len(unique_profiles)} profiles.",
+            profile_count=len(unique_profiles),
+            estimated_papers=estimated_papers,
+            status="started"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start profile-aware ingestion: {str(e)}") 

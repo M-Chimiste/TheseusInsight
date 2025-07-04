@@ -97,6 +97,35 @@ async def run_newsletter_pipeline_endpoint(
         if not topic_data:
             raise HTTPException(status_code=404, detail=f"Topic {params.topic_id} not found")
     
+    # Validate profile parameters if provided
+    if params.profile_id or params.profile_ids or params.profile_tag or params.profile_tags:
+        from ...data_access import ProfileRepository
+        
+        # Validate specific profile IDs exist
+        if params.profile_id:
+            profile = ProfileRepository.get_by_id(params.profile_id)
+            if not profile:
+                raise HTTPException(status_code=404, detail=f"Profile {params.profile_id} not found")
+        
+        if params.profile_ids:
+            for profile_id in params.profile_ids:
+                profile = ProfileRepository.get_by_id(profile_id)
+                if not profile:
+                    raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+        
+        # Validate tags exist (optional - tags that don't exist will simply return no profiles)
+        if params.profile_tag or params.profile_tags:
+            tag_list = []
+            if params.profile_tag:
+                tag_list.append(params.profile_tag)
+            if params.profile_tags:
+                tag_list.extend(params.profile_tags)
+            
+            # Check if any profiles exist with these tags
+            profiles_with_tags = ProfileRepository.get_by_tags(tag_list)
+            if not profiles_with_tags:
+                raise HTTPException(status_code=404, detail=f"No profiles found with tags: {tag_list}")
+    
     task_id = str(uuid.uuid4())
     run_db_path = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
     loop = asyncio.get_event_loop()
@@ -170,12 +199,56 @@ async def run_newsletter_pipeline_endpoint(
                 current_step="initializing",
             )
 
+            # Resolve profile IDs for TheseusInsight
+            resolved_profile_ids = None
+            final_email_recipients = params.email_recipients
+            
+            if params.profile_id or params.profile_ids or params.profile_tag or params.profile_tags:
+                from ...data_access import ProfileRepository
+                
+                # Resolve profile IDs from tags if provided
+                if params.profile_tag or params.profile_tags:
+                    tag_list = []
+                    if params.profile_tag:
+                        tag_list.append(params.profile_tag)
+                    if params.profile_tags:
+                        tag_list.extend(params.profile_tags)
+                    
+                    tag_profiles = ProfileRepository.get_by_tags(tag_list)
+                    tag_profile_ids = [p['id'] for p in tag_profiles]
+                    
+                    if params.profile_ids:
+                        # Combine explicit profile_ids with tag-resolved IDs
+                        resolved_profile_ids = list(set(params.profile_ids + tag_profile_ids))
+                    else:
+                        resolved_profile_ids = tag_profile_ids
+                elif params.profile_ids:
+                    resolved_profile_ids = params.profile_ids
+                elif params.profile_id:
+                    resolved_profile_ids = [params.profile_id]
+                
+                # Use profile-specific email recipients if requested
+                if params.use_profile_recipients and resolved_profile_ids:
+                    profile_recipients = []
+                    for pid in resolved_profile_ids:
+                        profile = ProfileRepository.get_by_id(pid)
+                        if profile and profile.get('email_recipients'):
+                            profile_recipients.extend(profile['email_recipients'])
+                    
+                    # Remove duplicates while preserving order
+                    profile_recipients = list(dict.fromkeys(profile_recipients))
+                    
+                    # Use profile recipients if available, otherwise fall back to params
+                    if profile_recipients:
+                        final_email_recipients = profile_recipients
+
             ti_instance = TheseusInsight(
                 research_interests_override=params.research_interests,
                 start_date_override=params.start_date,
                 end_date_override=params.end_date,
-                receiver_address_override=params.email_recipients,
-                topic_id_override=params.topic_id,  # Add topic_id support
+                receiver_address_override=final_email_recipients,
+                profile_ids_override=resolved_profile_ids,
+# topic_id handled via separate logic in TheseusInsight if needed
                 generate_podcast=params.generate_podcast_run,
                 db_saving=True, 
                 data_path=run_db_path,

@@ -7,6 +7,7 @@ of paper relationships based on semantic similarity and user-selected seeds.
 
 from .state import MindMapState
 from .nodes import (
+    ProfileResolverNode,
     SelectSeedNode,
     EmbedSeedNode,
     RetrieverNode,
@@ -17,6 +18,7 @@ from .workflow import MindMapWorkflow, create_mindmap_workflow
 
 __all__ = [
     "MindMapState",
+    "ProfileResolverNode",
     "SelectSeedNode",
     "EmbedSeedNode", 
     "RetrieverNode",

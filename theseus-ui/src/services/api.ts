@@ -188,6 +188,135 @@ export const taskApi = {
   },
 };
 
+// Profile API Types
+export interface ProfileApiResponse {
+  id: number;
+  name: string;
+  description?: string;
+  color?: string;
+  tags?: string[];
+  email_recipients?: string[];
+  arxiv_filters?: string[];
+  is_active: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+  total_papers?: number;
+  recent_papers?: number;
+}
+
+export interface ProfileCreateRequest {
+  name: string;
+  description?: string;
+  color?: string;
+  tags?: string[];
+  email_recipients?: string[];
+  arxiv_filters?: string[];
+}
+
+export interface ProfileUpdateRequest {
+  name?: string;
+  description?: string;
+  color?: string;
+  tags?: string[];
+  email_recipients?: string[];
+  arxiv_filters?: string[];
+  is_active?: boolean;
+}
+
+export interface ProfileAwareIngestRequest {
+  start_date?: string;
+  end_date?: string;
+  profile_ids?: number[];
+  profile_tags?: string[];
+  score_all_profiles?: boolean;
+  overwrite_existing?: boolean;
+  cosine_threshold?: number;
+  arxiv_categories?: string[];
+  batch_size?: number;
+  send_error_notifications?: boolean;
+}
+
+export interface ProfileAwareIngestResponse {
+  task_id: string;
+  message: string;
+  profile_count: number;
+  estimated_papers: number;
+  status: string;
+}
+
+export interface TagSearchResponse {
+  query: string;
+  suggestions: Array<{
+    tag: string;
+    usage_count: number;
+  }>;
+  exact_match: boolean;
+}
+
+export interface BulkJudgeRunRequest {
+  profile_ids?: number[];
+  profile_tags?: string[];
+  start_date?: string;
+  end_date?: string;
+  overwrite_existing?: boolean;
+  cosine_threshold?: number;
+  batch_size?: number;
+}
+
+export interface BulkJudgeRunResponse {
+  task_id: string;
+  message: string;
+  profile_count: number;
+  estimated_papers: number;
+  status: string;
+}
+
+// Profile Research Interest API Types
+export interface ProfileInterestResponse {
+  id: number;
+  interest_text: string;
+  embedding_model?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// Profile API
+export const profileApi = {
+  // Profile Management
+  getProfiles: () => api.get<ProfileApiResponse[]>('/profiles'),
+  createProfile: (profile: ProfileCreateRequest) => api.post<ProfileApiResponse>('/profiles', profile),
+  getProfile: (id: number) => api.get<ProfileApiResponse>(`/profiles/${id}`),
+  updateProfile: (id: number, profile: ProfileUpdateRequest) => api.put<ProfileApiResponse>(`/profiles/${id}`, profile),
+  deleteProfile: (id: number) => api.delete(`/profiles/${id}`),
+  cloneProfile: (id: number, newName: string) => api.post<ProfileApiResponse>(`/profiles/${id}/clone`, { name: newName }),
+  
+  // Profile Research Interests
+  getProfileInterests: (profileId: number) => api.get<ProfileInterestResponse[]>(`/profiles/${profileId}/interests`),
+  createProfileInterest: (profileId: number, interestText: string) => api.post<ProfileInterestResponse>(`/profiles/${profileId}/interests`, { interest_text: interestText }),
+  deleteProfileInterest: (profileId: number, interestId: number) => api.delete(`/profiles/${profileId}/interests/${interestId}`),
+  
+  // Profile Tags
+  getAllTags: () => api.get<string[]>('/profiles/tags'),
+  searchTags: (query: string, limit: number = 10) => api.get<TagSearchResponse>(`/profiles/tags/search`, { params: { q: query, limit } }),
+  getProfilesByTag: (tag: string) => api.get<ProfileApiResponse[]>(`/profiles/by-tag/${tag}`),
+  
+  // Profile-Scoped Operations
+  getProfilePapers: (id: number, params?: any) => api.get(`/profiles/${id}/papers`, { params }),
+  runProfileJudge: (id: number, params: any) => api.post(`/profiles/${id}/judge-run`, params),
+  getProfileTrends: (id: number, params?: any) => api.get(`/profiles/${id}/trends`, { params }),
+  generateProfileNewsletter: (id: number, params: any) => api.post(`/profiles/${id}/newsletter`, params),
+  generateProfileMindmap: (id: number, params: any) => api.post(`/profiles/${id}/mindmap`, params),
+  
+  // Bulk Operations
+  runBulkJudge: (request: BulkJudgeRunRequest) => api.post<BulkJudgeRunResponse>('/profiles/bulk/judge-run', request),
+  generateBulkNewsletters: (params: any) => api.post('/profiles/bulk/newsletter', params),
+  getBulkTrends: (params: any) => api.get('/profiles/bulk/trends', { params }),
+  
+  // Profile-Aware Ingestion
+  runProfileAwareIngest: (request: ProfileAwareIngestRequest) => api.post<ProfileAwareIngestResponse>('/papers/profile-aware-ingest', request),
+};
+
 // Runs API
 export const runsApi = {
   getRuns: (page: number = 1) => api.get('/runs', { params: { page } }),

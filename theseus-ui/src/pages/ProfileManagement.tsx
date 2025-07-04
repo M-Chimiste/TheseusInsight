@@ -13,6 +13,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  DialogContentText,
   Autocomplete,
   IconButton,
   CircularProgress,
@@ -52,6 +53,8 @@ const ProfileManagement: React.FC = () => {
   const queryClient = useQueryClient();
   
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [profileToDelete, setProfileToDelete] = useState<ProfileApiResponse | null>(null);
   const [editingProfile, setEditingProfile] = useState<ProfileApiResponse | null>(null);
   const [formData, setFormData] = useState<ProfileFormData>({
     name: '',
@@ -267,10 +270,17 @@ const ProfileManagement: React.FC = () => {
     }
   };
 
-  const handleDelete = (profileId: number) => {
-    if (window.confirm('Are you sure you want to delete this profile?')) {
-      deleteMutation.mutate(profileId);
+  const handleDelete = (profile: ProfileApiResponse) => {
+    setProfileToDelete(profile);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (profileToDelete) {
+      deleteMutation.mutate(profileToDelete.id);
     }
+    setDeleteDialogOpen(false);
+    setProfileToDelete(null);
   };
 
   const predefinedColors = [
@@ -400,7 +410,7 @@ const ProfileManagement: React.FC = () => {
                     size="small"
                     color="error"
                     startIcon={<DeleteIcon />}
-                    onClick={() => handleDelete(profile.id)}
+                    onClick={() => handleDelete(profile)}
                   >
                     Delete
                   </Button>
@@ -579,6 +589,34 @@ const ProfileManagement: React.FC = () => {
             ) : (
               editingProfile ? 'Update' : 'Create'
             )}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">Confirm Delete</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="delete-dialog-description">
+            Are you sure you want to delete the profile "{profileToDelete?.name}"? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)} color="primary">
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleDeleteConfirm} 
+            color="error" 
+            variant="contained"
+            autoFocus
+          >
+            Delete
           </Button>
         </DialogActions>
       </Dialog>

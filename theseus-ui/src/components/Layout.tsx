@@ -121,15 +121,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           >
             {isDrawerOpen ? <ChevronLeftIcon /> : <MenuIcon />}
           </IconButton>
+          <img src="/logo.png" alt="Theseus Insight Logo" style={{ height: 84, marginRight: 8, marginLeft: 16 }} />
+          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
+            Theseus Insight
+          </Typography>
           <ProfileSelector
             allowMultiple={true}
             label="Profile"
             compact={true}
           />
-          <img src="/logo.png" alt="Theseus Insight Logo" style={{ height: 84, marginRight: 8, marginLeft: 16 }} />
-          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            Theseus Insight
-          </Typography>
         </Toolbar>
       </AppBar>
       <Drawer

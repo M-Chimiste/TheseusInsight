@@ -48,6 +48,8 @@ const Newsletter = () => {
   const [endDate, setEndDate] = useState<Date | null>(today);
   const [days, setDays] = useState<number>(7);
 
+
+
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [researchInterests, setResearchInterests] = useState<string>('');
@@ -55,7 +57,7 @@ const Newsletter = () => {
   const [isAborting, setIsAborting] = useState<boolean>(false);
   
   // Use profile context
-  const { getSelectedProfiles } = useProfile();
+  const { getSelectedProfiles, selectedProfileIds } = useProfile();
   const selectedProfiles = getSelectedProfiles();
   const primaryProfile = selectedProfiles[0]; // Use first selected profile
   
@@ -64,11 +66,12 @@ const Newsletter = () => {
 
   // Load profile interests for all selected profiles
   const { data: allProfileInterests } = useQuery({
-    queryKey: ['all-profile-interests', selectedProfiles.map(p => p.id).sort().join(',')],
+    queryKey: ['all-profile-interests', selectedProfileIds.sort().join(',')],
     queryFn: async () => {
-      if (selectedProfiles.length === 0) return [];
+      if (selectedProfileIds.length === 0) return [];
       
-      const interestsPromises = selectedProfiles.map(async (profile) => {
+      const currentProfiles = getSelectedProfiles();
+      const interestsPromises = currentProfiles.map(async (profile) => {
         const response = await profileApi.getProfileInterests(profile.id);
         return response.data;
       });
@@ -76,14 +79,17 @@ const Newsletter = () => {
       const allInterests = await Promise.all(interestsPromises);
       return allInterests.flat();
     },
-    enabled: selectedProfiles.length > 0,
+    enabled: selectedProfileIds.length > 0,
   });
 
   // Update form data when profiles change
   useEffect(() => {
-    if (selectedProfiles.length > 0) {
+    if (selectedProfileIds.length > 0) {
+      // Get current profiles inside effect to avoid dependency issues
+      const currentProfiles = getSelectedProfiles();
+      
       // Combine email recipients from all selected profiles (remove duplicates)
-      const allRecipients = selectedProfiles.flatMap(profile => profile.email_recipients || []);
+      const allRecipients = currentProfiles.flatMap(profile => profile.email_recipients || []);
       const uniqueRecipients = Array.from(new Set(allRecipients));
       setEmailRecipients(uniqueRecipients);
       setEmailRecipientsInput(uniqueRecipients.join('\n'));
@@ -99,7 +105,7 @@ const Newsletter = () => {
       setEmailRecipientsInput('');
       setResearchInterests('');
     }
-  }, [selectedProfiles, allProfileInterests]);
+  }, [selectedProfileIds, allProfileInterests]); // getSelectedProfiles is stable from context
   
   // Date logic handlers
   useEffect(() => {

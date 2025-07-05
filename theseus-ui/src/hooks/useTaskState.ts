@@ -32,8 +32,8 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
   const [taskState, setTaskState] = useState<TaskState>(DEFAULT_TASK_STATE);
   const [isCheckingForActiveTasks, setIsCheckingForActiveTasks] = useState(true);
 
-  // WebSocket connection for real-time updates
-  const { lastMessage } = useWebSocket(taskState.taskId, taskType);
+  // WebSocket connection for real-time updates - only for running tasks
+  const { lastMessage } = useWebSocket(taskState.isRunning ? taskState.taskId : null, taskType);
 
   // Check for active tasks on mount
   useEffect(() => {
@@ -61,24 +61,10 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
           task.task_type === `custom_${taskType}_run`
         );
         
-        // If no active task found, check for recent completed tasks with results
+        // Skip checking for completed tasks on mount to prevent unnecessary WebSocket connections
+        // Only active (running) tasks should be restored to prevent navigation issues
         if (!activeTask) {
-          console.log(`[useTaskState] No active tasks found, checking for recent completed tasks...`);
-          const completedResponse = await taskApi.getRecentCompletedTasks(taskTypesToCheck);
-          const completedTasks = completedResponse.data.completed_tasks || [];
-          
-          console.log(`[useTaskState] Found recent completed ${taskType} tasks:`, {
-            taskTypesToCheck,
-            completedTasks,
-            totalFound: completedTasks.length
-          });
-          
-          activeTask = completedTasks.find((task: any) => 
-            task.type === taskType || 
-            task.type === `custom_${taskType}_run` ||
-            task.task_type === taskType ||
-            task.task_type === `custom_${taskType}_run`
-          );
+          console.log(`[useTaskState] No active tasks found. Not checking completed tasks to prevent WebSocket issues.`);
         }
         
         console.log(`[useTaskState] Found task for ${taskType}:`, activeTask);

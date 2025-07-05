@@ -26,6 +26,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
   - [Similarity Search](#similarity-search)
   - [Mind-Map Explorer](#mind-map-explorer)
   - [Topic Evolution & Trend-Forecast Dashboard](#topic-evolution--trend-forecast-dashboard)
+  - [Profile Management](#profile-management)
   - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
 - [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
@@ -125,6 +126,13 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **Cross-Feature Integration**: Generate mind-maps and newsletters directly from trending topics.
   - **Performance Optimization**: Configurable processing parameters with system hardware detection and recommendations.
   - **Scheduled Automation**: Nightly recomputation with incremental processing and comprehensive accuracy tracking.
+- **Comprehensive Profile Management System**: Create and manage multiple research profiles with individual configurations.
+  - **Smart Profile Selection**: Visual profile chips with individual remove buttons and system-wide Smart Selection Bar for easy multi-profile workflows.
+  - **Profile-Specific Configurations**: Each profile maintains its own email recipients, research interests, ArXiv category filters, tags, and visual styling.
+  - **Multi-Profile Support**: Select multiple profiles simultaneously with combined email recipients and research interests while maintaining backward compatibility.
+  - **Profile Integration**: Seamless integration across all features - newsletters, podcasts, mind-maps, and research agent workflows use profile-specific settings.
+  - **Default Profile System**: Designate default profiles for streamlined workflows with automatic population of settings for new profiles.
+  - **Visual Organization**: Color-coded profiles with custom descriptions and tag-based organization for easy identification.
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers with PostgreSQL.
@@ -409,6 +417,98 @@ The trends system integrates seamlessly with existing Theseus Insight features:
 - **Newsletter API**: Enhanced with `topic_id` support for topic-focused newsletter generation
 
 📖 **[Complete Trends API Documentation](docs/trends_api_spec.md)** - Detailed API specification with examples and response schemas.
+
+### Profile Management
+
+The profile management system enables researchers to create and manage multiple research profiles, each with its own configuration for email recipients, research interests, ArXiv filters, and visual styling. This system provides a foundation for personalized research workflows across all Theseus Insight features.
+
+#### Core Profile Features
+
+**Multi-Profile Workflows**: Create unlimited research profiles with individual configurations:
+- **Email Recipients**: Each profile maintains its own list of newsletter recipients
+- **Research Interests**: Profile-specific research interests for targeted content generation
+- **ArXiv Category Filters**: Customizable ArXiv category selections with main category and subcategory filtering
+- **Visual Styling**: Color-coded profiles with custom descriptions and tags for easy identification
+- **Default Profile System**: Designate default profiles for streamlined workflows
+
+**Smart Profile Selection**: System-wide profile selection interface with:
+- **Visual Profile Chips**: Individual profile chips with remove buttons for easy management
+- **Multi-Profile Support**: Select multiple profiles simultaneously with combined settings
+- **Smart Selection Bar**: Consistent profile selection interface across all features
+- **Real-Time Stats**: Combined email recipient counts and research interest previews
+
+#### Profile API Endpoints
+
+**`GET /api/profiles`** - List all profiles
+- **Returns**: All profiles with metadata, paper counts, and configuration summaries
+- **Features**: Includes default profile identification and total paper counts per profile
+
+**`POST /api/profiles`** - Create new profile
+- **Parameters**: `name`, `description`, `color`, `tags`, `email_recipients`, `research_interests`, `arxiv_filters`
+- **Returns**: Created profile with generated ID
+- **Features**: Automatic population from current settings for new profiles
+
+**`GET /api/profiles/{profile_id}`** - Get specific profile details
+- **Returns**: Complete profile configuration including research interests and filters
+
+**`PUT /api/profiles/{profile_id}`** - Update profile configuration
+- **Parameters**: Any profile field (name, description, color, tags, etc.)
+- **Returns**: Updated profile information
+- **Features**: Partial updates supported, maintains data integrity
+
+**`DELETE /api/profiles/{profile_id}`** - Delete profile
+- **Returns**: Confirmation of deletion
+- **Restrictions**: Cannot delete default profiles
+
+**`GET /api/profiles/{profile_id}/interests`** - Get profile research interests
+- **Returns**: Detailed research interests with metadata
+
+**`GET /api/profiles/tags`** - Get available tags for autocomplete
+- **Returns**: All tags used across profiles for consistent tagging
+
+#### Profile Integration
+
+Profiles integrate seamlessly with all Theseus Insight features:
+
+**Newsletter Generation**: Use profile-specific email recipients and research interests
+```bash
+POST /api/profiles/{profile_id}/newsletters
+```
+
+**Mind-Map Generation**: Profile-seeded mind-maps using profile research interests
+```bash
+POST /api/profiles/{profile_id}/mindmaps
+```
+
+**Research Agent**: Profile-aware research workflows with personalized configurations
+```bash
+POST /api/profiles/{profile_id}/research
+```
+
+**Multi-Profile Operations**: Many endpoints support multiple profile IDs for combined workflows:
+- Combined email recipient lists (deduplicated)
+- Merged research interests from all selected profiles
+- Unified ArXiv filtering across profiles
+
+#### Profile Data Management
+
+**Automatic Settings Population**: New profiles automatically inherit:
+- Current email recipients from settings
+- Global research interests
+- Default ArXiv category filters
+- System-wide configuration preferences
+
+**Profile Statistics**: Each profile tracks:
+- Total papers associated with the profile
+- Email recipient counts
+- Research interest complexity
+- Usage metrics across features
+
+**Data Integrity**: Profile system maintains:
+- Referential integrity with generated content
+- Consistent email formatting and validation
+- ArXiv category validation against taxonomy
+- Tag normalization and deduplication
 
 ---
 

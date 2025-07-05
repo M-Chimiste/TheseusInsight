@@ -70,6 +70,9 @@ const ProfileManagement: React.FC = () => {
   const [selectedArxivMain, setSelectedArxivMain] = useState<string>('');
   const [selectedArxivSubs, setSelectedArxivSubs] = useState<string[]>([]);
 
+  // Email input state for better user experience
+  const [emailInput, setEmailInput] = useState<string>('');
+
   // Alias taxonomy as any to allow dynamic indexing
   const taxonomyAny = taxonomy as any;
 
@@ -170,6 +173,21 @@ const ProfileManagement: React.FC = () => {
     return { main: '', subs: [] };
   };
 
+  // Helper function to count ArXiv filters correctly
+  const getArxivFiltersCount = (filters: any): number => {
+    if (!filters) return 0;
+    
+    if (Array.isArray(filters)) {
+      // Legacy format: count array length
+      return filters.length;
+    } else if (filters.filter_categories && Array.isArray(filters.filter_categories)) {
+      // New format: count subcategories
+      return filters.filter_categories.length;
+    }
+    
+    return 0;
+  };
+
   // Event handlers
   const handleOpenDialog = (profile?: ProfileApiResponse) => {
     if (profile) {
@@ -180,12 +198,16 @@ const ProfileManagement: React.FC = () => {
       setSelectedArxivMain(parsedArxiv.main);
       setSelectedArxivSubs(parsedArxiv.subs);
       
+      // Initialize email input from profile data
+      const emailRecipientsArray = Array.isArray(profile.email_recipients) ? profile.email_recipients : [];
+      setEmailInput(emailRecipientsArray.join('\n'));
+      
       setFormData({
         name: profile.name,
         description: profile.description || '',
         color: profile.color || '#2196F3',
         tags: Array.isArray(profile.tags) ? profile.tags : [],
-        email_recipients: Array.isArray(profile.email_recipients) ? profile.email_recipients : [],
+        email_recipients: emailRecipientsArray,
         arxiv_filters: Array.isArray(profile.arxiv_filters) ? profile.arxiv_filters : [],
         research_interests: '', // Will be loaded from profileInterests query
       });
@@ -196,6 +218,9 @@ const ProfileManagement: React.FC = () => {
       const emailRecipientsArray = emailRecipients?.recipients 
         ? Array.isArray(emailRecipients.recipients) ? emailRecipients.recipients : []
         : [];
+      
+      // Initialize email input from current settings
+      setEmailInput(emailRecipientsArray.join('\n'));
       
       // Initialize ArXiv settings from current settings
       const arxivMain = arxivCategories?.main_category || 'cs';
@@ -222,6 +247,7 @@ const ProfileManagement: React.FC = () => {
     setEditingProfile(null);
     setSelectedArxivMain('');
     setSelectedArxivSubs([]);
+    setEmailInput('');
     setFormData({
       name: '',
       description: '',
@@ -239,6 +265,23 @@ const ProfileManagement: React.FC = () => {
 
   const handleTagChange = (_event: React.SyntheticEvent, value: string[]) => {
     setFormData(prev => ({ ...prev, tags: value }));
+  };
+
+  // Email parsing function to handle both commas and newlines
+  const parseEmailRecipients = (input: string): string[] => {
+    if (!input.trim()) return [];
+    
+    return input
+      .split(/[,\n\s;]+/) // Split by comma, newline, space, or semicolon
+      .map(email => email.trim())
+      .filter(email => email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) // Basic email validation
+      .filter((email, index, arr) => arr.indexOf(email) === index); // Remove duplicates
+  };
+
+  const handleEmailRecipientsChange = (input: string) => {
+    setEmailInput(input);
+    const parsedEmails = parseEmailRecipients(input);
+    setFormData(prev => ({ ...prev, email_recipients: parsedEmails }));
   };
 
   const handleSubmit = async () => {
@@ -384,7 +427,7 @@ const ProfileManagement: React.FC = () => {
                     Recipients: {profile.email_recipients?.length || 0}
                   </Typography>
                   <Typography variant="body2" gutterBottom>
-                    ArXiv Filters: {profile.arxiv_filters?.length || 0}
+                    ArXiv Filters: {getArxivFiltersCount(profile.arxiv_filters)}
                   </Typography>
                 </Box>
 
@@ -493,17 +536,35 @@ const ProfileManagement: React.FC = () => {
             />
 
             <TextField
-              label="Email Recipients (one per line)"
-              value={Array.isArray(formData.email_recipients) ? formData.email_recipients.join('\n') : ''}
-              onChange={(e) => 
-                handleInputChange('email_recipients', e.target.value.split('\n').filter(Boolean))
-              }
+              label="Email Recipients (one per line or comma-separated)"
+              value={emailInput}
+              onChange={(e) => handleEmailRecipientsChange(e.target.value)}
               multiline
               rows={4}
               fullWidth
-              placeholder="user1@example.com&#10;user2@example.com"
-              helperText={!editingProfile ? "Pre-populated from current settings" : ""}
+              placeholder="user1@example.com, user2@example.com&#10;user3@example.com"
+              helperText={!editingProfile ? "Pre-populated from current settings. Supports comma and newline separation." : "Supports comma and newline separation."}
             />
+            
+            {/* Email chips display for visual feedback */}
+            {formData.email_recipients.length > 0 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                {formData.email_recipients.map((email, index) => (
+                  <Chip
+                    key={index}
+                    label={email}
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                    onDelete={() => {
+                      const updatedEmails = formData.email_recipients.filter((_, i) => i !== index);
+                      setFormData(prev => ({ ...prev, email_recipients: updatedEmails }));
+                      setEmailInput(updatedEmails.join('\n'));
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
 
             <TextField
               label="Research Interests (one per line)"

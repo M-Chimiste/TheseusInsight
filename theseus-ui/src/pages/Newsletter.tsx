@@ -48,8 +48,6 @@ const Newsletter = () => {
   const [endDate, setEndDate] = useState<Date | null>(today);
   const [days, setDays] = useState<number>(7);
 
-
-
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [researchInterests, setResearchInterests] = useState<string>('');
@@ -89,7 +87,17 @@ const Newsletter = () => {
       const currentProfiles = getSelectedProfiles();
       
       // Combine email recipients from all selected profiles (remove duplicates)
-      const allRecipients = currentProfiles.flatMap(profile => profile.email_recipients || []);
+      const allRecipients = currentProfiles.flatMap(profile => {
+        const recipients = profile.email_recipients || [];
+        // Handle both array and string formats
+        if (Array.isArray(recipients)) {
+          return recipients;
+        } else if (typeof (recipients as any) === 'string') {
+          // If it's a string, split it by common delimiters
+          return (recipients as string).split(/[,\n\s]+/).map((email: string) => email.trim()).filter((email: string) => email);
+        }
+        return [];
+      });
       const uniqueRecipients = Array.from(new Set(allRecipients));
       setEmailRecipients(uniqueRecipients);
       setEmailRecipientsInput(uniqueRecipients.join('\n'));
@@ -139,10 +147,16 @@ const Newsletter = () => {
   
   // Email parsing
   const parseAndSetEmails = (input: string) => {
+    if (!input.trim()) {
+      setEmailRecipients([]);
+      return;
+    }
+    
     const parsed = input
-      .split(/[,\n\s]+/)
+      .split(/[,\n\s;]+/) // Split by comma, newline, space, or semicolon
       .map(email => email.trim())
       .filter(email => email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)); // Basic email validation
+    
     setEmailRecipients(Array.from(new Set(parsed))); // Remove duplicates
   };
 

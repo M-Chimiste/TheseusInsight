@@ -97,7 +97,9 @@ class ArxivDataProcessor:
             print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
         # Check if we're in bulk mode (FORCE_KAGGLE is set)
-        auto_cleanup = os.getenv('FORCE_KAGGLE', '').lower() != 'true'
+        force_kaggle = os.getenv('FORCE_KAGGLE', '').lower() == 'true'
+        auto_cleanup = not force_kaggle
+        print(f"[DEBUG] FORCE_KAGGLE={force_kaggle}, auto_cleanup={auto_cleanup}")
         if not auto_cleanup:
             print("📌 Bulk mode: Kaggle dataset will be preserved for reuse")
         

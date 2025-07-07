@@ -21,6 +21,13 @@ services:
       - ${EXTERNAL_DATA_PATH:-/Volumes/Metis/theseus_insight_data}/postgres_data:/var/lib/postgresql/data
       # Keep the setup script mount as-is (it's just a small initialization file)
       - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
+      # Mount SQL files to separate directory for setup script to access
+      - ./scripts/init_schema_postgres.sql:/app/sql/init_schema_postgres.sql
+      - ./scripts/migrate_to_profiles.sql:/app/sql/migrate_to_profiles.sql
+      - ./scripts/profiles_trends_integration.sql:/app/sql/profiles_trends_integration.sql
+      # Mount migration tracking files
+      - ./scripts/create_migration_tracking.sql:/app/sql/create_migration_tracking.sql
+      - ./scripts/check_and_apply_migrations.sh:/app/sql/check_and_apply_migrations.sh
 
 # When using this override, we don't need the named volumes since we're using direct host mounts
 # The named volumes from the main docker-compose.yml will be ignored in favor of these host mounts 

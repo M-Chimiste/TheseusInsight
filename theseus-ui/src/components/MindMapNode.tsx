@@ -99,7 +99,7 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
         border: `3px solid ${heatMapColor}`,
         backgroundColor: alpha(heatMapColor, 0.1),
         boxShadow: theme.shadows[3],
-        zIndex: 2,
+        zIndex: 10,
       };
     }
 
@@ -109,6 +109,7 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
         border: `2px solid ${heatMapColor}`,
         backgroundColor: alpha(heatMapColor, 0.15),
         boxShadow: theme.shadows[2],
+        zIndex: 5,
       };
     }
 
@@ -116,6 +117,7 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
       ...baseStyles,
       border: `2px solid ${heatMapColor}`,
       backgroundColor: alpha(heatMapColor, 0.08),
+      zIndex: 3,
     };
   };
 

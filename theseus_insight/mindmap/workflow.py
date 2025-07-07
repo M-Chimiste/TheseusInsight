@@ -7,7 +7,7 @@ node orchestration, and progress tracking for interactive paper visualization.
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from langgraph.graph import StateGraph, END
 
 from .state import MindMapState, create_initial_mindmap_state, get_progress_summary, has_required_data

@@ -1,0 +1,25 @@
+# Docker Compose override file for external database access
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.db-external.yml up
+#
+# This override file exposes the PostgreSQL database port for external access
+# This allows connecting to the database from external tools for migration,
+# data population, debugging, or administration tasks.
+#
+# SECURITY WARNING: Only use this in development environments or secure networks.
+
+services:
+  db:
+    ports:
+      # Expose PostgreSQL port for external access
+      - "5433:5432"  # Maps host port 5433 to container port 5432
+    volumes:
+      # Ensure all database initialization scripts are available
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
+      # Mount SQL files to separate directory for setup script to access
+      - ./scripts/init_schema_postgres.sql:/app/sql/init_schema_postgres.sql
+      - ./scripts/migrate_to_profiles.sql:/app/sql/migrate_to_profiles.sql
+      - ./scripts/profiles_trends_integration.sql:/app/sql/profiles_trends_integration.sql
+      # Mount migration tracking files
+      - ./scripts/create_migration_tracking.sql:/app/sql/create_migration_tracking.sql
+      - ./scripts/check_and_apply_migrations.sh:/app/sql/check_and_apply_migrations.sh 

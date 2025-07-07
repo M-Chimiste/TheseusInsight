@@ -408,6 +408,13 @@ main() {
         
         print_success "✅ Installation complete!"
         echo ""
+        print_status "🎯 Profile Features Enabled:"
+        print_status "  • Multiple research profiles with separate interests"
+        print_status "  • Profile-specific paper scoring and recommendations"
+        print_status "  • Profile-aware trends analysis" 
+        print_status "  • Newsletter generation for specific profiles"
+        print_status "  • Smart profile selection UI in the frontend"
+        echo ""
     fi
     
     if [ "$INSTALL_ONLY" = false ]; then

@@ -66,6 +66,7 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
           strokeWidth,
           opacity,
           strokeDasharray: selected ? '5,5' : 'none',
+          zIndex: 1,
         }}
       />
       
@@ -76,6 +77,7 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
             pointerEvents: 'all',
+            zIndex: 2,
           }}
         >
           <Chip

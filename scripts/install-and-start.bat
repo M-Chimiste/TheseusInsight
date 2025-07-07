@@ -409,6 +409,13 @@ if "%START_ONLY%"=="false" (
     echo.
     call :print_success "✅ Installation complete!"
     echo.
+    call :print_status "🎯 Profile Features Enabled:"
+    call :print_status "  • Multiple research profiles with separate interests"
+    call :print_status "  • Profile-specific paper scoring and recommendations"
+    call :print_status "  • Profile-aware trends analysis"
+    call :print_status "  • Newsletter generation for specific profiles"
+    call :print_status "  • Smart profile selection UI in the frontend"
+    echo.
 )
 
 if "%INSTALL_ONLY%"=="false" (

@@ -15,9 +15,9 @@ if "%DB_NAME%"=="" set DB_NAME=theseusdb
 echo Setting up pgvector extension for user: %DB_USER%, database: %DB_NAME%
 
 REM Detect environment and set schema file path
-if exist "C:\docker-entrypoint-initdb.d\init_schema_postgres.sql" (
+if exist "C:\app\sql\init_schema_postgres.sql" (
     REM Running in Docker container
-    set SCHEMA_FILE=C:\docker-entrypoint-initdb.d\init_schema_postgres.sql
+    set SCHEMA_FILE=C:\app\sql\init_schema_postgres.sql
     set ENVIRONMENT=docker
     echo 🐳 Detected Docker environment
 ) else if exist "%~dp0init_schema_postgres.sql" (
@@ -28,7 +28,7 @@ if exist "C:\docker-entrypoint-initdb.d\init_schema_postgres.sql" (
 ) else (
     echo ❌ Error: Cannot find init_schema_postgres.sql
     echo    Expected locations:
-    echo    - Docker: C:\docker-entrypoint-initdb.d\init_schema_postgres.sql
+    echo    - Docker: C:\app\sql\init_schema_postgres.sql
     echo    - Local:  %~dp0init_schema_postgres.sql
     exit /b 1
 )
@@ -131,8 +131,48 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+REM Apply profile migrations
+echo 🔄 Applying profile migrations...
+
+REM Determine migration file paths based on environment
+if "%ENVIRONMENT%"=="docker" (
+    set MIGRATE_TO_PROFILES_FILE=C:\app\sql\migrate_to_profiles.sql
+    set PROFILES_TRENDS_FILE=C:\app\sql\profiles_trends_integration.sql
+) else (
+    set MIGRATE_TO_PROFILES_FILE=%~dp0migrate_to_profiles.sql
+    set PROFILES_TRENDS_FILE=%~dp0profiles_trends_integration.sql
+)
+
+REM Apply profile migration
+if exist "%MIGRATE_TO_PROFILES_FILE%" (
+    echo 📋 Applying profile migration from: %MIGRATE_TO_PROFILES_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%MIGRATE_TO_PROFILES_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply profile migration from %MIGRATE_TO_PROFILES_FILE%
+        exit /b 1
+    )
+    echo ✅ Profile migration completed successfully
+) else (
+    echo ⚠️  Warning: Profile migration file not found at %MIGRATE_TO_PROFILES_FILE%
+    echo    The system will work but profile features may not be available
+)
+
+REM Apply profiles-trends integration
+if exist "%PROFILES_TRENDS_FILE%" (
+    echo 📋 Applying profiles-trends integration from: %PROFILES_TRENDS_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%PROFILES_TRENDS_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply profiles-trends integration from %PROFILES_TRENDS_FILE%
+        exit /b 1
+    )
+    echo ✅ Profiles-trends integration completed successfully
+) else (
+    echo ⚠️  Warning: Profiles-trends integration file not found at %PROFILES_TRENDS_FILE%
+    echo    Trends features may not work properly with profiles
+)
+
 echo.
-echo 🎉 Database setup completed successfully!
+echo 🎉 Database setup with profile features completed successfully!
 echo.
 echo 📋 Connection details:
 echo    Database: %DB_NAME%

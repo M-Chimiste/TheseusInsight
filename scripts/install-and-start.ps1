@@ -431,6 +431,13 @@ function Main {
         Write-Host ""
         Write-Success "✅ Installation complete!"
         Write-Host ""
+        Write-Status "🎯 Profile Features Enabled:"
+        Write-Status "  • Multiple research profiles with separate interests"
+        Write-Status "  • Profile-specific paper scoring and recommendations"
+        Write-Status "  • Profile-aware trends analysis"
+        Write-Status "  • Newsletter generation for specific profiles"
+        Write-Status "  • Smart profile selection UI in the frontend"
+        Write-Host ""
     }
     
     if (-not $InstallOnly) {

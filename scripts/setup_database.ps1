@@ -43,9 +43,9 @@ Write-Host "Setting up pgvector extension for user: $DbUser, database: $DbName"
 $SchemaFile = $null
 $Environment = $null
 
-if (Test-Path "C:\docker-entrypoint-initdb.d\init_schema_postgres.sql") {
+if (Test-Path "C:\app\sql\init_schema_postgres.sql") {
     # Running in Docker container
-    $SchemaFile = "C:\docker-entrypoint-initdb.d\init_schema_postgres.sql"
+    $SchemaFile = "C:\app\sql\init_schema_postgres.sql"
     $Environment = "docker"
     Write-Host "🐳 Detected Docker environment" -ForegroundColor $InfoColor
 }
@@ -58,7 +58,7 @@ elseif (Test-Path "$PSScriptRoot\init_schema_postgres.sql") {
 else {
     Write-ErrorMsg "❌ Error: Cannot find init_schema_postgres.sql"
     Write-Host "   Expected locations:"
-    Write-Host "   - Docker: C:\docker-entrypoint-initdb.d\init_schema_postgres.sql"
+    Write-Host "   - Docker: C:\app\sql\init_schema_postgres.sql"
     Write-Host "   - Local:  $PSScriptRoot\init_schema_postgres.sql"
     exit 1
 }
@@ -211,8 +211,63 @@ catch {
     exit 1
 }
 
+# Apply profile migrations
+Write-Status "🔄 Applying profile migrations..."
+
+# Determine migration file paths based on environment
+if ($Environment -eq "docker") {
+    $MigrateToProfilesFile = "C:\app\sql\migrate_to_profiles.sql"
+    $ProfilesTrendsFile = "C:\app\sql\profiles_trends_integration.sql"
+}
+else {
+    $MigrateToProfilesFile = "$PSScriptRoot\migrate_to_profiles.sql"
+    $ProfilesTrendsFile = "$PSScriptRoot\profiles_trends_integration.sql"
+}
+
+# Apply profile migration
+if (Test-Path $MigrateToProfilesFile) {
+    Write-Status "📋 Applying profile migration from: $MigrateToProfilesFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $MigrateToProfilesFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply profile migration from $MigrateToProfilesFile"
+            exit 1
+        }
+        Write-Success "✅ Profile migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply profile migration from $MigrateToProfilesFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Profile migration file not found at $MigrateToProfilesFile"
+    Write-Host "   The system will work but profile features may not be available"
+}
+
+# Apply profiles-trends integration
+if (Test-Path $ProfilesTrendsFile) {
+    Write-Status "📋 Applying profiles-trends integration from: $ProfilesTrendsFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $ProfilesTrendsFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply profiles-trends integration from $ProfilesTrendsFile"
+            exit 1
+        }
+        Write-Success "✅ Profiles-trends integration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply profiles-trends integration from $ProfilesTrendsFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Profiles-trends integration file not found at $ProfilesTrendsFile"
+    Write-Host "   Trends features may not work properly with profiles"
+}
+
 Write-Host ""
-Write-Success "🎉 Database setup completed successfully!"
+Write-Success "🎉 Database setup with profile features completed successfully!"
 Write-Host ""
 Write-Host "📋 Connection details:" -ForegroundColor $InfoColor
 Write-Host "   Database: $DbName"

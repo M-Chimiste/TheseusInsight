@@ -213,12 +213,21 @@ class TheseusInsight:
         else:
             raise ValueError("Invalid orchestration config")
 
+        # Debug: Check the orchestration config before any modifications
+        if self.verbose:
+            print(f"[DEBUG] TheseusInsight received orchestration_config: {self.orchestration_config.get('arxiv_search_categories', 'NOT SET')}")
+        
         # Ensure arxiv_search_categories exists with defaults if not present
         if 'arxiv_search_categories' not in self.orchestration_config:
+            if self.verbose:
+                print("[DEBUG] arxiv_search_categories not found, setting defaults")
             self.orchestration_config['arxiv_search_categories'] = {
                 "main_category": "cs",
                 "filter_categories": ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"]
             }
+        else:
+            if self.verbose:
+                print("[DEBUG] arxiv_search_categories already exists, keeping current values")
 
         # 1) Embedding model
         self.embedding_model_name = self.orchestration_config['embedding_model']['model_name']

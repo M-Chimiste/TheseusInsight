@@ -39,6 +39,7 @@ class UnifiedArxivHarvester:
         timeout: int = 300,
         verbose: bool = False,
         kaggle_dataset_path: Optional[str] = None,
+        auto_cleanup: bool = True,
     ):
         """Initialize the unified harvester.
 
@@ -52,6 +53,8 @@ class UnifiedArxivHarvester:
             verbose (bool, optional): Whether to print progress. Defaults to False.
             kaggle_dataset_path (Optional[str], optional): Path to Kaggle dataset. 
                 If None, uses KAGGLE_ARXIV_PATH environment variable.
+            auto_cleanup (bool, optional): Whether to clean up downloaded dataset on exit. 
+                Defaults to True. Set to False for bulk operations to avoid re-downloading.
         """
         self.category = category
         self.date_from = date_from
@@ -71,6 +74,7 @@ class UnifiedArxivHarvester:
         self._debug_mode = os.getenv("DEBUG", "").lower() == "true"
         self._force_kaggle = os.getenv("FORCE_KAGGLE", "").lower() == "true"
         self._auto_download = os.getenv("AUTO_DOWNLOAD", "true").lower() == "true"  # Default to true
+        self._auto_cleanup = auto_cleanup
         self._temp_dir = None
         self._downloaded_dataset = False
         
@@ -420,7 +424,7 @@ class UnifiedArxivHarvester:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - ensures cleanup."""
-        if self._downloaded_dataset:
+        if self._downloaded_dataset and self._auto_cleanup:
             self._cleanup_downloaded_dataset()
 
     def _harvest_with_kaggle(self) -> List[Dict[str, Any]]:

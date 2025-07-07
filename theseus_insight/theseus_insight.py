@@ -869,15 +869,17 @@ Theseus Insight Team
                 elif not isinstance(embedding, list):
                     embedding = list(embedding)
                 
+                # For embedding-only pipeline, provide placeholder values for required fields
+                # These will be updated when papers are scored for specific profiles
                 paper = Paper(
                     title=row['title'],
                     abstract=row['abstract'],
                     url=row['pdf_url'],
-                    date_run=None,  # No judge run date yet
+                    date_run='1970-01-01',  # Placeholder date - will be updated when scored
                     date=row['date'].strftime('%Y-%m-%d'),
-                    score=None,  # No score yet - will be added per profile
-                    related=None,  # No related flag yet - will be added per profile
-                    rationale=None,  # No rationale yet - will be added per profile
+                    score=0.0,  # Placeholder score - will be updated when scored
+                    related=False,  # Placeholder - will be updated when scored
+                    rationale='Not yet scored',  # Placeholder - will be updated when scored
                     cosine_similarity=row['cosine_similarity'],
                     embedding_model=self.embedding_model_name,
                     embedding=embedding
@@ -1615,7 +1617,7 @@ Theseus Insight Team
                 
                 # Embed abstracts
                 abstracts = list(new_df['abstract'])
-                embeddings = self.embedding_model.batch_invoke(abstracts)
+                embeddings = self.embedding_model.invoke(abstracts)
                 new_df['abstract_embedding'] = embeddings
                 
                 # Calculate cosine similarity with research interests
@@ -1881,6 +1883,18 @@ Theseus Insight Team
                     
                 storage_result = self._load_checkpoint('papers_stored')
                 if storage_result is None:
+                    # Debug logging to understand the data
+                    if self.verbose:
+                        print(f"\n💾 STORING {len(embedded_df)} PAPERS WITHOUT SCORING")
+                        print("="*60)
+                        if not embedded_df.empty:
+                            print("Sample data columns:", embedded_df.columns.tolist())
+                            print("First row sample:")
+                            first_row = embedded_df.iloc[0]
+                            for col in ['title', 'abstract', 'pdf_url', 'date', 'cosine_similarity']:
+                                if col in embedded_df.columns:
+                                    print(f"  {col}: {first_row[col][:100] if isinstance(first_row[col], str) else first_row[col]}")
+                    
                     storage_result = self.store_papers_without_scoring(embedded_df)
                     self._save_checkpoint('papers_stored', storage_result)
                     saved_count = storage_result['saved_count']

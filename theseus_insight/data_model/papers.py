@@ -158,10 +158,10 @@ class Paper(BaseModel):
     title: str
     abstract: str
     date: str
-    date_run: str
-    score: float | int
-    rationale: str
-    related: bool
+    date_run: Optional[str] = None  # Optional for embedding-only pipeline
+    score: Optional[float | int] = None  # Optional for embedding-only pipeline
+    rationale: Optional[str] = None  # Optional for embedding-only pipeline
+    related: Optional[bool] = None  # Optional for embedding-only pipeline
     cosine_similarity: float
     url: str
     embedding_model: str
@@ -170,7 +170,7 @@ class Paper(BaseModel):
     @field_validator('score')
     @classmethod
     def score_range(cls, v):
-        if not 0 <= v <= 10:
+        if v is not None and not 0 <= v <= 10:
             raise ValueError('Score must be between 0 and 10')
         return v
 

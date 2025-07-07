@@ -388,6 +388,7 @@ class UnifiedArxivHarvester:
             try:
                 self._debug_log("Attempting OAI-PMH harvest")
                 self._log("Trying ArXiv OAI-PMH API...")
+                self._log(f"Date range: {self.date_from} to {self.date_until}")
                 
                 records = self.oai_harvester.harvest()
                 
@@ -470,6 +471,9 @@ class UnifiedArxivHarvester:
                     )
 
             self._debug_log("Starting Kaggle dataset harvest")
+            self._log(f"🔍 Searching Kaggle dataset for papers from {self.date_from} to {self.date_until}")
+            self._log(f"📁 Using dataset: {self.kaggle_harvester.dataset_path}")
+            
             records = self.kaggle_harvester.harvest()
             
             if records:
@@ -477,7 +481,7 @@ class UnifiedArxivHarvester:
                 self._debug_log(f"Kaggle harvest completed with {len(records)} records")
                 return records
             else:
-                raise RuntimeError("Kaggle dataset returned no matching records")
+                raise RuntimeError(f"Kaggle dataset returned no matching records for date range {self.date_from} to {self.date_until}")
                 
         except Exception as e:
             self._log(f"❌ Kaggle harvest failed: {e}")

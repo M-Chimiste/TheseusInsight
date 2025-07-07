@@ -1641,6 +1641,7 @@ class TaskManager:
             
             # Override arxiv categories if provided
             if arxiv_categories is not None:
+                print(f"[DEBUG] Task handler received arxiv_categories: {arxiv_categories}")
                 if 'arxiv_search_categories' not in orchestration_config:
                     orchestration_config['arxiv_search_categories'] = {}
                 
@@ -1648,14 +1649,16 @@ class TaskManager:
                 if arxiv_categories and arxiv_categories[0] == 'ALL':
                     orchestration_config['arxiv_search_categories']['filter_categories'] = None
                     orchestration_config['arxiv_search_categories']['main_category'] = None
+                    print("[DEBUG] Setting categories to None for ALL papers")
                 elif len(arxiv_categories) == 0:
                     # Empty array - use defaults (shouldn't happen with new UI)
-                    pass
+                    print("[DEBUG] Empty array - using defaults")
                 else:
                     orchestration_config['arxiv_search_categories']['filter_categories'] = arxiv_categories
                     # If main category is provided, use the prefix
                     main_cat = arxiv_categories[0].split('.')[0]
                     orchestration_config['arxiv_search_categories']['main_category'] = main_cat
+                    print(f"[DEBUG] Setting specific categories: {arxiv_categories}")
             
             # Run embedding-only pipeline
             await self.update_task_status(

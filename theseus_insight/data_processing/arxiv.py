@@ -23,8 +23,8 @@ class ArxivDataProcessor:
     def __init__(self,
                 start_date: str | datetime | None = None,
                 end_date: str | datetime | None = None,
-                category: str = "cs",
-                subcategories: list[str] = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
+                category: str | None = "cs",
+                subcategories: list[str] | None = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
                 num_days: int|None = 7,
                 max_results: int|None = None
                 ):
@@ -90,7 +90,10 @@ class ArxivDataProcessor:
         # --- End: Sanity check and swap if needed ---
         
         print(f"Start date: {start_date}, End date: {end_date}")
-        print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+        if self.category is None and self.subcategories is None:
+            print("Category: ALL (no filtering)")
+        else:
+            print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
         with UnifiedArxivHarvester(
             category=self.category,
@@ -106,7 +109,10 @@ class ArxivDataProcessor:
             # Handle case where no records were retrieved
             if data_df.empty or len(records) == 0:
                 print(f"No records found for date range {start_date} to {end_date}")
-                print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+                if self.category is None and self.subcategories is None:
+                    print("Category: ALL (no filtering)")
+                else:
+                    print(f"Category: {self.category}, Subcategories: {self.subcategories}")
                 
                 # Create an empty DataFrame with the expected structure for downstream processing
                 empty_df = pd.DataFrame(columns=[

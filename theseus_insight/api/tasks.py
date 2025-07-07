@@ -1596,6 +1596,7 @@ class TaskManager:
             end_date = config.get("end_date")
             batch_size = config.get("batch_size", 100)
             skip_existing = config.get("skip_existing", True)
+            arxiv_categories = config.get("arxiv_categories", None)
             
             await self.update_task_status(
                 task_id,
@@ -1637,6 +1638,24 @@ class TaskManager:
             # Get orchestration config
             orchestration_json = SettingsRepository.get("orchestration")
             orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            
+            # Override arxiv categories if provided
+            if arxiv_categories is not None:
+                if 'arxiv_search_categories' not in orchestration_config:
+                    orchestration_config['arxiv_search_categories'] = {}
+                
+                # Check for special "ALL" flag
+                if arxiv_categories and arxiv_categories[0] == 'ALL':
+                    orchestration_config['arxiv_search_categories']['filter_categories'] = None
+                    orchestration_config['arxiv_search_categories']['main_category'] = None
+                elif len(arxiv_categories) == 0:
+                    # Empty array - use defaults (shouldn't happen with new UI)
+                    pass
+                else:
+                    orchestration_config['arxiv_search_categories']['filter_categories'] = arxiv_categories
+                    # If main category is provided, use the prefix
+                    main_cat = arxiv_categories[0].split('.')[0]
+                    orchestration_config['arxiv_search_categories']['main_category'] = main_cat
             
             # Run embedding-only pipeline
             await self.update_task_status(

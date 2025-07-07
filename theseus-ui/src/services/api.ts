@@ -254,6 +254,14 @@ export interface TagSearchResponse {
   exact_match: boolean;
 }
 
+export interface BulkEmbedRequest {
+  start_date: string;
+  end_date: string;
+  batch_size?: number;
+  skip_existing?: boolean;
+  arxiv_categories?: string[];
+}
+
 export interface BulkJudgeRunRequest {
   profile_ids?: number[];
   profile_tags?: string[];
@@ -317,7 +325,7 @@ export const profileApi = {
   runProfileAwareIngest: (request: ProfileAwareIngestRequest) => api.post<ProfileAwareIngestResponse>('/papers/profile-aware-ingest', request),
   
   // Bulk Embedding
-  runBulkEmbed: (request: any) => api.post('/papers/bulk-embed', request),
+  runBulkEmbed: (request: BulkEmbedRequest) => api.post('/papers/bulk-embed', request),
   checkExistingBulkData: (params: { start_date: string; end_date: string }) => api.get('/papers/check-existing-bulk-data', { params }),
 };
 

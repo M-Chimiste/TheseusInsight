@@ -1728,6 +1728,16 @@ Theseus Insight Team
                 category = arxiv_config.get('main_category', 'cs')
                 subcategories = arxiv_config.get('filter_categories', ['cs.ai', 'cs.cl', 'cs.lg', 'cs.ir', 'cs.ma', 'cs.cv'])
                 
+                # If categories are explicitly set to None, download all papers
+                if 'filter_categories' in arxiv_config and arxiv_config['filter_categories'] is None:
+                    category = None
+                    subcategories = None
+                    if self.verbose:
+                        print("📋 Downloading ALL ArXiv categories (no filtering)")
+                else:
+                    if self.verbose:
+                        print(f"📋 Category: {category}, Subcategories: {subcategories}")
+                
                 process_data = ArxivDataProcessor(
                     start_date=self.start_date, 
                     end_date=self.end_date,

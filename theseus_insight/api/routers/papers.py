@@ -751,6 +751,7 @@ async def start_bulk_embed(request: dict):
         end_date = request.get('end_date')
         batch_size = request.get('batch_size', 100)
         skip_existing = request.get('skip_existing', True)
+        arxiv_categories = request.get('arxiv_categories', None)
         
         # Validate dates
         if not start_date or not end_date:
@@ -765,7 +766,8 @@ async def start_bulk_embed(request: dict):
             "end_date": end_date,
             "batch_size": batch_size,
             "skip_existing": skip_existing,
-            "embedding_only": True  # Flag to indicate embedding-only mode
+            "embedding_only": True,  # Flag to indicate embedding-only mode
+            "arxiv_categories": arxiv_categories  # Optional arxiv category filter
         }
         
         # Create task in database

@@ -12,7 +12,6 @@ import {
   Menu,
   MenuItem,
   useTheme,
-  alpha,
   Collapse,
 } from '@mui/material';
 import {
@@ -91,15 +90,15 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
       boxShadow: theme.shadows[1],
       transition: 'all 0.3s ease-in-out',
       cursor: 'pointer',
+      position: 'relative' as const
     };
 
     if (data.is_seed) {
       return {
         ...baseStyles,
         border: `3px solid ${heatMapColor}`,
-        backgroundColor: alpha(heatMapColor, 0.1),
+        backgroundColor: theme.palette.background.paper,
         boxShadow: theme.shadows[3],
-        zIndex: 10,
       };
     }
 
@@ -107,22 +106,20 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
       return {
         ...baseStyles,
         border: `2px solid ${heatMapColor}`,
-        backgroundColor: alpha(heatMapColor, 0.15),
+        backgroundColor: theme.palette.background.paper,
         boxShadow: theme.shadows[2],
-        zIndex: 5,
       };
     }
 
     return {
       ...baseStyles,
       border: `2px solid ${heatMapColor}`,
-      backgroundColor: alpha(heatMapColor, 0.08),
-      zIndex: 3,
+      backgroundColor: theme.palette.background.paper,
     };
   };
 
   return (
-    <>
+    <div style={{ position: 'relative', zIndex: 1000, opacity: 1 }}>
       {/* Connection handles for all sides */}
       <Handle
         type="target"
@@ -377,7 +374,7 @@ const MindMapNode: React.FC<MindMapNodeProps> = memo(({ data, selected }) => {
           </MenuItem>
         )}
       </Menu>
-    </>
+    </div>
   );
 });
 

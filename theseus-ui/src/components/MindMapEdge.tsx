@@ -66,7 +66,6 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
           strokeWidth,
           opacity,
           strokeDasharray: selected ? '5,5' : 'none',
-          zIndex: 1,
         }}
       />
       
@@ -77,7 +76,7 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
             pointerEvents: 'all',
-            zIndex: 2,
+            zIndex: 5, // Keep edge labels below nodes but above edge lines
           }}
         >
           <Chip
@@ -90,6 +89,8 @@ const MindMapEdge: React.FC<MindMapEdgeProps> = memo(({
               backgroundColor: edgeColor,
               color: theme.palette.getContrastText(edgeColor),
               opacity: selected ? 1 : 0.8,
+              position: 'relative',
+              zIndex: 5,
               '&:hover': {
                 opacity: 1,
               },

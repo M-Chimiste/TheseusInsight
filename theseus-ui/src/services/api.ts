@@ -315,6 +315,10 @@ export const profileApi = {
   
   // Profile-Aware Ingestion
   runProfileAwareIngest: (request: ProfileAwareIngestRequest) => api.post<ProfileAwareIngestResponse>('/papers/profile-aware-ingest', request),
+  
+  // Bulk Embedding
+  runBulkEmbed: (request: any) => api.post('/papers/bulk-embed', request),
+  checkExistingBulkData: (params: { start_date: string; end_date: string }) => api.get('/papers/check-existing-bulk-data', { params }),
 };
 
 // Runs API

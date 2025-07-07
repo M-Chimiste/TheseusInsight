@@ -1508,11 +1508,17 @@ Theseus Insight Team
         without applying LLM judge filtering. Papers can be scored later per profile.
         """
         try:
+            # Force Kaggle download for bulk operations to handle large date ranges efficiently
+            import os
+            old_force_kaggle = os.environ.get('FORCE_KAGGLE', '')
+            os.environ['FORCE_KAGGLE'] = 'true'
+            
             if self.verbose:
                 print("🚀 STARTING PROFILES-AWARE PAPER INGESTION")
                 print("="*60)
                 print("Note: This pipeline stores ALL papers without LLM judge filtering")
                 print("Papers will be scored later on a per-profile basis")
+                print("Using Kaggle dataset for bulk download (4GB file)")
                 print("="*60)
             
             # -----------
@@ -1674,3 +1680,245 @@ Theseus Insight Team
         except Exception as e:
             self._log_error(500, e)
             raise
+        finally:
+            # Restore original FORCE_KAGGLE setting
+            if old_force_kaggle is not None:
+                os.environ['FORCE_KAGGLE'] = old_force_kaggle
+            else:
+                os.environ.pop('FORCE_KAGGLE', None)
+
+    def run_embedding_only_pipeline(self, progress_callback: Callable[[str, float, str], None]|None = None):
+        """
+        Run embedding-only pipeline for bulk data preparation.
+        
+        This method downloads papers, embeds them, and stores them all in the database
+        without any profile-specific filtering or scoring. This is useful for bulk
+        data preparation where scoring will be done later.
+        """
+        try:
+            # Force Kaggle download for bulk operations to handle large date ranges efficiently
+            import os
+            old_force_kaggle = os.environ.get('FORCE_KAGGLE', '')
+            os.environ['FORCE_KAGGLE'] = 'true'
+            
+            if self.verbose:
+                print("🚀 STARTING BULK EMBEDDING PIPELINE")
+                print("="*60)
+                print("Note: This pipeline stores ALL papers with embeddings")
+                print("No profile filtering or LLM scoring will be performed")
+                print("Using Kaggle dataset for bulk download (4GB file)")
+                print("="*60)
+            
+            # -----------
+            # Stage 1: Download Papers
+            # -----------
+            if progress_callback:
+                progress_callback("download", 0, "Starting paper download")
+                
+            data_df = self._load_checkpoint('papers_downloaded')
+            if data_df is None:
+                if self.verbose:
+                    print("📥 STAGE 1: DOWNLOADING PAPERS")
+                    print("="*40)
+                
+                # Get ArXiv categories from orchestration config
+                arxiv_config = self.orchestration_config.get('arxiv_search_categories', {})
+                category = arxiv_config.get('main_category', 'cs')
+                subcategories = arxiv_config.get('filter_categories', ['cs.ai', 'cs.cl', 'cs.lg', 'cs.ir', 'cs.ma', 'cs.cv'])
+                
+                process_data = ArxivDataProcessor(
+                    start_date=self.start_date, 
+                    end_date=self.end_date,
+                    category=category,
+                    subcategories=subcategories
+                )
+                data_df = process_data.download_and_process_data()
+                
+                # Check if no papers were found and handle gracefully
+                if data_df.empty:
+                    if self.verbose:
+                        print("❌ No papers found for the specified date range")
+                    return {
+                        'saved_count': 0,
+                        'embedded_count': 0,
+                        'skipped_count': 0,
+                        'total_processed': 0
+                    }
+                
+                self._save_checkpoint('papers_downloaded', data_df)
+                if self.verbose:
+                    print(f"✅ Downloaded {len(data_df)} papers from ArXiv")
+            else:
+                if self.verbose:
+                    print(f"📥 Using cached papers: {len(data_df)} papers")
+
+            if progress_callback:
+                progress_callback("download", 25, f"Downloaded {len(data_df)} papers")
+
+            # -----------
+            # Stage 2: Check Existing & Filter
+            # -----------
+            if progress_callback:
+                progress_callback("filter", 26, "Checking for existing papers")
+                
+            # Filter out papers with missing abstracts
+            original_count = len(data_df)
+            abstract_mask = data_df['abstract'].notna() & (data_df['abstract'].str.strip() != '')
+            data_df = data_df[abstract_mask].reset_index(drop=True)
+            
+            if self.verbose and original_count != len(data_df):
+                filtered_out = original_count - len(data_df)
+                print(f"⚠️ Filtered out {filtered_out} papers with missing/empty abstracts")
+            
+            if data_df.empty:
+                if self.verbose:
+                    print("❌ No papers with valid abstracts to process")
+                return {
+                    'saved_count': 0,
+                    'embedded_count': 0,
+                    'skipped_count': original_count,
+                    'total_processed': original_count
+                }
+            
+            # Check for existing papers if skip_existing is enabled
+            papers_to_embed = data_df
+            skipped_count = 0
+            
+            if getattr(self, 'skip_existing', True):
+                if self.verbose:
+                    print("🔍 Checking for existing papers in database...")
+                
+                new_mask = []
+                already_embedded_mask = []
+                
+                for _, row in tqdm(data_df.iterrows(), total=len(data_df), 
+                                  desc="Checking existing papers", disable=not self.verbose):
+                    existing_paper = PaperRepository.get_by_url(row["pdf_url"])
+                    if existing_paper:
+                        new_mask.append(False)
+                        # Check if paper already has embedding
+                        already_embedded_mask.append(existing_paper.get('embedding_model') is not None)
+                    else:
+                        new_mask.append(True)
+                        already_embedded_mask.append(False)
+                
+                # Papers that need to be embedded (new papers + existing without embeddings)
+                needs_embedding_mask = [new_mask[i] or not already_embedded_mask[i] for i in range(len(data_df))]
+                papers_to_embed = data_df[needs_embedding_mask].reset_index(drop=True)
+                skipped_count = sum(already_embedded_mask)
+                
+                if self.verbose:
+                    new_count = sum(new_mask)
+                    existing_without_embedding = sum(not new and not embedded for new, embedded in zip(new_mask, already_embedded_mask))
+                    print(f"📝 Found {new_count} new papers")
+                    print(f"📝 Found {existing_without_embedding} existing papers without embeddings")
+                    print(f"📝 Skipping {skipped_count} papers that already have embeddings")
+
+            if progress_callback:
+                progress_callback("filter", 35, f"Filtered to {len(papers_to_embed)} papers needing embeddings")
+
+            # -----------
+            # Stage 3: Embed Papers
+            # -----------
+            embedded_count = 0
+            if len(papers_to_embed) > 0:
+                if progress_callback:
+                    progress_callback("embed", 36, "Starting paper embedding")
+                    
+                embedded_df = self._load_checkpoint('papers_embedded')
+                if embedded_df is None:
+                    if self.verbose:
+                        print(f"\n🧠 STAGE 3: EMBEDDING {len(papers_to_embed)} PAPERS")
+                        print("="*40)
+                    
+                    # Process in batches
+                    batch_size = getattr(self, 'batch_size', 100)
+                    all_embeddings = []
+                    
+                    for i in tqdm(range(0, len(papers_to_embed), batch_size), 
+                                 desc="Embedding batches", disable=not self.verbose):
+                        batch = papers_to_embed.iloc[i:i+batch_size]
+                        abstracts = batch['abstract'].tolist()
+                        
+                        # Embed batch
+                        embeddings = self.embedding_model.invoke(abstracts)
+                        all_embeddings.extend(embeddings)
+                        
+                        # Update progress
+                        if progress_callback:
+                            embed_progress = 36 + (i / len(papers_to_embed)) * 40
+                            progress_callback("embed", embed_progress, f"Embedded {min(i+batch_size, len(papers_to_embed))}/{len(papers_to_embed)} papers")
+                    
+                    # Add embeddings to dataframe
+                    papers_to_embed['abstract_embedding'] = all_embeddings
+                    papers_to_embed['cosine_similarity'] = [0.0] * len(papers_to_embed)  # No similarity calculation needed
+                    
+                    embedded_df = papers_to_embed
+                    embedded_count = len(embedded_df)
+                    self._save_checkpoint('papers_embedded', embedded_df)
+                    
+                    if self.verbose:
+                        print(f"✅ Embedded {embedded_count} papers")
+                else:
+                    embedded_count = len(embedded_df)
+                    if self.verbose:
+                        print(f"🧠 Using cached embeddings: {embedded_count} papers")
+            else:
+                embedded_df = pd.DataFrame()
+                if self.verbose:
+                    print("ℹ️ No papers need embedding")
+
+            if progress_callback:
+                progress_callback("embed", 76, "Embedding complete")
+
+            # -----------
+            # Stage 4: Store Papers
+            # -----------
+            saved_count = 0
+            if len(embedded_df) > 0:
+                if progress_callback:
+                    progress_callback("store", 77, "Storing papers to database")
+                    
+                storage_result = self._load_checkpoint('papers_stored')
+                if storage_result is None:
+                    storage_result = self.store_papers_without_scoring(embedded_df)
+                    self._save_checkpoint('papers_stored', storage_result)
+                    saved_count = storage_result['saved_count']
+                else:
+                    saved_count = storage_result['saved_count']
+                    if self.verbose:
+                        print(f"💾 Using cached storage result: {storage_result}")
+            
+            if progress_callback:
+                progress_callback("store", 100, "Storage complete")
+
+            # Clean up checkpoints after successful completion
+            self._cleanup_checkpoints()
+            
+            total_result = {
+                'saved_count': saved_count,
+                'embedded_count': embedded_count,
+                'skipped_count': skipped_count,
+                'total_processed': len(data_df)
+            }
+            
+            if self.verbose:
+                print("\n🎉 BULK EMBEDDING PIPELINE COMPLETE!")
+                print("="*60)
+                print(f"✅ Total papers processed: {total_result['total_processed']}")
+                print(f"🧠 Papers embedded: {total_result['embedded_count']}")
+                print(f"💾 New papers saved: {total_result['saved_count']}")
+                print(f"⏭️  Papers skipped (already embedded): {total_result['skipped_count']}")
+                print("📝 Papers are ready for profile-specific scoring")
+                
+            return total_result
+            
+        except Exception as e:
+            self._log_error(500, e)
+            raise
+        finally:
+            # Restore original FORCE_KAGGLE setting
+            if old_force_kaggle is not None:
+                os.environ['FORCE_KAGGLE'] = old_force_kaggle
+            else:
+                os.environ.pop('FORCE_KAGGLE', None)

@@ -727,4 +727,112 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start profile-aware ingestion: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to start profile-aware ingestion: {str(e)}")
+
+@router.post("/bulk-embed")
+async def start_bulk_embed(request: dict):
+    """
+    Start a bulk paper embedding task without profile scoring.
+    
+    This endpoint initiates a paper embedding process that:
+    1. Downloads papers from ArXiv based on date range
+    2. Embeds all paper abstracts without filtering
+    3. Stores embedded papers in the database
+    4. Does NOT perform any profile-specific scoring
+    
+    The process runs asynchronously and returns a task ID for monitoring progress.
+    """
+    try:
+        import uuid
+        from ..tasks import task_manager
+        
+        # Extract request parameters
+        start_date = request.get('start_date')
+        end_date = request.get('end_date')
+        batch_size = request.get('batch_size', 100)
+        skip_existing = request.get('skip_existing', True)
+        
+        # Validate dates
+        if not start_date or not end_date:
+            raise HTTPException(status_code=400, detail="Both start_date and end_date are required")
+        
+        # Create task ID and configuration
+        task_id = str(uuid.uuid4())
+        
+        # Prepare task configuration
+        config = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "batch_size": batch_size,
+            "skip_existing": skip_existing,
+            "embedding_only": True  # Flag to indicate embedding-only mode
+        }
+        
+        # Create task in database
+        await task_manager.create_task(task_id, "bulk_embed", config)
+        
+        # Enqueue task for processing
+        await task_manager.enqueue_task(task_manager.run_bulk_embed_task, task_id)
+        
+        # Estimate papers
+        from datetime import datetime
+        start = datetime.strptime(start_date, '%Y-%m-%d')
+        end = datetime.strptime(end_date, '%Y-%m-%d')
+        days = (end - start).days + 1
+        estimated_papers = days * 250
+        
+        return {
+            "task_id": task_id,
+            "message": f"Bulk embedding task started successfully for {days} days.",
+            "estimated_papers": estimated_papers,
+            "status": "started"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start bulk embedding: {str(e)}")
+
+@router.get("/check-existing-bulk-data")
+async def check_existing_bulk_data(start_date: str, end_date: str):
+    """
+    Check if bulk data already exists for the specified date range.
+    
+    Returns information about:
+    - Total papers in the date range
+    - How many already have embeddings
+    - How many are missing embeddings
+    """
+    try:
+        from ...data_access.papers import PaperRepository
+        from datetime import datetime
+        
+        # Validate dates
+        try:
+            start = datetime.strptime(start_date, '%Y-%m-%d')
+            end = datetime.strptime(end_date, '%Y-%m-%d')
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query papers in date range
+        papers = PaperRepository.get_papers_in_date_range(start_date, end_date)
+        
+        # Count papers with and without embeddings
+        total_papers = len(papers)
+        # Check if papers have embeddings by looking for non-null embedding_model
+        embedded_count = sum(1 for p in papers if p.get('embedding_model') is not None)
+        missing_embeddings = total_papers - embedded_count
+        
+        return {
+            "paper_count": total_papers,
+            "embedded_count": embedded_count,
+            "missing_embeddings": missing_embeddings,
+            "start_date": start_date,
+            "end_date": end_date,
+            "has_all_embeddings": missing_embeddings == 0
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check existing data: {str(e)}") 

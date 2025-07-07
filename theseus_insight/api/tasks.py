@@ -1467,7 +1467,8 @@ class TaskManager:
                 verbose=True,
                 orchestration_config=orchestration_config,
                 task_id=task_id,
-                send_error_notifications=send_error_notifications
+                send_error_notifications=send_error_notifications,
+                generate_email=False  # Bulk operations should not send newsletters
             )
             
             # Run the profiles pipeline (stores all papers without scoring)
@@ -1569,6 +1570,142 @@ class TaskManager:
                 task_id,
                 TaskStatus.FAILED,
                 f"Profile-aware ingestion task failed: {str(e)}",
+                error=str(e),
+                current_step="task_failed",
+            )
+            raise
+
+    async def run_bulk_embed_task(self, task_id: str):
+        """
+        Run a bulk embedding task that downloads and embeds papers without profile scoring.
+        
+        This task:
+        1. Downloads papers from ArXiv based on date range
+        2. Embeds all paper abstracts without filtering
+        3. Stores embedded papers in the database
+        4. Does NOT perform any profile-specific scoring
+        """
+        try:
+            # Get task configuration
+            task = TaskRepository.get_task(task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            config = task.get("config", {})
+            
+            start_date = config.get("start_date")
+            end_date = config.get("end_date")
+            batch_size = config.get("batch_size", 100)
+            skip_existing = config.get("skip_existing", True)
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Starting bulk embedding from {start_date} to {end_date}",
+                progress=5,
+                current_step="initialization",
+            )
+            
+            # Check for existing papers if skip_existing is enabled
+            if skip_existing:
+                from ..data_access.papers import PaperRepository
+                existing_papers = PaperRepository.get_papers_in_date_range(start_date, end_date)
+                existing_count = len(existing_papers)
+                embedded_count = sum(1 for p in existing_papers if p.get('embedding_model') is not None)
+                
+                await self.update_task_status(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    f"Found {existing_count} existing papers ({embedded_count} with embeddings)",
+                    progress=10,
+                    current_step="checking_existing",
+                )
+            
+            # Create progress callback for pipeline
+            def pipeline_progress_callback(stage: str, progress: float, message: str = ""):
+                # Convert pipeline progress to task progress (10% - 90%)
+                task_progress = 10 + (progress * 0.8)
+                
+                # Use sync version of update_task_status to avoid event loop issues
+                self.update_task_status_sync(
+                    task_id,
+                    TaskStatus.PROCESSING,
+                    f"Embedding: {stage} - {message}",
+                    progress=task_progress,
+                    current_step=f"embedding_{stage}",
+                )
+            
+            # Get orchestration config
+            orchestration_json = SettingsRepository.get("orchestration")
+            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            
+            # Run embedding-only pipeline
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                "Starting paper download and embedding",
+                progress=15,
+                current_step="embedding_start",
+            )
+            
+            theseus_insight = TheseusInsight(
+                start_date_override=start_date,
+                end_date_override=end_date,
+                db_saving=True,
+                verbose=True,
+                orchestration_config=orchestration_config,
+                task_id=task_id,
+                generate_email=False  # Bulk operations should not send newsletters
+            )
+            
+            # Set additional attributes after instantiation
+            theseus_insight.batch_size = batch_size
+            theseus_insight.skip_existing = skip_existing
+            
+            # Run the embedding-only pipeline
+            result = theseus_insight.run_embedding_only_pipeline(
+                progress_callback=pipeline_progress_callback
+            )
+            
+            papers_saved = result.get('saved_count', 0)
+            papers_skipped = result.get('skipped_count', 0)
+            papers_embedded = result.get('embedded_count', 0)
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Embedding completed: {papers_embedded} papers embedded, {papers_saved} new papers saved",
+                progress=95,
+                current_step="finalization",
+            )
+            
+            # Prepare final result
+            final_result = {
+                "papers_saved": papers_saved,
+                "papers_embedded": papers_embedded,
+                "papers_skipped": papers_skipped,
+                "start_date": start_date,
+                "end_date": end_date,
+                "batch_size": batch_size,
+                "skip_existing": skip_existing,
+                "status": "success"
+            }
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                f"Bulk embedding completed successfully. {papers_embedded} papers embedded.",
+                result=final_result,
+                progress=100,
+                current_step="completed",
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await self.update_task_status(
+                task_id,
+                TaskStatus.FAILED,
+                f"Bulk embedding task failed: {str(e)}",
                 error=str(e),
                 current_step="task_failed",
             )

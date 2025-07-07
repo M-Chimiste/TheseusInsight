@@ -73,6 +73,13 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
 
   const selectedProfiles = getSelectedProfiles();
 
+  // Sync context state with parent component callbacks
+  React.useEffect(() => {
+    if (onProfileChange) {
+      onProfileChange(selectedProfileIds);
+    }
+  }, [selectedProfileIds, onProfileChange]);
+
   // Calculate combined stats for selected profiles
   const combinedStats = {
     totalPapers: selectedProfiles.reduce((sum, profile) => sum + (profile.total_papers || 0), 0),

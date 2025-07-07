@@ -13,20 +13,26 @@ import {
   Alert,
   Tab,
   Tabs,
+  List,
+  ListItem,
+  ListItemText,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import {
   PlayArrow as PlayIcon,
+  CloudDownload as DownloadIcon,
+  CheckCircle as CheckIcon,
 } from '@mui/icons-material';
 
 import {
   profileApi,
-  type BulkJudgeRunRequest,
   type ProfileAwareIngestRequest,
 } from '../services/api';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import ProfileSelector from '../components/ProfileSelector';
 
 interface BulkOperationsProps {}
@@ -34,78 +40,100 @@ interface BulkOperationsProps {}
 const BulkOperations: React.FC<BulkOperationsProps> = () => {
   const [activeTab, setActiveTab] = useState(0);
   
-  // Judge Run State
-  const [selectedJudgeProfiles, setSelectedJudgeProfiles] = useState<number[]>([]);
-  const [selectedJudgeTags, setSelectedJudgeTags] = useState<string[]>([]);
-  const [judgeStartDate, setJudgeStartDate] = useState<Date | null>(null);
-  const [judgeEndDate, setJudgeEndDate] = useState<Date | null>(null);
-  const [cosineThreshold, setCosineThreshold] = useState<number>(0.7);
-  const [overwriteExisting] = useState(false);
-  const [batchSize, setBatchSize] = useState<number>(100);
-  
-  // Ingestion State
+  // Profile-Aware Full Ingestion State
   const [selectedIngestProfiles, setSelectedIngestProfiles] = useState<number[]>([]);
   const [selectedIngestTags, setSelectedIngestTags] = useState<string[]>([]);
   const [ingestStartDate, setIngestStartDate] = useState<Date | null>(null);
   const [ingestEndDate, setIngestEndDate] = useState<Date | null>(null);
-  const [scoreAllProfiles] = useState(false);
-  const [overwriteExistingIngest] = useState(false);
   const [cosineThresholdIngest, setCosineThresholdIngest] = useState<number>(0.7);
   const [batchSizeIngest, setBatchSizeIngest] = useState<number>(100);
+  const [checkExistingData, setCheckExistingData] = useState<boolean>(true);
+  
+  // Bulk Embedding Only State
+  const [embedStartDate, setEmbedStartDate] = useState<Date | null>(null);
+  const [embedEndDate, setEmbedEndDate] = useState<Date | null>(null);
+  const [embedBatchSize, setEmbedBatchSize] = useState<number>(100);
+  const [skipExistingEmbeddings, setSkipExistingEmbeddings] = useState<boolean>(true);
 
-  // Mutations
-  const bulkJudgeMutation = useMutation({
-    mutationFn: (request: BulkJudgeRunRequest) => profileApi.runBulkJudge(request),
-    onSuccess: (response) => {
-      console.log('Bulk judge run started:', response.data);
+  // Status State
+  const [ingestionStatus, setIngestionStatus] = useState<string>('');
+  const [embeddingStatus, setEmbeddingStatus] = useState<string>('');
+
+  // Query to check existing data
+  const existingDataQuery = useQuery({
+    queryKey: ['existing-bulk-data', ingestStartDate, ingestEndDate],
+    queryFn: async () => {
+      if (!ingestStartDate || !ingestEndDate) return null;
+      // This endpoint needs to be implemented in the backend
+      const response = await profileApi.checkExistingBulkData({
+        start_date: ingestStartDate.toISOString().split('T')[0],
+        end_date: ingestEndDate.toISOString().split('T')[0],
+      });
+      return response.data;
     },
-    onError: (error) => {
-      console.error('Failed to start bulk judge run:', error);
-    },
+    enabled: checkExistingData && !!ingestStartDate && !!ingestEndDate,
   });
 
-  const ingestionMutation = useMutation({
-    mutationFn: (request: ProfileAwareIngestRequest) => profileApi.runProfileAwareIngest(request),
+  // Mutations
+  const fullIngestMutation = useMutation({
+    mutationFn: async (request: ProfileAwareIngestRequest) => {
+      setIngestionStatus('Starting profile-aware ingestion...');
+      return profileApi.runProfileAwareIngest(request);
+    },
     onSuccess: (response) => {
+      setIngestionStatus(`Ingestion started successfully. Task ID: ${response.data.task_id}`);
       console.log('Profile-aware ingestion started:', response.data);
     },
     onError: (error) => {
+      setIngestionStatus('Failed to start ingestion');
       console.error('Failed to start profile-aware ingestion:', error);
     },
   });
 
-  // Judge Run Handlers
-  const handleJudgeRun = () => {
-    const request: BulkJudgeRunRequest = {
-      profile_ids: selectedJudgeProfiles.length > 0 ? selectedJudgeProfiles : undefined,
-      profile_tags: selectedJudgeTags.length > 0 ? selectedJudgeTags : undefined,
-      start_date: judgeStartDate?.toISOString().split('T')[0],
-      end_date: judgeEndDate?.toISOString().split('T')[0],
-      overwrite_existing: overwriteExisting,
-      cosine_threshold: cosineThreshold,
-      batch_size: batchSize,
-    };
-    bulkJudgeMutation.mutate(request);
-  };
+  const bulkEmbedMutation = useMutation({
+    mutationFn: async (request: any) => {
+      setEmbeddingStatus('Starting bulk embedding...');
+      // This endpoint needs to be implemented
+      return profileApi.runBulkEmbed(request);
+    },
+    onSuccess: (response) => {
+      setEmbeddingStatus(`Embedding started successfully. Task ID: ${response.data.task_id}`);
+      console.log('Bulk embedding started:', response.data);
+    },
+    onError: (error) => {
+      setEmbeddingStatus('Failed to start embedding');
+      console.error('Failed to start bulk embedding:', error);
+    },
+  });
 
-  const canRunJudge = selectedJudgeProfiles.length > 0 || selectedJudgeTags.length > 0;
-
-  // Ingestion Handlers
-  const handleIngestionRun = () => {
+  // Handlers
+  const handleFullIngestionRun = () => {
     const request: ProfileAwareIngestRequest = {
       profile_ids: selectedIngestProfiles.length > 0 ? selectedIngestProfiles : undefined,
       profile_tags: selectedIngestTags.length > 0 ? selectedIngestTags : undefined,
       start_date: ingestStartDate?.toISOString().split('T')[0],
       end_date: ingestEndDate?.toISOString().split('T')[0],
-      score_all_profiles: scoreAllProfiles,
-      overwrite_existing: overwriteExistingIngest,
       cosine_threshold: cosineThresholdIngest,
       batch_size: batchSizeIngest,
+      score_all_profiles: false,
+      overwrite_existing: !checkExistingData,
     };
-    ingestionMutation.mutate(request);
+    fullIngestMutation.mutate(request);
   };
 
-  const canRunIngest = selectedIngestProfiles.length > 0 || selectedIngestTags.length > 0;
+  const handleBulkEmbedRun = () => {
+    const request = {
+      start_date: embedStartDate?.toISOString().split('T')[0],
+      end_date: embedEndDate?.toISOString().split('T')[0],
+      batch_size: embedBatchSize,
+      skip_existing: skipExistingEmbeddings,
+    };
+    bulkEmbedMutation.mutate(request);
+  };
+
+  const canRunFullIngest = (selectedIngestProfiles.length > 0 || selectedIngestTags.length > 0) 
+    && ingestStartDate && ingestEndDate;
+  const canRunBulkEmbed = embedStartDate && embedEndDate;
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
@@ -119,126 +147,46 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
         </Typography>
         
         <Typography variant="body1" color="text.secondary" paragraph>
-          Execute bulk operations across multiple profiles. Select profiles directly or use tags to target groups of profiles.
+          Manage bulk data ingestion and processing operations for your research profiles.
         </Typography>
 
         <Tabs value={activeTab} onChange={handleTabChange} sx={{ mb: 3 }}>
-          <Tab label="Bulk Judge Run" />
-          <Tab label="Profile-Aware Ingestion" />
+          <Tab label="Profile-Aware Full Ingestion" />
+          <Tab label="Bulk Embedding Only" />
         </Tabs>
 
         {activeTab === 0 && (
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                Bulk Judge Run
+                Profile-Aware Full Ingestion
               </Typography>
               
-              <Typography variant="body2" color="text.secondary" paragraph>
-                Run LLM judge scoring across multiple profiles for a specified date range.
-              </Typography>
-
-                             <Grid container spacing={3}>
-                 <Grid size={{ xs: 12 }}>
-                   <ProfileSelector
-                     onProfileChange={setSelectedJudgeProfiles}
-                     onTagChange={setSelectedJudgeTags}
-                     allowMultiple={true}
-                     showTags={true}
-                     label="Select Profiles for Judge Run"
-                   />
-                 </Grid>
-
-                 <Grid size={{ xs: 12, md: 6 }}>
-                   <DatePicker
-                     label="Start Date"
-                     value={judgeStartDate}
-                     onChange={(newValue) => setJudgeStartDate(newValue)}
-                     slotProps={{
-                       textField: {
-                         fullWidth: true,
-                       },
-                     }}
-                   />
-                 </Grid>
-
-                 <Grid size={{ xs: 12, md: 6 }}>
-                   <DatePicker
-                     label="End Date"
-                     value={judgeEndDate}
-                     onChange={(newValue) => setJudgeEndDate(newValue)}
-                     slotProps={{
-                       textField: {
-                         fullWidth: true,
-                       },
-                     }}
-                   />
-                 </Grid>
-
-                 <Grid size={{ xs: 12, md: 6 }}>
-                   <TextField
-                     label="Cosine Threshold"
-                     type="number"
-                     value={cosineThreshold}
-                     onChange={(e) => setCosineThreshold(parseFloat(e.target.value))}
-                     inputProps={{ min: 0, max: 1, step: 0.1 }}
-                     fullWidth
-                   />
-                   <TextField
-                     label="Batch Size"
-                     type="number"
-                     value={batchSize}
-                     onChange={(e) => setBatchSize(parseInt(e.target.value))}
-                     inputProps={{ min: 1, max: 1000 }}
-                     fullWidth
-                     sx={{ mt: 2 }}
-                   />
-                 </Grid>
-
-                 <Grid size={{ xs: 12, md: 6 }}>
-                   <Alert severity="info">
-                     <Typography variant="body2">
-                       Selected profiles: {selectedJudgeProfiles.length}
-                       <br />
-                       Selected tags: {selectedJudgeTags.length}
-                     </Typography>
-                   </Alert>
-                 </Grid>
-
-                 <Grid size={{ xs: 12 }}>
-                   <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                     {selectedJudgeTags.map((tag) => (
-                       <Chip key={tag} label={tag} variant="outlined" />
-                     ))}
-                   </Box>
-                 </Grid>
-               </Grid>
-            </CardContent>
-            
-            <CardActions>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={handleJudgeRun}
-                disabled={!canRunJudge || bulkJudgeMutation.isPending}
-                startIcon={bulkJudgeMutation.isPending ? <CircularProgress size={20} /> : <PlayIcon />}
-              >
-                {bulkJudgeMutation.isPending ? 'Starting...' : 'Start Bulk Judge'}
-              </Button>
-            </CardActions>
-          </Card>
-        )}
-
-        {activeTab === 1 && (
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Profile-Aware Ingestion
-              </Typography>
-              
-              <Typography variant="body2" color="text.secondary" paragraph>
-                Ingest papers and run profile-aware scoring across multiple profiles.
-              </Typography>
+              <Alert severity="info" sx={{ mb: 3 }}>
+                <Typography variant="body2">
+                  This mode performs a complete ingestion workflow:
+                  <List dense>
+                    <ListItem>
+                      <ListItemText primary="1. Downloads papers from Kaggle/ArXiv for the specified date range" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="2. Filters papers based on profile configurations" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="3. Embeds paper abstracts using the configured embedding model" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="4. Stores embedded papers in the database" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="5. Runs LLM judge scoring for selected profiles" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="6. Updates paper scores and rankings for each profile" />
+                    </ListItem>
+                  </List>
+                </Typography>
+              </Alert>
 
               <Grid container spacing={3}>
                 <Grid size={{ xs: 12 }}>
@@ -247,7 +195,7 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                     onTagChange={setSelectedIngestTags}
                     allowMultiple={true}
                     showTags={true}
-                    label="Select Profiles for Ingestion"
+                    label="Select Profiles for Full Ingestion"
                   />
                 </Grid>
 
@@ -277,6 +225,31 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                   />
                 </Grid>
 
+                <Grid size={{ xs: 12 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={checkExistingData}
+                        onChange={(e) => setCheckExistingData(e.target.checked)}
+                      />
+                    }
+                    label="Check for existing data (skip downloading if already available)"
+                  />
+                </Grid>
+
+                {existingDataQuery.data && checkExistingData && (
+                  <Grid size={{ xs: 12 }}>
+                    <Alert severity="success" icon={<CheckIcon />}>
+                      <Typography variant="body2">
+                        Found existing data: {existingDataQuery.data.paper_count} papers already available.
+                        {existingDataQuery.data.embedded_count > 0 && 
+                          ` (${existingDataQuery.data.embedded_count} already embedded)`
+                        }
+                      </Typography>
+                    </Alert>
+                  </Grid>
+                )}
+
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField
                     label="Cosine Threshold"
@@ -285,7 +258,11 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                     onChange={(e) => setCosineThresholdIngest(parseFloat(e.target.value))}
                     inputProps={{ min: 0, max: 1, step: 0.1 }}
                     fullWidth
+                    helperText="Minimum similarity score for profile matching"
                   />
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
                   <TextField
                     label="Batch Size"
                     type="number"
@@ -293,27 +270,34 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                     onChange={(e) => setBatchSizeIngest(parseInt(e.target.value))}
                     inputProps={{ min: 1, max: 1000 }}
                     fullWidth
-                    sx={{ mt: 2 }}
+                    helperText="Number of papers to process in each batch"
                   />
                 </Grid>
 
-                <Grid size={{ xs: 12, md: 6 }}>
+                <Grid size={{ xs: 12 }}>
                   <Alert severity="info">
                     <Typography variant="body2">
                       Selected profiles: {selectedIngestProfiles.length}
                       <br />
                       Selected tags: {selectedIngestTags.length}
+                      {selectedIngestTags.length > 0 && (
+                        <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                          {selectedIngestTags.map((tag) => (
+                            <Chip key={tag} label={tag} size="small" variant="outlined" />
+                          ))}
+                        </Box>
+                      )}
                     </Typography>
                   </Alert>
                 </Grid>
 
-                <Grid size={{ xs: 12 }}>
-                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                    {selectedIngestTags.map((tag) => (
-                      <Chip key={tag} label={tag} variant="outlined" />
-                    ))}
-                  </Box>
-                </Grid>
+                {ingestionStatus && (
+                  <Grid size={{ xs: 12 }}>
+                    <Alert severity={ingestionStatus.includes('Failed') ? 'error' : 'success'}>
+                      {ingestionStatus}
+                    </Alert>
+                  </Grid>
+                )}
               </Grid>
             </CardContent>
             
@@ -321,11 +305,116 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
               <Button
                 variant="contained"
                 color="primary"
-                onClick={handleIngestionRun}
-                disabled={!canRunIngest || ingestionMutation.isPending}
-                startIcon={ingestionMutation.isPending ? <CircularProgress size={20} /> : <PlayIcon />}
+                onClick={handleFullIngestionRun}
+                disabled={!canRunFullIngest || fullIngestMutation.isPending}
+                startIcon={fullIngestMutation.isPending ? <CircularProgress size={20} /> : <PlayIcon />}
               >
-                {ingestionMutation.isPending ? 'Starting...' : 'Start Ingestion'}
+                {fullIngestMutation.isPending ? 'Processing...' : 'Start Full Ingestion'}
+              </Button>
+            </CardActions>
+          </Card>
+        )}
+
+        {activeTab === 1 && (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Bulk Embedding Only
+              </Typography>
+              
+              <Alert severity="info" sx={{ mb: 3 }}>
+                <Typography variant="body2">
+                  This mode performs embedding only:
+                  <List dense>
+                    <ListItem>
+                      <ListItemText primary="1. Downloads papers from Kaggle/ArXiv for the specified date range" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="2. Embeds all paper abstracts without filtering" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="3. Stores embedded papers in the database" />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText primary="4. Papers are ready for later profile-specific judging" />
+                    </ListItem>
+                  </List>
+                  <Typography variant="body2" sx={{ mt: 1, fontWeight: 'bold' }}>
+                    Use this mode to pre-process papers for multiple profiles or future analysis.
+                  </Typography>
+                </Typography>
+              </Alert>
+
+              <Grid container spacing={3}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <DatePicker
+                    label="Start Date"
+                    value={embedStartDate}
+                    onChange={(newValue) => setEmbedStartDate(newValue)}
+                    slotProps={{
+                      textField: {
+                        fullWidth: true,
+                      },
+                    }}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <DatePicker
+                    label="End Date"
+                    value={embedEndDate}
+                    onChange={(newValue) => setEmbedEndDate(newValue)}
+                    slotProps={{
+                      textField: {
+                        fullWidth: true,
+                      },
+                    }}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={skipExistingEmbeddings}
+                        onChange={(e) => setSkipExistingEmbeddings(e.target.checked)}
+                      />
+                    }
+                    label="Skip papers that already have embeddings"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    label="Batch Size"
+                    type="number"
+                    value={embedBatchSize}
+                    onChange={(e) => setEmbedBatchSize(parseInt(e.target.value))}
+                    inputProps={{ min: 1, max: 1000 }}
+                    fullWidth
+                    helperText="Number of papers to embed in each batch"
+                  />
+                </Grid>
+
+                {embeddingStatus && (
+                  <Grid size={{ xs: 12 }}>
+                    <Alert severity={embeddingStatus.includes('Failed') ? 'error' : 'success'}>
+                      {embeddingStatus}
+                    </Alert>
+                  </Grid>
+                )}
+              </Grid>
+            </CardContent>
+            
+            <CardActions>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleBulkEmbedRun}
+                disabled={!canRunBulkEmbed || bulkEmbedMutation.isPending}
+                startIcon={bulkEmbedMutation.isPending ? <CircularProgress size={20} /> : <DownloadIcon />}
+              >
+                {bulkEmbedMutation.isPending ? 'Processing...' : 'Start Bulk Embedding'}
               </Button>
             </CardActions>
           </Card>

@@ -13,6 +13,8 @@ import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import StorageIcon from '@mui/icons-material/Storage';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import PeopleIcon from '@mui/icons-material/People';
+import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
 
 interface NavCardItem {
   title: string;
@@ -51,6 +53,18 @@ const navItems: NavCardItem[] = [
     description: 'Discover emerging research topics and track their evolution over time.',
     icon: <TrendingUpIcon fontSize="large" color="primary" />,
     path: '/trends',
+  },
+  {
+    title: 'Profile Management',
+    description: 'Create and manage research profiles with custom filters and interests.',
+    icon: <PeopleIcon fontSize="large" color="primary" />,
+    path: '/profile-management',
+  },
+  {
+    title: 'Bulk Operations',
+    description: 'Perform bulk paper ingestion and embedding for large-scale data processing.',
+    icon: <WorkOutlineIcon fontSize="large" color="primary" />,
+    path: '/bulk-operations',
   },
   {
     title: 'Audio Visualizer',

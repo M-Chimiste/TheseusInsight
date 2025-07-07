@@ -788,17 +788,17 @@ class PaperRepository:
             
             return [
                 {
-                    'id': row[0],
-                    'title': row[1],
-                    'abstract': row[2],
-                    'date': row[3],
-                    'url': row[4],
-                    'score': row[5],
-                    'related': row[6],
-                    'rationale': row[7],
-                    'cosine_similarity': row[8],
-                    'embedding_model': row[9],
-                    'date_run': row[10]
+                    'id': row['id'],
+                    'title': row['title'],
+                    'abstract': row['abstract'],
+                    'date': row['date'],
+                    'url': row['url'],
+                    'score': row['score'],
+                    'related': row['related'],
+                    'rationale': row['rationale'],
+                    'cosine_similarity': row['cosine_similarity'],
+                    'embedding_model': row['embedding_model'],
+                    'date_run': row['date_run']
                 }
                 for row in rows
             ] 

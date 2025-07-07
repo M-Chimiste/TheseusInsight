@@ -1,6 +1,7 @@
 from .unified_harvester import UnifiedArxivHarvester
 from datetime import datetime, timedelta, date
 import pandas as pd
+import os
 
 
 class ArxivDataProcessor:
@@ -95,13 +96,19 @@ class ArxivDataProcessor:
         else:
             print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
+        # Check if we're in bulk mode (FORCE_KAGGLE is set)
+        auto_cleanup = os.getenv('FORCE_KAGGLE', '').lower() != 'true'
+        if not auto_cleanup:
+            print("📌 Bulk mode: Kaggle dataset will be preserved for reuse")
+        
         with UnifiedArxivHarvester(
             category=self.category,
             subcategories=self.subcategories,
             date_from=start_date,
             date_until=end_date,
             max_results=self.max_results,
-            verbose=True
+            verbose=True,
+            auto_cleanup=auto_cleanup  # Don't cleanup in bulk mode
         ) as harvester:
             records = harvester.harvest()
             data_df = harvester.to_dataframe()

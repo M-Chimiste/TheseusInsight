@@ -1537,8 +1537,23 @@ Theseus Insight Team
                 
                 # Get ArXiv categories from orchestration config
                 arxiv_config = self.orchestration_config.get('arxiv_search_categories', {})
+                
+                # Debug: Let's see what's in the config
+                if self.verbose:
+                    print(f"[DEBUG] arxiv_config: {arxiv_config}")
+                
                 category = arxiv_config.get('main_category', 'cs')
                 subcategories = arxiv_config.get('filter_categories', ['cs.ai', 'cs.cl', 'cs.lg', 'cs.ir', 'cs.ma', 'cs.cv'])
+                
+                # If categories are explicitly set to None, download all papers
+                if 'filter_categories' in arxiv_config and arxiv_config['filter_categories'] is None:
+                    category = None
+                    subcategories = None
+                    if self.verbose:
+                        print("📋 Downloading ALL ArXiv categories (no filtering)")
+                else:
+                    if self.verbose:
+                        print(f"📋 Category: {category}, Subcategories: {subcategories}")
                 
                 process_data = ArxivDataProcessor(
                     start_date=self.start_date, 
@@ -1725,6 +1740,11 @@ Theseus Insight Team
                 
                 # Get ArXiv categories from orchestration config
                 arxiv_config = self.orchestration_config.get('arxiv_search_categories', {})
+                
+                # Debug: Let's see what's in the config
+                if self.verbose:
+                    print(f"[DEBUG] arxiv_config: {arxiv_config}")
+                
                 category = arxiv_config.get('main_category', 'cs')
                 subcategories = arxiv_config.get('filter_categories', ['cs.ai', 'cs.cl', 'cs.lg', 'cs.ir', 'cs.ma', 'cs.cv'])
                 

@@ -27,4 +27,9 @@ def get_cursor(*, autocommit: bool = True):
         with conn.cursor() as cur:
             yield cur
         if autocommit:
-            conn.commit() 
+            conn.commit()
+
+# Export migrations module
+from .migrations import check_and_apply_migrations, MigrationRunner
+
+__all__ = ['get_cursor', 'DATABASE_URL', 'check_and_apply_migrations', 'MigrationRunner'] 

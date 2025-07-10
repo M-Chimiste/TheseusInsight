@@ -170,6 +170,18 @@ To run just PostgreSQL in Docker while running the application locally:
 
 📖 **[Docker PostgreSQL Guide](docs/docker_postgresql.md)** - Instructions for running PostgreSQL in Docker.
 
+### Database Schema Management
+
+Theseus Insight includes an automatic database migration system that ensures your PostgreSQL schema is always up-to-date:
+
+📖 **[Database Migrations Guide](docs/database_migrations.md)** - Learn about the automatic migration system that runs on startup.
+
+**Key Features:**
+- **Automatic Schema Updates**: Migrations run automatically when the API starts
+- **Version Tracking**: Applied migrations are tracked to prevent re-running
+- **Failure Protection**: Migration failures are handled gracefully without corrupting data
+- **Profile Support**: Automatically creates database tables for the profiles feature
+
 ### Migrating from SQLite
 If you're upgrading from a previous SQLite installation:
 
@@ -264,7 +276,7 @@ If you prefer to install manually or the automated scripts don't work for your e
    npm run dev
    ```
 
-The PostgreSQL database schema will be created automatically on first run.
+The PostgreSQL database schema will be created automatically on first run through the automatic migration system.
 
 ## Custom Data Storage Location
 

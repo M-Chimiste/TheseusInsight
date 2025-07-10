@@ -63,6 +63,11 @@ async def lifespan(app_instance: FastAPI):
     # Startup logic
     print("INFO:     Starting up Theseus Insight API...")
     try:
+        # Check and apply database migrations
+        from .db.migrations import check_and_apply_migrations
+        print("INFO:     Checking database migrations...")
+        await check_and_apply_migrations()
+        
         # Directory structure is now created during database initialization
 
         # Load credentials from DB (encrypted) and apply to environment

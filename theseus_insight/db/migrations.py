@@ -1,0 +1,230 @@
+"""Automatic database migration system for Theseus Insight.
+
+This module checks and applies database migrations automatically on startup.
+"""
+from __future__ import annotations
+
+import os
+import pathlib
+from typing import List, Tuple, Optional
+import hashlib
+from datetime import datetime
+
+import psycopg
+from psycopg.rows import dict_row
+
+from . import DATABASE_URL
+
+
+class MigrationRunner:
+    """Handles automatic database migration checking and application."""
+    
+    def __init__(self, migration_dir: Optional[pathlib.Path] = None):
+        """Initialize the migration runner.
+        
+        Args:
+            migration_dir: Directory containing migration SQL files. 
+                         Defaults to scripts/ in project root.
+        """
+        if migration_dir is None:
+            # Determine migration directory based on environment
+            if os.path.exists("/app/sql"):
+                # Docker environment
+                self.migration_dir = pathlib.Path("/app/sql")
+            else:
+                # Local development - scripts directory relative to this file
+                project_root = pathlib.Path(__file__).resolve().parent.parent.parent
+                self.migration_dir = project_root / "scripts"
+        else:
+            self.migration_dir = migration_dir
+            
+        # Define migrations in order with their metadata
+        self.migrations: List[Tuple[int, str, str]] = [
+            (1, "init_schema_postgres.sql", "Initial database schema"),
+            (2, "migrate_to_profiles.sql", "Add research profiles feature"),
+            (3, "profiles_trends_integration.sql", "Integrate profiles with trends"),
+        ]
+    
+    def _get_file_checksum(self, filepath: pathlib.Path) -> str:
+        """Calculate MD5 checksum of a file."""
+        with open(filepath, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
+    
+    def _ensure_migration_table(self) -> None:
+        """Ensure the schema_migrations table exists."""
+        create_migration_sql = self.migration_dir / "create_migration_tracking.sql"
+        
+        if not create_migration_sql.exists():
+            # Fallback: create the table inline if script not found
+            with psycopg.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS schema_migrations (
+                            version INTEGER PRIMARY KEY,
+                            name TEXT NOT NULL,
+                            description TEXT,
+                            applied_at TIMESTAMPTZ DEFAULT NOW(),
+                            checksum TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_schema_migrations_name 
+                        ON schema_migrations(name);
+                    """)
+                conn.commit()
+        else:
+            # Run the create migration tracking script
+            with psycopg.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    with open(create_migration_sql, 'r') as f:
+                        cur.execute(f.read())
+                conn.commit()
+    
+    def _is_migration_applied(self, migration_name: str) -> bool:
+        """Check if a migration has already been applied."""
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) as count FROM schema_migrations WHERE name = %s",
+                    (migration_name,)
+                )
+                result = cur.fetchone()
+                return result['count'] > 0 if result else False
+    
+    def _apply_migration(self, version: int, filename: str, description: str) -> None:
+        """Apply a single migration file."""
+        migration_path = self.migration_dir / filename
+        
+        if not migration_path.exists():
+            raise FileNotFoundError(f"Migration file not found: {migration_path}")
+        
+        checksum = self._get_file_checksum(migration_path)
+        
+        print(f"[MIGRATION] Applying {filename}: {description}")
+        
+        # Apply the migration in a transaction
+        with psycopg.connect(DATABASE_URL) as conn:
+            try:
+                with conn.cursor() as cur:
+                    # Read and execute the migration file
+                    with open(migration_path, 'r') as f:
+                        migration_sql = f.read()
+                    cur.execute(migration_sql)
+                    
+                    # Record the migration
+                    cur.execute("""
+                        INSERT INTO schema_migrations (version, name, description, checksum)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (version) DO NOTHING
+                    """, (version, filename, description, checksum))
+                
+                conn.commit()
+                print(f"[MIGRATION] ✓ Successfully applied {filename}")
+                
+            except Exception as e:
+                conn.rollback()
+                print(f"[MIGRATION] ✗ Failed to apply {filename}: {e}")
+                raise
+    
+    def _verify_critical_tables(self) -> List[str]:
+        """Verify that critical tables exist and return any missing tables."""
+        critical_tables = [
+            "papers",
+            "research_profiles", 
+            "profile_research_interests",
+            "paper_profile_scores",
+            "topics",
+            "settings",
+            "model_providers"
+        ]
+        
+        missing_tables = []
+        
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                for table in critical_tables:
+                    cur.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = 'public' 
+                            AND table_name = %s
+                        ) as exists
+                    """, (table,))
+                    result = cur.fetchone()
+                    if not result or not result['exists']:
+                        missing_tables.append(table)
+        
+        return missing_tables
+    
+    def run_migrations(self) -> Tuple[int, int, List[str]]:
+        """Check and apply all pending migrations.
+        
+        Returns:
+            Tuple of (migrations_applied, migrations_skipped, issues)
+        """
+        print("[MIGRATION] Starting automatic migration check...")
+        
+        issues = []
+        migrations_applied = 0
+        migrations_skipped = 0
+        
+        try:
+            # Ensure migration tracking table exists
+            self._ensure_migration_table()
+            
+            # Check and apply each migration
+            for version, filename, description in self.migrations:
+                try:
+                    if self._is_migration_applied(filename):
+                        print(f"[MIGRATION] ✓ Already applied: {filename}")
+                        migrations_skipped += 1
+                    else:
+                        self._apply_migration(version, filename, description)
+                        migrations_applied += 1
+                except FileNotFoundError as e:
+                    issue = f"Migration file not found: {filename}"
+                    print(f"[MIGRATION] ⚠ {issue}")
+                    issues.append(issue)
+                except Exception as e:
+                    issue = f"Failed to apply {filename}: {str(e)}"
+                    print(f"[MIGRATION] ✗ {issue}")
+                    issues.append(issue)
+                    # Stop on first failure to maintain consistency
+                    break
+            
+            # Verify critical tables exist
+            missing_tables = self._verify_critical_tables()
+            if missing_tables:
+                issue = f"Missing critical tables after migration: {', '.join(missing_tables)}"
+                print(f"[MIGRATION] ✗ {issue}")
+                issues.append(issue)
+            else:
+                print("[MIGRATION] ✓ All critical tables verified")
+            
+            # Summary
+            print(f"[MIGRATION] Summary: {migrations_applied} applied, {migrations_skipped} skipped")
+            if issues:
+                print(f"[MIGRATION] Issues encountered: {len(issues)}")
+                for issue in issues:
+                    print(f"[MIGRATION]   - {issue}")
+            
+        except Exception as e:
+            issue = f"Migration system error: {str(e)}"
+            print(f"[MIGRATION] ✗ {issue}")
+            issues.append(issue)
+        
+        return migrations_applied, migrations_skipped, issues
+
+
+async def check_and_apply_migrations() -> None:
+    """Async wrapper to check and apply migrations during FastAPI startup.
+    
+    This function is designed to be called from the FastAPI lifespan context.
+    """
+    runner = MigrationRunner()
+    applied, skipped, issues = runner.run_migrations()
+    
+    if issues:
+        # Log issues but don't prevent startup
+        print(f"[MIGRATION] WARNING: {len(issues)} issues during migration")
+        # In production, you might want to send these to monitoring
+    
+    print(f"[MIGRATION] Database migration check complete")

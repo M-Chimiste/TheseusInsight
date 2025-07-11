@@ -254,6 +254,14 @@ export interface TagSearchResponse {
   exact_match: boolean;
 }
 
+export interface BulkEmbedRequest {
+  start_date: string;
+  end_date: string;
+  batch_size?: number;
+  skip_existing?: boolean;
+  arxiv_categories?: string[];
+}
+
 export interface BulkJudgeRunRequest {
   profile_ids?: number[];
   profile_tags?: string[];
@@ -317,7 +325,7 @@ export const profileApi = {
   runProfileAwareIngest: (request: ProfileAwareIngestRequest) => api.post<ProfileAwareIngestResponse>('/papers/profile-aware-ingest', request),
   
   // Bulk Embedding
-  runBulkEmbed: (request: any) => api.post('/papers/bulk-embed', request),
+  runBulkEmbed: (request: BulkEmbedRequest) => api.post('/papers/bulk-embed', request),
   checkExistingBulkData: (params: { start_date: string; end_date: string }) => api.get('/papers/check-existing-bulk-data', { params }),
 };
 
@@ -559,7 +567,11 @@ export const papersApi = {
         fromDate?: string,
         toDate?: string,
         search?: string,
-        topicId?: number
+        topicId?: number,
+        profileIds?: number[],
+        minProfileScore?: number,
+        maxProfileScore?: number,
+        profileRelatedOnly?: boolean
     ): Promise<PaginatedPapersResponse> => {
         const params: Record<string, any> = {
             page,
@@ -574,6 +586,14 @@ export const papersApi = {
         if (toDate) params.to_date = toDate;
         if (search) params.search = search;
         if (topicId !== undefined) params.topic_id = topicId;
+        
+        // Profile filtering parameters
+        if (profileIds && profileIds.length > 0) {
+            params.profile_ids = profileIds.join(',');
+        }
+        if (minProfileScore !== undefined) params.min_profile_score = minProfileScore;
+        if (maxProfileScore !== undefined) params.max_profile_score = maxProfileScore;
+        if (profileRelatedOnly) params.profile_related_only = profileRelatedOnly;
 
         const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
             params

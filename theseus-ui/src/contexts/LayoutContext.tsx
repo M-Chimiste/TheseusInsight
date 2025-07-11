@@ -10,6 +10,8 @@ interface LayoutContextType {
   collapsedDrawerWidth: number;
   currentDrawerWidth: number;
   toggleDrawer: () => void;
+  headerHeight: number;
+  setHeaderHeight: (height: number) => void;
 }
 
 const LayoutContext = createContext<LayoutContextType | undefined>(undefined);
@@ -28,6 +30,7 @@ interface LayoutProviderProps {
 
 export const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(true);
+  const [headerHeight, setHeaderHeight] = useState(84); // Default header height
 
   const toggleDrawer = () => {
     setIsDrawerOpen(!isDrawerOpen);
@@ -41,6 +44,8 @@ export const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
     collapsedDrawerWidth,
     currentDrawerWidth,
     toggleDrawer,
+    headerHeight,
+    setHeaderHeight,
   };
 
   return (

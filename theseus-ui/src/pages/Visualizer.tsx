@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import { taskApi } from '../services/api';
 import { useTaskState } from '../hooks/useTaskState';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface VisualizerParamsType {
   matrix_count: number;
@@ -40,6 +41,7 @@ interface VisualizerParamsType {
 }
 
 const Visualizer: React.FC = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [visualizerParams, setVisualizerParams] = useState<VisualizerParamsType>({
     matrix_count: 150,
@@ -157,7 +159,7 @@ const Visualizer: React.FC = () => {
   }, [taskState.taskId, taskState.result, taskState.isRunning]);
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
         🎬 Audio Visualizer
       </Typography>

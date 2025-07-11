@@ -1,6 +1,7 @@
 from .unified_harvester import UnifiedArxivHarvester
 from datetime import datetime, timedelta, date
 import pandas as pd
+import os
 
 
 class ArxivDataProcessor:
@@ -23,8 +24,8 @@ class ArxivDataProcessor:
     def __init__(self,
                 start_date: str | datetime | None = None,
                 end_date: str | datetime | None = None,
-                category: str = "cs",
-                subcategories: list[str] = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
+                category: str | None = "cs",
+                subcategories: list[str] | None = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
                 num_days: int|None = 7,
                 max_results: int|None = None
                 ):
@@ -90,15 +91,26 @@ class ArxivDataProcessor:
         # --- End: Sanity check and swap if needed ---
         
         print(f"Start date: {start_date}, End date: {end_date}")
-        print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+        if self.category is None and self.subcategories is None:
+            print("Category: ALL (no filtering)")
+        else:
+            print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
+        # Check if we're in bulk mode (FORCE_KAGGLE is set)
+        force_kaggle = os.getenv('FORCE_KAGGLE', '').lower() == 'true'
+        auto_cleanup = not force_kaggle
+        print(f"[DEBUG] FORCE_KAGGLE={force_kaggle}, auto_cleanup={auto_cleanup}")
+        if not auto_cleanup:
+            print("📌 Bulk mode: Kaggle dataset will be preserved for reuse")
+        
         with UnifiedArxivHarvester(
             category=self.category,
             subcategories=self.subcategories,
             date_from=start_date,
             date_until=end_date,
             max_results=self.max_results,
-            verbose=True
+            verbose=True,
+            auto_cleanup=auto_cleanup  # Don't cleanup in bulk mode
         ) as harvester:
             records = harvester.harvest()
             data_df = harvester.to_dataframe()
@@ -106,7 +118,10 @@ class ArxivDataProcessor:
             # Handle case where no records were retrieved
             if data_df.empty or len(records) == 0:
                 print(f"No records found for date range {start_date} to {end_date}")
-                print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+                if self.category is None and self.subcategories is None:
+                    print("Category: ALL (no filtering)")
+                else:
+                    print(f"Category: {self.category}, Subcategories: {self.subcategories}")
                 
                 # Create an empty DataFrame with the expected structure for downstream processing
                 empty_df = pd.DataFrame(columns=[

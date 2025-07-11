@@ -26,6 +26,7 @@ import { useTaskState } from '../hooks/useTaskState';
 import { useProfile } from '../contexts/ProfileContext';
 import ProfileSelector from '../components/ProfileSelector';
 import { useQuery } from '@tanstack/react-query';
+import { useLayout } from '../contexts/LayoutContext';
 
 // Helper to get date N days ago or N days from now
 const getDateByOffset = (days: number, fromDate: Date = new Date()): Date => {
@@ -41,6 +42,7 @@ const getDaysDifference = (date1: Date, date2: Date): number => {
 };
 
 const Newsletter = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const today = new Date();
   const sevenDaysAgo = getDateByOffset(-6); // -6 because we add 1 in getDaysDifference for an inclusive 7 days
 
@@ -238,7 +240,7 @@ const Newsletter = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
         <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
           <RocketLaunchIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> New Theseus Insight Newsletter Run
         </Typography>

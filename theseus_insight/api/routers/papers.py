@@ -746,11 +746,17 @@ async def start_bulk_embed(request: dict):
         import uuid
         from ..tasks import task_manager
         
+        # Debug: Print the entire request
+        print(f"[DEBUG] Bulk embed API received request: {request}")
+        
         # Extract request parameters
         start_date = request.get('start_date')
         end_date = request.get('end_date')
         batch_size = request.get('batch_size', 100)
         skip_existing = request.get('skip_existing', True)
+        arxiv_categories = request.get('arxiv_categories', None)
+        
+        print(f"[DEBUG] API extracted arxiv_categories: {arxiv_categories} (type: {type(arxiv_categories)})")
         
         # Validate dates
         if not start_date or not end_date:
@@ -765,7 +771,8 @@ async def start_bulk_embed(request: dict):
             "end_date": end_date,
             "batch_size": batch_size,
             "skip_existing": skip_existing,
-            "embedding_only": True  # Flag to indicate embedding-only mode
+            "embedding_only": True,  # Flag to indicate embedding-only mode
+            "arxiv_categories": arxiv_categories  # Optional arxiv category filter
         }
         
         # Create task in database

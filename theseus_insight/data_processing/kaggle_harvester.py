@@ -123,15 +123,19 @@ class KaggleArxivHarvester:
         if not categories:
             return False
             
+        # If no category filters are specified, match all papers
+        if self.category is None and self.subcategories is None:
+            return True
+            
         categories_lower = categories.lower()
         
-        # Check main category
-        if self.category.lower() not in categories_lower:
+        # Check main category if specified
+        if self.category and self.category.lower() not in categories_lower:
             return False
             
         # Check subcategories if specified
         if self.subcategories:
-            return any(sub in categories_lower for sub in self.subcategories)
+            return any(sub.lower() in categories_lower for sub in self.subcategories)
             
         return True
 

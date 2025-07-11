@@ -35,6 +35,7 @@ import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
 import SimilarityView from './SimilarityView'; // Import the new SimilarityView
 import MindMapExplorer from '../components/MindMapExplorer'; // Import the new MindMapExplorer
 import { useLayout } from '../contexts/LayoutContext';
+import { useProfile } from '../contexts/ProfileContext';
 
 const DEFAULT_PAGE_SIZE = 18; // 6 cards per row, 3 rows for grid view - increased for smoother scrolling
 
@@ -51,7 +52,10 @@ interface FilterState {
 
 const Papers: React.FC = () => {
   // Layout context for responsive sidebar
-  const { currentDrawerWidth } = useLayout();
+  const { currentDrawerWidth, headerHeight } = useLayout();
+  
+  // Profile context for filtering
+  const { selectedProfileIds } = useProfile();
   
   // URL parameters for initial filtering
   const [searchParams] = useSearchParams();
@@ -165,7 +169,8 @@ const Papers: React.FC = () => {
           appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
           appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
           appliedFilters.search || undefined,
-          appliedFilters.topicId || undefined
+          appliedFilters.topicId || undefined,
+          selectedProfileIds.length > 0 ? selectedProfileIds : undefined
         );
       }
       setAllPapers(prevPapers => isInitialLoad ? data.items : [...prevPapers, ...data.items]);
@@ -183,7 +188,7 @@ const Papers: React.FC = () => {
     } else {
       setLoadingMore(false);
     }
-  }, [hasNextPage, initialLoadComplete, appliedFilters, useHybridSearch, semanticWeight, keywordWeight]);
+      }, [hasNextPage, initialLoadComplete, appliedFilters, useHybridSearch, semanticWeight, keywordWeight, selectedProfileIds]);
 
   // Reset papers when filters change
   const resetAndFetch = useCallback(() => {
@@ -196,7 +201,7 @@ const Papers: React.FC = () => {
   // Initial fetch
   useEffect(() => {
     resetAndFetch();
-  }, [pageSize, appliedFilters, resetAndFetch]);
+  }, [pageSize, appliedFilters, selectedProfileIds, resetAndFetch]);
 
   useEffect(() => {
     if(!initialLoadComplete) {
@@ -409,13 +414,13 @@ const Papers: React.FC = () => {
           {/* Fixed Header Container */}
           <Box sx={{ 
             position: 'fixed',
-            top: '84px', // Account for main app header height
+            top: `${headerHeight}px`, // Dynamic header height including ProfileSelector
             left: `${currentDrawerWidth}px`, // Dynamic sidebar width
             right: 0,
-            zIndex: 1100,
+            zIndex: 1000, // Lower z-index than AppBar (1100) to allow ProfileSelector to overlay
             backgroundColor: 'background.default',
             boxShadow: 1,
-            transition: 'left 0.3s', // Smooth transition when sidebar toggles
+            transition: 'left 0.3s, top 0.3s', // Smooth transition when sidebar toggles or header height changes
           }}>
             {/* Main header with title and controls */}
             <Box sx={{ 
@@ -674,7 +679,7 @@ const Papers: React.FC = () => {
           </Box>
 
           {/* Scrollable content area with padding for fixed header */}
-          <Box sx={{ p: 3, pt: '200px' }}> {/* Add top padding to account for fixed header */}
+          <Box sx={{ p: 3, pt: `${headerHeight + 150}px` }}> {/* Add top padding to account for fixed header + filter bar */}
             {/* Papers content based on viewMode */} 
             {viewMode === 'grid' ? (
               <Grid container spacing={3} sx={{ mb: 3 }}>
@@ -685,6 +690,7 @@ const Papers: React.FC = () => {
                       onFindSimilar={handleFindSimilar}
                       onOpenMindMap={handleOpenMindMap}
                       onTopicClick={handleTopicClick}
+                      hasProfilesSelected={selectedProfileIds.length > 0}
                     />
                   </Grid>
                 ))}
@@ -698,6 +704,7 @@ const Papers: React.FC = () => {
                     onFindSimilar={handleFindSimilar}
                     onOpenMindMap={handleOpenMindMap}
                     onTopicClick={handleTopicClick}
+                    hasProfilesSelected={selectedProfileIds.length > 0}
                   />
                 ))}
               </Box>

@@ -49,6 +49,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { modelCatalogApi, settingsApi } from '../services/api';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface ModelCatalogEntry {
   id: number;
@@ -92,6 +93,7 @@ const MODEL_TYPES = [
 
 const ModelCatalog: React.FC = () => {
   const queryClient = useQueryClient();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
@@ -516,14 +518,14 @@ const ModelCatalog: React.FC = () => {
 
   if (isLoadingModels) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh" sx={{ pt: `${headerHeight + 24}px` }}>
         <CircularProgress />
       </Box>
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Snackbar
         open={Boolean(error)}
         autoHideDuration={4000}

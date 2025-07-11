@@ -18,6 +18,7 @@ import {
   ListItemText,
   FormControlLabel,
   Checkbox,
+  Autocomplete,
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -31,13 +32,33 @@ import {
 import {
   profileApi,
   type ProfileAwareIngestRequest,
+  type BulkEmbedRequest,
 } from '../services/api';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import ProfileSelector from '../components/ProfileSelector';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface BulkOperationsProps {}
 
+// Common ArXiv categories
+const ARXIV_CATEGORIES = [
+  { value: 'ALL', label: 'All Papers - No Filters' },
+  { value: 'cs.AI', label: 'Artificial Intelligence' },
+  { value: 'cs.CL', label: 'Computation and Language' },
+  { value: 'cs.CV', label: 'Computer Vision and Pattern Recognition' },
+  { value: 'cs.LG', label: 'Machine Learning' },
+  { value: 'cs.IR', label: 'Information Retrieval' },
+  { value: 'cs.MA', label: 'Multiagent Systems' },
+  { value: 'cs.NE', label: 'Neural and Evolutionary Computing' },
+  { value: 'cs.RO', label: 'Robotics' },
+  { value: 'stat.ML', label: 'Machine Learning (Statistics)' },
+  { value: 'math.OC', label: 'Optimization and Control' },
+  { value: 'eess.AS', label: 'Audio and Speech Processing' },
+  { value: 'eess.IV', label: 'Image and Video Processing' },
+];
+
 const BulkOperations: React.FC<BulkOperationsProps> = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [activeTab, setActiveTab] = useState(0);
   
   // Profile-Aware Full Ingestion State
@@ -54,6 +75,8 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
   const [embedEndDate, setEmbedEndDate] = useState<Date | null>(null);
   const [embedBatchSize, setEmbedBatchSize] = useState<number>(100);
   const [skipExistingEmbeddings, setSkipExistingEmbeddings] = useState<boolean>(true);
+  const [selectedArxivCategories, setSelectedArxivCategories] = useState<string[]>([]);
+  const [useDefaultCategories, setUseDefaultCategories] = useState<boolean>(true);
 
   // Status State
   const [ingestionStatus, setIngestionStatus] = useState<string>('');
@@ -91,9 +114,8 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
   });
 
   const bulkEmbedMutation = useMutation({
-    mutationFn: async (request: any) => {
+    mutationFn: async (request: BulkEmbedRequest) => {
       setEmbeddingStatus('Starting bulk embedding...');
-      // This endpoint needs to be implemented
       return profileApi.runBulkEmbed(request);
     },
     onSuccess: (response) => {
@@ -122,11 +144,27 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
   };
 
   const handleBulkEmbedRun = () => {
-    const request = {
-      start_date: embedStartDate?.toISOString().split('T')[0],
-      end_date: embedEndDate?.toISOString().split('T')[0],
+    // Determine arxiv categories:
+    // - If using defaults: undefined (backend will use default categories)  
+    // - If "ALL" is selected: send ["ALL"] to explicitly request no filtering
+    // - Otherwise: send the selected categories
+    let arxivCategories: string[] | undefined;
+    if (useDefaultCategories) {
+      arxivCategories = undefined; // Use backend defaults
+    } else if (selectedArxivCategories.includes('ALL')) {
+      arxivCategories = ['ALL']; // Explicit flag for no filtering
+    } else if (selectedArxivCategories.length > 0) {
+      arxivCategories = selectedArxivCategories; // Use selected categories
+    } else {
+      arxivCategories = []; // Empty array - prompt user to select something
+    }
+    
+    const request: BulkEmbedRequest = {
+      start_date: embedStartDate?.toISOString().split('T')[0] || '',
+      end_date: embedEndDate?.toISOString().split('T')[0] || '',
       batch_size: embedBatchSize,
       skip_existing: skipExistingEmbeddings,
+      arxiv_categories: arxivCategories,
     };
     bulkEmbedMutation.mutate(request);
   };
@@ -141,7 +179,7 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box sx={{ p: 3 }}>
+      <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
         <Typography variant="h4" gutterBottom>
           Bulk Operations
         </Typography>
@@ -383,6 +421,59 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                     label="Skip papers that already have embeddings"
                   />
                 </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={useDefaultCategories}
+                        onChange={(e) => setUseDefaultCategories(e.target.checked)}
+                      />
+                    }
+                    label="Use default ArXiv categories (AI, CL, LG, IR, MA, CV)"
+                  />
+                </Grid>
+
+                {!useDefaultCategories && (
+                  <Grid size={{ xs: 12 }}>
+                    <Autocomplete
+                      multiple
+                      options={ARXIV_CATEGORIES}
+                      getOptionLabel={(option) => `${option.value} - ${option.label}`}
+                      value={ARXIV_CATEGORIES.filter(cat => selectedArxivCategories.includes(cat.value))}
+                      onChange={(_, newValue) => {
+                        // If "ALL" is selected, clear other selections
+                        const hasAll = newValue.some(cat => cat.value === 'ALL');
+                        if (hasAll) {
+                          setSelectedArxivCategories(['ALL']);
+                        } else {
+                          setSelectedArxivCategories(newValue.map(cat => cat.value));
+                        }
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Select ArXiv Categories"
+                          placeholder="Choose categories to download"
+                          helperText={selectedArxivCategories.includes('ALL') 
+                            ? "All papers from ALL categories will be downloaded (no filtering)" 
+                            : "Select specific ArXiv categories or choose 'All Papers - No Filters'"}
+                        />
+                      )}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            variant={option.value === 'ALL' ? 'filled' : 'outlined'}
+                            color={option.value === 'ALL' ? 'primary' : 'default'}
+                            label={option.label}
+                            {...getTagProps({ index })}
+                            key={option.value}
+                          />
+                        ))
+                      }
+                    />
+                  </Grid>
+                )}
 
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField

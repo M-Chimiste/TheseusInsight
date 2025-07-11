@@ -160,6 +160,7 @@ class TaskManager:
         
     async def create_task(self, task_id: str, task_type: str, config: dict):
         """Create a new task."""
+        print(f"[DEBUG] Creating task {task_id} with config: {config}")
         start_time = datetime.now().isoformat()
         
         # Store task in database using repository
@@ -173,6 +174,7 @@ class TaskManager:
             current_step="initializing",
             message="Task created"
         )
+        print(f"[DEBUG] Task {task_id} created successfully")
         
         # Initialize WebSocket subscriptions
         self.status_updates[task_id] = []
@@ -1590,12 +1592,29 @@ class TaskManager:
             task = TaskRepository.get_task(task_id)
             if not task:
                 raise ValueError(f"Task {task_id} not found")
-            config = task.get("config", {})
+            
+            # Debug: Check if config is in JSON format
+            print(f"[DEBUG] Raw task data: {task}")
+            config_json_value = task.get("config_json")
+            print(f"[DEBUG] config_json value: {config_json_value} (type: {type(config_json_value)})")
+            
+            if isinstance(config_json_value, str):
+                config = json.loads(config_json_value)
+                print(f"[DEBUG] Parsed config from JSON string: {config}")
+            elif isinstance(config_json_value, dict):
+                config = config_json_value
+                print(f"[DEBUG] Using config_json as dict: {config}")
+            else:
+                config = task.get("config", {})
+                print(f"[DEBUG] Fallback to config field: {config}")
             
             start_date = config.get("start_date")
             end_date = config.get("end_date")
             batch_size = config.get("batch_size", 100)
             skip_existing = config.get("skip_existing", True)
+            arxiv_categories = config.get("arxiv_categories", None)
+            
+            print(f"[DEBUG] Extracted from config - arxiv_categories: {arxiv_categories}")
             
             await self.update_task_status(
                 task_id,
@@ -1637,6 +1656,35 @@ class TaskManager:
             # Get orchestration config
             orchestration_json = SettingsRepository.get("orchestration")
             orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            
+            # Debug: Always print what we received
+            print(f"[DEBUG] Task handler received arxiv_categories: {arxiv_categories} (type: {type(arxiv_categories)})")
+            print(f"[DEBUG] Current orchestration_config: {orchestration_config.get('arxiv_search_categories', 'NOT SET')}")
+            
+            # Override arxiv categories if provided
+            if arxiv_categories is not None:
+                print(f"[DEBUG] Processing arxiv_categories: {arxiv_categories}")
+                if 'arxiv_search_categories' not in orchestration_config:
+                    orchestration_config['arxiv_search_categories'] = {}
+                
+                # Check for special "ALL" flag
+                if arxiv_categories and len(arxiv_categories) > 0 and arxiv_categories[0] == 'ALL':
+                    orchestration_config['arxiv_search_categories']['filter_categories'] = None
+                    orchestration_config['arxiv_search_categories']['main_category'] = None
+                    print("[DEBUG] Setting categories to None for ALL papers")
+                elif len(arxiv_categories) == 0:
+                    # Empty array - use defaults (shouldn't happen with new UI)
+                    print("[DEBUG] Empty array - using defaults")
+                else:
+                    orchestration_config['arxiv_search_categories']['filter_categories'] = arxiv_categories
+                    # If main category is provided, use the prefix
+                    main_cat = arxiv_categories[0].split('.')[0]
+                    orchestration_config['arxiv_search_categories']['main_category'] = main_cat
+                    print(f"[DEBUG] Setting specific categories: {arxiv_categories}")
+            else:
+                print("[DEBUG] arxiv_categories is None - using existing config")
+            
+            print(f"[DEBUG] Final orchestration_config: {orchestration_config.get('arxiv_search_categories', 'NOT SET')}")
             
             # Run embedding-only pipeline
             await self.update_task_status(

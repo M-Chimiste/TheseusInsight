@@ -1,6 +1,7 @@
 import React from 'react';
 import { Grid, Card, CardActionArea, CardContent, Typography, Box } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useLayout } from '../contexts/LayoutContext';
 import SettingsIcon from '@mui/icons-material/Settings';
 import EmailIcon from '@mui/icons-material/Email';
 import MicIcon from '@mui/icons-material/Mic';
@@ -112,13 +113,14 @@ const navItems: NavCardItem[] = [
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { headerHeight } = useLayout(); // Get dynamic header height
 
   const handleCardClick = (path: string) => {
     navigate(path);
   };
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
       <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
         Dashboard
       </Typography>

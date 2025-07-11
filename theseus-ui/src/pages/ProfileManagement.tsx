@@ -36,6 +36,7 @@ import {
 } from '../services/api';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProfile } from '../contexts/ProfileContext';
+import { useLayout } from '../contexts/LayoutContext';
 import taxonomy from '../arxiv_taxonomy.json';
 
 interface ProfileFormData {
@@ -50,6 +51,7 @@ interface ProfileFormData {
 
 const ProfileManagement: React.FC = () => {
   const { profiles, refreshProfiles, isLoading, error } = useProfile();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const queryClient = useQueryClient();
   
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -334,7 +336,7 @@ const ProfileManagement: React.FC = () => {
   // Handle loading state
   if (isLoading) {
     return (
-      <Box sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
+      <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
         <CircularProgress />
         <Typography sx={{ ml: 2 }}>Loading profiles...</Typography>
       </Box>
@@ -344,7 +346,7 @@ const ProfileManagement: React.FC = () => {
   // Handle error state
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
         <Typography variant="h4" gutterBottom>Profile Management</Typography>
         <Box sx={{ p: 2, bgcolor: 'error.light', color: 'error.contrastText', borderRadius: 1 }}>
           <Typography>Error loading profiles: {error}</Typography>
@@ -361,7 +363,7 @@ const ProfileManagement: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">Profile Management</Typography>
         <Button

@@ -47,6 +47,7 @@ import {
   type ResearchWebSocketMessage 
 } from '../services/api';
 import { ActivityTimeline, type ProcessedEvent } from '../components/ActivityTimeline';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface ChatMessage {
   id: string;
@@ -78,6 +79,7 @@ const STORAGE_KEYS = {
 } as const;
 
 const ResearchAgent: React.FC = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
@@ -693,8 +695,8 @@ Task ID: ${result.task_id}
   };
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 240px)' }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: `calc(100vh - ${headerHeight + 160}px)` }}>
         {/* Header */}
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
           <Typography variant="h4" component="h1">

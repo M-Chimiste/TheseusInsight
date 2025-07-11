@@ -53,6 +53,7 @@ import {
   type TrendsListResponse,
 } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
+import { useLayout } from '../contexts/LayoutContext';
 // import PaperRowCard from './PaperRowCard'; // No longer used directly here
 
 interface TrendsProps {}
@@ -61,6 +62,7 @@ type ViewMode = 'research-interests' | 'topic-discovery';
 
 const Trends: React.FC<TrendsProps> = () => {
   const navigate = useNavigate();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   // State management
   const [viewMode, setViewMode] = useState<ViewMode>('research-interests');
   const [topics, setTopics] = useState<TopicApiResponse[]>([]);
@@ -883,7 +885,7 @@ const Trends: React.FC<TrendsProps> = () => {
 
   // Main component render
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
       {/* Header */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2 }}>

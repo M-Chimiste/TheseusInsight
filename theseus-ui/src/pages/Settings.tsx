@@ -44,6 +44,7 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import PaletteIcon from '@mui/icons-material/Palette';
 import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
+import { useLayout } from '../contexts/LayoutContext';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -224,6 +225,7 @@ const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
 const Settings: React.FC = () => {
   const queryClient = useQueryClient();
   const { isDarkMode, toggleTheme } = useCustomTheme();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
@@ -1353,7 +1355,7 @@ const Settings: React.FC = () => {
 
   if (isLoadingOrchestration || isLoadingProviders || isCheckingDbTasks) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh" sx={{ pt: `${headerHeight + 24}px` }}>
         <CircularProgress />
         {isCheckingDbTasks && (
           <Typography variant="body2" sx={{ ml: 2 }}>
@@ -1678,7 +1680,7 @@ const Settings: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Snackbar
         open={Boolean(error)}
         autoHideDuration={4000}

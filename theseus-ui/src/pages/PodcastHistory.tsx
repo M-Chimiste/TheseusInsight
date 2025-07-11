@@ -30,6 +30,7 @@ import ViewListIcon from '@mui/icons-material/ViewList';
 import DeleteIcon from '@mui/icons-material/Delete';
 import HistoryIcon from '@mui/icons-material/History';
 import { format } from 'date-fns';
+import { useLayout } from '../contexts/LayoutContext';
 
 type ViewMode = 'grid' | 'list';
 
@@ -41,6 +42,7 @@ const parseDate = (dateString: string): Date => {
 };
 
 const PodcastHistory: React.FC = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [viewMode, setViewMode] = React.useState<ViewMode>('grid');
   const [openDeleteDialog, setOpenDeleteDialog] = React.useState(false);
   const [selectedPodcastId, setSelectedPodcastId] = React.useState<number | null>(null);
@@ -90,7 +92,7 @@ const PodcastHistory: React.FC = () => {
 
   if (isLoading) {
     return (
-      <Container sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+      <Container sx={{ display: 'flex', justifyContent: 'center', pt: `${headerHeight + 32}px` }}>
         <CircularProgress />
       </Container>
     );
@@ -98,7 +100,7 @@ const PodcastHistory: React.FC = () => {
 
   if (error) {
     return (
-      <Container sx={{ mt: 4 }}>
+      <Container sx={{ pt: `${headerHeight + 32}px` }}>
         <Alert severity="error">Error fetching podcast history: {error.message}</Alert>
       </Container>
     );
@@ -106,14 +108,14 @@ const PodcastHistory: React.FC = () => {
 
   if (!podcasts || podcasts.length === 0) {
     return (
-      <Container sx={{ mt: 4 }}>
+      <Container sx={{ pt: `${headerHeight + 32}px` }}>
         <Typography variant="h6" align="center">No podcast history found.</Typography>
       </Container>
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="div">
           Podcast History

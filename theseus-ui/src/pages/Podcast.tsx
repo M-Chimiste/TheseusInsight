@@ -22,11 +22,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi, podcastApi, taskApi } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useTaskState } from '../hooks/useTaskState';
+import { useLayout } from '../contexts/LayoutContext';
 
 // Interface for podcast generation state
 
 const Podcast: React.FC = () => {
   const queryClient = useQueryClient();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   // Fetch orchestration and model providers for config
   const { data: orchestrationConfig, isLoading: isLoadingOrchestration } = useQuery({
     queryKey: ['orchestrationConfig'],
@@ -244,7 +246,7 @@ const Podcast: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
         🎙️ Podcast Creator
       </Typography>

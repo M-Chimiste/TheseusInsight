@@ -50,9 +50,11 @@ import {
   type ResearchHistoryItem,
   type ResearchTaskResult 
 } from '../services/api';
+import { useLayout } from '../contexts/LayoutContext';
 
 const ResearchLibrary: React.FC = () => {
   const queryClient = useQueryClient();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -252,7 +254,7 @@ Task ID: ${result.task_id}
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh" sx={{ pt: `${headerHeight + 24}px` }}>
         <CircularProgress />
       </Box>
     );
@@ -260,7 +262,7 @@ Task ID: ${result.task_id}
 
   if (isError) {
     return (
-      <Container maxWidth="lg" sx={{ py: 3 }}>
+      <Container maxWidth="lg" sx={{ pt: `${headerHeight + 24}px`, pb: 3 }}>
         <Alert severity="error">
           Failed to load research history. Please try again.
         </Alert>
@@ -269,7 +271,7 @@ Task ID: ${result.task_id}
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 3 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 24}px`, pb: 3 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h4" component="h1">

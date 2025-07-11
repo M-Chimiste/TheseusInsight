@@ -36,6 +36,7 @@ import {
 } from '../services/api';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import ProfileSelector from '../components/ProfileSelector';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface BulkOperationsProps {}
 
@@ -57,6 +58,7 @@ const ARXIV_CATEGORIES = [
 ];
 
 const BulkOperations: React.FC<BulkOperationsProps> = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [activeTab, setActiveTab] = useState(0);
   
   // Profile-Aware Full Ingestion State
@@ -177,7 +179,7 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box sx={{ p: 3 }}>
+      <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
         <Typography variant="h4" gutterBottom>
           Bulk Operations
         </Typography>

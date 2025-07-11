@@ -31,8 +31,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { mindMapApi } from '../services/api';
 import type { MindMapReport } from '../services/api';
 import MindMapExplorer from '../components/MindMapExplorer';
+import { useLayout } from '../contexts/LayoutContext';
 
 const MindMapReports: React.FC = () => {
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [selectedReport, setSelectedReport] = useState<MindMapReport | null>(null);
   const [mindMapOpen, setMindMapOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -183,7 +185,7 @@ const MindMapReports: React.FC = () => {
 
   if (isLoading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh', pt: `${headerHeight + 24}px` }}>
         <CircularProgress />
       </Box>
     );
@@ -191,7 +193,7 @@ const MindMapReports: React.FC = () => {
 
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
         <Alert severity="error">Failed to load mind-map reports</Alert>
       </Box>
     );
@@ -200,7 +202,7 @@ const MindMapReports: React.FC = () => {
   const reports = reportsData?.reports || [];
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
       <Typography variant="h4" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <AccountTreeIcon />
         Mind-Map Reports

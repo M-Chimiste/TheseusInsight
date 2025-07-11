@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -59,11 +59,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isDarkMode } = useCustomTheme();
-  const { isDrawerOpen, currentDrawerWidth, toggleDrawer } = useLayout();
+  const { isDrawerOpen, currentDrawerWidth, toggleDrawer, setHeaderHeight } = useLayout();
   useProfile(); // Initialize profile context
   const theme = useTheme();
 
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     settingsApi
@@ -77,6 +78,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         console.error('Failed to fetch credentials:', err);
       });
   }, []);
+
+  // Measure header height and update context
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        const height = headerRef.current.offsetHeight;
+        setHeaderHeight(height);
+      }
+    };
+
+    updateHeaderHeight();
+    
+    // Create a ResizeObserver to watch for header height changes
+    const resizeObserver = new ResizeObserver(updateHeaderHeight);
+    if (headerRef.current) {
+      resizeObserver.observe(headerRef.current);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [setHeaderHeight]);
 
   const drawerGradient = isDarkMode
     ? 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)'
@@ -103,6 +126,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar
+        ref={headerRef}
         position="fixed"
         sx={{
           width: `calc(100% - ${currentDrawerWidth}px)`,

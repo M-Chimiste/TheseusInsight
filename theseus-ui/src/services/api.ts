@@ -567,7 +567,11 @@ export const papersApi = {
         fromDate?: string,
         toDate?: string,
         search?: string,
-        topicId?: number
+        topicId?: number,
+        profileIds?: number[],
+        minProfileScore?: number,
+        maxProfileScore?: number,
+        profileRelatedOnly?: boolean
     ): Promise<PaginatedPapersResponse> => {
         const params: Record<string, any> = {
             page,
@@ -582,6 +586,14 @@ export const papersApi = {
         if (toDate) params.to_date = toDate;
         if (search) params.search = search;
         if (topicId !== undefined) params.topic_id = topicId;
+        
+        // Profile filtering parameters
+        if (profileIds && profileIds.length > 0) {
+            params.profile_ids = profileIds.join(',');
+        }
+        if (minProfileScore !== undefined) params.min_profile_score = minProfileScore;
+        if (maxProfileScore !== undefined) params.max_profile_score = maxProfileScore;
+        if (profileRelatedOnly) params.profile_related_only = profileRelatedOnly;
 
         const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
             params

@@ -21,6 +21,7 @@ interface PaperRowCardProps {
   onFindSimilar?: (paper: PaperApiResponse) => void;
   onOpenMindMap?: (paper: PaperApiResponse) => void;
   onTopicClick?: (topicId: number) => void;
+  hasProfilesSelected?: boolean;
 }
 
 const TruncatedTypography = styled(Typography)(() => ({
@@ -33,7 +34,7 @@ const TruncatedTypography = styled(Typography)(() => ({
   lineHeight: '1.5em' 
 }));
 
-const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick }) => {
+const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, hasProfilesSelected = false }) => {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
 
@@ -83,10 +84,18 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
               color: theme => theme.palette.mode === 'dark' ? theme.palette.common.white : theme.palette.primary.main,
             }} 
           />
-          {paper.related !== undefined && (
+          {paper.related !== undefined && hasProfilesSelected && (
              <Chip 
                 label={paper.related ? "Relevant" : "Not Relevant"} 
                 color={paper.related ? "success" : "default"} 
+                size="small"
+                sx={{mb: 1, width: '100%'}} // Make chip full width of its container
+             />
+          )}
+          {!hasProfilesSelected && (
+             <Chip 
+                label="Not Applicable" 
+                color="default" 
                 size="small"
                 sx={{mb: 1, width: '100%'}} // Make chip full width of its container
              />
@@ -110,10 +119,17 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
               </Typography>
             </>
           )}
-          {paper.related !== undefined && (
+          {paper.related !== undefined && hasProfilesSelected && (
              <Chip 
                label={paper.related ? "Considered Relevant" : "Considered Not Relevant"} 
                color={paper.related ? "success" : "default"} 
+               sx={{mb:1}}
+             />
+          )}
+          {!hasProfilesSelected && (
+             <Chip 
+               label="Not Applicable - No Profile Selected" 
+               color="default" 
                sx={{mb:1}}
              />
           )}

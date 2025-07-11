@@ -26,9 +26,10 @@ interface PaperCardProps {
   onOpenMindMap?: (paper: PaperApiResponse) => void;
   onTopicClick?: (topicId: number) => void;
   initialExpanded?: boolean;
+  hasProfilesSelected?: boolean;
 }
 
-const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, initialExpanded = false }) => {
+const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, initialExpanded = false, hasProfilesSelected = false }) => {
   const [expanded, setExpanded] = useState(initialExpanded);
   const navigate = useNavigate();
 
@@ -62,10 +63,18 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
             <Typography variant="body2" sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'text.secondary', mr: 1 }}>
               Score: {paper.score.toFixed(2)} 
             </Typography>
-            {paper.related !== undefined && (
+            {paper.related !== undefined && hasProfilesSelected && (
                 <Chip 
                     label={paper.related ? "Relevant" : "Not Relevant"} 
                     color={paper.related ? "success" : "default"} 
+                    size="small"
+                    sx={{mr: 1}}
+                />
+            )}
+            {!hasProfilesSelected && (
+                <Chip 
+                    label="Not Applicable" 
+                    color="default" 
                     size="small"
                     sx={{mr: 1}}
                 />
@@ -124,8 +133,11 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
               ))}
             </Box>
           )}
-          {paper.related !== undefined && (
+          {paper.related !== undefined && hasProfilesSelected && (
              <Chip label={paper.related ? "Considered Relevant" : "Considered Not Relevant"} color={paper.related ? "success" : "default"} sx={{mb:1}}/>
+          )}
+          {!hasProfilesSelected && (
+             <Chip label="Not Applicable - No Profile Selected" color="default" sx={{mb:1}}/>
           )}
           <Typography variant="body2" sx={{mt:1}}>
             <Link href={paper.url} target="_blank" rel="noopener noreferrer">

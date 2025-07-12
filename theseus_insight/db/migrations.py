@@ -187,11 +187,18 @@ class MigrationRunner:
                     print(f"[MIGRATION] ⚠ {issue}")
                     issues.append(issue)
                 except Exception as e:
-                    issue = f"Failed to apply {filename}: {str(e)}"
-                    print(f"[MIGRATION] ✗ {issue}")
-                    issues.append(issue)
-                    # Stop on first failure to maintain consistency
-                    break
+                    error_str = str(e)
+                    # Check if it's a constraint already exists error
+                    if "already exists" in error_str.lower():
+                        print(f"[MIGRATION] ⚠ Skipping {filename}: Constraint/index already exists")
+                        # This is not a critical error, migration was partially applied before
+                        migrations_skipped += 1
+                    else:
+                        issue = f"Failed to apply {filename}: {error_str}"
+                        print(f"[MIGRATION] ✗ {issue}")
+                        issues.append(issue)
+                        # Stop on first real failure to maintain consistency
+                        break
             
             # Verify critical tables exist
             missing_tables = self._verify_critical_tables()

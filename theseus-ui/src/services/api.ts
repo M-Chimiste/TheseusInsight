@@ -101,7 +101,15 @@ export const settingsApi = {
         }
       },
     }),
-  startExportDatabase: () => api.post('/settings/database/export-task'),
+  startExportDatabase: (options?: {
+    incremental?: boolean;
+    since_timestamp?: string;
+    tables?: string[];
+    batch_size?: number;
+    streaming?: boolean;
+    parallel?: boolean;
+    max_workers?: number;
+  }) => api.post('/settings/database/export-task', options || {}),
   downloadExportDatabase: (
     taskId: string,
     onProgress?: (percent: number) => void

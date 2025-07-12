@@ -715,10 +715,24 @@ class TaskManager:
             if not task:
                 raise ValueError(f"Task {task_id} not found")
 
+            # Extract configuration
+            config = task.get("config_json", {})
+            if isinstance(config, str):
+                config = json.loads(config)
+            
+            incremental = config.get("incremental", False)
+            since_timestamp = config.get("since_timestamp")
+            tables = config.get("tables")
+            batch_size = config.get("batch_size", 1000)
+            streaming = config.get("streaming", False)
+            parallel = config.get("parallel", False)
+            max_workers = config.get("max_workers", 4)
+            
+            export_type = "incremental" if incremental else "full"
             await self.update_task_status(
                 task_id,
                 TaskStatus.PROCESSING,
-                "Starting database export",
+                f"Starting {export_type} database export",
                 progress=0,
                 current_step="export_init",
             )
@@ -728,7 +742,26 @@ class TaskManager:
 
             # Get database URL from environment
             db_url = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
-            exporter = DatabaseExporter(db_url, export_dir)
+            
+            # Parse timestamp if provided
+            parsed_timestamp = None
+            if since_timestamp:
+                try:
+                    from datetime import datetime as dt
+                    parsed_timestamp = dt.fromisoformat(since_timestamp)
+                except ValueError:
+                    raise ValueError(f"Invalid timestamp format: {since_timestamp}")
+            
+            exporter = DatabaseExporter(
+                db_url, 
+                export_dir,
+                batch_size=batch_size,
+                streaming=streaming,
+                parallel=parallel,
+                max_workers=max_workers,
+                incremental=incremental,
+                since_timestamp=parsed_timestamp
+            )
 
             loop = asyncio.get_event_loop()
 
@@ -745,17 +778,32 @@ class TaskManager:
                         loop,
                     )
 
-            result = await asyncio.to_thread(
-                exporter.export_all,
-                True,
-                f"theseus_backup_{task_id}",
-                progress_cb,
-            )
+            if incremental:
+                # Run incremental export
+                result = await asyncio.to_thread(
+                    exporter.export_incremental,
+                    tables,
+                    parsed_timestamp
+                )
+                # Create archive for incremental export
+                archive_file = await asyncio.to_thread(
+                    exporter.create_archive,
+                    f"theseus_incremental_{task_id}"
+                )
+                result["archive"] = archive_file
+            else:
+                # Run full export
+                result = await asyncio.to_thread(
+                    exporter.export_all,
+                    True,
+                    f"theseus_backup_{task_id}",
+                    progress_cb,
+                )
 
             await self.update_task_status(
                 task_id,
                 TaskStatus.COMPLETED,
-                "Database export completed",
+                f"{export_type.capitalize()} database export completed",
                 progress=100,
                 current_step="export_complete",
                 result={"archive_path": result.get("archive")},

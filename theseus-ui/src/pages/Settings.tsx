@@ -232,6 +232,17 @@ const Settings: React.FC = () => {
 
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
+  
+  // Incremental export state
+  const [exportMode, setExportMode] = useState<'full' | 'incremental'>('full');
+  const [incrementalSince, setIncrementalSince] = useState<string>('');
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
+  const [exportOptions, setExportOptions] = useState({
+    streaming: false,
+    parallel: false,
+    batch_size: 1000,
+    max_workers: 4
+  });
   const [editedResearchAgentConfig, setEditedResearchAgentConfig] = useState<any | null>(null);
   
   // Use the database task state hook for persistent state management
@@ -300,7 +311,29 @@ const Settings: React.FC = () => {
   });
 
   const exportDatabaseMutation = useMutation({
-    mutationFn: () => settingsApi.startExportDatabase(),
+    mutationFn: () => {
+      const options: any = {};
+      
+      if (exportMode === 'incremental') {
+        options.incremental = true;
+        if (incrementalSince) {
+          // Convert date to ISO format with timezone
+          const date = new Date(incrementalSince);
+          options.since_timestamp = date.toISOString();
+        }
+        if (selectedTables.length > 0) {
+          options.tables = selectedTables;
+        }
+      }
+      
+      // Add performance options
+      options.streaming = exportOptions.streaming;
+      options.parallel = exportOptions.parallel;
+      options.batch_size = exportOptions.batch_size;
+      options.max_workers = exportOptions.max_workers;
+      
+      return settingsApi.startExportDatabase(options);
+    },
     onMutate: () => {
       // Clear any previous errors
       setExportError(null);
@@ -2217,8 +2250,109 @@ const Settings: React.FC = () => {
                 Export Database
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Create a backup of your entire database as a compressed archive.
+                Create a backup of your database as a compressed archive.
               </Typography>
+              
+              {/* Export Mode Selection */}
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={exportMode === 'incremental'}
+                    onChange={(e) => setExportMode(e.target.checked ? 'incremental' : 'full')}
+                    color="primary"
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight={500}>
+                      Incremental Export
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {exportMode === 'full' 
+                        ? 'Full export - includes all data in the database'
+                        : 'Incremental export - only export changes since a specific date'
+                      }
+                    </Typography>
+                  </Box>
+                }
+                sx={{ mb: 2, display: 'block' }}
+              />
+              
+              {/* Incremental Options */}
+              {exportMode === 'incremental' && (
+                <Box sx={{ mb: 2, pl: 4 }}>
+                  <TextField
+                    label="Export changes since"
+                    type="datetime-local"
+                    value={incrementalSince}
+                    onChange={(e) => setIncrementalSince(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    helperText="Leave empty to auto-detect from last export"
+                    sx={{ mb: 2, width: '100%', maxWidth: 300 }}
+                  />
+                  
+                  <FormControl sx={{ mb: 2, width: '100%', maxWidth: 400 }}>
+                    <InputLabel>Tables to export (optional)</InputLabel>
+                    <Select
+                      multiple
+                      value={selectedTables}
+                      onChange={(e) => setSelectedTables(e.target.value as string[])}
+                      renderValue={(selected) => selected.join(', ')}
+                    >
+                      {['papers', 'research_runs', 'mindmap_reports', 'research_agent_state', 
+                        'paper_fulltext', 'topics', 'research_profiles', 'podcasts', 'newsletters'].map((table) => (
+                        <MenuItem key={table} value={table}>
+                          {table}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              )}
+              
+              {/* Advanced Options */}
+              <Accordion sx={{ mb: 2 }}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="body2">Advanced Export Options</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={exportOptions.streaming}
+                          onChange={(e) => setExportOptions({...exportOptions, streaming: e.target.checked})}
+                        />
+                      }
+                      label="Enable streaming (for large datasets)"
+                    />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={exportOptions.parallel}
+                          onChange={(e) => setExportOptions({...exportOptions, parallel: e.target.checked})}
+                        />
+                      }
+                      label="Enable parallel processing"
+                    />
+                    {exportOptions.parallel && (
+                      <Box sx={{ pl: 3 }}>
+                        <Typography variant="body2" gutterBottom>
+                          Max Workers: {exportOptions.max_workers}
+                        </Typography>
+                        <Slider
+                          value={exportOptions.max_workers}
+                          onChange={(_, value) => setExportOptions({...exportOptions, max_workers: value as number})}
+                          min={1}
+                          max={8}
+                          marks
+                          sx={{ maxWidth: 200 }}
+                        />
+                      </Box>
+                    )}
+                  </Box>
+                </AccordionDetails>
+              </Accordion>
               <Button
                 variant="contained"
                 color="primary"

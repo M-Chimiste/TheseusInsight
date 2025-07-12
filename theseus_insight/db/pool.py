@@ -13,7 +13,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 try:
-    from psycopg.pool import ConnectionPool
+    from psycopg_pool import ConnectionPool
     POOL_AVAILABLE = True
 except ImportError:
     # Pool module not available - will use fallback

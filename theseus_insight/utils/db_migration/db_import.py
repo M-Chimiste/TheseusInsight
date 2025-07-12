@@ -15,9 +15,13 @@ import json
 import tarfile
 import argparse
 import tempfile
+import csv
+import hashlib
+import logging
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable, Tuple
+from contextlib import contextmanager
 
 from ...data_access import (
     PaperRepository, NewsletterRepository, PodcastRepository, 
@@ -27,19 +31,248 @@ from ...data_access import (
 from ...data_model.papers import Paper, Podcast, Newsletter
 from ...db import get_cursor
 
+logger = logging.getLogger(__name__)
+
+# Import parallel processor if available
+try:
+    from .parallel_processor import ParallelImporter
+    PARALLEL_AVAILABLE = True
+except ImportError:
+    PARALLEL_AVAILABLE = False
+    logger.debug("Parallel processing not available")
+
+
+class ValidationError(Exception):
+    """Raised when data validation fails."""
+    pass
+
 
 class DatabaseImporter:
     """Handles importing database contents from JSON files."""
     
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, dry_run: bool = False, auto_migrate: bool = False, merge_strategy: str = 'upsert'):
         """
         Initialize the importer.
         
         Args:
             db_path: Database connection string (PostgreSQL URL)
+            dry_run: If True, validate without making changes
+            auto_migrate: If True, automatically apply schema migrations when needed
+            merge_strategy: Strategy for incremental imports ('upsert', 'insert_only', 'update_only')
         """
         # Store the db_path for reference (repositories handle their own connections)
         self.db_path = db_path
+        self.dry_run = dry_run
+        self.auto_migrate = auto_migrate
+        self.merge_strategy = merge_strategy
+        self.import_version = "5.2"  # Updated version with incremental support
+        self.validation_results = {
+            "tables": {},
+            "errors": [],
+            "warnings": []
+        }
+    
+    @contextmanager
+    def _transaction_context(self, table_name: str):
+        """
+        Context manager for transactional operations with savepoints.
+        
+        Args:
+            table_name: Name of the table for the savepoint
+            
+        Yields:
+            Database cursor
+        """
+        if self.dry_run:
+            # In dry-run mode, use a transaction that will be rolled back
+            with get_cursor() as cursor:
+                cursor.execute("BEGIN")
+                try:
+                    yield cursor
+                finally:
+                    cursor.execute("ROLLBACK")
+        else:
+            # Normal mode with savepoints
+            with get_cursor() as cursor:
+                savepoint = f"sp_{table_name.replace('-', '_')}"
+                cursor.execute(f"SAVEPOINT {savepoint}")
+                
+                try:
+                    yield cursor
+                    cursor.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception as e:
+                    cursor.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    logger.error(f"Transaction failed for {table_name}: {e}")
+                    raise
+    
+    def _validate_table_data(self, table_name: str, data: List[Dict], checksum: Optional[str] = None) -> bool:
+        """
+        Validate table data integrity using comprehensive validation framework.
+        
+        Args:
+            table_name: Name of the table
+            data: Table data as list of dictionaries
+            checksum: Expected checksum from metadata
+            
+        Returns:
+            True if valid
+        """
+        validation_errors = []
+        
+        # Calculate data checksum if provided
+        if checksum:
+            hasher = hashlib.sha256()
+            for row in data:
+                row_json = json.dumps(row, sort_keys=True, default=str)
+                hasher.update(row_json.encode())
+            
+            calculated_checksum = hasher.hexdigest()
+            if calculated_checksum != checksum:
+                validation_errors.append(f"Checksum mismatch for {table_name}")
+        
+        # Use comprehensive validation framework
+        try:
+            from .data_validation import ComprehensiveValidator
+            validator = ComprehensiveValidator()
+            
+            # Validate single table
+            result = validator.table_validator.validate_table(table_name, data)
+            
+            # Add errors from validation result
+            validation_errors.extend(result.errors)
+            
+            # Store detailed validation results
+            self.validation_results["tables"][table_name] = {
+                "record_count": len(data),
+                "errors": result.errors,
+                "warnings": result.warnings,
+                "statistics": result.statistics,
+                "valid": result.is_valid and len(validation_errors) == 0  # Include checksum result
+            }
+            
+            # Log warnings
+            for warning in result.warnings:
+                logger.warning(f"{table_name}: {warning}")
+            
+        except ImportError:
+            logger.warning("Comprehensive validation not available, using basic validation")
+            
+            # Fallback to basic validation
+            if table_name == "papers":
+                required_fields = ["title", "abstract"]
+                for i, row in enumerate(data):
+                    for field in required_fields:
+                        if not row.get(field):
+                            validation_errors.append(f"Row {i}: Missing required field '{field}'")
+            
+            # Store basic validation results
+            self.validation_results["tables"][table_name] = {
+                "record_count": len(data),
+                "errors": validation_errors,
+                "valid": len(validation_errors) == 0
+            }
+        
+        # Log errors
+        if validation_errors:
+            for error in validation_errors:
+                logger.warning(f"{table_name}: {error}")
+        
+        return len(validation_errors) == 0
+    
+    def _import_with_copy(
+        self, 
+        table_name: str, 
+        data: List[Dict], 
+        columns: List[str],
+        skip_duplicates: bool = True,
+        unique_columns: Optional[List[str]] = None
+    ) -> Dict[str, int]:
+        """
+        Import data using PostgreSQL COPY for performance.
+        
+        Args:
+            table_name: Target table name
+            data: Data to import
+            columns: Column names
+            skip_duplicates: Whether to skip duplicate records
+            unique_columns: Columns that define uniqueness
+            
+        Returns:
+            Import statistics
+        """
+        stats = {"imported": 0, "skipped": 0, "errors": 0}
+        
+        if not data:
+            return stats
+        
+        with self._transaction_context(table_name) as cursor:
+            # Create temporary table for staging
+            temp_table = f"temp_{table_name}_{id(self)}"
+            
+            try:
+                # Create temp table with same structure
+                cursor.execute(f"""
+                    CREATE TEMP TABLE {temp_table} 
+                    (LIKE {table_name} INCLUDING ALL)
+                """)
+                
+                # Prepare CSV data
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp:
+                    writer = csv.DictWriter(tmp, fieldnames=columns, extrasaction='ignore')
+                    writer.writeheader()
+                    writer.writerows(data)
+                    tmp_path = tmp.name
+                
+                # COPY data into temp table
+                with open(tmp_path, 'r') as f:
+                    cursor.copy_expert(
+                        f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER",
+                        f
+                    )
+                
+                # Handle duplicates and insert
+                if skip_duplicates and unique_columns:
+                    # Insert only non-duplicates
+                    unique_clause = " AND ".join([
+                        f"t.{col} = s.{col}" for col in unique_columns
+                    ])
+                    
+                    cursor.execute(f"""
+                        INSERT INTO {table_name} ({','.join(columns)})
+                        SELECT {','.join(columns)} FROM {temp_table} s
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM {table_name} t
+                            WHERE {unique_clause}
+                        )
+                    """)
+                    
+                    stats["imported"] = cursor.rowcount
+                    
+                    # Count skipped
+                    cursor.execute(f"SELECT COUNT(*) FROM {temp_table}")
+                    total_count = cursor.fetchone()[0]
+                    stats["skipped"] = total_count - stats["imported"]
+                else:
+                    # Insert all records
+                    cursor.execute(f"""
+                        INSERT INTO {table_name} ({','.join(columns)})
+                        SELECT {','.join(columns)} FROM {temp_table}
+                    """)
+                    stats["imported"] = cursor.rowcount
+                
+                # Drop temp table
+                cursor.execute(f"DROP TABLE {temp_table}")
+                
+            except Exception as e:
+                logger.error(f"COPY import failed for {table_name}: {e}")
+                stats["errors"] = len(data)
+                raise
+            finally:
+                # Clean up temp file
+                if 'tmp_path' in locals():
+                    os.unlink(tmp_path)
+        
+        return stats
 
     def extract_archive(self, archive_path: str, extract_dir: str) -> str:
         """
@@ -62,6 +295,214 @@ class DatabaseImporter:
         
         print(f"Archive extracted to: {extract_path}")
         return str(extract_path)
+    
+    def validate_import(self, input_path: str) -> Dict[str, Any]:
+        """
+        Perform dry-run validation of import data.
+        
+        Args:
+            input_path: Path to import directory or archive
+            
+        Returns:
+            Validation results
+        """
+        self.dry_run = True
+        input_path_obj = Path(input_path)
+        
+        if input_path_obj.is_dir():
+            return self._validate_directory(input_path)
+        elif input_path_obj.suffix == ".gz":
+            return self._validate_archive(input_path)
+        else:
+            raise ValueError(f"Invalid input path: {input_path}")
+    
+    def _validate_directory(self, input_dir: str) -> Dict[str, Any]:
+        """Validate all files in a directory."""
+        input_path = Path(input_dir)
+        
+        # Check metadata
+        metadata_file = input_path / "metadata.json"
+        if metadata_file.exists():
+            self.validate_metadata(str(metadata_file))
+        else:
+            self.validation_results["warnings"].append("No metadata.json found")
+        
+        # Validate each table file
+        table_files = {
+            "papers": "papers.json",
+            "podcasts": "podcasts.json",
+            "newsletters": "newsletters.json",
+            "literature_reviews": "literature_reviews.json"
+        }
+        
+        for table_name, filename in table_files.items():
+            file_path = input_path / filename
+            if file_path.exists():
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                    checksum = self.validation_results.get("checksums", {}).get(table_name)
+                    self._validate_table_data(table_name, data, checksum)
+        
+        return self.validation_results
+    
+    def _validate_archive(self, archive_path: str) -> Dict[str, Any]:
+        """Validate files in an archive."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Extract archive
+            extract_dir = self.extract_archive(archive_path, temp_dir)
+            return self._validate_directory(extract_dir)
+    
+    def validate_comprehensive(self, input_path: str) -> Dict[str, Any]:
+        """
+        Perform comprehensive validation including referential integrity and data consistency.
+        
+        Args:
+            input_path: Path to import directory or archive
+            
+        Returns:
+            Comprehensive validation results
+        """
+        # First perform basic validation
+        basic_results = self.validate_import(input_path)
+        
+        try:
+            from .data_validation import ComprehensiveValidator
+            
+            # Load all table data
+            input_path_obj = Path(input_path)
+            if input_path_obj.suffix == ".gz":
+                # Extract to temporary directory
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    extract_dir = self.extract_archive(input_path, temp_dir)
+                    tables_data = self._load_all_tables(extract_dir)
+            else:
+                tables_data = self._load_all_tables(input_path)
+            
+            # Perform comprehensive validation
+            validator = ComprehensiveValidator()
+            comprehensive_result = validator.validate_export_data(tables_data)
+            
+            # Merge results
+            basic_results["comprehensive_validation"] = {
+                "is_valid": comprehensive_result.is_valid,
+                "errors": comprehensive_result.errors,
+                "warnings": comprehensive_result.warnings,
+                "statistics": comprehensive_result.statistics
+            }
+            
+            # Add overall status
+            basic_results["overall_valid"] = (
+                basic_results.get("overall_valid", True) and 
+                comprehensive_result.is_valid
+            )
+            
+        except ImportError:
+            logger.warning("Comprehensive validation framework not available")
+            basic_results["comprehensive_validation"] = {
+                "status": "unavailable",
+                "message": "Comprehensive validation framework not available"
+            }
+        except Exception as e:
+            logger.error(f"Comprehensive validation failed: {e}")
+            basic_results["comprehensive_validation"] = {
+                "status": "error",
+                "message": str(e)
+            }
+        
+        return basic_results
+    
+    def _load_all_tables(self, input_dir: str) -> Dict[str, List[Dict]]:
+        """Load all table data from directory."""
+        input_path = Path(input_dir)
+        tables_data = {}
+        
+        # Define all possible table files
+        table_files = {
+            "papers": "papers.json",
+            "podcasts": "podcasts.json",
+            "newsletters": "newsletters.json",
+            "literature_reviews": "literature_reviews.json",
+            "research_profiles": "research_profiles.json",
+            "profile_research_interests": "profile_research_interests.json",
+            "paper_profile_scores": "paper_profile_scores.json",
+            "research_runs": "research_runs.json",
+            "research_agent_state": "research_agent_state.json",
+            "paper_fulltext": "paper_fulltext.json",
+            "mindmap_reports": "mindmap_reports.json",
+            "model_catalog": "model_catalog.json",
+            "topics": "topics.json",
+            "topic_metrics": "topic_metrics.json",
+            "paper_topics": "paper_topics.json",
+            "research_interests": "research_interests.json",
+            "research_interest_metrics": "research_interest_metrics.json",
+            "paper_research_interests": "paper_research_interests.json",
+            "label_summaries": "label_summaries.json"
+        }
+        
+        for table_name, filename in table_files.items():
+            file_path = input_path / filename
+            if file_path.exists():
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        tables_data[table_name] = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Could not load {filename}: {e}")
+                    tables_data[table_name] = []
+            else:
+                logger.debug(f"Table file {filename} not found")
+        
+        return tables_data
+    
+    def apply_migrations(self, migration_info: Dict[str, Any]) -> bool:
+        """
+        Apply database schema migrations.
+        
+        Args:
+            migration_info: Migration information from validation results
+            
+        Returns:
+            True if migrations were applied successfully
+        """
+        if not migration_info:
+            return True
+        
+        try:
+            from .schema_versioning import SchemaMigrator
+            migrator = SchemaMigrator(self.db_path)
+            
+            migration_path = migration_info.get("migration_path", [])
+            from_version = migration_info.get("from_version")
+            to_version = migration_info.get("to_version")
+            
+            print(f"Applying migrations from {from_version} to {to_version}")
+            
+            for path in migration_path:
+                print(f"Applying migration: {path}")
+                
+                if self.dry_run:
+                    # Validate migration without applying
+                    success = migrator.apply_migration(path, dry_run=True)
+                    if success:
+                        print(f"Migration {path} validation: SUCCESS")
+                    else:
+                        print(f"Migration {path} validation: FAILED")
+                        return False
+                else:
+                    # Apply migration
+                    success = migrator.apply_migration(path, dry_run=False)
+                    if success:
+                        print(f"Migration {path}: SUCCESS")
+                    else:
+                        print(f"Migration {path}: FAILED")
+                        return False
+            
+            print("All migrations applied successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Migration failed: {e}")
+            print(f"Error applying migrations: {e}")
+            return False
     
     def validate_metadata(self, metadata_path: str) -> bool:
         """
@@ -92,9 +533,60 @@ class DatabaseImporter:
                 print(f"Warning: Missing expected tables in export: {missing}")
                 return False
             
+            # Check schema version compatibility if available
+            if "schema_version" in metadata:
+                try:
+                    from .schema_versioning import SchemaVersionManager, SchemaMigrator
+                    schema_manager = SchemaVersionManager(self.db_path)
+                    
+                    # Load source schema version
+                    import_dir = Path(metadata_path).parent
+                    source_schema = schema_manager.load_schema_version(import_dir)
+                    
+                    # Check compatibility
+                    is_compatible, warnings = schema_manager.check_compatibility(source_schema)
+                    
+                    for warning in warnings:
+                        print(f"Schema compatibility: {warning}")
+                    
+                    if not is_compatible:
+                        # Try to find migration path
+                        if source_schema:
+                            migrator = SchemaMigrator(self.db_path)
+                            current_schema = schema_manager.extract_current_schema()
+                            
+                            migration_path = migrator.get_migration_path(
+                                source_schema.version, 
+                                current_schema.version
+                            )
+                            
+                            if migration_path:
+                                print(f"Migration available: {' -> '.join(migration_path)}")
+                                print("Use --auto-migrate flag to apply migrations automatically")
+                                
+                                # Store migration info for later use
+                                self.validation_results["migration_required"] = {
+                                    "from_version": source_schema.version,
+                                    "to_version": current_schema.version,
+                                    "migration_path": migration_path
+                                }
+                            else:
+                                print("Error: No migration path available")
+                                return False
+                        else:
+                            print("Error: Schema versions are not compatible")
+                            return False
+                        
+                except Exception as e:
+                    print(f"Warning: Could not check schema compatibility: {e}")
+            
             # Check version and available features
             export_version = metadata.get("export_version", "1.0")
             print(f"Export version: {export_version}")
+            
+            # Store checksums if available
+            if "checksums" in metadata:
+                self.validation_results["checksums"] = metadata["checksums"]
             
             # List new features if available
             new_features = metadata.get("new_features", [])
@@ -117,7 +609,58 @@ class DatabaseImporter:
             print(f"Error validating metadata: {e}")
             return False
     
-    def import_papers(self, papers_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+    def import_papers_optimized(self, papers_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import papers using optimized COPY method.
+        
+        Args:
+            papers_file: Path to papers.json
+            skip_duplicates: Whether to skip duplicates
+            progress_callback: Optional progress callback
+            
+        Returns:
+            Import statistics
+        """
+        logger.info(f"Importing papers from {papers_file} using optimized method")
+        
+        with open(papers_file, 'r', encoding='utf-8') as f:
+            papers_data = json.load(f)
+        
+        # Validate data
+        checksum = self.validation_results.get("checksums", {}).get("papers")
+        if not self._validate_table_data("papers", papers_data, checksum):
+            if not self.dry_run:
+                self.validation_results["warnings"].append("Papers validation failed but continuing")
+        
+        if self.dry_run:
+            return {"total": len(papers_data), "validated": len(papers_data)}
+        
+        # Prepare data for COPY
+        columns = [
+            "title", "abstract", "date", "date_run", "score", "rationale",
+            "related", "cosine_similarity", "url", "embedding_model", "embedding"
+        ]
+        
+        # Convert embeddings to PostgreSQL format
+        for paper in papers_data:
+            if paper.get("embedding"):
+                paper["embedding"] = json.dumps(paper["embedding"])
+        
+        # Import using COPY
+        stats = self._import_with_copy(
+            "papers",
+            papers_data,
+            columns,
+            skip_duplicates=skip_duplicates,
+            unique_columns=["url"]
+        )
+        
+        if progress_callback:
+            progress_callback(len(papers_data), len(papers_data), f"Imported {stats['imported']} papers")
+        
+        return stats
+    
+    def import_papers(self, papers_file: str, skip_duplicates: bool = True, progress_callback=None, use_copy: bool = True) -> Dict[str, int]:
         """
         Import papers from JSON file using bulk insert for improved performance.
         
@@ -125,10 +668,19 @@ class DatabaseImporter:
             papers_file: Path to papers.json file
             skip_duplicates: Whether to skip papers that already exist (by URL)
             progress_callback: Optional callback function(current, total, message)
+            use_copy: Whether to use the optimized COPY method
             
         Returns:
             Dictionary with import statistics
         """
+        # Use optimized method if requested
+        if use_copy:
+            try:
+                return self.import_papers_optimized(papers_file, skip_duplicates, progress_callback)
+            except Exception as e:
+                logger.warning(f"Optimized import failed, falling back to traditional method: {e}")
+        
+        # Traditional method
         print("Importing papers...")
         
         with open(papers_file, 'r', encoding='utf-8') as f:
@@ -214,7 +766,84 @@ class DatabaseImporter:
         bulk_stats["errors"] += conversion_errors
         
         print(f"Papers import completed: {bulk_stats['imported']} imported, {bulk_stats['skipped']} skipped, {bulk_stats['errors']} errors")
+        
+        # Migrate paper scores to default profile for backward compatibility
+        if bulk_stats["imported"] > 0:
+            self._migrate_papers_to_default_profile(papers_data, progress_callback)
+        
         return bulk_stats
+    
+    def _migrate_papers_to_default_profile(self, papers_data: List[Dict], progress_callback=None):
+        """
+        Migrate paper scores from old schema to profile-based schema.
+        This ensures backward compatibility with old backups.
+        """
+        print("Migrating paper scores to profile-based system...")
+        
+        # Ensure default profile exists
+        default_profile_id = self.ensure_default_profile()
+        
+        # Get papers that have scores but no profile scores
+        papers_with_scores = [p for p in papers_data if p.get("score") is not None]
+        if not papers_with_scores:
+            print("No paper scores to migrate")
+            return
+        
+        print(f"Found {len(papers_with_scores)} papers with scores to migrate to default profile")
+        
+        migrated_count = 0
+        skipped_count = 0
+        
+        # Get paper IDs by URL
+        url_to_id = {}
+        with get_cursor() as cursor:
+            cursor.execute("SELECT id, url FROM papers WHERE url = ANY(%s)", 
+                         ([p["url"] for p in papers_with_scores],))
+            url_to_id = {row["url"]: row["id"] for row in cursor.fetchall()}
+        
+        for i, paper_data in enumerate(papers_with_scores):
+            try:
+                paper_id = url_to_id.get(paper_data["url"])
+                if not paper_id:
+                    continue
+                
+                # Check if score already exists for this profile
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM paper_profile_scores 
+                        WHERE paper_id = %s AND profile_id = %s
+                    """, (paper_id, default_profile_id))
+                    if cursor.fetchone()[0] > 0:
+                        skipped_count += 1
+                        continue
+                
+                # Insert paper score for default profile
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO paper_profile_scores 
+                        (paper_id, profile_id, score, related, rationale, date_scored, judge_model)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        paper_id,
+                        default_profile_id,
+                        paper_data.get("score"),
+                        paper_data.get("related"),
+                        paper_data.get("rationale"),
+                        paper_data.get("date_run"),  # Use date_run as date_scored
+                        "legacy_import"  # Mark as imported from legacy system
+                    ))
+                
+                migrated_count += 1
+                
+            except Exception as e:
+                print(f"Error migrating score for paper '{paper_data.get('title', 'Unknown')}': {e}")
+            
+            # Report progress
+            if progress_callback and (i + 1) % 100 == 0:
+                progress_callback(i + 1, len(papers_with_scores), 
+                                f"Migrating scores to profile system: {i + 1}/{len(papers_with_scores)}")
+        
+        print(f"Score migration completed: {migrated_count} migrated, {skipped_count} already existed")
     
     def import_podcasts(self, podcasts_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
@@ -703,6 +1332,224 @@ class DatabaseImporter:
         print(f"Model catalog import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
 
+    def ensure_default_profile(self) -> int:
+        """
+        Ensure a default profile exists and return its ID.
+        This is used for backward compatibility when importing old backups.
+        
+        Returns:
+            ID of the default profile
+        """
+        with get_cursor() as cursor:
+            # Check if default profile exists
+            cursor.execute("SELECT id FROM research_profiles WHERE is_default = TRUE LIMIT 1")
+            result = cursor.fetchone()
+            
+            if result:
+                return result['id']
+            
+            # Create default profile if it doesn't exist
+            cursor.execute("""
+                INSERT INTO research_profiles (name, description, is_active, is_default, created_at, updated_at)
+                VALUES (%s, %s, TRUE, TRUE, NOW(), NOW())
+                RETURNING id
+            """, ("Default Profile", "Default research profile for backward compatibility"))
+            
+            default_id = cursor.fetchone()['id']
+            print(f"Created default profile with ID: {default_id}")
+            return default_id
+    
+    def import_research_profiles(self, profiles_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import research profiles from JSON file.
+        
+        Args:
+            profiles_file: Path to research_profiles.json file
+            skip_duplicates: Whether to skip profiles that already exist (by name)
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing research profiles...")
+        
+        with open(profiles_file, 'r', encoding='utf-8') as f:
+            profiles_data = json.load(f)
+        
+        stats = {"total": len(profiles_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, profile_data in enumerate(profiles_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM research_profiles WHERE name = %s", (profile_data["name"],))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert profile
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO research_profiles 
+                        (name, description, color, tags, email_recipients, arxiv_filters, 
+                         is_active, is_default, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        profile_data["name"],
+                        profile_data.get("description"),
+                        profile_data.get("color"),
+                        json.dumps(profile_data.get("tags", [])),
+                        json.dumps(profile_data.get("email_recipients", [])),
+                        json.dumps(profile_data.get("arxiv_filters", {})),
+                        profile_data.get("is_active", True),
+                        profile_data.get("is_default", False),
+                        profile_data.get("created_at"),
+                        profile_data.get("updated_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing profile '{profile_data.get('name', 'Unknown')}': {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(profiles_data), f"Importing profiles: {i + 1}/{len(profiles_data)}")
+        
+        print(f"Profiles import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
+    def import_profile_research_interests(self, interests_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import profile research interests from JSON file.
+        
+        Args:
+            interests_file: Path to profile_research_interests.json file
+            skip_duplicates: Whether to skip interests that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing profile research interests...")
+        
+        with open(interests_file, 'r', encoding='utf-8') as f:
+            interests_data = json.load(f)
+        
+        stats = {"total": len(interests_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, interest_data in enumerate(interests_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM profile_research_interests 
+                            WHERE profile_id = %s AND interest_text = %s
+                        """, (interest_data["profile_id"], interest_data["interest_text"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Convert embedding from list to pgvector format if present
+                embedding_str = None
+                if interest_data.get("embedding"):
+                    try:
+                        embedding_str = json.dumps(interest_data["embedding"])
+                    except Exception as e:
+                        print(f"Warning: Could not convert embedding for interest: {e}")
+                
+                # Insert interest
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO profile_research_interests 
+                        (profile_id, interest_text, embedding, embedding_model, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        interest_data["profile_id"],
+                        interest_data["interest_text"],
+                        embedding_str,
+                        interest_data.get("embedding_model"),
+                        interest_data.get("created_at"),
+                        interest_data.get("updated_at")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing profile interest: {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(interests_data), f"Importing profile interests: {i + 1}/{len(interests_data)}")
+        
+        print(f"Profile interests import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+    
+    def import_paper_profile_scores(self, scores_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import paper profile scores from JSON file.
+        
+        Args:
+            scores_file: Path to paper_profile_scores.json file
+            skip_duplicates: Whether to skip scores that already exist
+            progress_callback: Optional callback function(current, total, message)
+            
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing paper profile scores...")
+        
+        with open(scores_file, 'r', encoding='utf-8') as f:
+            scores_data = json.load(f)
+        
+        stats = {"total": len(scores_data), "imported": 0, "skipped": 0, "errors": 0}
+        
+        for i, score_data in enumerate(scores_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM paper_profile_scores 
+                            WHERE paper_id = %s AND profile_id = %s
+                        """, (score_data["paper_id"], score_data["profile_id"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+                
+                # Insert score
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO paper_profile_scores 
+                        (paper_id, profile_id, score, related, rationale, date_scored, judge_model)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        score_data["paper_id"],
+                        score_data["profile_id"],
+                        score_data.get("score"),
+                        score_data.get("related"),
+                        score_data.get("rationale"),
+                        score_data.get("date_scored"),
+                        score_data.get("judge_model")
+                    ))
+                
+                stats["imported"] += 1
+                
+            except Exception as e:
+                print(f"Error importing paper profile score: {e}")
+                stats["errors"] += 1
+            
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(scores_data), f"Importing paper profile scores: {i + 1}/{len(scores_data)}")
+        
+        print(f"Paper profile scores import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
     def import_topics(self, topics_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
         Import topics from JSON file.
@@ -1155,6 +2002,18 @@ class DatabaseImporter:
         if metadata_file.exists():
             if not self.validate_metadata(str(metadata_file)):
                 print("Warning: Metadata validation failed, continuing anyway...")
+            
+            # Check for required migrations
+            migration_info = self.validation_results.get("migration_required")
+            if migration_info:
+                if self.auto_migrate:
+                    print("Auto-migration enabled, applying required migrations...")
+                    if not self.apply_migrations(migration_info):
+                        raise ValueError("Migration failed, cannot proceed with import")
+                elif not self.dry_run:
+                    print("Migration required but auto-migrate not enabled.")
+                    print("Use --auto-migrate flag or manually apply migrations before importing.")
+                    raise ValueError("Schema migration required before import")
         
         results = {}
         current_step = 0
@@ -1162,7 +2021,10 @@ class DatabaseImporter:
         # Check what files are available
         available_files = []
         file_map = {
+            "research_profiles": "research_profiles.json",  # Import profiles first
             "papers": "papers.json",
+            "profile_research_interests": "profile_research_interests.json",
+            "paper_profile_scores": "paper_profile_scores.json",
             "podcasts": "podcasts.json", 
             "newsletters": "newsletters.json",
             "literature_reviews": "literature_reviews.json",
@@ -1205,8 +2067,20 @@ class DatabaseImporter:
                 progress_callback(int((i / total_steps) * 100), 100, f"Starting {table_name} import...")
             
             try:
-                if table_name == "papers":
+                if table_name == "research_profiles":
+                    results[table_name] = self.import_research_profiles(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "papers":
                     results[table_name] = self.import_papers(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "profile_research_interests":
+                    results[table_name] = self.import_profile_research_interests(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "paper_profile_scores":
+                    results[table_name] = self.import_paper_profile_scores(
                         str(file_path), skip_duplicates, create_progress_callback(i, table_name)
                     )
                 elif table_name == "podcasts":
@@ -1316,25 +2190,162 @@ class DatabaseImporter:
             
             return self.import_from_directory(extract_dir, skip_duplicates, adjusted_progress_callback)
     
-    def import_all(self, input_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
+    def import_tables_parallel(
+        self,
+        input_dir: str,
+        skip_duplicates: bool = True,
+        max_workers: int = 4,
+        progress_callback: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Import tables in parallel respecting dependencies.
+        
+        Args:
+            input_dir: Directory containing import files
+            skip_duplicates: Whether to skip duplicates
+            max_workers: Maximum parallel workers
+            progress_callback: Optional progress callback
+            
+        Returns:
+            Import results
+        """
+        if not PARALLEL_AVAILABLE:
+            logger.warning("Parallel processing not available, falling back to sequential import")
+            return self.import_from_directory(input_dir, skip_duplicates, progress_callback)
+        
+        input_path = Path(input_dir)
+        
+        # Build file map
+        file_map = {}
+        table_files = {
+            "research_profiles": "research_profiles.json",
+            "papers": "papers.json",
+            "profile_research_interests": "profile_research_interests.json",
+            "paper_profile_scores": "paper_profile_scores.json",
+            "podcasts": "podcasts.json",
+            "newsletters": "newsletters.json",
+            "literature_reviews": "literature_reviews.json"
+        }
+        
+        for table, filename in table_files.items():
+            file_path = input_path / filename
+            if file_path.exists():
+                file_map[table] = str(file_path)
+        
+        # Use parallel importer
+        parallel_importer = ParallelImporter(self, max_workers)
+        return parallel_importer.import_tables_parallel(
+            file_map, skip_duplicates, progress_callback
+        )
+    
+    def import_incremental(self, input_path: str) -> Dict[str, Any]:
+        """
+        Import incremental data using delta processing and UPSERT operations.
+        
+        Args:
+            input_path: Path to incremental export directory or archive
+            
+        Returns:
+            Import results with delta statistics
+        """
+        try:
+            from .incremental_ops import IncrementalImporter
+        except ImportError:
+            raise RuntimeError("Incremental import functionality not available")
+        
+        logger.info(f"Starting incremental import from {input_path}")
+        
+        # Create incremental importer
+        incremental_importer = IncrementalImporter(self.db_path)
+        
+        # Detect if this is an incremental export
+        if not incremental_importer.detect_incremental_import(input_path):
+            raise ValueError("Input does not appear to be an incremental export")
+        
+        # Handle archive extraction if needed
+        import_dir = input_path
+        temp_dir = None
+        
+        if Path(input_path).suffix == ".gz":
+            import tempfile
+            temp_dir = tempfile.mkdtemp()
+            import_dir = self.extract_archive(input_path, temp_dir)
+        
+        try:
+            # Validate metadata and check for migrations
+            metadata_file = Path(import_dir) / "metadata.json"
+            if metadata_file.exists():
+                if not self.validate_metadata(str(metadata_file)):
+                    logger.warning("Metadata validation failed for incremental import")
+                
+                # Check for required migrations
+                migration_info = self.validation_results.get("migration_required")
+                if migration_info:
+                    if self.auto_migrate:
+                        logger.info("Auto-migration enabled for incremental import")
+                        if not self.apply_migrations(migration_info):
+                            raise ValueError("Migration failed, cannot proceed with incremental import")
+                    elif not self.dry_run:
+                        raise ValueError("Schema migration required before incremental import")
+            
+            # Perform incremental import
+            results = incremental_importer.import_incremental(import_dir, self.merge_strategy)
+            
+            # Add validation info to results
+            results["validation_results"] = self.validation_results
+            
+            logger.info(f"Incremental import completed: {results.get('total_stats', {})}")
+            return results
+            
+        finally:
+            # Clean up temporary directory
+            if temp_dir:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+    
+    def import_all(self, input_path: str, skip_duplicates: bool = True, parallel: bool = False, max_workers: int = 4) -> Dict[str, Any]:
         """
         Import data from either a directory or archive.
         
         Args:
             input_path: Path to directory or tar.gz archive
             skip_duplicates: Whether to skip duplicate entries
+            parallel: Whether to use parallel processing
+            max_workers: Maximum parallel workers
             
         Returns:
             Dictionary with import results
         """
+        # Auto-detect incremental imports
+        try:
+            from .incremental_ops import IncrementalImporter
+            incremental_importer = IncrementalImporter(self.db_path)
+            
+            if incremental_importer.detect_incremental_import(input_path):
+                print(f"Detected incremental import: {input_path}")
+                return self.import_incremental(input_path)
+        except ImportError:
+            logger.debug("Incremental import detection not available")
+        
         input_path_obj = Path(input_path)
         
         if input_path_obj.is_dir():
             print(f"Importing from directory: {input_path}")
-            return self.import_from_directory(input_path, skip_duplicates)
+            if parallel:
+                print(f"Using parallel import with {max_workers} workers")
+                return self.import_tables_parallel(input_path, skip_duplicates, max_workers)
+            else:
+                return self.import_from_directory(input_path, skip_duplicates)
         elif input_path_obj.suffix == ".gz" and input_path_obj.name.endswith(".tar.gz"):
             print(f"Importing from archive: {input_path}")
-            return self.import_from_archive(input_path, skip_duplicates)
+            # Extract first then decide on parallel
+            with tempfile.TemporaryDirectory() as temp_dir:
+                extract_dir = self.extract_archive(input_path, temp_dir)
+                if parallel:
+                    print(f"Using parallel import with {max_workers} workers")
+                    return self.import_tables_parallel(extract_dir, skip_duplicates, max_workers)
+                else:
+                    return self.import_from_directory(extract_dir, skip_duplicates)
         else:
             raise ValueError(f"Input path must be a directory or .tar.gz archive: {input_path}")
 
@@ -1356,7 +2367,8 @@ class DatabaseImporter:
             'logs', 'tasks', 'research_agent_state', 'research_runs', 'lit_reviews', 
             'mindmap_reports', 'model_catalog', 'paper_fulltext', 'newsletters', 'podcasts', 
             'paper_topics', 'topic_metrics', 'topics', 'paper_research_interests', 
-            'research_interest_metrics', 'research_interests', 'label_summaries', 'papers'
+            'research_interest_metrics', 'research_interests', 'label_summaries', 
+            'paper_profile_scores', 'profile_research_interests', 'papers', 'research_profiles'
         ]
         deletion_counts = {}
         total_tables = len(tables_to_clear)
@@ -1399,15 +2411,54 @@ def main():
     parser.add_argument("--db-path", required=True, help="Database connection string")
     parser.add_argument("--input-path", required=True, help="Input directory or tar.gz archive")
     parser.add_argument("--allow-duplicates", action="store_true", help="Allow duplicate entries (don't skip)")
+    parser.add_argument("--dry-run", action="store_true", help="Validate without importing")
+    parser.add_argument("--parallel", action="store_true", help="Use parallel processing")
+    parser.add_argument("--max-workers", type=int, default=4, help="Maximum parallel workers")
+    parser.add_argument("--use-copy", action="store_true", default=True, help="Use COPY for bulk import (default: True)")
+    parser.add_argument("--auto-migrate", action="store_true", help="Automatically apply schema migrations")
+    parser.add_argument("--merge-strategy", choices=['upsert', 'insert_only', 'update_only'], 
+                       default='upsert', help="Strategy for incremental imports (default: upsert)")
+    parser.add_argument("--force-incremental", action="store_true", help="Force incremental import mode")
     
     args = parser.parse_args()
     
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
     try:
-        importer = DatabaseImporter(args.db_path)
-        results = importer.import_all(
-            args.input_path,
-            skip_duplicates=not args.allow_duplicates
+        importer = DatabaseImporter(
+            args.db_path, 
+            dry_run=args.dry_run,
+            auto_migrate=args.auto_migrate,
+            merge_strategy=args.merge_strategy
         )
+        
+        if args.dry_run:
+            print("Running in dry-run mode - no changes will be made")
+            results = importer.validate_import(args.input_path)
+            
+            print("\nValidation Results:")
+            for table, validation in results["tables"].items():
+                status = "VALID" if validation.get("valid", False) else "INVALID"
+                print(f"  {table}: {status} ({validation.get('record_count', 0)} records)")
+                if validation.get("errors"):
+                    for error in validation["errors"][:5]:  # Show first 5 errors
+                        print(f"    - {error}")
+                    if len(validation["errors"]) > 5:
+                        print(f"    ... and {len(validation['errors']) - 5} more errors")
+        else:
+            # Check if we should force incremental mode
+            if args.force_incremental:
+                print(f"Forcing incremental import mode with {args.merge_strategy} strategy")
+                results = importer.import_incremental(args.input_path)
+            else:
+                # import_all will auto-detect incremental imports
+                results = importer.import_all(
+                    args.input_path,
+                    skip_duplicates=not args.allow_duplicates,
+                    parallel=args.parallel,
+                    max_workers=args.max_workers
+                )
         
         print("\nImport Summary:")
         for table, stats in results.items():

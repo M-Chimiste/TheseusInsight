@@ -521,8 +521,8 @@ async def rank_papers(
     research_interests: str, 
     checkpoint_dir: str, 
     checkpoint_manager: CheckpointManager,
-    job_id: Optional[str] = None,
     top_n: int, 
+    job_id: Optional[str] = None,
     verbose: bool = True
 ) -> pd.DataFrame:
     if verbose:
@@ -1014,25 +1014,25 @@ async def harvest_and_judge(
     # Execute pipeline stages
     try:
         data_df = await download_papers(
-        date_from,
-        date_to,
-        category=arxiv_cfg.get("main_category", "cs"),
-        subcats=arxiv_cfg.get("filter_categories", []),
-        checkpoint_dir=checkpoint_dir,
-        checkpoint_manager=checkpoint_manager,
-        job_id=job_id,
-        verbose=verbose,
-    )
-    
-    if data_df is None or data_df.empty:
-        if verbose:
-            print("❌ No papers found for the given date range")
-        return
+            date_from,
+            date_to,
+            category=arxiv_cfg.get("main_category", "cs"),
+            subcats=arxiv_cfg.get("filter_categories", []),
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_manager=checkpoint_manager,
+            job_id=job_id,
+            verbose=verbose,
+        )
+        
+        if data_df is None or data_df.empty:
+            if verbose:
+                print("❌ No papers found for the given date range")
+            return
 
-    # Optimize DataFrame memory after download
-    if memory_monitor:
-        data_df = optimize_dataframe_memory(data_df, verbose)
-        memory_monitor.check_memory()
+        # Optimize DataFrame memory after download
+        if memory_monitor:
+            data_df = optimize_dataframe_memory(data_df, verbose)
+            memory_monitor.check_memory()
 
         embedded_df = await embed_papers(
             data_df,
@@ -1046,13 +1046,13 @@ async def harvest_and_judge(
             max_workers,
             verbose,
         )
-    
-    # Check memory after embedding
-    if memory_monitor:
-        memory_monitor.check_memory()
-        # Free original dataframe if not needed
-        if 'data_df' in locals() and embedded_df is not data_df:
-            del data_df
+        
+        # Check memory after embedding
+        if memory_monitor:
+            memory_monitor.check_memory()
+            # Free original dataframe if not needed
+            if 'data_df' in locals() and embedded_df is not data_df:
+                del data_df
 
         ranked_df = await rank_papers(
             embedded_df,
@@ -1064,10 +1064,10 @@ async def harvest_and_judge(
             top_n,
             verbose,
         )
-    
-    # Check memory after ranking
-    if memory_monitor:
-        memory_monitor.check_memory()
+        
+        # Check memory after ranking
+        if memory_monitor:
+            memory_monitor.check_memory()
 
         if use_bulk_insert:
             insert_papers_bulk(ranked_df, embedded_df, embedding_cfg["model_name"], verbose)

@@ -10,16 +10,32 @@
 -- Add profile_id column to topics table
 ALTER TABLE topics ADD COLUMN IF NOT EXISTS profile_id INTEGER;
 
--- Add foreign key constraint to research_profiles
-ALTER TABLE topics ADD CONSTRAINT fk_topics_profile_id 
-    FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
+-- Add foreign key constraint to research_profiles (if not exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'fk_topics_profile_id'
+    ) THEN
+        ALTER TABLE topics ADD CONSTRAINT fk_topics_profile_id 
+            FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- Add profile_id column to topic_metrics table
 ALTER TABLE topic_metrics ADD COLUMN IF NOT EXISTS profile_id INTEGER;
 
--- Add foreign key constraint for topic_metrics
-ALTER TABLE topic_metrics ADD CONSTRAINT fk_topic_metrics_profile_id 
-    FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
+-- Add foreign key constraint for topic_metrics (if not exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'fk_topic_metrics_profile_id'
+    ) THEN
+        ALTER TABLE topic_metrics ADD CONSTRAINT fk_topic_metrics_profile_id 
+            FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- ===================================================================
 -- Migrate Existing Topics to Default Profile
@@ -65,11 +81,33 @@ END $$;
 -- Make Profile Columns Required
 -- ===================================================================
 
--- Make profile_id NOT NULL for topics
-ALTER TABLE topics ALTER COLUMN profile_id SET NOT NULL;
+-- Make profile_id NOT NULL for topics (if not already)
+DO $$
+BEGIN
+    -- Check if column is already NOT NULL
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'topics' 
+        AND column_name = 'profile_id' 
+        AND is_nullable = 'YES'
+    ) THEN
+        ALTER TABLE topics ALTER COLUMN profile_id SET NOT NULL;
+    END IF;
+END $$;
 
--- Make profile_id NOT NULL for topic_metrics  
-ALTER TABLE topic_metrics ALTER COLUMN profile_id SET NOT NULL;
+-- Make profile_id NOT NULL for topic_metrics (if not already)
+DO $$
+BEGIN
+    -- Check if column is already NOT NULL
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'topic_metrics' 
+        AND column_name = 'profile_id' 
+        AND is_nullable = 'YES'
+    ) THEN
+        ALTER TABLE topic_metrics ALTER COLUMN profile_id SET NOT NULL;
+    END IF;
+END $$;
 
 -- ===================================================================
 -- Create Indexes for Performance

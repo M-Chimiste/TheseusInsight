@@ -40,6 +40,7 @@ class MigrationRunner:
             
         # Define migrations in order with their metadata
         self.migrations: List[Tuple[int, str, str]] = [
+            (0, "000_migration_compatibility.sql", "Migration helper functions"),
             (1, "001_init_schema_postgres.sql", "Initial database schema"),
             (2, "002_migrate_to_profiles.sql", "Add research profiles feature"),
             (3, "003_profiles_trends_integration.sql", "Integrate profiles with trends"),

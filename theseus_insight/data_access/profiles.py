@@ -608,29 +608,59 @@ class ProfileInterestsRepository:
         if not interests:
             return []
         
+        # Filter and prepare valid interests
+        valid_interests = []
+        for interest_text in interests:
+            interest_text = interest_text.strip()
+            if interest_text:
+                valid_interests.append((profile_id, interest_text))
+        
+        if not valid_interests:
+            return []
+        
         results = []
         with get_cursor() as cur:
-            for interest_text in interests:
-                # Skip empty or duplicate interests
-                interest_text = interest_text.strip()
-                if not interest_text:
-                    continue
+            # Use executemany for batch insert
+            try:
+                cur.executemany(
+                    """
+                    INSERT INTO profile_research_interests (profile_id, interest_text)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    valid_interests
+                )
                 
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO profile_research_interests (profile_id, interest_text)
-                        VALUES (%s, %s)
-                        RETURNING *
-                        """,
-                        (profile_id, interest_text)
-                    )
-                    results.append(cur.fetchone())
-                except Exception as e:
-                    # Skip duplicates
-                    if "unique constraint" in str(e).lower():
-                        continue
-                    raise
+                # Fetch all the newly created interests
+                interest_texts = [text for _, text in valid_interests]
+                placeholders = ', '.join(['%s'] * len(interest_texts))
+                cur.execute(
+                    f"""
+                    SELECT * FROM profile_research_interests 
+                    WHERE profile_id = %s AND interest_text IN ({placeholders})
+                    ORDER BY id
+                    """,
+                    [profile_id] + interest_texts
+                )
+                results = cur.fetchall()
+                
+            except Exception as e:
+                # Fall back to individual inserts if batch fails
+                for profile_id, interest_text in valid_interests:
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO profile_research_interests (profile_id, interest_text)
+                            VALUES (%s, %s)
+                            RETURNING *
+                            """,
+                            (profile_id, interest_text)
+                        )
+                        results.append(cur.fetchone())
+                    except Exception as e:
+                        if "unique constraint" in str(e).lower():
+                            continue
+                        raise
         
         return results
 
@@ -921,6 +951,69 @@ class ProfileScoreRepository:
             """, (paper_id, profile_id, score, related, rationale, judge_model))
             
             return cur.rowcount > 0
+
+    @staticmethod
+    def bulk_create_or_update_scores(
+        scores_data: List[Dict[str, Any]]
+    ) -> Tuple[int, int]:
+        """
+        Create or update multiple paper scores for profiles in a single batch.
+        
+        Args:
+            scores_data: List of dictionaries containing:
+                - paper_id: ID of the paper
+                - profile_id: ID of the profile
+                - score: LLM judge score (1-10)
+                - related: Whether paper is related to profile interests
+                - rationale: LLM judge rationale
+                - judge_model: Name of the judge model used
+                
+        Returns:
+            Tuple of (successful_count, failed_count)
+        """
+        if not scores_data:
+            return 0, 0
+            
+        successful = 0
+        failed = 0
+        
+        with get_cursor() as cur:
+            # Prepare values for executemany
+            values = []
+            for score_item in scores_data:
+                try:
+                    values.append((
+                        score_item['paper_id'],
+                        score_item['profile_id'],
+                        score_item['score'],
+                        score_item['related'],
+                        score_item['rationale'],
+                        score_item['judge_model']
+                    ))
+                except KeyError as e:
+                    failed += 1
+                    continue
+            
+            if values:
+                try:
+                    cur.executemany("""
+                        INSERT INTO paper_profile_scores 
+                        (paper_id, profile_id, score, related, rationale, judge_model, date_scored)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (paper_id, profile_id) 
+                        DO UPDATE SET 
+                            score = EXCLUDED.score,
+                            related = EXCLUDED.related,
+                            rationale = EXCLUDED.rationale,
+                            judge_model = EXCLUDED.judge_model,
+                            date_scored = NOW()
+                    """, values)
+                    successful = cur.rowcount
+                except Exception as e:
+                    failed += len(values)
+                    raise
+                    
+        return successful, failed
 
     @staticmethod
     def get_profile_paper_stats(profile_id: int) -> Dict[str, Any]:

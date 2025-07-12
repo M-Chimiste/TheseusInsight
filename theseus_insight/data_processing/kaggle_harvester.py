@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from ..data_model.papers import ArxivRecord
+from .kaggle_optimizer import OptimizedKaggleProcessor
 
 
 class KaggleArxivHarvester:
@@ -59,12 +60,15 @@ class KaggleArxivHarvester:
 
         self._records: List[Dict[str, Any]] = []
         self._debug_mode = os.getenv("DEBUG", "").lower() == "true"
+        self._use_optimizer = os.getenv("USE_KAGGLE_OPTIMIZER", "true").lower() == "true"
+        self._optimizer = None
 
         if self._debug_mode:
             self._debug_log("Kaggle ArXiv harvester initialized")
             self._debug_log(f"Dataset path: {self.dataset_path}")
             self._debug_log(f"Category: {category}, Date range: {date_from} to {date_until}")
             self._debug_log(f"Subcategories: {subcategories}")
+            self._debug_log(f"Optimizer enabled: {self._use_optimizer}")
 
     def _debug_log(self, msg: str) -> None:
         """Print debug message if DEBUG environment variable is 'true'."""
@@ -215,6 +219,59 @@ class KaggleArxivHarvester:
         if not self.dataset_path.exists():
             raise FileNotFoundError(f"Kaggle dataset file not found: {self.dataset_path}")
 
+        # Use optimized processor if enabled
+        if self._use_optimizer:
+            return self._harvest_optimized()
+        
+        # Otherwise, use legacy processing
+        return self._harvest_legacy()
+    
+    def _harvest_optimized(self) -> List[Dict[str, Any]]:
+        """Harvest using the optimized processor with date indexing."""
+        self._log("🚀 Using OPTIMIZED Kaggle processor with date indexing")
+        
+        # Initialize optimizer
+        if self._optimizer is None:
+            self._optimizer = OptimizedKaggleProcessor(str(self.dataset_path))
+        
+        # Check if date range is within dataset bounds
+        try:
+            dataset_start, dataset_end = self._optimizer.get_date_range()
+            self._log(f"📊 Dataset covers: {dataset_start} to {dataset_end}")
+            
+            if self.date_from > dataset_end or self.date_until < dataset_start:
+                self._log(f"⚠️  Requested range {self.date_from} to {self.date_until} is outside dataset")
+                return []
+            
+            # Estimate records for progress reporting
+            estimated_count = self._optimizer.estimate_records_in_range(self.date_from, self.date_until)
+            self._log(f"📈 Estimated {estimated_count:,} records in date range (before filtering)")
+            
+        except Exception as e:
+            self._log(f"⚠️  Index not available, building now: {e}")
+        
+        # Get records using optimized method
+        matched_count = 0
+        for record_dict in self._optimizer.get_records_in_date_range(
+            self.date_from,
+            self.date_until,
+            self.category,
+            self.subcategories,
+            self.max_results
+        ):
+            # Convert to expected format
+            arxiv_record = self._convert_to_arxiv_record(record_dict)
+            self._records.append(arxiv_record)
+            matched_count += 1
+            
+            if matched_count % 1000 == 0:
+                self._log(f"   Processed {matched_count:,} matching records...")
+        
+        self._log(f"✅ Optimized harvest complete: {matched_count:,} records")
+        return self._records
+    
+    def _harvest_legacy(self) -> List[Dict[str, Any]]:
+        """Legacy harvest method - processes entire file line by line."""
         self._log(f"Reading Kaggle ArXiv dataset from: {self.dataset_path}")
         
         processed_count = 0
@@ -261,13 +318,13 @@ class KaggleArxivHarvester:
         except Exception as e:
             raise RuntimeError(f"Failed to process Kaggle dataset: {e}")
 
-        self._log(f"Kaggle harvest completed:")
+        self._log(f"Legacy harvest completed:")
         self._log(f"  Processed: {processed_count} records")
         self._log(f"  Filtered by category: {filtered_category}")
         self._log(f"  Filtered by date: {filtered_date}")
         self._log(f"  Final matches: {matched_count}")
         
-        self._debug_log(f"Kaggle harvest summary: {len(self._records)} records collected")
+        self._debug_log(f"Legacy harvest summary: {len(self._records)} records collected")
         return self._records
 
     def check_dataset_availability(self) -> bool:

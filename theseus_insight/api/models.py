@@ -1,7 +1,8 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from uuid import UUID
 
 # Basic domain entities
 class Model(BaseModel):
@@ -734,7 +735,7 @@ class PerformanceConfig(BaseModel):
     development_max_papers: int = Field(default=5000, ge=100, le=50000, description="Max papers in development mode")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "max_cores": 16,
                 "max_memory_gb": 128,
@@ -948,6 +949,7 @@ class BulkJudgeRunRequest(BaseModel):
     to_date: Optional[str] = Field(None, description="End date for paper filtering (YYYY-MM-DD)")
     batch_size: int = Field(100, ge=10, le=1000, description="Papers to process per batch")
     overwrite_existing: bool = Field(False, description="Overwrite existing scores")
+    paper_ids: Optional[List[int]] = Field(None, description="Specific paper IDs to process (overrides date range)")
 
 
 class BulkJudgeRunResponse(BaseModel):
@@ -979,3 +981,46 @@ class ProfileAwareIngestResponse(BaseModel):
     profile_count: int
     estimated_papers: int
     status: str
+
+
+# Job monitoring models
+class JobStatus(BaseModel):
+    """Enum-like class for job statuses."""
+    PENDING: str = "pending"
+    RUNNING: str = "running"
+    COMPLETED: str = "completed"
+    FAILED: str = "failed"
+    CANCELLED: str = "cancelled"
+
+
+class JobResponse(BaseModel):
+    """Response model for job details."""
+    id: UUID = Field(..., description="Job ID")
+    job_type: str = Field(..., description="Type of job")
+    status: str = Field(..., description="Current job status")
+    configuration: Dict[str, Any] = Field(..., description="Job configuration")
+    state: Optional[Dict[str, Any]] = Field(None, description="Current job state")
+    progress_current: int = Field(0, description="Current progress count")
+    progress_total: Optional[int] = Field(None, description="Total items to process")
+    progress_percent: float = Field(0.0, description="Progress percentage")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+    error_count: int = Field(0, description="Number of errors")
+    started_at: Optional[datetime] = Field(None, description="Job start time")
+    completed_at: Optional[datetime] = Field(None, description="Job completion time")
+    last_checkpoint_at: Optional[datetime] = Field(None, description="Last checkpoint time")
+    created_at: datetime = Field(..., description="Job creation time")
+    updated_at: datetime = Field(..., description="Last update time")
+
+
+class JobListResponse(BaseModel):
+    """Response model for paginated job list."""
+    jobs: List[JobResponse] = Field(..., description="List of jobs")
+    total: int = Field(..., description="Total number of jobs")
+    limit: int = Field(..., description="Page size")
+    offset: int = Field(..., description="Page offset")
+
+
+class JobStatisticsResponse(BaseModel):
+    """Response model for job statistics."""
+    statistics: List[Dict[str, Any]] = Field(..., description="Statistics by job type")
+    overall: Dict[str, Any] = Field(..., description="Overall statistics")

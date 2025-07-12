@@ -15,21 +15,21 @@ if "%DB_NAME%"=="" set DB_NAME=theseusdb
 echo Setting up pgvector extension for user: %DB_USER%, database: %DB_NAME%
 
 REM Detect environment and set schema file path
-if exist "C:\app\sql\init_schema_postgres.sql" (
+if exist "C:\app\sql\001_init_schema_postgres.sql" (
     REM Running in Docker container
-    set SCHEMA_FILE=C:\app\sql\init_schema_postgres.sql
+    set SCHEMA_FILE=C:\app\sql\001_init_schema_postgres.sql
     set ENVIRONMENT=docker
     echo 🐳 Detected Docker environment
-) else if exist "%~dp0init_schema_postgres.sql" (
+) else if exist "%~dp0001_init_schema_postgres.sql" (
     REM Running locally with schema file in same directory as script
-    set SCHEMA_FILE=%~dp0init_schema_postgres.sql
+    set SCHEMA_FILE=%~dp0001_init_schema_postgres.sql
     set ENVIRONMENT=local
     echo 💻 Detected local environment
 ) else (
-    echo ❌ Error: Cannot find init_schema_postgres.sql
+    echo ❌ Error: Cannot find 001_init_schema_postgres.sql
     echo    Expected locations:
-    echo    - Docker: C:\app\sql\init_schema_postgres.sql
-    echo    - Local:  %~dp0init_schema_postgres.sql
+    echo    - Docker: C:\app\sql\001_init_schema_postgres.sql
+    echo    - Local:  %~dp0001_init_schema_postgres.sql
     exit /b 1
 )
 
@@ -136,11 +136,15 @@ echo 🔄 Applying profile migrations...
 
 REM Determine migration file paths based on environment
 if "%ENVIRONMENT%"=="docker" (
-    set MIGRATE_TO_PROFILES_FILE=C:\app\sql\migrate_to_profiles.sql
-    set PROFILES_TRENDS_FILE=C:\app\sql\profiles_trends_integration.sql
+    set MIGRATE_TO_PROFILES_FILE=C:\app\sql\002_migrate_to_profiles.sql
+    set PROFILES_TRENDS_FILE=C:\app\sql\003_profiles_trends_integration.sql
+    set STAGING_TABLES_FILE=C:\app\sql\004_add_staging_tables.sql
+    set OPTIMIZE_INDEXES_FILE=C:\app\sql\005_optimize_indexes.sql
 ) else (
-    set MIGRATE_TO_PROFILES_FILE=%~dp0migrate_to_profiles.sql
-    set PROFILES_TRENDS_FILE=%~dp0profiles_trends_integration.sql
+    set MIGRATE_TO_PROFILES_FILE=%~dp0002_migrate_to_profiles.sql
+    set PROFILES_TRENDS_FILE=%~dp0003_profiles_trends_integration.sql
+    set STAGING_TABLES_FILE=%~dp0004_add_staging_tables.sql
+    set OPTIMIZE_INDEXES_FILE=%~dp0005_optimize_indexes.sql
 )
 
 REM Apply profile migration
@@ -169,6 +173,34 @@ if exist "%PROFILES_TRENDS_FILE%" (
 ) else (
     echo ⚠️  Warning: Profiles-trends integration file not found at %PROFILES_TRENDS_FILE%
     echo    Trends features may not work properly with profiles
+)
+
+REM Apply staging tables migration
+if exist "%STAGING_TABLES_FILE%" (
+    echo 📋 Applying staging tables migration from: %STAGING_TABLES_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%STAGING_TABLES_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply staging tables migration from %STAGING_TABLES_FILE%
+        exit /b 1
+    )
+    echo ✅ Staging tables migration completed successfully
+) else (
+    echo ⚠️  Warning: Staging tables migration file not found at %STAGING_TABLES_FILE%
+    echo    Bulk import features may not be available
+)
+
+REM Apply index optimization
+if exist "%OPTIMIZE_INDEXES_FILE%" (
+    echo 📋 Applying index optimization from: %OPTIMIZE_INDEXES_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%OPTIMIZE_INDEXES_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply index optimization from %OPTIMIZE_INDEXES_FILE%
+        exit /b 1
+    )
+    echo ✅ Index optimization completed successfully
+) else (
+    echo ⚠️  Warning: Index optimization file not found at %OPTIMIZE_INDEXES_FILE%
+    echo    Database performance may not be optimal
 )
 
 echo.

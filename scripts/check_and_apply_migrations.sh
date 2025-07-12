@@ -4,6 +4,13 @@
 
 set -euo pipefail
 
+# Ensure we're running with bash, not sh
+if [ -z "$BASH_VERSION" ]; then
+    echo "Error: This script must be run with bash, not sh"
+    echo "Please run: bash $0 or ./$0"
+    exit 1
+fi
+
 DB_USER="${POSTGRES_USER:-theseus}"
 DB_PASS="${POSTGRES_PASSWORD:-theseus}"
 DB_NAME="${POSTGRES_DB:-theseusdb}"
@@ -71,19 +78,35 @@ apply_migration() {
 echo -e "${BLUE}📊 Setting up migration tracking...${NC}"
 psql -U "$DB_USER" -d "$DB_NAME" -f "$MIGRATION_DIR/create_migration_tracking.sql" 2>/dev/null || true
 
-# Define migrations in order
-declare -A migrations=(
-    [1]="init_schema_postgres.sql|Initial database schema"
-    [2]="migrate_to_profiles.sql|Add research profiles feature"
-    [3]="profiles_trends_integration.sql|Integrate profiles with trends"
+# Define migrations in order (using regular arrays for compatibility)
+migration_files=(
+    "000_migration_compatibility.sql"
+    "001_init_schema_postgres.sql"
+    "002_migrate_to_profiles.sql"
+    "003_profiles_trends_integration.sql"
+    "004_add_staging_tables.sql"
+    "005_optimize_indexes.sql"
+    "006_add_processing_checkpoints.sql"
+)
+
+migration_descriptions=(
+    "Migration helper functions"
+    "Initial database schema"
+    "Add research profiles feature"
+    "Integrate profiles with trends"
+    "Add staging tables for bulk operations"
+    "Optimize indexes for performance"
+    "Add checkpoint system for resumable processing"
 )
 
 # Check and apply migrations
 migrations_applied=0
 migrations_needed=0
 
-for version in 1 2 3; do
-    IFS='|' read -r filename description <<< "${migrations[$version]}"
+for i in ${!migration_files[@]}; do
+    version=$((i + 1))
+    filename="${migration_files[$i]}"
+    description="${migration_descriptions[$i]}"
     migration_path="$MIGRATION_DIR/$filename"
     
     if [ ! -f "$migration_path" ]; then
@@ -111,7 +134,7 @@ done
 # Summary
 echo ""
 echo -e "${BLUE}📊 Migration Summary:${NC}"
-echo "  Total migrations: 3"
+echo "  Total migrations: 5"
 echo "  Already applied: $migrations_applied"
 echo "  Newly applied: $migrations_needed"
 

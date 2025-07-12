@@ -10,22 +10,52 @@ from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json_repair
 from tqdm import tqdm
+import asyncio
 
 from ..inference.llm import OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
 from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
 from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
 from .papers import PaperRepository
 from ..api.models import BulkJudgeRunRequest, BulkJudgeRunResponse
+from ..data_processing.optimized_ollama_scoring import OptimizedOllamaScorer
+from ..data_processing.checkpoint_manager import CheckpointManager
 
 
 class BulkJudgeRunner:
     """Service for running LLM judge scoring across multiple profiles."""
     
-    def __init__(self, judge_model_config: dict, verbose: bool = True):
-        """Initialize the bulk judge runner with model configuration."""
+    def __init__(
+        self, 
+        judge_model_config: dict, 
+        verbose: bool = True,
+        use_optimized_scorer: bool = True,
+        embedding_model=None,
+        checkpoint_manager: Optional[CheckpointManager] = None
+    ):
+        """
+        Initialize the bulk judge runner with model configuration.
+        
+        Args:
+            judge_model_config: Configuration for the judge model
+            verbose: Whether to show progress information
+            use_optimized_scorer: Whether to use the optimized Ollama scorer
+            embedding_model: Optional embedding model for similarity-based optimizations
+        """
         self.judge_model_config = judge_model_config
         self.verbose = verbose
         self.judge_inference = self._load_judge_model(judge_model_config)
+        self.use_optimized_scorer = use_optimized_scorer
+        self.embedding_model = embedding_model
+        self.checkpoint_manager = checkpoint_manager
+        
+        # Initialize optimized scorer if requested and using Ollama
+        self.optimized_scorer = None
+        if use_optimized_scorer and judge_model_config.get('model_type', '').lower() == 'ollama':
+            self.optimized_scorer = OptimizedOllamaScorer(
+                judge_inference=self.judge_inference,
+                embedding_model=embedding_model,
+                verbose=verbose
+            )
         
     def _load_judge_model(self, model_config: dict):
         """Load the appropriate judge model based on configuration."""
@@ -63,10 +93,11 @@ class BulkJudgeRunner:
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
     
-    def run_bulk_judge(
+    async def run_bulk_judge(
         self, 
         request: BulkJudgeRunRequest,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        job_id: Optional[str] = None
     ) -> BulkJudgeRunResponse:
         """
         Run LLM judge scoring for multiple profiles.
@@ -78,7 +109,30 @@ class BulkJudgeRunner:
         Returns:
             BulkJudgeRunResponse with job details
         """
-        job_id = str(uuid.uuid4())
+        if not job_id:
+            job_id = str(uuid.uuid4())
+        
+        # Initialize checkpoint manager if needed
+        if self.checkpoint_manager and not job_id:
+            # Create or find resumable job
+            config = {
+                "profile_ids": request.profile_ids,
+                "profile_tags": request.profile_tags,
+                "from_date": str(request.from_date) if request.from_date else None,
+                "to_date": str(request.to_date) if request.to_date else None,
+                "batch_size": request.batch_size,
+                "overwrite_existing": request.overwrite_existing
+            }
+            
+            resumable_job_id = await self.checkpoint_manager.find_resumable_job("bulk_judge", config)
+            if resumable_job_id:
+                job_id = str(resumable_job_id)
+                if self.verbose:
+                    print(f"🔄 Resuming job {job_id}")
+                await self.checkpoint_manager.resume_job(resumable_job_id)
+            else:
+                new_job_id = await self.checkpoint_manager.create_job("bulk_judge", config)
+                job_id = str(new_job_id)
         
         if self.verbose:
             print(f"🚀 STARTING BULK LLM JUDGE RUN - Job ID: {job_id}")
@@ -118,11 +172,26 @@ class BulkJudgeRunner:
             print(f"📊 Found {len(papers_to_score)} papers to score across {len(target_profiles)} profiles")
             print(f"🎯 Total scoring operations: {total_operations}")
         
-        # Step 3: Run scoring for each profile
+        # Check for previous progress
+        start_profile_idx = 0
         total_scored = 0
         total_failed = 0
         
-        for profile_idx, profile in enumerate(target_profiles):
+        if self.checkpoint_manager and job_id:
+            checkpoint = await self.checkpoint_manager.get_latest_checkpoint(
+                uuid.UUID(job_id), "profile_progress"
+            )
+            if checkpoint:
+                checkpoint_data = checkpoint['checkpoint_data']
+                start_profile_idx = checkpoint_data.get('last_completed_profile_idx', 0) + 1
+                total_scored = checkpoint_data.get('total_scored', 0)
+                total_failed = checkpoint_data.get('total_failed', 0)
+                if self.verbose:
+                    print(f"🔄 Resuming from profile {start_profile_idx + 1}/{len(target_profiles)}")
+        
+        # Step 3: Run scoring for each profile
+        for profile_idx in range(start_profile_idx, len(target_profiles)):
+            profile = target_profiles[profile_idx]
             if progress_callback:
                 progress_callback(f"Scoring profile: {profile['name']}", profile_idx, len(target_profiles))
             
@@ -139,17 +208,38 @@ class BulkJudgeRunner:
                 continue
             
             # Score papers for this profile
-            scored, failed = self._score_papers_for_profile(
+            scored, failed = await self._score_papers_for_profile(
                 profile['id'],
                 profile['name'],
                 research_interests,
                 papers_to_score,
                 request.batch_size,
-                request.overwrite_existing
+                request.overwrite_existing,
+                job_id=job_id if self.checkpoint_manager else None
             )
             
             total_scored += scored
             total_failed += failed
+            
+            # Save checkpoint after each profile
+            if self.checkpoint_manager and job_id:
+                await self.checkpoint_manager.save_checkpoint(
+                    uuid.UUID(job_id),
+                    "profile_progress",
+                    {
+                        "last_completed_profile_idx": profile_idx,
+                        "total_scored": total_scored,
+                        "total_failed": total_failed,
+                        "profile_id": profile['id'],
+                        "profile_name": profile['name']
+                    },
+                    profile_idx + 1
+                )
+                await self.checkpoint_manager.update_progress(
+                    uuid.UUID(job_id), 
+                    profile_idx + 1, 
+                    len(target_profiles)
+                )
         
         if progress_callback:
             progress_callback("Bulk judge run completed", len(target_profiles), len(target_profiles))
@@ -160,6 +250,10 @@ class BulkJudgeRunner:
             print(f"✅ Successfully scored: {total_scored} paper-profile combinations")
             print(f"❌ Failed operations: {total_failed}")
             print(f"📊 Success rate: {(total_scored / (total_scored + total_failed) * 100):.1f}%" if (total_scored + total_failed) > 0 else "100%")
+        
+        # Mark job as completed
+        if self.checkpoint_manager and job_id:
+            await self.checkpoint_manager.complete_job(uuid.UUID(job_id))
         
         return BulkJudgeRunResponse(
             job_id=job_id,
@@ -200,35 +294,76 @@ class BulkJudgeRunner:
         target_profiles: List[dict], 
         request: BulkJudgeRunRequest
     ) -> List[dict]:
-        """Get papers that need to be scored based on date range and existing scores."""
+        """Get papers that need to be scored based on date range or specific IDs."""
         
-        # Get all papers in date range
-        papers = PaperRepository.get_papers_in_date_range(
-            start_date=request.from_date,
-            end_date=request.to_date
-        )
+        # If specific paper IDs are provided, use those
+        if request.paper_ids:
+            papers = []
+            for paper_id in request.paper_ids:
+                paper = PaperRepository.get_by_id(paper_id)
+                if paper:
+                    papers.append(paper)
+            if self.verbose:
+                print(f"📋 Using {len(papers)} specific papers from provided IDs")
+        else:
+            # Otherwise, get all papers in date range
+            papers = PaperRepository.get_papers_in_date_range(
+                start_date=request.from_date,
+                end_date=request.to_date
+            )
+            if self.verbose:
+                print(f"📋 Found {len(papers)} papers in date range")
         
         if not request.overwrite_existing:
             # Filter out papers that already have scores for target profiles
             profile_ids = [p['id'] for p in target_profiles]
+            original_count = len(papers)
             papers = [
                 paper for paper in papers
                 if not ProfileScoreRepository.has_scores_for_profiles(paper['id'], profile_ids)
             ]
+            if self.verbose and original_count != len(papers):
+                print(f"📝 Filtered to {len(papers)} papers that need scoring (skipped {original_count - len(papers)} already scored)")
         
         return papers
     
-    def _score_papers_for_profile(
+    async def _score_papers_for_profile(
         self,
         profile_id: int,
         profile_name: str,
         research_interests: str,
         papers: List[dict],
         batch_size: int,
-        overwrite_existing: bool
+        overwrite_existing: bool,
+        job_id: Optional[str] = None
     ) -> Tuple[int, int]:
         """Score papers for a specific profile."""
         
+        # Check for existing progress for this profile
+        start_paper_idx = 0
+        if self.checkpoint_manager and job_id:
+            checkpoint = await self.checkpoint_manager.get_latest_checkpoint(
+                uuid.UUID(job_id), f"profile_{profile_id}_progress"
+            )
+            if checkpoint:
+                start_paper_idx = checkpoint['checkpoint_data'].get('last_completed_idx', 0) + 1
+                if self.verbose:
+                    print(f"🔄 Resuming profile {profile_name} from paper {start_paper_idx + 1}")
+        
+        # Use optimized scorer if available (TODO: add checkpoint support to optimized scorer)
+        if self.optimized_scorer and start_paper_idx == 0:
+            scored, failed, stats = self.optimized_scorer.score_papers_for_profile(
+                profile_id=profile_id,
+                profile_name=profile_name,
+                research_interests=research_interests,
+                papers=papers,
+                overwrite_existing=overwrite_existing,
+                use_prefiltering=bool(self.embedding_model),
+                prefilter_threshold=0.3
+            )
+            return scored, failed
+        
+        # Fall back to original implementation
         scored_count = 0
         failed_count = 0
         consecutive_failures = 0
@@ -253,9 +388,17 @@ class BulkJudgeRunner:
         
         if self.verbose:
             print(f"🎯 Scoring {len(papers_to_score)} papers for profile {profile_name}")
+            if batch_size > 1:
+                print(f"⚡ Using batch database writes with batch size: {batch_size}")
+        
+        # Collect scores for batch processing
+        scores_batch = []
         
         # Process papers in batches with progress tracking
-        with tqdm(papers_to_score, desc=f"Scoring {profile_name}", disable=not self.verbose) as pbar:
+        papers_to_process = papers_to_score[start_paper_idx:]
+        with tqdm(papers_to_process, desc=f"Scoring {profile_name}", 
+                  initial=start_paper_idx, total=len(papers_to_score),
+                  disable=not self.verbose) as pbar:
             for paper in pbar:
                 success = False
                 attempts = 0
@@ -272,25 +415,47 @@ class BulkJudgeRunner:
                         score_data = self._score_single_paper(paper, research_interests)
                         
                         if score_data:
-                            # Store the score
-                            ProfileScoreRepository.create_or_update_score(
-                                paper_id=paper['id'],
-                                profile_id=profile_id,
-                                score=score_data['score'],
-                                related=score_data['related'],
-                                rationale=score_data['rationale'],
-                                judge_model=self.judge_model_config.get('model_name', 'unknown')
-                            )
+                            # Add to batch instead of immediate write
+                            scores_batch.append({
+                                'paper_id': paper['id'],
+                                'profile_id': profile_id,
+                                'score': score_data['score'],
+                                'related': score_data['related'],
+                                'rationale': score_data['rationale'],
+                                'judge_model': self.judge_model_config.get('model_name', 'unknown')
+                            })
                             
-                            scored_count += 1
                             consecutive_failures = 0
                             success = True
                             
                             pbar.set_postfix({
                                 'score': score_data['score'],
                                 'related': score_data['related'],
-                                'failed': failed_count
+                                'failed': failed_count,
+                                'batch': len(scores_batch)
                             })
+                            
+                            # Write batch when it reaches the configured size
+                            if len(scores_batch) >= batch_size:
+                                successful, failed = ProfileScoreRepository.bulk_create_or_update_scores(scores_batch)
+                                scored_count += successful
+                                failed_count += failed
+                                scores_batch = []  # Clear batch
+                                
+                                # Save checkpoint periodically
+                                if self.checkpoint_manager and job_id and scored_count % 100 == 0:
+                                    current_idx = start_paper_idx + papers_to_score.index(paper)
+                                    await self.checkpoint_manager.save_checkpoint(
+                                        uuid.UUID(job_id),
+                                        f"profile_{profile_id}_progress",
+                                        {
+                                            "last_completed_idx": current_idx,
+                                            "scored_count": scored_count,
+                                            "failed_count": failed_count
+                                        },
+                                        current_idx + 1
+                                    )
+                                
                         else:
                             if attempts >= max_attempts:
                                 raise ValueError("Failed to get valid score data")
@@ -304,6 +469,12 @@ class BulkJudgeRunner:
                             success = True  # Exit the retry loop
                         else:
                             time.sleep(1)  # Brief delay before retry
+        
+        # Write any remaining scores in the batch
+        if scores_batch:
+            successful, failed = ProfileScoreRepository.bulk_create_or_update_scores(scores_batch)
+            scored_count += successful
+            failed_count += failed
         
         if self.verbose:
             success_rate = (scored_count / (scored_count + failed_count) * 100) if (scored_count + failed_count) > 0 else 100
@@ -384,7 +555,17 @@ class BulkJudgeRunner:
                 print(f"⚠️ Failed to clear judge cache: {e}")
 
 
-def create_bulk_judge_runner(orchestration_config: dict, verbose: bool = True) -> BulkJudgeRunner:
+async def create_bulk_judge_runner(
+    orchestration_config: dict, 
+    verbose: bool = True,
+    checkpoint_manager: Optional[CheckpointManager] = None
+) -> BulkJudgeRunner:
     """Factory function to create a BulkJudgeRunner from orchestration config."""
     judge_config = orchestration_config.get('judge_model', {})
-    return BulkJudgeRunner(judge_config, verbose) 
+    
+    # Initialize checkpoint manager if not provided
+    if checkpoint_manager is None:
+        checkpoint_manager = CheckpointManager()
+        await checkpoint_manager.initialize()
+    
+    return BulkJudgeRunner(judge_config, verbose, checkpoint_manager=checkpoint_manager) 

@@ -30,6 +30,59 @@ class PaperRepository:
             cur.execute("SELECT 1 FROM papers WHERE title = %s LIMIT 1", (title,))
             return cur.fetchone() is not None
 
+    @staticmethod
+    def bulk_check_existence(urls: Optional[List[str]] = None, titles: Optional[List[str]] = None) -> Tuple[Set[str], Set[str]]:
+        """
+        Check existence of multiple papers by URLs and/or titles in a single query.
+        
+        Args:
+            urls: List of URLs to check (optional)
+            titles: List of titles to check (optional)
+            
+        Returns:
+            Tuple of (existing_urls, existing_titles)
+        """
+        existing_urls = set()
+        existing_titles = set()
+        
+        with get_cursor() as cur:
+            # Check URLs if provided
+            if urls:
+                # Use ANY for efficient bulk checking
+                cur.execute(
+                    "SELECT DISTINCT url FROM papers WHERE url = ANY(%s) AND url IS NOT NULL",
+                    (urls,)
+                )
+                existing_urls = {row["url"] for row in cur.fetchall()}
+            
+            # Check titles if provided
+            if titles:
+                cur.execute(
+                    "SELECT DISTINCT title FROM papers WHERE title = ANY(%s) AND title IS NOT NULL",
+                    (titles,)
+                )
+                existing_titles = {row["title"] for row in cur.fetchall()}
+        
+        return existing_urls, existing_titles
+
+    @staticmethod
+    def get_all_urls_and_titles() -> Tuple[Set[str], Set[str]]:
+        """
+        Get all existing URLs and titles for duplicate checking.
+        More efficient for large-scale duplicate checking than individual queries.
+        
+        Returns:
+            Tuple of (all_urls, all_titles)
+        """
+        with get_cursor() as cur:
+            cur.execute("SELECT url FROM papers WHERE url IS NOT NULL")
+            all_urls = {row["url"] for row in cur.fetchall()}
+            
+            cur.execute("SELECT title FROM papers WHERE title IS NOT NULL")
+            all_titles = {row["title"] for row in cur.fetchall()}
+            
+        return all_urls, all_titles
+
     # ---------------------------------------------------------------------
     # Inserts
     # ---------------------------------------------------------------------
@@ -94,11 +147,8 @@ class PaperRepository:
         existing_urls = set()
         existing_titles = set()
         if skip_duplicates:
-            with get_cursor() as cur:
-                cur.execute("SELECT url FROM papers WHERE url IS NOT NULL")
-                existing_urls = {row["url"] for row in cur.fetchall()}
-                cur.execute("SELECT title FROM papers WHERE title IS NOT NULL")  
-                existing_titles = {row["title"] for row in cur.fetchall()}
+            # Use optimized method to get all URLs and titles at once
+            existing_urls, existing_titles = PaperRepository.get_all_urls_and_titles()
         
         # Process papers in batches to avoid memory issues
         batch_size = 1000
@@ -414,6 +464,41 @@ class PaperRepository:
                 (emb_literal, paper_id),
             )
 
+    @staticmethod
+    def bulk_update_embeddings(updates: List[Tuple[int, List[float]]]):
+        """
+        Bulk update embeddings for multiple papers.
+        
+        Args:
+            updates: List of tuples (paper_id, embedding)
+        """
+        if not updates:
+            return
+        
+        with get_cursor() as cur:
+            # Build arrays for bulk update
+            paper_ids = []
+            embedding_strs = []
+            
+            for paper_id, embedding in updates:
+                paper_ids.append(paper_id)
+                # Convert embedding to PostgreSQL vector format
+                emb_literal = to_pgvector(embedding)
+                embedding_strs.append(emb_literal)
+            
+            # Use UNNEST to perform bulk update
+            query = """
+                UPDATE papers 
+                SET embedding = data.embedding::vector
+                FROM (
+                    SELECT unnest(%s::int[]) as id,
+                           unnest(%s::text[]::vector[]) as embedding
+                ) as data
+                WHERE papers.id = data.id
+            """
+            
+            cur.execute(query, (paper_ids, embedding_strs))
+
     # ---------------------------------------------------------------------
     # Convenience wrappers for router compatibility
     # ---------------------------------------------------------------------
@@ -545,6 +630,33 @@ class PaperRepository:
                 "UPDATE papers SET keywords_json = %s WHERE id = %s",
                 (keywords_json, paper_id)
             )
+
+    @staticmethod
+    def bulk_update_keywords(updates: List[Tuple[int, List[str]]]) -> int:
+        """
+        Update keywords for multiple papers in a single batch.
+        
+        Args:
+            updates: List of tuples containing (paper_id, keywords_list)
+            
+        Returns:
+            Number of papers updated
+        """
+        if not updates:
+            return 0
+            
+        with get_cursor() as cur:
+            # Prepare data for executemany
+            values = []
+            for paper_id, keywords in updates:
+                keywords_json = json.dumps(keywords) if keywords else None
+                values.append((keywords_json, paper_id))
+            
+            cur.executemany(
+                "UPDATE papers SET keywords_json = %s WHERE id = %s",
+                values
+            )
+            return cur.rowcount
 
     # For backward compatibility
     paper_exists_by_url = exists_by_url 
@@ -801,4 +913,31 @@ class PaperRepository:
                     'date_run': row['date_run']
                 }
                 for row in rows
-            ] 
+            ]
+    
+    @staticmethod
+    def get_paper_ids_in_date_range(start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[int]:
+        """
+        Get only paper IDs within a date range for efficient filtering.
+        
+        Args:
+            start_date: Start date in YYYY-MM-DD format (inclusive)
+            end_date: End date in YYYY-MM-DD format (inclusive)
+            
+        Returns:
+            List of paper IDs
+        """
+        with get_cursor() as cur:
+            query = "SELECT id FROM papers WHERE 1=1"
+            params = []
+            
+            if start_date:
+                query += " AND date >= %s"
+                params.append(start_date)
+                
+            if end_date:
+                query += " AND date <= %s"
+                params.append(end_date)
+                
+            cur.execute(query, params)
+            return [row['id'] for row in cur.fetchall()] 

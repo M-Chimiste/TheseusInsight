@@ -9,27 +9,122 @@ This lightweight wrapper centralises connection creation so that the rest of
 from __future__ import annotations
 
 import os
+import logging
 from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
+
+from .pool import PooledConnectionManager
+
+logger = logging.getLogger(__name__)
 
 # Example: postgresql://user:password@localhost:5432/dbname
 DATABASE_URL: str = os.getenv(
     "DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"
 )
 
+# Enable connection pooling
+USE_CONNECTION_POOL = os.getenv("DB_USE_POOL", "true").lower() == "true"
+
+# Global connection pool manager
+_pool_manager: PooledConnectionManager = None
+
+def _get_pool_manager() -> PooledConnectionManager:
+    """Get or create the global connection pool manager."""
+    global _pool_manager
+    if _pool_manager is None:
+        _pool_manager = PooledConnectionManager(DATABASE_URL)
+        logger.info("Initialized global connection pool manager")
+    return _pool_manager
+
 
 @contextmanager
 def get_cursor(*, autocommit: bool = True):
-    """Context manager that yields a dict-row cursor and commits on exit."""
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
+    """Context manager that yields a dict-row cursor and commits on exit.
+    
+    This now uses connection pooling by default for better performance.
+    Set DB_USE_POOL=false to disable pooling.
+    """
+    if USE_CONNECTION_POOL:
+        # Use pooled connection
+        pool_manager = _get_pool_manager()
+        with pool_manager.get_cursor(autocommit=autocommit) as cur:
             yield cur
-        if autocommit:
-            conn.commit()
+            
+        # Log stats periodically (every 100 uses)
+        if hasattr(get_cursor, '_call_count'):
+            get_cursor._call_count += 1
+        else:
+            get_cursor._call_count = 1
+            
+        if get_cursor._call_count % 100 == 0:
+            pool_manager.log_stats()
+    else:
+        # Legacy non-pooled connection
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                yield cur
+            if autocommit:
+                conn.commit()
+
+
+@contextmanager
+def get_connection(autocommit: bool = False):
+    """Get a database connection directly.
+    
+    This is useful for operations that need direct connection access like COPY.
+    Note: This returns a context manager to ensure proper cleanup.
+    
+    Args:
+        autocommit: Whether to enable autocommit mode
+        
+    Yields:
+        psycopg connection object
+    """
+    if USE_CONNECTION_POOL:
+        pool_manager = _get_pool_manager()
+        # Use the pool's connection context manager
+        with pool_manager.get_connection(autocommit=autocommit) as conn:
+            yield conn
+    else:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        try:
+            if autocommit:
+                conn.autocommit = True
+            yield conn
+        finally:
+            conn.close()
+
+
+def get_pool_stats():
+    """Get connection pool statistics.
+    
+    Returns:
+        dict: Pool statistics or None if pooling is disabled
+    """
+    if USE_CONNECTION_POOL and _pool_manager:
+        return _pool_manager.get_pool_stats()
+    return None
+
+# Async connection pool support
+import asyncpg
+
+_async_pool: asyncpg.Pool = None
+
+async def get_connection_pool() -> asyncpg.Pool:
+    """Get or create an async connection pool for asyncpg.
+    
+    Returns:
+        asyncpg.Pool: The connection pool
+    """
+    global _async_pool
+    if _async_pool is None:
+        _async_pool = await asyncpg.create_pool(DATABASE_URL)
+        logger.info("Initialized async connection pool")
+    return _async_pool
 
 # Export migrations module
 from .migrations import check_and_apply_migrations, MigrationRunner
 
-__all__ = ['get_cursor', 'DATABASE_URL', 'check_and_apply_migrations', 'MigrationRunner'] 
+__all__ = ['get_cursor', 'get_connection', 'DATABASE_URL', 'check_and_apply_migrations', 'MigrationRunner', 'get_pool_stats', 'get_connection_pool'] 

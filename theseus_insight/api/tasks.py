@@ -715,10 +715,24 @@ class TaskManager:
             if not task:
                 raise ValueError(f"Task {task_id} not found")
 
+            # Extract configuration
+            config = task.get("config_json", {})
+            if isinstance(config, str):
+                config = json.loads(config)
+            
+            incremental = config.get("incremental", False)
+            since_timestamp = config.get("since_timestamp")
+            tables = config.get("tables")
+            batch_size = config.get("batch_size", 1000)
+            streaming = config.get("streaming", False)
+            parallel = config.get("parallel", False)
+            max_workers = config.get("max_workers", 4)
+            
+            export_type = "incremental" if incremental else "full"
             await self.update_task_status(
                 task_id,
                 TaskStatus.PROCESSING,
-                "Starting database export",
+                f"Starting {export_type} database export",
                 progress=0,
                 current_step="export_init",
             )
@@ -728,7 +742,26 @@ class TaskManager:
 
             # Get database URL from environment
             db_url = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
-            exporter = DatabaseExporter(db_url, export_dir)
+            
+            # Parse timestamp if provided
+            parsed_timestamp = None
+            if since_timestamp:
+                try:
+                    from datetime import datetime as dt
+                    parsed_timestamp = dt.fromisoformat(since_timestamp)
+                except ValueError:
+                    raise ValueError(f"Invalid timestamp format: {since_timestamp}")
+            
+            exporter = DatabaseExporter(
+                db_url, 
+                export_dir,
+                batch_size=batch_size,
+                streaming=streaming,
+                parallel=parallel,
+                max_workers=max_workers,
+                incremental=incremental,
+                since_timestamp=parsed_timestamp
+            )
 
             loop = asyncio.get_event_loop()
 
@@ -745,17 +778,32 @@ class TaskManager:
                         loop,
                     )
 
-            result = await asyncio.to_thread(
-                exporter.export_all,
-                True,
-                f"theseus_backup_{task_id}",
-                progress_cb,
-            )
+            if incremental:
+                # Run incremental export
+                result = await asyncio.to_thread(
+                    exporter.export_incremental,
+                    tables,
+                    parsed_timestamp
+                )
+                # Create archive for incremental export
+                archive_file = await asyncio.to_thread(
+                    exporter.create_archive,
+                    f"theseus_incremental_{task_id}"
+                )
+                result["archive"] = archive_file
+            else:
+                # Run full export
+                result = await asyncio.to_thread(
+                    exporter.export_all,
+                    True,
+                    f"theseus_backup_{task_id}",
+                    progress_cb,
+                )
 
             await self.update_task_status(
                 task_id,
                 TaskStatus.COMPLETED,
-                "Database export completed",
+                f"{export_type.capitalize()} database export completed",
                 progress=100,
                 current_step="export_complete",
                 result={"archive_path": result.get("archive")},
@@ -1436,6 +1484,18 @@ class TaskManager:
                 current_step="ingestion_start",
             )
             
+            # Get existing paper IDs before ingestion to track what's new
+            from ..data_access.papers import PaperRepository
+            existing_paper_ids = set(PaperRepository.get_paper_ids_in_date_range(start_date, end_date))
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Found {len(existing_paper_ids)} existing papers in date range",
+                progress=12,
+                current_step="existing_papers_checked",
+            )
+            
             # Create progress callback for pipeline
             def pipeline_progress_callback(stage: str, progress: float, message: str = ""):
                 # Convert pipeline progress to task progress (15% - 60%)
@@ -1486,6 +1546,21 @@ class TaskManager:
                 current_step="ingestion_complete",
             )
             
+            # Get new paper IDs after ingestion
+            all_paper_ids_after = set(PaperRepository.get_paper_ids_in_date_range(start_date, end_date))
+            new_paper_ids = list(all_paper_ids_after - existing_paper_ids)
+            
+            # If overwrite_existing is True, score all papers, not just new ones
+            papers_to_score_ids = None if overwrite_existing else new_paper_ids
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Identified {len(new_paper_ids)} new papers, will score {len(papers_to_score_ids) if papers_to_score_ids else 'all'} papers",
+                progress=62,
+                current_step="new_papers_identified",
+            )
+            
             # Stage 2: Run profile-aware scoring
             await self.update_task_status(
                 task_id,
@@ -1498,8 +1573,27 @@ class TaskManager:
             # Create bulk judge runner
             judge_config = orchestration_config.get("judge_model", {})
             
+            # Get embedding model for optimizations if available
+            embedding_model = None
+            embedding_config = orchestration_config.get("embedding_model", {})
+            if embedding_config:
+                try:
+                    from ..inference.llm import LLMModelFactory
+                    embedding_model = LLMModelFactory.create_model(
+                        model_type=embedding_config.get("model_type", "sentence-transformer"),
+                        model_name=embedding_config.get("model_name", "Alibaba-NLP/gte-large-en-v1.5"),
+                        **{k: v for k, v in embedding_config.items() if k not in ["model_type", "model_name"]}
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not load embedding model for optimizations: {e}")
+            
             from ..data_access.bulk_judge import BulkJudgeRunner
-            bulk_judge = BulkJudgeRunner(judge_config, verbose=True)
+            bulk_judge = BulkJudgeRunner(
+                judge_config, 
+                verbose=True,
+                use_optimized_scorer=True,
+                embedding_model=embedding_model
+            )
             
             # Create bulk judge request
             from ..api.models import BulkJudgeRunRequest
@@ -1509,7 +1603,8 @@ class TaskManager:
                 date_from=start_date,
                 date_to=end_date,
                 batch_size=batch_size,
-                overwrite_existing=overwrite_existing
+                overwrite_existing=overwrite_existing,
+                paper_ids=papers_to_score_ids  # Only score new papers unless overwrite_existing
             )
             
             # Scoring progress callback

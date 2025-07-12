@@ -40,9 +40,13 @@ class MigrationRunner:
             
         # Define migrations in order with their metadata
         self.migrations: List[Tuple[int, str, str]] = [
-            (1, "init_schema_postgres.sql", "Initial database schema"),
-            (2, "migrate_to_profiles.sql", "Add research profiles feature"),
-            (3, "profiles_trends_integration.sql", "Integrate profiles with trends"),
+            (0, "000_migration_compatibility.sql", "Migration helper functions"),
+            (1, "001_init_schema_postgres.sql", "Initial database schema"),
+            (2, "002_migrate_to_profiles.sql", "Add research profiles feature"),
+            (3, "003_profiles_trends_integration.sql", "Integrate profiles with trends"),
+            (4, "004_add_staging_tables.sql", "Add staging tables for bulk operations"),
+            (5, "005_optimize_indexes.sql", "Optimize indexes for performance"),
+            (6, "006_add_processing_checkpoints.sql", "Add checkpoint system for resumable processing"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:
@@ -184,11 +188,18 @@ class MigrationRunner:
                     print(f"[MIGRATION] ⚠ {issue}")
                     issues.append(issue)
                 except Exception as e:
-                    issue = f"Failed to apply {filename}: {str(e)}"
-                    print(f"[MIGRATION] ✗ {issue}")
-                    issues.append(issue)
-                    # Stop on first failure to maintain consistency
-                    break
+                    error_str = str(e)
+                    # Check if it's a constraint already exists error
+                    if "already exists" in error_str.lower():
+                        print(f"[MIGRATION] ⚠ Skipping {filename}: Constraint/index already exists")
+                        # This is not a critical error, migration was partially applied before
+                        migrations_skipped += 1
+                    else:
+                        issue = f"Failed to apply {filename}: {error_str}"
+                        print(f"[MIGRATION] ✗ {issue}")
+                        issues.append(issue)
+                        # Stop on first real failure to maintain consistency
+                        break
             
             # Verify critical tables exist
             missing_tables = self._verify_critical_tables()

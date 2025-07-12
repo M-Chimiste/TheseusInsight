@@ -13,7 +13,7 @@ import json
 import time
 import pickle
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
@@ -27,9 +27,10 @@ import yake
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from theseus_insight.data_access import PaperRepository, SettingsRepository
+from theseus_insight.data_access import PaperRepository, SettingsRepository, BulkImporter
 from theseus_insight.data_model.papers import Paper
 from theseus_insight.data_processing.arxiv import ArxivDataProcessor
+from theseus_insight.data_processing.checkpoint_manager import CheckpointManager
 from theseus_insight.inference import SentenceTransformerInference
 from theseus_insight.inference.llm import (
     OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
@@ -39,6 +40,10 @@ from theseus_insight.prompt import (
     research_prompt,
 )
 from theseus_insight.utils import cosine_similarity, purge_ollama_cache
+from theseus_insight.data_processing.memory_efficient_pipeline import (
+    MemoryMonitor, ChunkedDataProcessor, EfficientBulkProcessor,
+    optimize_dataframe_memory
+)
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 
@@ -47,12 +52,12 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 # Helper functions for database operations
 # ---------------------------------------------------------------
 
-def check_paper_exists(paper_data: tuple) -> bool:
+def check_paper_exists(paper_data: tuple, existing_urls: Set[str], existing_titles: Set[str]) -> bool:
     """Return True if paper already exists, based on URL **or** title."""
     idx, paper_url, paper_title = paper_data
-    # Check existence using repositories
-    exists_by_url = PaperRepository.exists_by_url(paper_url) if paper_url else False
-    exists_by_title = PaperRepository.exists_by_title(paper_title)
+    # Check existence using in-memory sets for O(1) lookup
+    exists_by_url = paper_url in existing_urls if paper_url else False
+    exists_by_title = paper_title in existing_titles
     return exists_by_url or exists_by_title
 
 
@@ -108,42 +113,45 @@ def check_existing_papers_parallel(
     verbose: bool = True
 ) -> List[bool]:
     """
-    Check for existing papers using parallel processing.
+    Check for existing papers using optimized bulk checking.
     
     Args:
         df: DataFrame with papers to check
-        max_workers: Maximum number of parallel workers
+        max_workers: Maximum number of parallel workers (not used in optimized version)
         verbose: Whether to show progress
     
     Returns:
         List[bool]: List indicating which papers are new (not existing)
     """
     if verbose:
-        print(f"🔍 Checking for existing papers using {max_workers} parallel workers...")
+        print(f"🔍 Checking for existing papers using optimized bulk query...")
     
-    # Prepare data for parallel processing
-    paper_data = [
-        (idx, row.get("pdf_url") or row.get("url_pdf"), row["title"]) 
-        for idx, (_, row) in enumerate(df.iterrows())
-    ]
+    # Extract URLs and titles from dataframe
+    urls = []
+    titles = []
+    for _, row in df.iterrows():
+        url = row.get("pdf_url") or row.get("url_pdf") or row.get("url")
+        if url:
+            urls.append(url)
+        titles.append(row["title"])
     
-    existing_mask = []
+    # Get existing URLs and titles in bulk
+    existing_urls, existing_titles = PaperRepository.bulk_check_existence(urls, titles)
     
-    # Use ThreadPoolExecutor for I/O-bound database operations
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Check each paper
+    new_mask = []
+    for _, row in df.iterrows():
+        url = row.get("pdf_url") or row.get("url_pdf") or row.get("url")
+        title = row["title"]
         
-        # Process in parallel with progress bar
-        results = list(tqdm(
-            executor.map(check_paper_exists, paper_data),
-            total=len(paper_data),
-            desc="Checking existing papers (parallel)",
-            disable=not verbose
-        ))
-        
-        existing_mask = results
+        exists_by_url = url in existing_urls if url else False
+        exists_by_title = title in existing_titles
+        is_new = not (exists_by_url or exists_by_title)
+        new_mask.append(is_new)
     
-    # Convert to "new paper" mask (inverse of existing)
-    new_mask = [not exists for exists in existing_mask]
+    if verbose:
+        existing_count = sum(1 for is_new in new_mask if not is_new)
+        print(f"✅ Found {existing_count} existing papers, {sum(new_mask)} new papers")
     
     return new_mask
 
@@ -228,12 +236,14 @@ def clear_judge_cache(inference, model_name: str, verbose: bool = True):
 # Pipeline stages
 # ---------------------------------------------------------------
 
-def download_papers(
+async def download_papers(
     date_from: str, 
     date_to: str, 
     category: str, 
     subcats: List[str], 
     checkpoint_dir: str, 
+    checkpoint_manager: CheckpointManager,
+    job_id: Optional[str] = None,
     retries: int = 3,
     verbose: bool = True
 ):
@@ -242,10 +252,30 @@ def download_papers(
         print("📥 STAGE 1: DOWNLOADING PAPERS FROM ARXIV")
         print("="*60)
     
+    # Check for resumable job if no job_id provided
+    if not job_id and checkpoint_manager:
+        config = {
+            "date_from": date_from,
+            "date_to": date_to,
+            "category": category,
+            "subcategories": subcats
+        }
+        job_id = await checkpoint_manager.find_resumable_job("harvest_judge", config)
+        
+    # Load from database checkpoint if available
+    if job_id and checkpoint_manager:
+        checkpoint = await checkpoint_manager.get_latest_checkpoint(job_id, "download")
+        if checkpoint:
+            data_df = pd.DataFrame(checkpoint['checkpoint_data']['papers'])
+            if verbose:
+                print(f"📊 Found {len(data_df)} papers in database checkpoint")
+            return data_df
+    
+    # Fall back to file checkpoint
     data_df = load_checkpoint(checkpoint_dir, "download", verbose)
     if data_df is not None:
         if verbose:
-            print(f"📊 Found {len(data_df)} papers in checkpoint")
+            print(f"📊 Found {len(data_df)} papers in file checkpoint")
         return data_df
     
     if verbose:
@@ -276,7 +306,18 @@ def download_papers(
             if verbose:
                 print(f"✅ Successfully downloaded {len(data_df)} papers")
             
+            # Save to both checkpoints
             save_checkpoint(checkpoint_dir, "download", data_df, verbose)
+            
+            if job_id and checkpoint_manager:
+                await checkpoint_manager.save_checkpoint(
+                    job_id,
+                    "download",
+                    {"papers": data_df.to_dict('records')},
+                    len(data_df)
+                )
+                await checkpoint_manager.update_progress(job_id, len(data_df), len(data_df))
+            
             return data_df
             
         except Exception as e:
@@ -288,12 +329,14 @@ def download_papers(
     return None
 
 
-def embed_papers(
+async def embed_papers(
     df: pd.DataFrame, 
     embedding_model: SentenceTransformerInference, 
     research_interests: str, 
     threshold: float, 
     checkpoint_dir: str,
+    checkpoint_manager: CheckpointManager,
+    job_id: Optional[str] = None,
     batch_size: int = 256,
     max_workers: int = 4,
     verbose: bool = True
@@ -305,10 +348,20 @@ def embed_papers(
         if batch_size > 1:
             print(f"⚡ Using batch processing with batch size: {batch_size}")
     
+    # Check database checkpoint first
+    if job_id and checkpoint_manager:
+        checkpoint = await checkpoint_manager.get_latest_checkpoint(job_id, "embed")
+        if checkpoint:
+            embedded_df = pd.DataFrame(checkpoint['checkpoint_data']['papers'])
+            if verbose:
+                print(f"📊 Found {len(embedded_df)} embedded papers in database checkpoint")
+            return embedded_df
+    
+    # Fall back to file checkpoint
     embedded_df = load_checkpoint(checkpoint_dir, "embed", verbose)
     if embedded_df is not None:
         if verbose:
-            print(f"📊 Found {len(embedded_df)} embedded papers in checkpoint")
+            print(f"📊 Found {len(embedded_df)} embedded papers in file checkpoint")
         return embedded_df
 
     if df.empty:
@@ -326,18 +379,8 @@ def embed_papers(
         if verbose:
             print(f"📝 Processing all {len(new_df)} papers (database checks skipped)")
     else:
-        # Use parallel database checking for speed
-        if len(df) > 50 and max_workers > 1:
-            new_mask = check_existing_papers_parallel(df, max_workers, verbose)
-        else:
-            # Fall back to sequential for small datasets
-            if verbose:
-                print(f"🔍 Checking for existing papers (sequential)...")
-            new_mask = []
-            with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
-                for _, row in pbar:
-                    exists = PaperRepository.exists_by_url(row["pdf_url"]) or PaperRepository.exists_by_title(row["title"])
-                    new_mask.append(not exists)
+        # Always use optimized bulk checking (works for any dataset size)
+        new_mask = check_existing_papers_parallel(df, max_workers, verbose)
         
         new_df = df[new_mask].reset_index(drop=True)
         
@@ -440,6 +483,10 @@ def embed_papers(
     new_df["abstract_embedding"] = embeddings
     new_df["cosine_similarity"] = sims
     
+    # Save progress after embedding
+    if job_id and checkpoint_manager:
+        await checkpoint_manager.update_progress(job_id, len(new_df), len(df))
+    
     filtered_df = new_df[new_df["cosine_similarity"] >= threshold].reset_index(drop=True)
     
     if verbose:
@@ -453,16 +500,29 @@ def embed_papers(
         if batch_size > 1:
             print(f"⚡ Batching improved efficiency: processed {total_count} papers in {len(embeddings)} batches")
     
+    # Save to both checkpoints
     save_checkpoint(checkpoint_dir, "embed", filtered_df, verbose)
+    
+    if job_id and checkpoint_manager:
+        await checkpoint_manager.save_checkpoint(
+            job_id,
+            "embed",
+            {"papers": filtered_df.to_dict('records')},
+            len(filtered_df),
+            {"stage": "embed_complete", "filtered_count": len(filtered_df)}
+        )
+    
     return filtered_df
 
 
-def rank_papers(
+async def rank_papers(
     df: pd.DataFrame, 
     judge_model, 
     research_interests: str, 
     checkpoint_dir: str, 
+    checkpoint_manager: CheckpointManager,
     top_n: int, 
+    job_id: Optional[str] = None,
     verbose: bool = True
 ) -> pd.DataFrame:
     if verbose:
@@ -470,10 +530,20 @@ def rank_papers(
         print("⚖️ STAGE 3: RANKING PAPERS WITH JUDGE MODEL")
         print("="*60)
     
+    # Check database checkpoint first
+    if job_id and checkpoint_manager:
+        checkpoint = await checkpoint_manager.get_latest_checkpoint(job_id, "rank")
+        if checkpoint:
+            ranked_df = pd.DataFrame(checkpoint['checkpoint_data']['papers'])
+            if verbose:
+                print(f"📊 Found {len(ranked_df)} ranked papers in database checkpoint")
+            return ranked_df
+    
+    # Fall back to file checkpoint
     ranked_df = load_checkpoint(checkpoint_dir, "rank", verbose)
     if ranked_df is not None:
         if verbose:
-            print(f"📊 Found {len(ranked_df)} ranked papers in checkpoint")
+            print(f"📊 Found {len(ranked_df)} ranked papers in file checkpoint")
         return ranked_df
 
     if df.empty:
@@ -488,16 +558,30 @@ def rank_papers(
     failed = []
     consecutive_failures = 0
     
-    partial = load_checkpoint(checkpoint_dir, "rank_partial", verbose=False)
+    # Try database checkpoint first for partial progress
     start_idx = 0
-    if partial:
-        scores = partial.get("scores", [])
-        related = partial.get("related", [])
-        rationale = partial.get("rationale", [])
-        failed = partial.get("failed_papers", [])
-        start_idx = len(scores)
-        if verbose:
-            print(f"🔄 Resuming ranking from paper {start_idx + 1}/{len(abstracts)}")
+    if job_id and checkpoint_manager:
+        db_partial = await checkpoint_manager.get_latest_checkpoint(job_id, "rank_progress")
+        if db_partial:
+            partial_data = db_partial['checkpoint_data']
+            scores = partial_data.get("scores", [])
+            related = partial_data.get("related", [])
+            rationale = partial_data.get("rationale", [])
+            failed = partial_data.get("failed_papers", [])
+            start_idx = len(scores)
+            if verbose:
+                print(f"🔄 Resuming ranking from paper {start_idx + 1}/{len(abstracts)} (database checkpoint)")
+    else:
+        # Fall back to file checkpoint
+        partial = load_checkpoint(checkpoint_dir, "rank_partial", verbose=False)
+        if partial:
+            scores = partial.get("scores", [])
+            related = partial.get("related", [])
+            rationale = partial.get("rationale", [])
+            failed = partial.get("failed_papers", [])
+            start_idx = len(scores)
+            if verbose:
+                print(f"🔄 Resuming ranking from paper {start_idx + 1}/{len(abstracts)} (file checkpoint)")
 
     if verbose:
         print(f"🎯 Ranking {len(abstracts) - start_idx} papers using {judge_model.model_name}")
@@ -578,6 +662,17 @@ def rank_papers(
                     "failed_papers": failed,
                 }
                 save_checkpoint(checkpoint_dir, "rank_partial", partial_data, verbose=False)
+                
+                # Also save to database checkpoint
+                if job_id and checkpoint_manager:
+                    await checkpoint_manager.save_checkpoint(
+                        job_id,
+                        "rank_progress",
+                        partial_data,
+                        idx + 1,
+                        {"stage": "ranking", "current": idx + 1, "total": len(abstracts)}
+                    )
+                    await checkpoint_manager.update_progress(job_id, idx + 1, len(abstracts))
 
     if failed and verbose:
         print(f"⚠️ Warning: {len(failed)} papers failed scoring")
@@ -601,7 +696,17 @@ def rank_papers(
     if verbose:
         print(f"🏆 Selected top {len(top_df)} papers for database insertion")
     
+    # Save to both checkpoints
     save_checkpoint(checkpoint_dir, "rank", top_df, verbose)
+    
+    if job_id and checkpoint_manager:
+        await checkpoint_manager.save_checkpoint(
+            job_id,
+            "rank",
+            {"papers": top_df.to_dict('records')},
+            len(top_df),
+            {"stage": "rank_complete", "top_papers": len(top_df)}
+        )
     
     # Clean up partial checkpoint
     cp = _checkpoint_path(checkpoint_dir, "rank_partial")
@@ -686,11 +791,105 @@ def insert_papers(
     return dup_urls
 
 
+def insert_papers_bulk(
+    df: pd.DataFrame, 
+    all_df: pd.DataFrame, 
+    embedding_model_name: str, 
+    verbose: bool = True,
+    use_staging: bool = True
+):
+    """
+    Insert papers using bulk operations with staging tables.
+    
+    This is an optimized version that uses PostgreSQL COPY for much faster imports.
+    """
+    if verbose:
+        print("\n" + "="*60)
+        print("💾 STAGE 4: BULK INSERTING PAPERS INTO DATABASE")
+        print("="*60)
+        print(f"📝 Bulk inserting {len(all_df)} papers into database...")
+        if use_staging:
+            print("⚡ Using staging tables with PostgreSQL COPY for maximum performance")
+    
+    if not use_staging:
+        # Fall back to regular insert
+        return insert_papers(df, all_df, embedding_model_name, verbose)
+    
+    # Initialize bulk importer
+    importer = BulkImporter()
+    extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+    
+    # Prepare papers for bulk import
+    papers = []
+    keywords_to_add = []
+    
+    if verbose:
+        print("📦 Preparing papers for bulk import...")
+    
+    with tqdm(all_df.iterrows(), total=len(all_df), desc="Preparing papers", disable=not verbose) as pbar:
+        for idx, row in pbar:
+            emb = row["abstract_embedding"]
+            if hasattr(emb, "tolist"):
+                emb = emb.tolist()
+            elif not isinstance(emb, list):
+                emb = list(emb)
+            
+            # Generate keywords
+            text_kw = f"{row['title']} {row['abstract']}"
+            try:
+                kw_scores = extractor.extract_keywords(text_kw)
+                keywords = [kw for kw, _ in kw_scores]
+            except Exception:
+                keywords = []
+            
+            paper = Paper(
+                title=row["title"],
+                abstract=row["abstract"],
+                url=row["pdf_url"],
+                date_run=str(pd.Timestamp.now().date()),
+                date=row["date"].strftime("%Y-%m-%d"),
+                score=row["score"],
+                related=row["related"],
+                rationale=row["rationale"],
+                cosine_similarity=row["cosine_similarity"],
+                embedding_model=embedding_model_name,
+                embedding=emb,
+                keywords=keywords  # Add keywords directly to paper
+            )
+            
+            papers.append(paper)
+    
+    # Perform bulk import
+    if verbose:
+        print(f"🚀 Starting bulk import of {len(papers)} papers...")
+    
+    try:
+        stats = importer.import_papers(papers, deduplicate=True, merge=True)
+        
+        if verbose:
+            print(f"✅ Bulk import complete:")
+            print(f"   - {stats['papers_staged']} papers staged")
+            print(f"   - {stats['duplicates_removed']} duplicates removed")
+            print(f"   - {stats['papers_inserted']} new papers inserted")
+            print(f"   - Batch ID: {stats['batch_id']}")
+        
+        # Return list of duplicate URLs (empty since we handled them in staging)
+        return []
+        
+    except Exception as e:
+        if verbose:
+            print(f"❌ Bulk import failed: {e}")
+            print("⚠️ Falling back to individual inserts...")
+        
+        # Fall back to regular insert
+        return insert_papers(df, all_df, embedding_model_name, verbose)
+
+
 # ---------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------
 
-def harvest_and_judge(
+async def harvest_and_judge(
     date_from: str, 
     date_to: str, 
     checkpoint_dir: str, 
@@ -698,8 +897,39 @@ def harvest_and_judge(
     cosine_threshold: float = 0.5,
     batch_size: int = 256,
     max_workers: int = 4,
-    verbose: bool = True
+    verbose: bool = True,
+    use_bulk_insert: bool = True,
+    memory_monitoring: bool = True,
+    memory_threshold: float = 80.0
 ):
+    # Initialize checkpoint manager
+    checkpoint_manager = CheckpointManager()
+    await checkpoint_manager.initialize()
+    
+    # Create or resume job
+    config = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "top_n": top_n,
+        "cosine_threshold": cosine_threshold,
+        "batch_size": batch_size
+    }
+    
+    job_id = await checkpoint_manager.find_resumable_job("harvest_judge", config)
+    if job_id:
+        if verbose:
+            print(f"🔄 Found resumable job {job_id}")
+        await checkpoint_manager.resume_job(job_id)
+    else:
+        job_id = await checkpoint_manager.create_job("harvest_judge", config)
+        if verbose:
+            print(f"📝 Created new job {job_id}")
+    
+    # Initialize memory monitoring
+    memory_monitor = None
+    if memory_monitoring:
+        memory_monitor = MemoryMonitor(memory_threshold, verbose)
+    
     if verbose:
         print("🚀 THESEUS INSIGHT - ARXIV HARVEST & JUDGE")
         print("="*60)
@@ -709,6 +939,8 @@ def harvest_and_judge(
         if batch_size > 1:
             print(f"⚡ Embedding batch size: {batch_size}")
         print(f"📁 Checkpoint directory: {checkpoint_dir}")
+        if memory_monitoring:
+            print(f"💾 Memory monitoring enabled (threshold: {memory_threshold}%)")
 
     if verbose:
         print(f"\n🔧 Loading configuration...")
@@ -780,46 +1012,84 @@ def harvest_and_judge(
     judge_model = load_inference_model(judge_cfg, verbose)
 
     # Execute pipeline stages
-    data_df = download_papers(
-        date_from,
-        date_to,
-        category=arxiv_cfg.get("main_category", "cs"),
-        subcats=arxiv_cfg.get("filter_categories", []),
-        checkpoint_dir=checkpoint_dir,
-        verbose=verbose,
-    )
-    
-    if data_df is None or data_df.empty:
+    try:
+        data_df = await download_papers(
+            date_from,
+            date_to,
+            category=arxiv_cfg.get("main_category", "cs"),
+            subcats=arxiv_cfg.get("filter_categories", []),
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_manager=checkpoint_manager,
+            job_id=job_id,
+            verbose=verbose,
+        )
+        
+        if data_df is None or data_df.empty:
+            if verbose:
+                print("❌ No papers found for the given date range")
+            return
+
+        # Optimize DataFrame memory after download
+        if memory_monitor:
+            data_df = optimize_dataframe_memory(data_df, verbose)
+            memory_monitor.check_memory()
+
+        embedded_df = await embed_papers(
+            data_df,
+            embedding_model,
+            research_interests,
+            cosine_threshold,
+            checkpoint_dir,
+            checkpoint_manager,
+            job_id,
+            batch_size,
+            max_workers,
+            verbose,
+        )
+        
+        # Check memory after embedding
+        if memory_monitor:
+            memory_monitor.check_memory()
+            # Free original dataframe if not needed
+            if 'data_df' in locals() and embedded_df is not data_df:
+                del data_df
+
+        ranked_df = await rank_papers(
+            embedded_df,
+            judge_model,
+            research_interests,
+            checkpoint_dir,
+            checkpoint_manager,
+            job_id,
+            top_n,
+            verbose,
+        )
+        
+        # Check memory after ranking
+        if memory_monitor:
+            memory_monitor.check_memory()
+
+        if use_bulk_insert:
+            insert_papers_bulk(ranked_df, embedded_df, embedding_cfg["model_name"], verbose)
+        else:
+            insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], verbose)
+        
+        # Mark job as completed
+        await checkpoint_manager.complete_job(job_id)
+        
+        # Final memory report
+        if memory_monitor:
+            memory_monitor.report()
+        
         if verbose:
-            print("❌ No papers found for the given date range")
-        return
-
-    embedded_df = embed_papers(
-        data_df,
-        embedding_model,
-        research_interests,
-        cosine_threshold,
-        checkpoint_dir,
-        batch_size,
-        max_workers,
-        verbose,
-    )
-
-    ranked_df = rank_papers(
-        embedded_df,
-        judge_model,
-        research_interests,
-        checkpoint_dir,
-        top_n,
-        verbose,
-    )
-
-    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], verbose)
-    
-    if verbose:
-        print("\n" + "="*60)
-        print("🎉 HARVEST AND JUDGING COMPLETE!")
-        print("="*60)
+            print("\n" + "="*60)
+            print("🎉 HARVEST AND JUDGING COMPLETE!")
+            print("="*60)
+            
+    except Exception as e:
+        # Mark job as failed
+        await checkpoint_manager.fail_job(job_id, str(e))
+        raise
 
 
 def parse_args():
@@ -837,15 +1107,23 @@ def parse_args():
                        help="Enable verbose output (default: True)")
     parser.add_argument("--quiet", "-q", action="store_true", 
                        help="Disable verbose output")
+    parser.add_argument("--use-bulk-insert", action="store_true", default=True,
+                       help="Use bulk insert with staging tables (default: True)")
+    parser.add_argument("--no-bulk-insert", action="store_true",
+                       help="Disable bulk insert and use individual inserts")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
+    import asyncio
+    
     args = parse_args()
     # Handle verbose/quiet flags
     verbose = args.verbose and not args.quiet
+    # Handle bulk insert flags
+    use_bulk_insert = args.use_bulk_insert and not args.no_bulk_insert
     
-    harvest_and_judge(
+    asyncio.run(harvest_and_judge(
         date_from=args.date_from,
         date_to=args.date_to,
         checkpoint_dir=args.checkpoint_dir,
@@ -854,4 +1132,5 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         max_workers=args.max_workers,
         verbose=verbose,
-    )
+        use_bulk_insert=use_bulk_insert,
+    ))

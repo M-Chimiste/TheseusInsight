@@ -33,6 +33,7 @@ import {
   TrendingUp as TrendingUpIcon,
   People as PeopleIcon,
   WorkOutline as WorkOutlineIcon,
+  Timeline as TimelineIcon,
 } from '@mui/icons-material';
 
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
@@ -114,6 +115,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Trends', icon: <TrendingUpIcon />, path: '/trends' },
     { text: 'Profile Management', icon: <PeopleIcon />, path: '/profile-management' },
     { text: 'Bulk Operations', icon: <WorkOutlineIcon />, path: '/bulk-operations' },
+    { text: 'Job Monitoring', icon: <TimelineIcon />, path: '/job-monitoring' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },

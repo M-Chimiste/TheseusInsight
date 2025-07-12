@@ -11,15 +11,21 @@
 ALTER TABLE topics ADD COLUMN IF NOT EXISTS profile_id INTEGER;
 
 -- Add foreign key constraint to research_profiles
-ALTER TABLE topics ADD CONSTRAINT fk_topics_profile_id 
-    FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
+SELECT add_constraint_if_not_exists(
+    'topics', 
+    'fk_topics_profile_id',
+    'FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE'
+);
 
 -- Add profile_id column to topic_metrics table
 ALTER TABLE topic_metrics ADD COLUMN IF NOT EXISTS profile_id INTEGER;
 
 -- Add foreign key constraint for topic_metrics
-ALTER TABLE topic_metrics ADD CONSTRAINT fk_topic_metrics_profile_id 
-    FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
+SELECT add_constraint_if_not_exists(
+    'topic_metrics', 
+    'fk_topic_metrics_profile_id',
+    'FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE'
+);
 
 -- ===================================================================
 -- Migrate Existing Topics to Default Profile
@@ -65,11 +71,33 @@ END $$;
 -- Make Profile Columns Required
 -- ===================================================================
 
--- Make profile_id NOT NULL for topics
-ALTER TABLE topics ALTER COLUMN profile_id SET NOT NULL;
+-- Make profile_id NOT NULL for topics (if not already)
+DO $$
+BEGIN
+    -- Check if column is already NOT NULL
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'topics' 
+        AND column_name = 'profile_id' 
+        AND is_nullable = 'YES'
+    ) THEN
+        ALTER TABLE topics ALTER COLUMN profile_id SET NOT NULL;
+    END IF;
+END $$;
 
--- Make profile_id NOT NULL for topic_metrics  
-ALTER TABLE topic_metrics ALTER COLUMN profile_id SET NOT NULL;
+-- Make profile_id NOT NULL for topic_metrics (if not already)
+DO $$
+BEGIN
+    -- Check if column is already NOT NULL
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'topic_metrics' 
+        AND column_name = 'profile_id' 
+        AND is_nullable = 'YES'
+    ) THEN
+        ALTER TABLE topic_metrics ALTER COLUMN profile_id SET NOT NULL;
+    END IF;
+END $$;
 
 -- ===================================================================
 -- Create Indexes for Performance
@@ -156,6 +184,4 @@ FROM topic_metrics tm
 JOIN research_profiles rp ON tm.profile_id = rp.id
 JOIN topics t ON tm.topic_id = t.id
 ORDER BY tm.period_start DESC
-LIMIT 5;
-
-COMMIT; 
+LIMIT 5; 

@@ -23,6 +23,7 @@ const MindMapReports = React.lazy(() => import('./pages/MindMapReports'));
 const Trends = React.lazy(() => import('./pages/Trends'));
 const ProfileManagement = React.lazy(() => import('./pages/ProfileManagement'));
 const BulkOperations = React.lazy(() => import('./pages/BulkOperations'));
+const JobMonitoring = React.lazy(() => import('./pages/JobMonitoring'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,6 +60,7 @@ function App() {
                     <Route path="/trends" element={<Trends />} />
                     <Route path="/profile-management" element={<ProfileManagement />} />
                     <Route path="/bulk-operations" element={<BulkOperations />} />
+                    <Route path="/job-monitoring" element={<JobMonitoring />} />
                     <Route path="/*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </React.Suspense>

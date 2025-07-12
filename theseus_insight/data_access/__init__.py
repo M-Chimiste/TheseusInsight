@@ -16,4 +16,5 @@ from .trends import (
     PaperResearchInterestsRepository
 )
 from .label_summaries import LabelSummariesRepository
-from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository 
+from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
+from .bulk_operations import BulkImporter, BulkExporter 

@@ -43,23 +43,23 @@ Write-Host "Setting up pgvector extension for user: $DbUser, database: $DbName"
 $SchemaFile = $null
 $Environment = $null
 
-if (Test-Path "C:\app\sql\init_schema_postgres.sql") {
+if (Test-Path "C:\app\sql\001_init_schema_postgres.sql") {
     # Running in Docker container
-    $SchemaFile = "C:\app\sql\init_schema_postgres.sql"
+    $SchemaFile = "C:\app\sql\001_init_schema_postgres.sql"
     $Environment = "docker"
     Write-Host "🐳 Detected Docker environment" -ForegroundColor $InfoColor
 }
-elseif (Test-Path "$PSScriptRoot\init_schema_postgres.sql") {
+elseif (Test-Path "$PSScriptRoot\001_init_schema_postgres.sql") {
     # Running locally with schema file in same directory as script
-    $SchemaFile = "$PSScriptRoot\init_schema_postgres.sql"
+    $SchemaFile = "$PSScriptRoot\001_init_schema_postgres.sql"
     $Environment = "local"
     Write-Host "💻 Detected local environment" -ForegroundColor $InfoColor
 }
 else {
-    Write-ErrorMsg "❌ Error: Cannot find init_schema_postgres.sql"
+    Write-ErrorMsg "❌ Error: Cannot find 001_init_schema_postgres.sql"
     Write-Host "   Expected locations:"
-    Write-Host "   - Docker: C:\app\sql\init_schema_postgres.sql"
-    Write-Host "   - Local:  $PSScriptRoot\init_schema_postgres.sql"
+    Write-Host "   - Docker: C:\app\sql\001_init_schema_postgres.sql"
+    Write-Host "   - Local:  $PSScriptRoot\001_init_schema_postgres.sql"
     exit 1
 }
 
@@ -216,12 +216,16 @@ Write-Status "🔄 Applying profile migrations..."
 
 # Determine migration file paths based on environment
 if ($Environment -eq "docker") {
-    $MigrateToProfilesFile = "C:\app\sql\migrate_to_profiles.sql"
-    $ProfilesTrendsFile = "C:\app\sql\profiles_trends_integration.sql"
+    $MigrateToProfilesFile = "C:\app\sql\002_migrate_to_profiles.sql"
+    $ProfilesTrendsFile = "C:\app\sql\003_profiles_trends_integration.sql"
+    $StagingTablesFile = "C:\app\sql\004_add_staging_tables.sql"
+    $OptimizeIndexesFile = "C:\app\sql\005_optimize_indexes.sql"
 }
 else {
-    $MigrateToProfilesFile = "$PSScriptRoot\migrate_to_profiles.sql"
-    $ProfilesTrendsFile = "$PSScriptRoot\profiles_trends_integration.sql"
+    $MigrateToProfilesFile = "$PSScriptRoot\002_migrate_to_profiles.sql"
+    $ProfilesTrendsFile = "$PSScriptRoot\003_profiles_trends_integration.sql"
+    $StagingTablesFile = "$PSScriptRoot\004_add_staging_tables.sql"
+    $OptimizeIndexesFile = "$PSScriptRoot\005_optimize_indexes.sql"
 }
 
 # Apply profile migration
@@ -264,6 +268,48 @@ if (Test-Path $ProfilesTrendsFile) {
 else {
     Write-Warning "⚠️  Warning: Profiles-trends integration file not found at $ProfilesTrendsFile"
     Write-Host "   Trends features may not work properly with profiles"
+}
+
+# Apply staging tables migration
+if (Test-Path $StagingTablesFile) {
+    Write-Status "📋 Applying staging tables migration from: $StagingTablesFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $StagingTablesFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply staging tables migration from $StagingTablesFile"
+            exit 1
+        }
+        Write-Success "✅ Staging tables migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply staging tables migration from $StagingTablesFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Staging tables migration file not found at $StagingTablesFile"
+    Write-Host "   Bulk import features may not be available"
+}
+
+# Apply index optimization
+if (Test-Path $OptimizeIndexesFile) {
+    Write-Status "📋 Applying index optimization from: $OptimizeIndexesFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $OptimizeIndexesFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply index optimization from $OptimizeIndexesFile"
+            exit 1
+        }
+        Write-Success "✅ Index optimization completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply index optimization from $OptimizeIndexesFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Index optimization file not found at $OptimizeIndexesFile"
+    Write-Host "   Database performance may not be optimal"
 }
 
 Write-Host ""

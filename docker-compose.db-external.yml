@@ -17,9 +17,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
       # Mount SQL files to separate directory for setup script to access
-      - ./scripts/init_schema_postgres.sql:/app/sql/init_schema_postgres.sql
-      - ./scripts/migrate_to_profiles.sql:/app/sql/migrate_to_profiles.sql
-      - ./scripts/profiles_trends_integration.sql:/app/sql/profiles_trends_integration.sql
+      - ./scripts/001_init_schema_postgres.sql:/app/sql/001_init_schema_postgres.sql
+      - ./scripts/002_migrate_to_profiles.sql:/app/sql/002_migrate_to_profiles.sql
+      - ./scripts/003_profiles_trends_integration.sql:/app/sql/003_profiles_trends_integration.sql
+      - ./scripts/004_add_staging_tables.sql:/app/sql/004_add_staging_tables.sql
+      - ./scripts/005_optimize_indexes.sql:/app/sql/005_optimize_indexes.sql
       # Mount migration tracking files
       - ./scripts/create_migration_tracking.sql:/app/sql/create_migration_tracking.sql
       - ./scripts/check_and_apply_migrations.sh:/app/sql/check_and_apply_migrations.sh 

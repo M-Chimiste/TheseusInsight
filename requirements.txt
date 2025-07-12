@@ -67,7 +67,8 @@ fastapi
 uvicorn[standard]
 websockets
 python-multipart
-psycopg[binary]
+psycopg[binary,pool]
+asyncpg
 
 # System monitoring
 psutil>=5.9.0

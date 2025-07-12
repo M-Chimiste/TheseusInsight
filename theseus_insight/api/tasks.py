@@ -1436,6 +1436,18 @@ class TaskManager:
                 current_step="ingestion_start",
             )
             
+            # Get existing paper IDs before ingestion to track what's new
+            from ..data_access.papers import PaperRepository
+            existing_paper_ids = set(PaperRepository.get_paper_ids_in_date_range(start_date, end_date))
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Found {len(existing_paper_ids)} existing papers in date range",
+                progress=12,
+                current_step="existing_papers_checked",
+            )
+            
             # Create progress callback for pipeline
             def pipeline_progress_callback(stage: str, progress: float, message: str = ""):
                 # Convert pipeline progress to task progress (15% - 60%)
@@ -1486,6 +1498,21 @@ class TaskManager:
                 current_step="ingestion_complete",
             )
             
+            # Get new paper IDs after ingestion
+            all_paper_ids_after = set(PaperRepository.get_paper_ids_in_date_range(start_date, end_date))
+            new_paper_ids = list(all_paper_ids_after - existing_paper_ids)
+            
+            # If overwrite_existing is True, score all papers, not just new ones
+            papers_to_score_ids = None if overwrite_existing else new_paper_ids
+            
+            await self.update_task_status(
+                task_id,
+                TaskStatus.PROCESSING,
+                f"Identified {len(new_paper_ids)} new papers, will score {len(papers_to_score_ids) if papers_to_score_ids else 'all'} papers",
+                progress=62,
+                current_step="new_papers_identified",
+            )
+            
             # Stage 2: Run profile-aware scoring
             await self.update_task_status(
                 task_id,
@@ -1498,8 +1525,27 @@ class TaskManager:
             # Create bulk judge runner
             judge_config = orchestration_config.get("judge_model", {})
             
+            # Get embedding model for optimizations if available
+            embedding_model = None
+            embedding_config = orchestration_config.get("embedding_model", {})
+            if embedding_config:
+                try:
+                    from ..inference.llm import LLMModelFactory
+                    embedding_model = LLMModelFactory.create_model(
+                        model_type=embedding_config.get("model_type", "sentence-transformer"),
+                        model_name=embedding_config.get("model_name", "Alibaba-NLP/gte-large-en-v1.5"),
+                        **{k: v for k, v in embedding_config.items() if k not in ["model_type", "model_name"]}
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not load embedding model for optimizations: {e}")
+            
             from ..data_access.bulk_judge import BulkJudgeRunner
-            bulk_judge = BulkJudgeRunner(judge_config, verbose=True)
+            bulk_judge = BulkJudgeRunner(
+                judge_config, 
+                verbose=True,
+                use_optimized_scorer=True,
+                embedding_model=embedding_model
+            )
             
             # Create bulk judge request
             from ..api.models import BulkJudgeRunRequest
@@ -1509,7 +1555,8 @@ class TaskManager:
                 date_from=start_date,
                 date_to=end_date,
                 batch_size=batch_size,
-                overwrite_existing=overwrite_existing
+                overwrite_existing=overwrite_existing,
+                paper_ids=papers_to_score_ids  # Only score new papers unless overwrite_existing
             )
             
             # Scoring progress callback

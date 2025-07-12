@@ -20,12 +20,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Detect environment and set paths
-if [ -f "/app/sql/init_schema_postgres.sql" ]; then
+if [ -f "/app/sql/001_init_schema_postgres.sql" ]; then
     # Running in Docker container
     SCHEMA_DIR="/app/sql"
     ENVIRONMENT="docker"
     echo -e "${BLUE}🐳 Detected Docker environment${NC}"
-elif [ -f "$(dirname "$0")/init_schema_postgres.sql" ]; then
+elif [ -f "$(dirname "$0")/001_init_schema_postgres.sql" ]; then
     # Running locally with schema file in same directory as script
     SCHEMA_DIR="$(dirname "$0")"
     ENVIRONMENT="local"
@@ -33,8 +33,8 @@ elif [ -f "$(dirname "$0")/init_schema_postgres.sql" ]; then
 else
     echo -e "${RED}❌ Error: Cannot find SQL files${NC}"
     echo "   Expected locations:"
-    echo "   - Docker: /app/sql/init_schema_postgres.sql" 
-    echo "   - Local:  $(dirname "$0")/init_schema_postgres.sql"
+    echo "   - Docker: /app/sql/001_init_schema_postgres.sql" 
+    echo "   - Local:  $(dirname "$0")/001_init_schema_postgres.sql"
     exit 1
 fi
 
@@ -302,24 +302,40 @@ main() {
         
         # Apply initial schema
         echo -e "${BLUE}📋 Applying initial schema...${NC}"
-        psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/init_schema_postgres.sql" || {
+        psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/001_init_schema_postgres.sql" || {
             echo -e "${RED}❌ Error: Failed to apply initial schema${NC}"
             exit 1
         }
         
         # Apply profile migration
-        if [ -f "$SCHEMA_DIR/migrate_to_profiles.sql" ]; then
+        if [ -f "$SCHEMA_DIR/002_migrate_to_profiles.sql" ]; then
             echo -e "${BLUE}📋 Applying profile migration...${NC}"
-            psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/migrate_to_profiles.sql" || {
+            psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/002_migrate_to_profiles.sql" || {
                 echo -e "${YELLOW}⚠️  Profile migration may have already been applied${NC}"
             }
         fi
         
         # Apply profiles-trends integration
-        if [ -f "$SCHEMA_DIR/profiles_trends_integration.sql" ]; then
+        if [ -f "$SCHEMA_DIR/003_profiles_trends_integration.sql" ]; then
             echo -e "${BLUE}📋 Applying profiles-trends integration...${NC}"
-            psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/profiles_trends_integration.sql" || {
+            psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/003_profiles_trends_integration.sql" || {
                 echo -e "${YELLOW}⚠️  Profiles-trends integration may have already been applied${NC}"
+            }
+        fi
+        
+        # Apply staging tables migration
+        if [ -f "$SCHEMA_DIR/004_add_staging_tables.sql" ]; then
+            echo -e "${BLUE}📋 Applying staging tables migration...${NC}"
+            psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/004_add_staging_tables.sql" || {
+                echo -e "${YELLOW}⚠️  Staging tables migration may have already been applied${NC}"
+            }
+        fi
+        
+        # Apply index optimization
+        if [ -f "$SCHEMA_DIR/005_optimize_indexes.sql" ]; then
+            echo -e "${BLUE}📋 Applying index optimization...${NC}"
+            psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/005_optimize_indexes.sql" || {
+                echo -e "${YELLOW}⚠️  Index optimization may have already been applied${NC}"
             }
         fi
     fi

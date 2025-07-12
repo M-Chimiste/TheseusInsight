@@ -4,8 +4,10 @@ import tempfile
 import uuid
 import os
 from datetime import datetime
+from typing import Dict, Any
 
 from ..tasks import task_manager
+from ...db import get_pool_stats
 
 router = APIRouter(prefix="/api/settings/database", tags=["database"])
 
@@ -245,4 +247,41 @@ async def import_database(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
+
+
+@router.get("/pool-stats")
+async def get_database_pool_stats() -> Dict[str, Any]:
+    """
+    Get connection pool statistics.
+    
+    Returns statistics about the database connection pool including:
+    - Pool size and available connections
+    - Connection reuse ratio
+    - Average wait times
+    - Error counts
+    
+    Returns:
+        dict: Connection pool statistics or message if pooling is disabled
+    """
+    stats = get_pool_stats()
+    
+    if stats is None:
+        return {
+            "enabled": False,
+            "message": "Connection pooling is disabled. Set DB_USE_POOL=true to enable."
+        }
+    
+    return {
+        "enabled": True,
+        "pool_size": stats.get("pool_size", "N/A"),
+        "pool_available": stats.get("pool_available", "N/A"),
+        "connections_created": stats.get("connections_created", 0),
+        "connections_reused": stats.get("connections_reused", 0),
+        "reuse_ratio": f"{stats.get('reuse_ratio', 0):.1%}",
+        "avg_wait_time_ms": round(stats.get("avg_wait_time", 0) * 1000, 2),
+        "timeouts": stats.get("timeouts", 0),
+        "errors": stats.get("errors", 0),
+        "requests_queued": stats.get("requests_queued", 0),
+        "last_reset": stats.get("last_reset", "N/A")
+    } 

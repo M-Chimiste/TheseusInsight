@@ -73,16 +73,19 @@ psql -U "$DB_USER" -d "$DB_NAME" -f "$MIGRATION_DIR/create_migration_tracking.sq
 
 # Define migrations in order
 declare -A migrations=(
-    [1]="init_schema_postgres.sql|Initial database schema"
-    [2]="migrate_to_profiles.sql|Add research profiles feature"
-    [3]="profiles_trends_integration.sql|Integrate profiles with trends"
+    [1]="001_init_schema_postgres.sql|Initial database schema"
+    [2]="002_migrate_to_profiles.sql|Add research profiles feature"
+    [3]="003_profiles_trends_integration.sql|Integrate profiles with trends"
+    [4]="004_add_staging_tables.sql|Add staging tables for bulk operations"
+    [5]="005_optimize_indexes.sql|Optimize indexes for performance"
+    [6]="006_add_processing_checkpoints.sql|Add checkpoint system for resumable processing"
 )
 
 # Check and apply migrations
 migrations_applied=0
 migrations_needed=0
 
-for version in 1 2 3; do
+for version in 1 2 3 4 5 6; do
     IFS='|' read -r filename description <<< "${migrations[$version]}"
     migration_path="$MIGRATION_DIR/$filename"
     
@@ -111,7 +114,7 @@ done
 # Summary
 echo ""
 echo -e "${BLUE}📊 Migration Summary:${NC}"
-echo "  Total migrations: 3"
+echo "  Total migrations: 5"
 echo "  Already applied: $migrations_applied"
 echo "  Newly applied: $migrations_needed"
 

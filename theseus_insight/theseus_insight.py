@@ -12,12 +12,15 @@ from dotenv import load_dotenv
 import json_repair
 from typing import Optional, Callable, List
 import yake
+import asyncio
+import uuid
 
 from docling.document_converter import DocumentConverter
 
 # Local application imports
 from theseus_insight.communication import GmailCommunication, construct_email_body, upload_video
 from theseus_insight.data_processing import ArxivDataProcessor, Paper, Newsletter, Podcast
+from theseus_insight.data_processing.checkpoint_manager import CheckpointManager
 from theseus_insight.data_access import (
     PaperRepository, LogsRepository, NewsletterRepository, 
     PodcastRepository, SettingsRepository
@@ -98,7 +101,8 @@ class TheseusInsight:
                  save_dialogue=True,
                  checkpoint_dir="checkpoints",
                  task_id=None,
-                 send_error_notifications=True):
+                 send_error_notifications=True,
+                 use_database_checkpoints=True):
         
         # Store task_id for logging
         self.task_id = task_id or f"theseus_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -109,6 +113,14 @@ class TheseusInsight:
         self.generate_email = generate_email
         self.publish_podcast = publish_podcast
         self.generate_podcast = generate_podcast
+        self.use_database_checkpoints = use_database_checkpoints
+        
+        # Initialize checkpoint manager if using database checkpoints
+        self.checkpoint_manager = None
+        self.job_id = None
+        if use_database_checkpoints:
+            # We'll initialize this lazily in async context
+            pass
         
         # Email/Communication
         final_receiver_address = None
@@ -350,8 +362,56 @@ class TheseusInsight:
             except Exception as e:
                 print(f"Failed to send error notification: {str(e)}")
 
+    async def _init_checkpoint_manager(self):
+        """Initialize the checkpoint manager and create/resume job."""
+        if self.checkpoint_manager is None and self.use_database_checkpoints:
+            self.checkpoint_manager = CheckpointManager()
+            await self.checkpoint_manager.initialize()
+            
+            # Create job configuration
+            config = {
+                "start_date": str(self.start_date),
+                "end_date": str(self.end_date),
+                "top_n": self.top_n,
+                "cosine_threshold": self.cosine_similarity_threshold,
+                "profile_ids": self.profile_ids_override,
+                "task_id": self.task_id
+            }
+            
+            # Find or create job
+            self.job_id = await self.checkpoint_manager.find_resumable_job("newsletter_generation", config)
+            if self.job_id:
+                if self.verbose:
+                    print(f"🔄 Found resumable job {self.job_id}")
+                await self.checkpoint_manager.resume_job(self.job_id)
+            else:
+                self.job_id = await self.checkpoint_manager.create_job("newsletter_generation", config)
+                if self.verbose:
+                    print(f"📝 Created new job {self.job_id}")
+
+    async def _save_checkpoint_async(self, stage: str, data: any):
+        """Save a checkpoint using the database checkpoint manager."""
+        if self.checkpoint_manager and self.job_id:
+            # Convert data to serializable format
+            checkpoint_data = data
+            if isinstance(data, pd.DataFrame):
+                checkpoint_data = {'dataframe': data.to_dict('records')}
+            
+            await self.checkpoint_manager.save_checkpoint(
+                self.job_id,
+                stage,
+                checkpoint_data,
+                item_count=len(data) if hasattr(data, '__len__') else 1,
+                update_state={"current_stage": stage}
+            )
+            if self.verbose:
+                print(f"✅ Saved database checkpoint for stage: {stage}")
+        
+        # Always save file checkpoint as fallback
+        self._save_checkpoint(stage, data)
+
     def _save_checkpoint(self, stage: str, data: any):
-        """Save a checkpoint for the given pipeline stage."""
+        """Save a file-based checkpoint for the given pipeline stage."""
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
         checkpoint_data = {
@@ -361,37 +421,64 @@ class TheseusInsight:
         }
         with open(checkpoint_path, 'wb') as f:
             pickle.dump(checkpoint_data, f)
-        if self.verbose:
-            print(f"Saved checkpoint for stage: {stage}")
+        if self.verbose and not self.use_database_checkpoints:
+            print(f"Saved file checkpoint for stage: {stage}")
+
+    async def _load_checkpoint_async(self, stage: str) -> any:
+        """Load a checkpoint using the database checkpoint manager."""
+        if self.checkpoint_manager and self.job_id:
+            checkpoint = await self.checkpoint_manager.get_latest_checkpoint(self.job_id, stage)
+            if checkpoint:
+                data = checkpoint['checkpoint_data']
+                # Reconstruct DataFrame if needed
+                if 'dataframe' in data:
+                    data = pd.DataFrame(data['dataframe'])
+                if self.verbose:
+                    print(f"✅ Loaded database checkpoint for stage: {stage}")
+                return data
+        
+        # Fall back to file checkpoint
+        return self._load_checkpoint(stage)
 
     def _load_checkpoint(self, stage: str) -> any:
-        """Load a checkpoint for the given pipeline stage."""
+        """Load a file-based checkpoint for the given pipeline stage."""
         checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
         if os.path.exists(checkpoint_path):
             try:
                 with open(checkpoint_path, 'rb') as f:
                     checkpoint = pickle.load(f)
-                if self.verbose:
-                    print(f"Loaded checkpoint for stage: {stage} from {checkpoint['timestamp']}")
+                if self.verbose and not self.use_database_checkpoints:
+                    print(f"Loaded file checkpoint for stage: {stage} from {checkpoint['timestamp']}")
                 return checkpoint['data']
             except Exception as e:
                 if self.verbose:
-                    print(f"Error loading checkpoint for stage {stage}: {str(e)}")
+                    print(f"Error loading file checkpoint for stage {stage}: {str(e)}")
                 return None
-        if self.verbose:
-            print(f"No checkpoint found for stage: {stage}")
+        if self.verbose and not self.use_database_checkpoints:
+            print(f"No file checkpoint found for stage: {stage}")
         return None
+
+    async def _cleanup_checkpoints_async(self):
+        """Mark job as completed and clean up file checkpoints."""
+        # Mark job as completed in database
+        if self.checkpoint_manager and self.job_id:
+            await self.checkpoint_manager.complete_job(self.job_id)
+            if self.verbose:
+                print("✅ Marked job as completed in database")
+        
+        # Clean up file checkpoints
+        self._cleanup_checkpoints()
 
     def _cleanup_checkpoints(self):
         """Remove all checkpoint files after successful completion."""
         if os.path.exists(self.checkpoint_dir):
             try:
                 shutil.rmtree(self.checkpoint_dir)
-                if self.verbose:
-                    print("Cleaned up all checkpoints")
+                if self.verbose and not self.use_database_checkpoints:
+                    print("Cleaned up all file checkpoints")
             except Exception as e:
                 if self.verbose:
-                    print(f"Error cleaning up checkpoints: {str(e)}")
+                    print(f"Error cleaning up file checkpoints: {str(e)}")
 
     def _cleanup_temp_data(self):
         """Clean up temp_data folder (if it exists)."""
@@ -938,6 +1025,13 @@ Theseus Insight Team
             start_from: str | None = None, 
             progress_callback: Callable[[str, float, str], None]|None = None
            ):
+        """Synchronous wrapper for the async run method."""
+        return asyncio.run(self.run_async(start_from, progress_callback))
+    
+    async def run_async(self, 
+                       start_from: str | None = None, 
+                       progress_callback: Callable[[str, float, str], None]|None = None
+                      ):
         """
         Unified pipeline with checkpoints. 
         Harmonizes the old generate_newsletter_and_podcast() features:
@@ -955,6 +1049,9 @@ Theseus Insight Team
         podcast_content = None
         
         try:
+            # Initialize checkpoint manager if using database checkpoints
+            await self._init_checkpoint_manager()
+            
             # -----------
             # Stage 1: Download Papers
             # -----------
@@ -1025,11 +1122,19 @@ Theseus Insight Team
 
                         # Check for existing papers to avoid unnecessary processing
                         if self.db_saving:
-                            existing_urls = []
+                            # Extract all URLs for bulk checking
+                            all_urls = [row['pdf_url'] for _, row in data_df.iterrows()]
+                            
+                            # Use optimized bulk existence checking
+                            existing_urls_set, _ = PaperRepository.bulk_check_existence(urls=all_urls)
+                            
+                            # Create mask for new papers
                             new_papers_mask = []
+                            existing_urls = []
                             for _, row in data_df.iterrows():
-                                if PaperRepository.exists_by_url(row['pdf_url']):
-                                    existing_urls.append(row['pdf_url'])
+                                url = row['pdf_url']
+                                if url in existing_urls_set:
+                                    existing_urls.append(url)
                                     new_papers_mask.append(False)
                                 else:
                                     new_papers_mask.append(True)
@@ -1110,7 +1215,7 @@ Theseus Insight Team
                             filtered_df['abstract_embedding'] = []
                         
                         # Save checkpoint
-                        self._save_checkpoint('papers_embedded', filtered_df)
+                        await self._save_checkpoint_async('papers_embedded', filtered_df)
                         embedded_df = filtered_df
 
             if progress_callback:
@@ -1123,7 +1228,7 @@ Theseus Insight Team
                 progress_callback("rank", 20, "Starting paper ranking")
 
             if start_from is None or start_from in ['papers_embedded', 'papers_ranked']:
-                top_n_df = self._load_checkpoint('papers_ranked')
+                top_n_df = await self._load_checkpoint_async('papers_ranked')
                 if top_n_df is None:
                     # Check if we should use profile-based paper retrieval
                     if self.profile_ids_override:
@@ -1151,7 +1256,7 @@ Theseus Insight Team
                                 print("Ranking papers...")
                             top_n_df = self.rank_papers(embedded_df)
                     
-                    self._save_checkpoint('papers_ranked', top_n_df)
+                    await self._save_checkpoint_async('papers_ranked', top_n_df)
 
                 # free memory from embeddings if needed
                 del embedded_df
@@ -1165,10 +1270,10 @@ Theseus Insight Team
             if progress_callback:
                 progress_callback("newsletter", 40, "Starting newsletter sections generation")
             if start_from is None or start_from in ['papers_ranked', 'newsletter_sections']:
-                sections_data = self._load_checkpoint('newsletter_sections')
+                sections_data = await self._load_checkpoint_async('newsletter_sections')
                 if sections_data is None:
                     if top_n_df is None:
-                        top_n_df = self._load_checkpoint('papers_ranked')
+                        top_n_df = await self._load_checkpoint_async('papers_ranked')
                         if top_n_df is None:
                             raise ValueError("No ranked papers found to generate newsletter sections.")
 
@@ -1180,7 +1285,7 @@ Theseus Insight Team
                             'sections': [],
                             'urls_and_titles': []
                         }
-                        self._save_checkpoint('newsletter_sections', sections_data)
+                        await self._save_checkpoint_async('newsletter_sections', sections_data)
                     else:
                         if self.verbose:
                             print("Generating newsletter sections (paper-by-paper) ...")
@@ -1247,7 +1352,7 @@ Theseus Insight Team
                             'sections': sections,
                             'urls_and_titles': urls_and_titles
                         }
-                        self._save_checkpoint('newsletter_sections', sections_data)
+                        await self._save_checkpoint_async('newsletter_sections', sections_data)
             if progress_callback:
                 progress_callback("newsletter", 50, "Newsletter sections generation complete")
 
@@ -1257,10 +1362,10 @@ Theseus Insight Team
             if progress_callback:
                 progress_callback("newsletter", 60, "Starting newsletter content generation")
             if start_from is None or start_from in ['newsletter_sections', 'newsletter_content']:
-                newsletter_content = self._load_checkpoint('newsletter_content')
+                newsletter_content = await self._load_checkpoint_async('newsletter_content')
                 if newsletter_content is None:
                     if sections_data is None:
-                        sections_data = self._load_checkpoint('newsletter_sections')
+                        sections_data = await self._load_checkpoint_async('newsletter_sections')
                         if sections_data is None:
                             raise ValueError("No newsletter sections found to build the final newsletter.")
                     
@@ -1300,7 +1405,7 @@ Theseus Insight Team
 
                                                  # Final newsletter
                         newsletter_content = intro_text + "\n\n" + joined_sections
-                    self._save_checkpoint('newsletter_content', newsletter_content)
+                    await self._save_checkpoint_async('newsletter_content', newsletter_content)
 
                     # Save to DB
                     if self.db_saving:
@@ -1322,12 +1427,12 @@ Theseus Insight Team
                 progress_callback("newsletter", 85, "Starting newsletter email sending")
             if self.generate_email:
                 if newsletter_content is None:
-                    newsletter_content = self._load_checkpoint('newsletter_content')
+                    newsletter_content = await self._load_checkpoint_async('newsletter_content')
                     if newsletter_content is None:
                         raise ValueError("Cannot send email: no newsletter content found.")
 
                 if sections_data is None:
-                    sections_data = self._load_checkpoint('newsletter_sections')
+                    sections_data = await self._load_checkpoint_async('newsletter_sections')
                     if sections_data is None:
                         raise ValueError("No sections data found to build email links.")
 
@@ -1371,18 +1476,18 @@ Theseus Insight Team
                 progress_callback("podcast", 90, "Starting podcast generation")
             if self.generate_podcast:
                 # Part A: Generate Podcast Script + Audio
-                podcast_content = self._load_checkpoint('podcast_script')
+                podcast_content = await self._load_checkpoint_async('podcast_script')
                 if podcast_content is None:
                     # If we haven't built any script yet, let's do it
                     if self.verbose:
                         print("Generating podcast script & audio...")
 
                     if top_n_df is None:
-                        top_n_df = self._load_checkpoint('papers_ranked')
+                        top_n_df = await self._load_checkpoint_async('papers_ranked')
                         if top_n_df is None:
                             raise ValueError("Cannot generate podcast: no ranked papers found.")
                     if sections_data is None:
-                        sections_data = self._load_checkpoint('newsletter_sections')
+                        sections_data = await self._load_checkpoint_async('newsletter_sections')
                         if sections_data is None:
                             raise ValueError("Cannot generate podcast: no newsletter sections found.")
 
@@ -1395,10 +1500,10 @@ Theseus Insight Team
                         verbose=self.verbose,
                         visualizer=False  # We'll do visualization in next step
                     )
-                    self._save_checkpoint('podcast_script', podcast_content)
+                    await self._save_checkpoint_async('podcast_script', podcast_content)
 
                 # Part B: Visualization (if visualizer=True)
-                visualized_podcast = self._load_checkpoint('podcast_visualized')
+                visualized_podcast = await self._load_checkpoint_async('podcast_visualized')
                 if self.visualizer and visualized_podcast is None:
                     if self.verbose:
                         print("Generating podcast visualization...")
@@ -1433,7 +1538,7 @@ Theseus Insight Team
                         line_width=self.line_width,
                         font_path=self.font_path
                     )
-                    self._save_checkpoint('podcast_visualized', podcast_content)
+                    await self._save_checkpoint_async('podcast_visualized', podcast_content)
                 
                 # Save the final script / transcript in DB and optional JSON
                 if podcast_content:
@@ -1479,7 +1584,7 @@ Theseus Insight Team
             # -----------
             # Final Step: Mark completion, purge + cleanup
             # -----------
-            self._save_checkpoint('newsletter_complete', {'status': 'complete'})
+            await self._save_checkpoint_async('newsletter_complete', {'status': 'complete'})
             # Try to purge the cache for all Ollama models used in the orchestration config
             try:
                 # Collect all unique Ollama model names from the orchestration config
@@ -1506,6 +1611,14 @@ Theseus Insight Team
             self._cleanup_checkpoints()
 
         except Exception as e:
+            # Mark job as failed if using database checkpoints
+            if self.checkpoint_manager and self.job_id:
+                try:
+                    await self.checkpoint_manager.fail_job(self.job_id, str(e))
+                except Exception as checkpoint_error:
+                    if self.verbose:
+                        print(f"Failed to mark job as failed: {checkpoint_error}")
+            
             self._log_error(500, e)
             raise
         finally:
@@ -1532,6 +1645,32 @@ Theseus Insight Team
                 print("Using Kaggle dataset for bulk download (4GB file)")
                 print("="*60)
             
+            # Check existing papers BEFORE downloading
+            existing_urls = set()
+            existing_titles = set()
+            if self.verbose:
+                print("\n🔍 PRE-DOWNLOAD CHECK")
+                print("="*40)
+                print("Checking existing papers in database before download...")
+            
+            # Get papers in the date range from the database
+            existing_papers = PaperRepository.get_papers_in_date_range(
+                start_date=self.start_date.strftime('%Y-%m-%d'),
+                end_date=self.end_date.strftime('%Y-%m-%d')
+            )
+            
+            existing_urls = {p['url'] for p in existing_papers}
+            existing_titles = {p['title'] for p in existing_papers}
+            
+            if self.verbose:
+                print(f"📊 Found {len(existing_papers)} existing papers in date range")
+                print(f"   - {len(existing_urls)} unique URLs")
+                print(f"   - {len(existing_titles)} unique titles")
+                
+                # If we have most papers already, we might skip download entirely
+                if len(existing_papers) > 0:
+                    print(f"💡 Tip: {len(existing_papers)} papers already exist - download will skip these")
+            
             # -----------
             # Stage 1: Download Papers
             # -----------
@@ -1541,7 +1680,7 @@ Theseus Insight Team
             data_df = self._load_checkpoint('papers_downloaded')
             if data_df is None:
                 if self.verbose:
-                    print("📥 STAGE 1: DOWNLOADING PAPERS")
+                    print("\n📥 STAGE 1: DOWNLOADING PAPERS")
                     print("="*40)
                 
                 # Get ArXiv categories from orchestration config
@@ -1576,6 +1715,20 @@ Theseus Insight Team
                 if data_df.empty:
                     self._handle_no_papers_found()
                     return  # Exit early since there's nothing to process
+                
+                # Early optimization: Check if all downloaded papers already exist
+                quick_check_urls = set(data_df['pdf_url'].tolist())
+                quick_check_titles = set(data_df['title'].tolist())
+                
+                if quick_check_urls.issubset(existing_urls) or quick_check_titles.issubset(existing_titles):
+                    if self.verbose:
+                        print("🎯 OPTIMIZATION: All downloaded papers already exist in database!")
+                        print("   Skipping download and processing stages")
+                    return {
+                        'saved_count': 0,
+                        'duplicate_count': len(data_df),
+                        'total_processed': len(data_df)
+                    }
                 
                 self._save_checkpoint('papers_downloaded', data_df)
                 if self.verbose:
@@ -1613,15 +1766,15 @@ Theseus Insight Team
                         print("❌ No papers with valid abstracts to process")
                     return
                 
-                # Check for existing papers to avoid duplicate processing
+                # Check for existing papers using pre-loaded data
                 new_mask = []
                 if self.verbose:
-                    print("🔍 Checking for existing papers in database...")
+                    print("🔍 Filtering out existing papers using pre-loaded data...")
                 
+                # Use the pre-loaded existing URLs and titles for faster checking
                 for _, row in tqdm(data_df.iterrows(), total=len(data_df), 
                                   desc="Checking existing papers", disable=not self.verbose):
-                    exists = (PaperRepository.exists_by_url(row["pdf_url"]) or 
-                             PaperRepository.exists_by_title(row["title"]))
+                    exists = (row["pdf_url"] in existing_urls or row["title"] in existing_titles)
                     new_mask.append(not exists)
                 
                 new_df = data_df[new_mask].reset_index(drop=True)

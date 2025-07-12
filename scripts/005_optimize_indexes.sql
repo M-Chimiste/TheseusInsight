@@ -13,10 +13,11 @@ CREATE INDEX IF NOT EXISTS idx_papers_pending_embedding
 ON papers(id, date) 
 WHERE embedding_model IS NULL;
 
--- Add partial index for recent papers (commonly queried)
+-- Add index for recent papers (commonly queried)
+-- Note: Cannot use CURRENT_DATE in partial index as it's not immutable
+-- Using a regular index instead, application code should filter by date
 CREATE INDEX IF NOT EXISTS idx_papers_recent 
-ON papers(date DESC, score DESC) 
-WHERE date >= (CURRENT_DATE - INTERVAL '90 days');
+ON papers(date DESC, score DESC);
 
 -- Optimize the URL/title composite index for duplicate checking
 DROP INDEX IF EXISTS idx_papers_url_title;
@@ -29,8 +30,8 @@ WHERE url IS NOT NULL;
 
 -- Add covering index for common profile queries
 CREATE INDEX IF NOT EXISTS idx_paper_profile_scores_profile_covering 
-ON paper_profile_scores(profile_id, score DESC, cosine_similarity DESC) 
-INCLUDE (paper_id, evaluated_at);
+ON paper_profile_scores(profile_id, score DESC, date_scored DESC) 
+INCLUDE (paper_id, related);
 
 -- Partial index for high-scoring papers per profile
 CREATE INDEX IF NOT EXISTS idx_paper_profile_high_scores 
@@ -49,7 +50,7 @@ ON embeddings(embedding_model, paper_id);
 
 -- Optimize keyword lookups
 DROP INDEX IF EXISTS idx_keywords_keyword;
-CREATE INDEX idx_keywords_keyword_lower ON keywords(LOWER(keyword));
+CREATE INDEX IF NOT EXISTS idx_keywords_keyword_lower ON keywords(LOWER(keyword));
 
 -- Add index for paper keyword associations
 CREATE INDEX IF NOT EXISTS idx_paper_keywords_paper_keyword 
@@ -84,6 +85,7 @@ WHERE is_active = true;
 -- ==========================
 
 -- Create a materialized view for paper statistics (refresh periodically)
+-- Note: View will include all data, filtering should be done at query time
 CREATE MATERIALIZED VIEW IF NOT EXISTS paper_stats_mv AS
 SELECT 
     DATE_TRUNC('day', date) as day,
@@ -92,15 +94,16 @@ SELECT
     AVG(score) as avg_score,
     COUNT(DISTINCT url) as unique_urls
 FROM papers
-WHERE date >= (CURRENT_DATE - INTERVAL '90 days')
 GROUP BY DATE_TRUNC('day', date);
 
-CREATE UNIQUE INDEX ON paper_stats_mv(day);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_stats_mv_day ON paper_stats_mv(day);
 
--- Create index to support the view refresh
+-- Create index to support the view refresh and date-based queries
 CREATE INDEX IF NOT EXISTS idx_papers_date_stats 
-ON papers(date) 
-WHERE date >= (CURRENT_DATE - INTERVAL '90 days');
+ON papers(date);
+
+-- Ensure the migration runs smoothly even if some objects already exist
+-- This makes the migration idempotent
 
 -- 8. Vacuum and analyze
 -- =====================

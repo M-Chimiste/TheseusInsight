@@ -223,12 +223,11 @@ class DatabaseImporter:
                     writer.writerows(data)
                     tmp_path = tmp.name
                 
-                # COPY data into temp table
-                with open(tmp_path, 'r') as f:
-                    cursor.copy_expert(
-                        f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER",
-                        f
-                    )
+                # COPY data into temp table using psycopg3 syntax
+                with open(tmp_path, 'rb') as f:
+                    with cursor.copy(f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
+                        while data := f.read(8192):
+                            copy.write(data)
                 
                 # Handle duplicates and insert
                 if skip_duplicates and unique_columns:
@@ -1378,13 +1377,37 @@ class DatabaseImporter:
         
         stats = {"total": len(profiles_data), "imported": 0, "skipped": 0, "errors": 0}
         
+        # Store mapping of old profile IDs to new ones for later use
+        if not hasattr(self, 'profile_id_mapping'):
+            self.profile_id_mapping = {}
+        
         for i, profile_data in enumerate(profiles_data):
             try:
-                # Check for duplicates if requested
+                old_profile_id = profile_data.get("id")
+                
+                # Special handling for Default profile
+                if profile_data.get("is_default", False) or profile_data["name"] == "Default":
+                    with get_cursor() as cursor:
+                        # Get the existing Default profile ID
+                        cursor.execute("SELECT id FROM research_profiles WHERE is_default = true")
+                        result = cursor.fetchone()
+                        if result:
+                            # Map old Default profile ID to existing Default profile ID
+                            if old_profile_id:
+                                self.profile_id_mapping[old_profile_id] = result["id"]
+                            stats["skipped"] += 1
+                            logger.info(f"Skipping Default profile import, using existing Default profile ID: {result['id']}")
+                            continue
+                
+                # Check for duplicates if requested (for non-Default profiles)
                 if skip_duplicates:
                     with get_cursor() as cursor:
-                        cursor.execute("SELECT COUNT(*) FROM research_profiles WHERE name = %s", (profile_data["name"],))
-                        if cursor.fetchone()[0] > 0:
+                        cursor.execute("SELECT id FROM research_profiles WHERE name = %s", (profile_data["name"],))
+                        result = cursor.fetchone()
+                        if result:
+                            # Map old profile ID to existing profile ID
+                            if old_profile_id:
+                                self.profile_id_mapping[old_profile_id] = result["id"]
                             stats["skipped"] += 1
                             continue
                 
@@ -1395,6 +1418,7 @@ class DatabaseImporter:
                         (name, description, color, tags, email_recipients, arxiv_filters, 
                          is_active, is_default, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
                     """, (
                         profile_data["name"],
                         profile_data.get("description"),
@@ -1407,6 +1431,10 @@ class DatabaseImporter:
                         profile_data.get("created_at"),
                         profile_data.get("updated_at")
                     ))
+                    new_id = cursor.fetchone()["id"]
+                    # Map old profile ID to new profile ID
+                    if old_profile_id:
+                        self.profile_id_mapping[old_profile_id] = new_id
                 
                 stats["imported"] += 1
                 
@@ -1442,13 +1470,20 @@ class DatabaseImporter:
         
         for i, interest_data in enumerate(interests_data):
             try:
+                # Map old profile ID to new profile ID if available
+                original_profile_id = interest_data["profile_id"]
+                mapped_profile_id = original_profile_id
+                if hasattr(self, 'profile_id_mapping') and original_profile_id in self.profile_id_mapping:
+                    mapped_profile_id = self.profile_id_mapping[original_profile_id]
+                    logger.debug(f"Mapped profile ID {original_profile_id} to {mapped_profile_id}")
+                
                 # Check for duplicates if requested
                 if skip_duplicates:
                     with get_cursor() as cursor:
                         cursor.execute("""
                             SELECT COUNT(*) FROM profile_research_interests 
                             WHERE profile_id = %s AND interest_text = %s
-                        """, (interest_data["profile_id"], interest_data["interest_text"]))
+                        """, (mapped_profile_id, interest_data["interest_text"]))
                         if cursor.fetchone()[0] > 0:
                             stats["skipped"] += 1
                             continue
@@ -1468,7 +1503,7 @@ class DatabaseImporter:
                         (profile_id, interest_text, embedding, embedding_model, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s)
                     """, (
-                        interest_data["profile_id"],
+                        mapped_profile_id,
                         interest_data["interest_text"],
                         embedding_str,
                         interest_data.get("embedding_model"),
@@ -1510,13 +1545,20 @@ class DatabaseImporter:
         
         for i, score_data in enumerate(scores_data):
             try:
+                # Map old profile ID to new profile ID if available
+                original_profile_id = score_data["profile_id"]
+                mapped_profile_id = original_profile_id
+                if hasattr(self, 'profile_id_mapping') and original_profile_id in self.profile_id_mapping:
+                    mapped_profile_id = self.profile_id_mapping[original_profile_id]
+                    logger.debug(f"Mapped profile ID {original_profile_id} to {mapped_profile_id}")
+                
                 # Check for duplicates if requested
                 if skip_duplicates:
                     with get_cursor() as cursor:
                         cursor.execute("""
                             SELECT COUNT(*) FROM paper_profile_scores 
                             WHERE paper_id = %s AND profile_id = %s
-                        """, (score_data["paper_id"], score_data["profile_id"]))
+                        """, (score_data["paper_id"], mapped_profile_id))
                         if cursor.fetchone()[0] > 0:
                             stats["skipped"] += 1
                             continue
@@ -1529,7 +1571,7 @@ class DatabaseImporter:
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         score_data["paper_id"],
-                        score_data["profile_id"],
+                        mapped_profile_id,
                         score_data.get("score"),
                         score_data.get("related"),
                         score_data.get("rationale"),

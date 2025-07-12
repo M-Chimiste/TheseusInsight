@@ -228,19 +228,23 @@ class DatabaseImporter:
                             with copy_cursor.copy(f"COPY {table_name} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
                                 bytes_processed = 0
                                 file_size = os.path.getsize(tmp_path)
+                                last_progress_pct = -1  # Track last reported progress to prevent flooding
                                 
                                 while chunk := f.read(65536):  # Read in larger chunks for better performance
                                     copy.write(chunk)
                                     bytes_processed += len(chunk)
                                     
-                                    # Report progress based on bytes processed
+                                    # Throttle progress reporting - only report when percentage changes significantly
                                     if progress_callback and file_size > 0:
                                         progress_pct = int((bytes_processed / file_size) * 100)
-                                        progress_callback(
-                                            bytes_processed, 
-                                            file_size, 
-                                            f"COPY progress for {table_name}: {progress_pct}%"
-                                        )
+                                        # Only report progress if it changed by at least 5% or at the end
+                                        if progress_pct >= last_progress_pct + 5 or bytes_processed >= file_size:
+                                            progress_callback(
+                                                bytes_processed, 
+                                                file_size, 
+                                                f"COPY progress for {table_name}: {progress_pct}%"
+                                            )
+                                            last_progress_pct = progress_pct
                     
                     stats["imported"] = total_records
                     if progress_callback:
@@ -264,19 +268,23 @@ class DatabaseImporter:
                         with copy_cursor.copy(f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
                             bytes_processed = 0
                             file_size = os.path.getsize(tmp_path)
+                            last_progress_pct = -1  # Track last reported progress to prevent flooding
                             
                             while chunk := f.read(65536):  # Read in larger chunks for better performance
                                 copy.write(chunk)
                                 bytes_processed += len(chunk)
                                 
-                                # Report progress based on bytes processed
+                                # Throttle progress reporting - only report when percentage changes significantly
                                 if progress_callback and file_size > 0:
                                     progress_pct = int((bytes_processed / file_size) * 100)
-                                    progress_callback(
-                                        bytes_processed, 
-                                        file_size, 
-                                        f"COPY progress for {table_name}: {progress_pct}%"
-                                    )
+                                    # Only report progress if it changed by at least 5% or at the end
+                                    if progress_pct >= last_progress_pct + 5 or bytes_processed >= file_size:
+                                        progress_callback(
+                                            bytes_processed, 
+                                            file_size, 
+                                            f"COPY progress for {table_name}: {progress_pct}%"
+                                        )
+                                        last_progress_pct = progress_pct
                 
                 if progress_callback:
                     progress_callback(total_records, total_records, f"COPY complete, inserting into {table_name}")

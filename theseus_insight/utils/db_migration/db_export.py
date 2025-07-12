@@ -155,29 +155,31 @@ class DatabaseExporter:
         progress_callback: Optional[Callable[[int, int, str], None]] = None
     ) -> Dict[str, Any]:
         """
-        Export a table using streaming to handle large datasets.
+        Export table data to JSON file using streaming to handle large datasets.
         
         Args:
-            table_name: Name of the table
+            table_name: Table name for logging
             query: SQL query to execute
-            output_filename: Output JSON filename
+            output_filename: Output JSON file name (without extension)
             params: Query parameters
-            progress_callback: Optional callback(current, total, message)
+            progress_callback: Optional progress callback function
             
         Returns:
-            Export statistics
+            Export statistics including file path, size, and checksum
         """
         output_file = self.output_dir / output_filename
+        start_time = datetime.datetime.now()
+        
         stats = {
-            "table": table_name,
+            "file_path": str(output_file),
             "records_exported": 0,
             "batches_processed": 0,
-            "export_time": None,
+            "export_time": 0,
             "file_size": 0,
-            "checksum": None
+            "checksum": "",
         }
         
-        start_time = datetime.datetime.now()
+        # Create checksum hasher
         hasher = hashlib.sha256()
         
         # Write JSON array manually to support streaming
@@ -185,6 +187,7 @@ class DatabaseExporter:
             f.write('[\n')
             first_record = True
             total_records = 0
+            last_progress_pct = -1  # Track last reported progress to prevent flooding
             
             for batch_num, (batch, total_count) in enumerate(self._stream_table_data(table_name, query, params)):
                 stats["batches_processed"] += 1
@@ -207,13 +210,17 @@ class DatabaseExporter:
                     
                     stats["records_exported"] += 1
                 
-                # Progress callback - report on every batch for better granularity
-                if progress_callback:
-                    progress_callback(
-                        stats["records_exported"], 
-                        total_records,
-                        f"Exported {stats['records_exported']:,}/{total_records:,} records from {table_name}"
-                    )
+                # Throttle progress callback - only report when percentage changes significantly
+                if progress_callback and total_records > 0:
+                    progress_pct = int((stats["records_exported"] / total_records) * 100)
+                    # Only report progress if it changed by at least 5% or this is the last batch
+                    if progress_pct >= last_progress_pct + 5 or stats["records_exported"] >= total_records:
+                        progress_callback(
+                            stats["records_exported"], 
+                            total_records,
+                            f"Exported {stats['records_exported']:,}/{total_records:,} records from {table_name}"
+                        )
+                        last_progress_pct = progress_pct
             
             f.write('\n]')
         
@@ -288,10 +295,10 @@ class DatabaseExporter:
                 
                 # Use streaming export
                 stats = self.export_table_streaming(
-                    "papers",
-                    query,
-                    "papers.json",
-                    progress_callback=progress_callback
+                                          "papers",
+                      query,
+                      "papers.json",
+                      progress_callback=progress_callback
                 )
                 
                 return str(self.output_dir / "papers.json")

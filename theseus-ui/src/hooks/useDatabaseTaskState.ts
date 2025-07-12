@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { taskApi } from '../services/api';
 
 export interface DatabaseTaskState {
@@ -79,6 +79,12 @@ const clearTaskState = () => {
 export const useDatabaseTaskState = (): UseDatabaseTaskStateReturn => {
   const [taskState, setTaskState] = useState<DatabaseTaskState>(loadTaskState);
   const [isCheckingForActiveTasks, setIsCheckingForActiveTasks] = useState(true);
+  
+  // Throttling refs to prevent callback flooding
+  const lastExportUpdateRef = useRef<number>(0);
+  const lastImportUpdateRef = useRef<number>(0);
+  const lastExportProgressRef = useRef<number>(-1);
+  const lastImportProgressRef = useRef<number>(-1);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -285,19 +291,37 @@ export const useDatabaseTaskState = (): UseDatabaseTaskStateReturn => {
   }, []);
 
   const updateExportProgress = useCallback((progress: number, status: string) => {
-    setTaskState(prev => ({
-      ...prev,
-      exportProgress: progress,
-      exportStatus: status
-    }));
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastExportUpdateRef.current;
+    const progressChanged = Math.abs(progress - lastExportProgressRef.current) >= 5; // Only update if progress changed by 5% or more
+    
+    // Throttle updates: only update if progress changed significantly OR 1 second has passed
+    if (progressChanged || timeSinceLastUpdate >= 1000) {
+      setTaskState(prev => ({
+        ...prev,
+        exportProgress: progress,
+        exportStatus: status
+      }));
+      lastExportUpdateRef.current = now;
+      lastExportProgressRef.current = progress;
+    }
   }, []);
 
   const updateImportProgress = useCallback((progress: number, status: string) => {
-    setTaskState(prev => ({
-      ...prev,
-      importProgress: progress,
-      importStatus: status
-    }));
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastImportUpdateRef.current;
+    const progressChanged = Math.abs(progress - lastImportProgressRef.current) >= 5; // Only update if progress changed by 5% or more
+    
+    // Throttle updates: only update if progress changed significantly OR 1 second has passed
+    if (progressChanged || timeSinceLastUpdate >= 1000) {
+      setTaskState(prev => ({
+        ...prev,
+        importProgress: progress,
+        importStatus: status
+      }));
+      lastImportUpdateRef.current = now;
+      lastImportProgressRef.current = progress;
+    }
   }, []);
 
   const setExportError = useCallback((error: string | null) => {

@@ -129,10 +129,87 @@ echo -e "  Functions remaining: $FUNCTION_COUNT"
 # Unset password
 unset PGPASSWORD
 
+# Fun atomic bomb animation
+echo ""
+echo -e "${RED}💥 INITIATING NUCLEAR DETONATION SEQUENCE... 💥${NC}"
+sleep 0.5
+
+# Falling bomb animation
+for i in {1..5}; do
+    clear
+    for ((j=1; j<i; j++)); do echo ""; done
+    echo "        ▄▄▄▄▄▄▄▄▄"
+    echo "        █ NUKE █"
+    echo "        █▄▄▄▄▄▄█"
+    echo "           ███"
+    echo "            V"
+    sleep 0.2
+done
+
+# Explosion animation
+clear
+echo ""
+echo ""
+echo ""
+echo ""
+echo "              ."
+sleep 0.1
+clear
+echo ""
+echo ""
+echo "            .-.-."
+echo "           (  :  )"
+echo "            '-'-'"
+sleep 0.1
+clear
+echo ""
+echo "          .::::::."
+echo "        .::      ::."
+echo "       ::  💥💥  ::"
+echo "        '::    ::'"
+echo "          '::::'"
+sleep 0.1
+clear
+echo "       .:::::::::::."
+echo "     .::           ::."
+echo "    ::   💥 💥 💥   ::"
+echo "   ::    💥 💥 💥    ::"
+echo "    '::           ::'"
+echo "      ':::::::::::'"
+sleep 0.2
+clear
+echo -e "${YELLOW}"
+echo "    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄"
+echo "  ▄█                 █▄"
+echo " █   💥 BOOM! 💥      █"
+echo "█    💥 KABOOM! 💥     █"
+echo " █   💥 EXPLOSION! 💥  █"
+echo "  ▀█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█▀"
+echo -e "${NC}"
+sleep 0.3
+
+# Mushroom cloud
+clear
+echo -e "${RED}"
+echo "         ☁☁☁☁☁☁☁"
+echo "       ☁☁☁☁☁☁☁☁☁"
+echo "      ☁☁☁☁☁☁☁☁☁☁☁"
+echo "     ☁☁☁☁☁☁☁☁☁☁☁☁☁"
+echo "      ☁☁☁☁☁☁☁☁☁☁☁"
+echo "        |||||||"
+echo "        |||||||"
+echo "        |||||||"
+echo "      ▄▄▄▄▄▄▄▄▄"
+echo "    ▄▄▄▄▄▄▄▄▄▄▄▄▄"
+echo -e "${NC}"
+sleep 0.5
+
 echo ""
 echo -e "${GREEN}✅ Database successfully nuked!${NC}"
 echo -e "${GREEN}All tables and data have been removed from '$DB_NAME'.${NC}"
 echo -e "${GREEN}The database and extensions (pgvector, pg_trgm) remain intact.${NC}"
+echo ""
+echo -e "${YELLOW}☢️  RADIATION LEVEL: SAFE ☢️${NC}"
 echo ""
 echo "Next steps:"
 echo "1. Run your setup/migration scripts to test fresh installation"

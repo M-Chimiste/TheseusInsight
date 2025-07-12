@@ -33,7 +33,7 @@ class ResearchTaskRequest(BaseModel):
     save_to_library: bool = Field(True, description="Whether to save results to research library")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "research_question": "What are the latest developments in quantum computing for machine learning?",
                 "config": {

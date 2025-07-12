@@ -735,7 +735,7 @@ class PerformanceConfig(BaseModel):
     development_max_papers: int = Field(default=5000, ge=100, le=50000, description="Max papers in development mode")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "max_cores": 16,
                 "max_memory_gb": 128,

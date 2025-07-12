@@ -13,12 +13,13 @@ import psycopg
 from psycopg.rows import dict_row
 
 try:
-    from psycopg_pool import ConnectionPool
+    from psycopg_pool import ConnectionPool, PoolTimeout
     POOL_AVAILABLE = True
 except ImportError:
     # Pool module not available - will use fallback
     POOL_AVAILABLE = False
     ConnectionPool = None
+    PoolTimeout = None
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +152,18 @@ class PooledConnectionManager:
             if autocommit:
                 connection.commit()
                 
-        except psycopg.PoolTimeout:
-            self._stats["timeouts"] += 1
-            logger.error(f"Connection pool timeout after {POOL_TIMEOUT}s")
-            raise
         except Exception as e:
-            self._stats["errors"] += 1
-            if connection:
-                connection.rollback()
-            raise
+            if POOL_AVAILABLE and PoolTimeout and isinstance(e, PoolTimeout):
+                # This is a pool timeout error
+                self._stats["timeouts"] += 1
+                logger.error(f"Connection pool timeout after {POOL_TIMEOUT}s")
+                raise
+            else:
+                # Other exceptions
+                self._stats["errors"] += 1
+                if connection:
+                    connection.rollback()
+                raise
         finally:
             # Return connection to pool
             if connection and self.pool:

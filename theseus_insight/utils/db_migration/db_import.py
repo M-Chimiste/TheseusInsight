@@ -185,7 +185,8 @@ class DatabaseImporter:
         data: List[Dict], 
         columns: List[str],
         skip_duplicates: bool = True,
-        unique_columns: Optional[List[str]] = None
+        unique_columns: Optional[List[str]] = None,
+        progress_callback: Optional[Callable] = None
     ) -> Dict[str, int]:
         """
         Import data using PostgreSQL COPY for performance.
@@ -204,6 +205,12 @@ class DatabaseImporter:
         
         if not data:
             return stats
+        
+        total_records = len(data)
+        logger.info(f"Starting COPY import for {table_name} with {total_records} records")
+        
+        if progress_callback:
+            progress_callback(0, total_records, f"Preparing {table_name} for COPY import")
         
         with self._transaction_context(table_name) as cursor:
             # Create temporary table for staging
@@ -224,10 +231,28 @@ class DatabaseImporter:
                     tmp_path = tmp.name
                 
                 # COPY data into temp table using psycopg3 syntax
-                with open(tmp_path, 'rb') as f:
-                    with cursor.copy(f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
-                        while data := f.read(8192):
-                            copy.write(data)
+                # For psycopg3, we need to use the connection's copy method, not the cursor's
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    with cursor.connection.cursor() as copy_cursor:
+                        with copy_cursor.copy(f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
+                            bytes_processed = 0
+                            file_size = os.path.getsize(tmp_path)
+                            
+                            while chunk := f.read(65536):  # Read in larger chunks for better performance
+                                copy.write(chunk)
+                                bytes_processed += len(chunk)
+                                
+                                # Report progress based on bytes processed
+                                if progress_callback and file_size > 0:
+                                    progress_pct = int((bytes_processed / file_size) * 100)
+                                    progress_callback(
+                                        bytes_processed, 
+                                        file_size, 
+                                        f"COPY progress for {table_name}: {progress_pct}%"
+                                    )
+                
+                if progress_callback:
+                    progress_callback(total_records, total_records, f"COPY complete, inserting into {table_name}")
                 
                 # Handle duplicates and insert
                 if skip_duplicates and unique_columns:
@@ -645,13 +670,18 @@ class DatabaseImporter:
             if paper.get("embedding"):
                 paper["embedding"] = json.dumps(paper["embedding"])
         
-        # Import using COPY
+        # Import using COPY with progress callback
+        def copy_progress(current, total, message):
+            if progress_callback:
+                progress_callback(current, total, f"COPY import: {message}")
+        
         stats = self._import_with_copy(
             "papers",
             papers_data,
             columns,
             skip_duplicates=skip_duplicates,
-            unique_columns=["url"]
+            unique_columns=["url"],
+            progress_callback=copy_progress
         )
         
         if progress_callback:
@@ -1391,12 +1421,37 @@ class DatabaseImporter:
                         # Get the existing Default profile ID
                         cursor.execute("SELECT id FROM research_profiles WHERE is_default = true")
                         result = cursor.fetchone()
-                        if result:
+                        if result and skip_duplicates:
                             # Map old Default profile ID to existing Default profile ID
                             if old_profile_id:
                                 self.profile_id_mapping[old_profile_id] = result["id"]
                             stats["skipped"] += 1
                             logger.info(f"Skipping Default profile import, using existing Default profile ID: {result['id']}")
+                            continue
+                        elif result and not skip_duplicates:
+                            # In overwrite mode, update the existing Default profile
+                            cursor.execute("""
+                                UPDATE research_profiles 
+                                SET name = %s, description = %s, color = %s, tags = %s, 
+                                    email_recipients = %s, arxiv_filters = %s, is_active = %s, 
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                                RETURNING id
+                            """, (
+                                profile_data["name"],
+                                profile_data.get("description"),
+                                profile_data.get("color"),
+                                json.dumps(profile_data.get("tags", [])),
+                                json.dumps(profile_data.get("email_recipients", [])),
+                                json.dumps(profile_data.get("arxiv_filters", {})),
+                                profile_data.get("is_active", True),
+                                result["id"]
+                            ))
+                            updated_result = cursor.fetchone()
+                            if old_profile_id:
+                                self.profile_id_mapping[old_profile_id] = updated_result["id"]
+                            stats["imported"] += 1
+                            logger.info(f"Updated existing Default profile with ID: {updated_result['id']}")
                             continue
                 
                 # Check for duplicates if requested (for non-Default profiles)

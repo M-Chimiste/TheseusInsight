@@ -250,13 +250,13 @@ class TableValidator:
         # String length validations
         if record.get('title'):
             title_result = FieldValidator.validate_string_length(
-                record['title'], 'title', min_len=5, max_len=500
+                record['title'], 'title', min_len=1, max_len=500
             )
             result.merge(title_result)
         
         if record.get('abstract'):
             abstract_result = FieldValidator.validate_string_length(
-                record['abstract'], 'abstract', min_len=50, max_len=5000
+                record['abstract'], 'abstract', min_len=1, max_len=10000
             )
             result.merge(abstract_result)
         
@@ -270,10 +270,10 @@ class TableValidator:
             date_result = FieldValidator.validate_date(record['date'], 'date')
             result.merge(date_result)
         
-        # Score validation
+        # Score validation (scores are 1-10 in the system)
         if record.get('score') is not None:
             score_result = FieldValidator.validate_numeric_range(
-                record['score'], 'score', min_val=0.0, max_val=1.0
+                record['score'], 'score', min_val=0.0, max_val=10.0
             )
             result.merge(score_result)
         
@@ -414,10 +414,10 @@ class TableValidator:
             field_result = FieldValidator.validate_required(record.get(field), field)
             result.merge(field_result)
         
-        # Score validation
+        # Score validation (scores are 1-10 in the system)
         if record.get('score') is not None:
             score_result = FieldValidator.validate_numeric_range(
-                record['score'], 'score', min_val=0.0, max_val=1.0
+                record['score'], 'score', min_val=0.0, max_val=10.0
             )
             result.merge(score_result)
         

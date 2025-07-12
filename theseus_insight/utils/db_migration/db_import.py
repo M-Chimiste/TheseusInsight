@@ -213,16 +213,7 @@ class DatabaseImporter:
             progress_callback(0, total_records, f"Preparing {table_name} for COPY import")
         
         with self._transaction_context(table_name) as cursor:
-            # Create temporary table for staging
-            temp_table = f"temp_{table_name}_{id(self)}"
-            
             try:
-                # Create temp table with same structure
-                cursor.execute(f"""
-                    CREATE TEMP TABLE {temp_table} 
-                    (LIKE {table_name} INCLUDING ALL)
-                """)
-                
                 # Prepare CSV data
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp:
                     writer = csv.DictWriter(tmp, fieldnames=columns, extrasaction='ignore')
@@ -230,8 +221,44 @@ class DatabaseImporter:
                     writer.writerows(data)
                     tmp_path = tmp.name
                 
+                # If skip_duplicates is False (overwrite mode), copy directly to target table
+                if not skip_duplicates:
+                    with open(tmp_path, 'r', encoding='utf-8') as f:
+                        with cursor.connection.cursor() as copy_cursor:
+                            with copy_cursor.copy(f"COPY {table_name} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
+                                bytes_processed = 0
+                                file_size = os.path.getsize(tmp_path)
+                                
+                                while chunk := f.read(65536):  # Read in larger chunks for better performance
+                                    copy.write(chunk)
+                                    bytes_processed += len(chunk)
+                                    
+                                    # Report progress based on bytes processed
+                                    if progress_callback and file_size > 0:
+                                        progress_pct = int((bytes_processed / file_size) * 100)
+                                        progress_callback(
+                                            bytes_processed, 
+                                            file_size, 
+                                            f"COPY progress for {table_name}: {progress_pct}%"
+                                        )
+                    
+                    stats["imported"] = total_records
+                    if progress_callback:
+                        progress_callback(total_records, total_records, f"Imported {total_records} records into {table_name}")
+                    
+                    return stats
+                
+                # Original logic for skip_duplicates = True (merge mode)
+                # Create temporary table for staging
+                temp_table = f"temp_{table_name}_{id(self)}"
+                
+                # Create temp table with same structure
+                cursor.execute(f"""
+                    CREATE TEMP TABLE {temp_table} 
+                    (LIKE {table_name} INCLUDING ALL)
+                """)
+                
                 # COPY data into temp table using psycopg3 syntax
-                # For psycopg3, we need to use the connection's copy method, not the cursor's
                 with open(tmp_path, 'r', encoding='utf-8') as f:
                     with cursor.connection.cursor() as copy_cursor:
                         with copy_cursor.copy(f"COPY {temp_table} ({','.join(columns)}) FROM STDIN WITH CSV HEADER") as copy:
@@ -284,8 +311,9 @@ class DatabaseImporter:
                     """)
                     stats["imported"] = cursor.rowcount
                 
-                # Drop temp table
-                cursor.execute(f"DROP TABLE {temp_table}")
+                # Drop temp table (only exists in merge mode)
+                if skip_duplicates:
+                    cursor.execute(f"DROP TABLE {temp_table}")
                 
             except Exception as e:
                 logger.error(f"COPY import failed for {table_name}: {e}")

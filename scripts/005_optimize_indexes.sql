@@ -38,36 +38,37 @@ CREATE INDEX IF NOT EXISTS idx_paper_profile_high_scores
 ON paper_profile_scores(profile_id, score DESC, paper_id) 
 WHERE score >= 7;
 
--- 3. Embeddings table optimizations
--- =================================
+-- 3. Embeddings-related optimizations
+-- ===================================
+-- Note: Embeddings are stored in papers.embedding column, not a separate table
+-- The embeddings_staging table is used for bulk imports only
 
--- Index for finding papers with/without embeddings of specific models
-CREATE INDEX IF NOT EXISTS idx_embeddings_model_paper 
-ON embeddings(embedding_model, paper_id);
+-- Add index on papers.embedding if using vector similarity searches
+-- This would require pgvector's ivfflat or hnsw index types
+-- Example (uncomment if needed):
+-- CREATE INDEX IF NOT EXISTS idx_papers_embedding_ivfflat 
+-- ON papers USING ivfflat (embedding vector_cosine_ops)
+-- WITH (lists = 100);
 
 -- 4. Keywords optimizations  
 -- =========================
+-- Note: Keywords are stored in papers.keywords_json JSONB column, not separate tables
+-- These indexes would optimize JSONB queries if needed
 
--- Optimize keyword lookups
-DROP INDEX IF EXISTS idx_keywords_keyword;
-CREATE INDEX IF NOT EXISTS idx_keywords_keyword_lower ON keywords(LOWER(keyword));
-
--- Add index for paper keyword associations
-CREATE INDEX IF NOT EXISTS idx_paper_keywords_paper_keyword 
-ON paper_keywords(paper_id, keyword_id);
+-- Index for JSONB keyword searches on papers table
+CREATE INDEX IF NOT EXISTS idx_papers_keywords_gin 
+ON papers USING gin (keywords_json);
 
 -- 5. Topics and trends optimizations
 -- ==================================
 
--- Index for active topics
-CREATE INDEX IF NOT EXISTS idx_topics_active 
-ON topics(is_active, created_at DESC) 
-WHERE is_active = true;
+-- Index for recent topics
+CREATE INDEX IF NOT EXISTS idx_topics_recent 
+ON topics(created_at DESC);
 
 -- Optimize paper topics for trend queries
-CREATE INDEX IF NOT EXISTS idx_paper_topics_date_topic 
-ON paper_topics(topic_id, assigned_at DESC) 
-INCLUDE (paper_id);
+CREATE INDEX IF NOT EXISTS idx_paper_topics_composite 
+ON paper_topics(topic_id, paper_id, relevance_score DESC);
 
 -- Index for topic metrics queries
 CREATE INDEX IF NOT EXISTS idx_topic_metrics_period_topic 
@@ -111,9 +112,8 @@ ON papers(date);
 -- Update table statistics for query planner
 ANALYZE papers;
 ANALYZE paper_profile_scores;
-ANALYZE embeddings;
-ANALYZE keywords;
-ANALYZE paper_keywords;
+-- Note: embeddings are stored in papers.embedding column, not a separate table
+-- Note: keywords are stored in papers.keywords_json column, not separate tables
 ANALYZE topics;
 ANALYZE paper_topics;
 ANALYZE topic_metrics;

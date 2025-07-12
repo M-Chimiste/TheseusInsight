@@ -184,6 +184,4 @@ FROM topic_metrics tm
 JOIN research_profiles rp ON tm.profile_id = rp.id
 JOIN topics t ON tm.topic_id = t.id
 ORDER BY tm.period_start DESC
-LIMIT 5;
-
-COMMIT; 
+LIMIT 5; 

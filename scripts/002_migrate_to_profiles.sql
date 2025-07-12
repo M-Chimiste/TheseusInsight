@@ -250,6 +250,4 @@ SELECT
     (SELECT COUNT(*) FROM profile_research_interests pri WHERE pri.profile_id = p.id) AS interest_count,
     (SELECT COUNT(*) FROM paper_profile_scores pps WHERE pps.profile_id = p.id) AS scored_papers_count
 FROM research_profiles p 
-WHERE p.name = 'Default';
-
-COMMIT; 
+WHERE p.name = 'Default'; 

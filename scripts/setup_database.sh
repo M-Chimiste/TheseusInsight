@@ -8,6 +8,13 @@
 
 set -euo pipefail
 
+# Ensure we're running with bash, not sh
+if [ -z "$BASH_VERSION" ]; then
+    echo "Error: This script must be run with bash, not sh"
+    echo "Please run: bash $0 or ./$0"
+    exit 1
+fi
+
 DB_USER="${POSTGRES_USER:-theseus}"
 DB_PASS="${POSTGRES_PASSWORD:-theseus}"
 DB_NAME="${POSTGRES_DB:-theseusdb}"
@@ -291,6 +298,16 @@ main() {
     psql -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/create_migration_tracking.sql" 2>/dev/null || {
         echo -e "${YELLOW}⚠️  Migration tracking table may already exist${NC}"
     }
+    
+    # Apply migration helper functions first (required by other migrations)
+    echo -e "${BLUE}🔧 Setting up migration helper functions...${NC}"
+    if [ -f "$SCHEMA_DIR/000_migration_compatibility.sql" ]; then
+        psql -U "$DB_USER" -d "$DB_NAME" -f "$SCHEMA_DIR/000_migration_compatibility.sql" || {
+            echo -e "${RED}❌ Error: Failed to create migration helper functions${NC}"
+            exit 1
+        }
+        echo -e "${GREEN}✅ Migration helper functions created${NC}"
+    fi
     
     # Run migration check and apply script
     echo -e "${BLUE}🔄 Checking and applying migrations...${NC}"

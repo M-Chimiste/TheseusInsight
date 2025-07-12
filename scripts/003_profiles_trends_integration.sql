@@ -10,32 +10,22 @@
 -- Add profile_id column to topics table
 ALTER TABLE topics ADD COLUMN IF NOT EXISTS profile_id INTEGER;
 
--- Add foreign key constraint to research_profiles (if not exists)
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint 
-        WHERE conname = 'fk_topics_profile_id'
-    ) THEN
-        ALTER TABLE topics ADD CONSTRAINT fk_topics_profile_id 
-            FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
-    END IF;
-END $$;
+-- Add foreign key constraint to research_profiles
+SELECT add_constraint_if_not_exists(
+    'topics', 
+    'fk_topics_profile_id',
+    'FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE'
+);
 
 -- Add profile_id column to topic_metrics table
 ALTER TABLE topic_metrics ADD COLUMN IF NOT EXISTS profile_id INTEGER;
 
--- Add foreign key constraint for topic_metrics (if not exists)
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint 
-        WHERE conname = 'fk_topic_metrics_profile_id'
-    ) THEN
-        ALTER TABLE topic_metrics ADD CONSTRAINT fk_topic_metrics_profile_id 
-            FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE;
-    END IF;
-END $$;
+-- Add foreign key constraint for topic_metrics
+SELECT add_constraint_if_not_exists(
+    'topic_metrics', 
+    'fk_topic_metrics_profile_id',
+    'FOREIGN KEY (profile_id) REFERENCES research_profiles(id) ON DELETE CASCADE'
+);
 
 -- ===================================================================
 -- Migrate Existing Topics to Default Profile

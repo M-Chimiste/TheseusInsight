@@ -74,7 +74,9 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
         </Box>
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: '120px' }}>
           <Chip 
-            label={`Score: ${paper.score.toFixed(2)}`} 
+            label={hasProfilesSelected && paper.profile_score !== undefined 
+              ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
+              : `Score: ${paper.score.toFixed(2)}`} 
             size="small" 
             color="primary" 
             variant="outlined" 

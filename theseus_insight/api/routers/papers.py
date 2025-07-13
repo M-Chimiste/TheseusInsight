@@ -33,7 +33,7 @@ async def get_papers(
     page: int = Query(1, gt=0),
     score: Optional[float] = None,  # This is min_score for backward compatibility
     max_score: Optional[float] = None,  # Add max_score parameter
-    sort_field: Optional[str] = Query(None, enum=['date', 'score']),
+    sort_field: Optional[str] = Query(None, enum=['date', 'score', 'profile_score']),
     sort_direction: Optional[str] = Query(None, enum=['asc', 'desc']),
     search: Optional[str] = None,
     from_date: Optional[str] = None,
@@ -257,13 +257,28 @@ async def get_papers(
         papers = []
         for p in papers_data['items']:
             converted_p = _convert_paper_timestamps(p)
+
+            # When profile data is present, use it to override base paper data
+            is_profile_query = 'profile_score' in converted_p and converted_p['profile_score'] is not None
+
+            # Determine 'related' value, handling None
+            related_val = converted_p.get('profile_related') if is_profile_query else converted_p.get('related')
+            final_related = related_val if related_val is not None else False
+
             papers.append(PaperApiResponse(
-                id=converted_p['id'], title=converted_p['title'], abstract=converted_p['abstract'],
-                score=converted_p['score'], date=converted_p['date'], url=converted_p['url'],
-                date_run=converted_p['date_run'], rationale=converted_p['rationale'],
-                related=converted_p['related'], cosine_similarity=converted_p['cosine_similarity'],
+                id=converted_p['id'], 
+                title=converted_p['title'], 
+                abstract=converted_p['abstract'],
+                score=converted_p['score'], 
+                date=converted_p['date'], 
+                url=converted_p['url'],
+                date_run=converted_p['date_run'], 
+                rationale=converted_p.get('profile_rationale') or converted_p.get('rationale', ''),
+                related=final_related,
+                cosine_similarity=converted_p['cosine_similarity'],
                 embedding_model=converted_p['embedding_model'],
-                keywords=converted_p.get('keywords')
+                keywords=converted_p.get('keywords'),
+                profile_score=converted_p.get('profile_score')
             ))
         
         return PaginatedPapersResponse(

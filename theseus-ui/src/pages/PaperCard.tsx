@@ -61,7 +61,9 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, gap: 0.5, flexWrap: 'wrap' }}>
             <ScoreIcon fontSize="small" color="action" />
             <Typography variant="body2" sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'text.secondary', mr: 1 }}>
-              Score: {paper.score.toFixed(2)} 
+              {hasProfilesSelected && paper.profile_score !== undefined 
+                ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
+                : `Score: ${paper.score.toFixed(2)}`}
             </Typography>
             {paper.related !== undefined && hasProfilesSelected && (
                 <Chip 

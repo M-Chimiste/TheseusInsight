@@ -18,6 +18,11 @@ import {
   Stack,
   IconButton,
   Tooltip,
+  Paper,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -27,6 +32,29 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import ClearIcon from '@mui/icons-material/Clear';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import SortIcon from '@mui/icons-material/Sort';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import DragHandleIcon from '@mui/icons-material/DragHandle';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 // import type { SelectChangeEvent } from '@mui/material'; // Commented out as unused
 import { papersApi } from '../services/api';
 import type { PaperApiResponse } from '../services/api';
@@ -48,7 +76,146 @@ interface FilterState {
   toDate: Date | null;
   search: string;
   topicId: number | null;
+  // Profile-aware filters (only available when profiles are selected)
+  minProfileScore: number;
+  maxProfileScore: number;
+  relevanceFilter: 'all' | 'relevant' | 'not_relevant';
 }
+
+// Multi-criteria sorting system
+interface SortCriterion {
+  id: string;
+  field: 'score' | 'profile_score' | 'date';
+  direction: 'asc' | 'desc';
+}
+
+const SORT_FIELD_LABELS = {
+  score: 'Overall Score',
+  profile_score: 'Profile Score',
+  date: 'Date'
+};
+
+// Add helper just above the component to compute ordinal suffixes
+const getOrdinalSuffix = (n: number): string => {
+  const j = n % 10;
+  const k = n % 100;
+  if (j === 1 && k !== 11) return 'st';
+  if (j === 2 && k !== 12) return 'nd';
+  if (j === 3 && k !== 13) return 'rd';
+  return 'th';
+};
+
+// Sortable item component for drag and drop
+interface SortableItemProps {
+  id: string;
+  index: number;
+  criterion: SortCriterion;
+  selectedProfileIds: number[];
+  sortCriteria: SortCriterion[];
+  setSortCriteria: React.Dispatch<React.SetStateAction<SortCriterion[]>>;
+}
+
+const SortableItem: React.FC<SortableItemProps> = ({ 
+  id, 
+  index, 
+  criterion, 
+  selectedProfileIds, 
+  sortCriteria, 
+  setSortCriteria 
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <Paper 
+      ref={setNodeRef} 
+      style={style} 
+      sx={{ 
+        p: 2, 
+        bgcolor: 'action.hover',
+        cursor: isDragging ? 'grabbing' : 'grab'
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box 
+          {...attributes} 
+          {...listeners}
+          sx={{ 
+            cursor: 'grab',
+            '&:active': { cursor: 'grabbing' },
+            display: 'flex',
+            alignItems: 'center'
+          }}
+        >
+          <DragHandleIcon color="disabled" />
+        </Box>
+        <Typography variant="body2" color="text.secondary" sx={{ minWidth: 70 }}>
+          {index === 0 ? 'Primary' : `${index + 1}${getOrdinalSuffix(index + 1)}`}
+        </Typography>
+        
+        <FormControl size="small" sx={{ minWidth: 150 }}>
+          <InputLabel>Field</InputLabel>
+          <Select
+            value={criterion.field}
+            label="Field"
+            onChange={(e) => {
+              const newCriteria = [...sortCriteria];
+              newCriteria[index] = { ...newCriteria[index], field: e.target.value as 'score' | 'profile_score' | 'date' };
+              setSortCriteria(newCriteria);
+            }}
+          >
+            <MenuItem value="score">Overall Score</MenuItem>
+            <MenuItem value="profile_score" disabled={selectedProfileIds.length === 0}>
+              Profile Score {selectedProfileIds.length === 0 && '(Select profiles first)'}
+            </MenuItem>
+            <MenuItem value="date">Date</MenuItem>
+          </Select>
+        </FormControl>
+        
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel>Direction</InputLabel>
+          <Select
+            value={criterion.direction}
+            label="Direction"
+            onChange={(e) => {
+              const newCriteria = [...sortCriteria];
+              newCriteria[index] = { ...newCriteria[index], direction: e.target.value as 'asc' | 'desc' };
+              setSortCriteria(newCriteria);
+            }}
+          >
+            <MenuItem value="desc">High to Low</MenuItem>
+            <MenuItem value="asc">Low to High</MenuItem>
+          </Select>
+        </FormControl>
+        
+        {sortCriteria.length > 1 && (
+          <IconButton 
+            color="error" 
+            size="small"
+            onClick={() => {
+              const newCriteria = sortCriteria.filter((_, i) => i !== index);
+              setSortCriteria(newCriteria);
+            }}
+          >
+            <DeleteIcon />
+          </IconButton>
+        )}
+      </Box>
+    </Paper>
+  );
+};
 
 const Papers: React.FC = () => {
   // Layout context for responsive sidebar
@@ -60,6 +227,14 @@ const Papers: React.FC = () => {
   // URL parameters for initial filtering
   const [searchParams] = useSearchParams();
   
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   // Keep track of all fetched papers for infinite scroll
   const [allPapers, setAllPapers] = useState<PaperApiResponse[]>([]); 
   const [loading, setLoading] = useState<boolean>(true);
@@ -70,6 +245,12 @@ const Papers: React.FC = () => {
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // Track if more pages are available
   const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<ViewMode>('grid'); // Updated to include similarity
+  
+  // Multi-criteria sorting state
+  const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([
+    { id: 'primary', field: 'score', direction: 'desc' }
+  ]);
+  const [showSorting, setShowSorting] = useState<boolean>(false);
   
   // Similarity view state
   const [selectedPaper, setSelectedPaper] = useState<PaperApiResponse | null>(null);
@@ -95,7 +276,11 @@ const Papers: React.FC = () => {
       fromDate: fromDate ? new Date(fromDate) : null,
       toDate: toDate ? new Date(toDate) : null,
       search: search || '',
-      topicId: topicId ? parseInt(topicId) : null
+      topicId: topicId ? parseInt(topicId) : null,
+      // Profile-aware filters - defaults
+      minProfileScore: 0,
+      maxProfileScore: 10,
+      relevanceFilter: 'all'
     };
   }, [searchParams]);
 
@@ -136,6 +321,23 @@ const Papers: React.FC = () => {
     }
     setError(null);
     
+    // Parse sort option
+    const getSortFieldAndDirection = (sortOption: SortCriterion): [string, string] => {
+      switch (sortOption.field) {
+        case 'score':
+          return ['score', sortOption.direction];
+        case 'profile_score':
+          return ['profile_score', sortOption.direction];
+        case 'date':
+          return ['date', sortOption.direction];
+        default:
+          return ['score', 'desc'];
+      }
+    };
+
+    // Use only the first sort criterion for API call (backend limitation)
+    const [sortField, sortDirection] = getSortFieldAndDirection(sortCriteria[0]);
+    
     try {
       let data;
       if (useHybridSearch && appliedFilters.search) {
@@ -162,15 +364,20 @@ const Papers: React.FC = () => {
         data = await papersApi.getPapers(
           page, 
           size, 
-          'score', 
-          'desc',
+          sortField,
+          sortDirection,
           appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
           appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
           appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
           appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
           appliedFilters.search || undefined,
           appliedFilters.topicId || undefined,
-          selectedProfileIds.length > 0 ? selectedProfileIds : undefined
+          selectedProfileIds.length > 0 ? selectedProfileIds : undefined,
+          // Profile-aware parameters
+          selectedProfileIds.length > 0 && appliedFilters.minProfileScore > 0 ? appliedFilters.minProfileScore : undefined,
+          selectedProfileIds.length > 0 && appliedFilters.maxProfileScore < 10 ? appliedFilters.maxProfileScore : undefined,
+          // Fixed profile relevance filtering logic
+          selectedProfileIds.length > 0 && appliedFilters.relevanceFilter === 'relevant' ? true : undefined
         );
       }
       setAllPapers(prevPapers => isInitialLoad ? data.items : [...prevPapers, ...data.items]);
@@ -188,7 +395,7 @@ const Papers: React.FC = () => {
     } else {
       setLoadingMore(false);
     }
-      }, [hasNextPage, initialLoadComplete, appliedFilters, useHybridSearch, semanticWeight, keywordWeight, selectedProfileIds]);
+      }, [hasNextPage, initialLoadComplete, appliedFilters, useHybridSearch, semanticWeight, keywordWeight, selectedProfileIds, sortCriteria]);
 
   // Reset papers when filters change
   const resetAndFetch = useCallback(() => {
@@ -198,10 +405,33 @@ const Papers: React.FC = () => {
     setInitialLoadComplete(false);
   }, []);
 
+  // Smart sorting: automatically switch to profile-aware sorting when profiles are selected
+  useEffect(() => {
+    if (selectedProfileIds.length > 0) {
+      // Switch to profile-aware sorting if currently using regular score sorting
+      setSortCriteria(prev => {
+        const updated = [...prev];
+        if (updated[0].field === 'score') {
+          updated[0] = { ...updated[0], field: 'profile_score' };
+        }
+        return updated;
+      });
+    } else {
+      // Switch back to regular sorting if currently using profile-aware sorting
+      setSortCriteria(prev => {
+        const updated = [...prev];
+        if (updated[0].field === 'profile_score') {
+          updated[0] = { ...updated[0], field: 'score' };
+        }
+        return updated;
+      });
+    }
+  }, [selectedProfileIds]);
+
   // Initial fetch
   useEffect(() => {
     resetAndFetch();
-  }, [pageSize, appliedFilters, selectedProfileIds, resetAndFetch]);
+  }, [pageSize, appliedFilters, selectedProfileIds, sortCriteria, resetAndFetch]);
 
   useEffect(() => {
     if(!initialLoadComplete) {
@@ -284,7 +514,7 @@ const Papers: React.FC = () => {
   // No need for client-side filtering anymore since it's handled at database level
   const sortedPapers = useMemo(() => {
     return allPapers;
-  }, [allPapers]);
+  }, [allPapers, sortCriteria]);
 
   const handleViewModeChange = (
     _event: React.MouseEvent<HTMLElement>,
@@ -341,13 +571,17 @@ const Papers: React.FC = () => {
   };
 
   const handleResetFilters = () => {
-    const resetFilters = {
+    const resetFilters: FilterState = {
       minScore: 0,
       maxScore: 10,
       fromDate: null,
       toDate: null,
       search: '',
-      topicId: null
+      topicId: null,
+      // Profile-aware filters - defaults
+      minProfileScore: 0,
+      maxProfileScore: 10,
+      relevanceFilter: 'all' as const
     };
     setFilters(resetFilters);
     setAppliedFilters(resetFilters);
@@ -359,7 +593,10 @@ const Papers: React.FC = () => {
            appliedFilters.fromDate !== null || 
            appliedFilters.toDate !== null || 
            appliedFilters.search !== '' ||
-           appliedFilters.topicId !== null;
+           appliedFilters.topicId !== null ||
+           appliedFilters.minProfileScore > 0 ||
+           appliedFilters.maxProfileScore < 10 ||
+           appliedFilters.relevanceFilter !== 'all';
   }, [appliedFilters]);
 
   const getActiveFilterChips = () => {
@@ -382,7 +619,28 @@ const Papers: React.FC = () => {
     if (appliedFilters.topicId) {
       chips.push(`Filtered by Topic/Interest: ${appliedFilters.topicId}`);
     }
+    if (appliedFilters.minProfileScore > 0) {
+      chips.push(`Min Profile Score: ${appliedFilters.minProfileScore}`);
+    }
+    if (appliedFilters.maxProfileScore < 10) {
+      chips.push(`Max Profile Score: ${appliedFilters.maxProfileScore}`);
+    }
+    if (appliedFilters.relevanceFilter !== 'all') {
+      chips.push(`Relevance: ${appliedFilters.relevanceFilter}`);
+    }
     return chips;
+  };
+
+  const getSortSummary = () => {
+    const primary = sortCriteria[0];
+    const fieldLabel = SORT_FIELD_LABELS[primary.field];
+    const directionLabel = primary.direction === 'desc' ? '↓' : '↑';
+    
+    if (sortCriteria.length === 1) {
+      return `${fieldLabel} ${directionLabel}`;
+    } else {
+      return `${fieldLabel} ${directionLabel} +${sortCriteria.length - 1}`;
+    }
   };
   
   if (loading && allPapers.length === 0) { // Show full page loader only on initial load
@@ -447,6 +705,19 @@ const Papers: React.FC = () => {
                 >
                   Filters {hasActiveFilters && `(${getActiveFilterChips().length})`}
                 </Button>
+                
+                {/* Sorting controls - always visible */}
+                <Button
+                  variant="outlined"
+                  startIcon={<SortIcon />}
+                  endIcon={showSorting ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                  onClick={() => setShowSorting(!showSorting)}
+                  color="inherit"
+                  sx={{ minWidth: 200 }}
+                >
+                  {getSortSummary()}
+                </Button>
+                
                 <ToggleButtonGroup
                     value={viewMode}
                     exclusive
@@ -632,6 +903,69 @@ const Papers: React.FC = () => {
                       </Grid>
                     </Grid>
 
+                    {/* Profile-aware Filters */}
+                    {selectedProfileIds.length > 0 && (
+                      <>
+                        <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>
+                          Profile-Aware Filters
+                        </Typography>
+                        <Grid container spacing={2} sx={{ mb: 1.5 }}>
+                          <Grid size={{ xs: 12, md: 6 }}>
+                            <Typography variant="body2" sx={{ mb: 1 }}>
+                              Profile Score Range: {filters.minProfileScore} - {filters.maxProfileScore}
+                            </Typography>
+                            <Slider
+                              value={[filters.minProfileScore, filters.maxProfileScore]}
+                              onChange={(_, newValue) => {
+                                const [min, max] = newValue as number[];
+                                setFilters(prev => ({ ...prev, minProfileScore: min, maxProfileScore: max }));
+                              }}
+                              valueLabelDisplay="auto"
+                              min={0}
+                              max={10}
+                              step={0.1}
+                              size="small"
+                              sx={{ 
+                                '& .MuiSlider-markLabel': { 
+                                  fontSize: '0.7rem'
+                                }
+                              }}
+                              marks={[
+                                { value: 0, label: '0' },
+                                { value: 5, label: '5' },
+                                { value: 10, label: '10' }
+                              ]}
+                            />
+                          </Grid>
+                          <Grid size={{ xs: 12, md: 6 }}>
+                            <Typography variant="body2" sx={{ mb: 1 }}>
+                              Relevance Filter:
+                            </Typography>
+                            <ToggleButtonGroup
+                                value={filters.relevanceFilter}
+                                exclusive
+                                onChange={(_, newFilter) => setFilters(prev => ({ ...prev, relevanceFilter: newFilter }))}
+                                aria-label="relevance filter"
+                                size="small"
+                            >
+                                <ToggleButton value="all" aria-label="all relevance">
+                                    All
+                                </ToggleButton>
+                                <ToggleButton value="relevant" aria-label="relevant papers">
+                                    Relevant
+                                </ToggleButton>
+                                <ToggleButton value="not_relevant" aria-label="not relevant papers" disabled>
+                                    Not Relevant
+                                </ToggleButton>
+                            </ToggleButtonGroup>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                              Note: "Not Relevant" filter is not currently supported by the API
+                            </Typography>
+                          </Grid>
+                        </Grid>
+                      </>
+                    )}
+
                     {/* Filter Actions */}
                     <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
                       <Button variant="outlined" size="small" onClick={handleResetFilters} startIcon={<ClearIcon />}>
@@ -640,6 +974,94 @@ const Papers: React.FC = () => {
                       <Button variant="contained" size="small" onClick={handleApplyFilters}>
                         Apply Filters
                       </Button>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Box>
+            </Collapse>
+
+            {/* Sorting panel - only visible when showSorting is true */}
+            <Collapse in={showSorting}>
+              <Box sx={{ 
+                backgroundColor: 'background.default',
+                borderBottom: 1,
+                borderColor: 'divider'
+              }}>
+                <Card sx={{ borderRadius: 0, boxShadow: 'none', backgroundColor: 'transparent' }}>
+                  <CardContent sx={{ py: 2, px: 3 }}>
+                    <Typography variant="h6" sx={{ mb: 2 }}>
+                      Sort Papers
+                    </Typography>
+                    
+                    {/* Sort criteria list */}
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={(event: DragEndEvent) => {
+                        const { active, over } = event;
+                        if (active.id !== over?.id) {
+                          const oldIndex = sortCriteria.findIndex(criterion => criterion.id === active.id);
+                          const newIndex = sortCriteria.findIndex(criterion => criterion.id === over?.id);
+                          if (oldIndex !== -1 && newIndex !== -1) {
+                            setSortCriteria(arrayMove(sortCriteria, oldIndex, newIndex));
+                          }
+                        }
+                      }}
+                    >
+                      <SortableContext
+                        items={sortCriteria.map(criterion => criterion.id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <Stack spacing={2} sx={{ mb: 2 }}>
+                          {sortCriteria.map((criterion, index) => (
+                            <SortableItem
+                              key={criterion.id}
+                              id={criterion.id}
+                              index={index}
+                              criterion={criterion}
+                              selectedProfileIds={selectedProfileIds}
+                              sortCriteria={sortCriteria}
+                              setSortCriteria={setSortCriteria}
+                            />
+                          ))}
+                        </Stack>
+                      </SortableContext>
+                    </DndContext>
+                    
+                    {/* Sort actions */}
+                    <Box sx={{ display: 'flex', gap: 2, justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">
+                        {sortCriteria.length === 1 ? 'Single sort criterion' : `${sortCriteria.length} sort criteria (currently only primary is used)`}
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button 
+                          variant="outlined" 
+                          size="small" 
+                          onClick={() => setSortCriteria((prev) => {
+                            const newCriteria = [...prev, {
+                              id: `sort-${Date.now()}`,
+                              field: 'score' as 'score',
+                              direction: 'desc' as 'desc'
+                            }];
+                            return newCriteria;
+                          })}
+                          startIcon={<AddIcon />}
+                          disabled={sortCriteria.length >= 4}
+                        >
+                          Add Sort
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => {
+                            const newCriteria = [{ id: 'primary', field: 'score' as 'score', direction: 'desc' as 'desc' }];
+                            setSortCriteria(newCriteria);
+                          }}
+                          startIcon={<ClearIcon />}
+                        >
+                          Reset
+                        </Button>
+                      </Box>
                     </Box>
                   </CardContent>
                 </Card>

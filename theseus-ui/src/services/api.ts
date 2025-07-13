@@ -514,6 +514,7 @@ export interface PaperApiResponse {
   embedding_model: string;
   keywords?: string[];
   similarity_score?: number; // Optional field for similarity search results
+  profile_score?: number;
 }
 
 export interface PaginatedPapersResponse {

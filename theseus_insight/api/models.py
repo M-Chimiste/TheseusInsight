@@ -287,6 +287,7 @@ class PaperApiResponse(BaseModel):
     embedding_model: str
     keywords: Optional[List[str]] = Field(default=None, description="Top keywords extracted from title/abstract")
     similarity_score: Optional[float] = Field(default=None, description="Semantic similarity score when returned from similarity search")
+    profile_score: Optional[float] = Field(default=None, description="Profile-specific relevance score")
     semantic_score: Optional[float] = Field(default=None, description="Semantic similarity score in hybrid search")
     keyword_score: Optional[float] = Field(default=None, description="Keyword matching score in hybrid search")
     hybrid_score: Optional[float] = Field(default=None, description="Combined hybrid search score")

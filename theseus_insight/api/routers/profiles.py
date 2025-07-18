@@ -770,6 +770,41 @@ async def generate_profile_newsletter(
                 except RuntimeError as e:
                     print(f"RuntimeError creating task for status update: {e}")
 
+        # Prepare profile-specific orchestration config with ArXiv filters
+        # Get base orchestration config from settings
+        base_orchestration_json = SettingsRepository.get("orchestration")
+        if base_orchestration_json:
+            orchestration_config = json.loads(base_orchestration_json)
+        else:
+            # Fallback to default file-based config
+            from ...utils.path_resolver import get_config_path
+            config_path = get_config_path('orchestration.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    orchestration_config = json.load(f)
+            else:
+                # Minimal default config
+                orchestration_config = {}
+        
+        # Override ArXiv categories with profile's filters if available
+        profile_arxiv_filters = profile.get('arxiv_filters')
+        if profile_arxiv_filters:
+            # Parse JSON if it's a string
+            if isinstance(profile_arxiv_filters, str):
+                try:
+                    profile_arxiv_filters = json.loads(profile_arxiv_filters)
+                except json.JSONDecodeError:
+                    profile_arxiv_filters = None
+            
+            if profile_arxiv_filters and isinstance(profile_arxiv_filters, dict):
+                # Apply profile's ArXiv filters to orchestration config
+                orchestration_config['arxiv_search_categories'] = profile_arxiv_filters
+                print(f"[DEBUG] Using profile ArXiv filters: {profile_arxiv_filters}")
+            else:
+                print("[DEBUG] Profile has invalid arxiv_filters, using defaults")
+        else:
+            print("[DEBUG] Profile has no arxiv_filters, using defaults")
+
         async def background_pipeline_run():
             """Run the newsletter generation pipeline for the specific profile."""
             try:
@@ -802,6 +837,7 @@ async def generate_profile_newsletter(
                     end_date_override=request.end_date,
                     receiver_address_override=email_recipients,
                     profile_ids_override=[profile_id],  # Target specific profile
+                    orchestration_config=orchestration_config,  # Use profile-specific ArXiv filters
                     generate_podcast=request.generate_podcast_run,
                     db_saving=True,
                     data_path=run_db_path,

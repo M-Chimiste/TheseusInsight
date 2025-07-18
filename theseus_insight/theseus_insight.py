@@ -928,6 +928,162 @@ Theseus Insight Team
             traceback.print_exc()
             return pd.DataFrame()
 
+    def get_and_score_profile_papers(self, profile_ids: List[int], embedded_df: pd.DataFrame = None) -> pd.DataFrame:
+        """
+        Get papers from database in date range and score them for the profile.
+        This ensures newsletter generation works even if profile hasn't scored papers yet.
+        
+        Args:
+            profile_ids: List of profile IDs to score for
+            embedded_df: Optional DataFrame with freshly downloaded papers to use instead of database query
+            
+        Returns:
+            DataFrame with top-scored papers for newsletter generation
+        """
+        try:
+            if self.verbose:
+                print(f"\n🎯 SCORING PAPERS FOR PROFILE NEWSLETTER")
+                print(f"Profile IDs: {profile_ids}")
+                print(f"Date range: {self.start_date} to {self.end_date}")
+                print("="*60)
+            
+            from .data_access import PaperRepository, ProfileRepository, ProfileInterestsRepository
+            from .db import get_cursor
+            import pandas as pd
+            
+            # Get research interests for the profile
+            research_interests_list = []
+            for profile_id in profile_ids:
+                interests = ProfileInterestsRepository.get_by_profile(profile_id)
+                for interest in interests:
+                    research_interests_list.append(interest["interest_text"])
+            
+            if not research_interests_list:
+                if self.verbose:
+                    print("⚠️ No research interests found for profile(s)")
+                return pd.DataFrame()
+            
+            research_interests_text = "\n".join(research_interests_list)
+            if self.verbose:
+                print(f"Research interests: {research_interests_text[:200]}...")
+            
+            # Use embedded_df if provided (freshly downloaded papers), otherwise query database
+            if embedded_df is not None and not embedded_df.empty:
+                if self.verbose:
+                    print(f"📊 Using {len(embedded_df)} freshly downloaded papers from current session")
+                
+                # Convert DataFrame to the format expected by scoring
+                papers_list = []
+                for _, row in embedded_df.iterrows():
+                    papers_list.append({
+                        'title': row['title'],
+                        'abstract': row['abstract'],
+                        'pdf_url': row['pdf_url'],
+                        'date': row['date'],
+                        'cosine_similarity': 1.0,  # Will be set during scoring
+                        'abstract_embedding': row['abstract_embedding']  # Use existing embedding
+                    })
+                
+                df = pd.DataFrame(papers_list)
+            else:
+                # Fall back to database query (existing logic)
+                # Get papers from database in date range (up to 100 to ensure we have enough to score)
+                papers_data = []
+                with get_cursor() as cur:
+                    # First, let's check what date range we have in the database
+                    cur.execute("""
+                        SELECT MIN(date) as min_date, MAX(date) as max_date, COUNT(*) as total_papers
+                        FROM papers
+                    """)
+                    date_info = cur.fetchone()
+                    if self.verbose and date_info:
+                        print(f"📊 Database contains {date_info['total_papers']} papers")
+                        print(f"   Date range: {date_info['min_date']} to {date_info['max_date']}")
+                    
+                    cur.execute("""
+                        SELECT * FROM papers 
+                        WHERE date >= %s AND date <= %s
+                        ORDER BY date DESC 
+                        LIMIT 100
+                    """, (self.start_date, self.end_date))
+                    
+                    papers_data = cur.fetchall()
+                
+                if not papers_data:
+                    if self.verbose:
+                        print("No papers found in database for the date range")
+                        # Let's also check if there are any papers close to this date range
+                        with get_cursor() as cur:
+                            cur.execute("""
+                                SELECT date, COUNT(*) as count 
+                                FROM papers 
+                                WHERE date >= %s AND date <= %s
+                                GROUP BY date 
+                                ORDER BY date DESC 
+                                LIMIT 10
+                            """, (
+                                self.start_date - datetime.timedelta(days=30),
+                                self.end_date + datetime.timedelta(days=30)
+                            ))
+                            nearby_papers = cur.fetchall()
+                            if nearby_papers:
+                                print(f"📅 Papers found within ±30 days:")
+                                for row in nearby_papers:
+                                    print(f"   {row['date']}: {row['count']} papers")
+                            else:
+                                print("📅 No papers found within ±30 days of target range")
+                    return pd.DataFrame()
+                
+                if self.verbose:
+                    print(f"📊 Found {len(papers_data)} papers in date range")
+                
+                # Convert to DataFrame for scoring
+                papers_list = []
+                for paper in papers_data:
+                    papers_list.append({
+                        'title': paper['title'],
+                        'abstract': paper['abstract'],
+                        'pdf_url': paper['url'],
+                        'date': paper['date'],
+                        'cosine_similarity': 1.0,  # Will be set during scoring
+                        'abstract_embedding': None  # Not needed for judge scoring
+                    })
+                
+                df = pd.DataFrame(papers_list)
+            
+            if self.verbose:
+                print(f"🧠 Starting scoring process with judge model...")
+            
+            # Temporarily override research interests for profile-specific scoring
+            original_research_interests = self.research_interests
+            self.research_interests = research_interests_text
+            
+            try:
+                # Score papers using the rank_papers method
+                scored_df = self.rank_papers(df)
+            finally:
+                # Restore original research interests
+                self.research_interests = original_research_interests
+            
+            # Take top N papers
+            top_df = scored_df.head(self.top_n)
+            
+            if self.verbose:
+                print(f"✅ Scored and selected top {len(top_df)} papers")
+                if len(top_df) > 0:
+                    print(f"Score range: {top_df['score'].min():.2f} - {top_df['score'].max():.2f}")
+                    related_count = sum(top_df['related'])
+                    print(f"Related papers: {related_count}/{len(top_df)}")
+            
+            return top_df
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error scoring profile papers: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+
     def store_papers_without_scoring(self, data_df):
         """Store all papers without LLM judge scoring for profiles feature."""
         try:
@@ -1226,13 +1382,14 @@ Theseus Insight Team
             if start_from is None or start_from in ['papers_embedded', 'papers_ranked']:
                 top_n_df = await self._load_checkpoint_async('papers_ranked')
                 if top_n_df is None:
-                    # Check if we should use profile-based paper retrieval
+                    # Check if we should use profile-based paper scoring
                     if self.profile_ids_override:
                         if self.verbose:
-                            print(f"Using profile-based paper retrieval for profiles: {self.profile_ids_override}")
-                        top_n_df = self.get_profile_papers(
+                            print(f"Profile newsletter generation for profiles: {self.profile_ids_override}")
+                            print("Using freshly downloaded papers and scoring for profile...")
+                        top_n_df = self.get_and_score_profile_papers(
                             profile_ids=self.profile_ids_override,
-                            min_score=0.5  # Configurable threshold
+                            embedded_df=embedded_df
                         )
                     else:
                         # Use traditional embedding-based approach

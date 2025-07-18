@@ -719,16 +719,21 @@ async def generate_profile_newsletter(
                     detail=f"Profile {profile_id} has no research interests configured and none provided in request"
                 )
         
-        # Get email recipients - use profile's if requested and available, otherwise from request
-        email_recipients = request.email_recipients or []
-        if request.use_profile_recipients and profile.get('email_recipients'):
+        # Get email recipients with proper override logic
+        email_recipients = []
+        
+        # Priority 1: Use explicitly provided email_recipients from request
+        if request.email_recipients:
+            email_recipients = request.email_recipients
+        # Priority 2: Use profile recipients if use_profile_recipients is True and available
+        elif request.use_profile_recipients and profile.get('email_recipients'):
             profile_recipients = profile['email_recipients']
             if isinstance(profile_recipients, str):
                 try:
                     profile_recipients = json.loads(profile_recipients)
                 except json.JSONDecodeError:
                     profile_recipients = []
-            email_recipients = profile_recipients if profile_recipients else email_recipients
+            email_recipients = profile_recipients if profile_recipients else []
         
         if not email_recipients:
             raise HTTPException(
@@ -773,8 +778,8 @@ async def generate_profile_newsletter(
                     task_type="profile_newsletter_run",
                     config={
                         "profile_id": profile_id,
-                        "start_date": request.start_date,
-                        "end_date": request.end_date,
+                        "start_date": str(request.start_date),
+                        "end_date": str(request.end_date),
                         "email_recipients": email_recipients,
                         "research_interests": research_interests_text,
                         "topic_id": request.topic_id,

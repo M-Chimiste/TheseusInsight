@@ -4,13 +4,39 @@ Interfaces with processing_jobs and processing_checkpoints tables.
 """
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Dict, Optional, List
 from uuid import UUID, uuid4
 import asyncpg
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
+
+
+def make_json_serializable(obj: Any) -> Any:
+    """
+    Recursively convert an object to be JSON serializable.
+    
+    Handles common PostgreSQL types like timestamps, dates, UUIDs, etc.
+    """
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    elif isinstance(obj, UUID):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    else:
+        # For any other type (like psycopg Timestamp), convert to string
+        try:
+            return str(obj)
+        except Exception:
+            return None
 
 
 class CheckpointManager:
@@ -48,6 +74,10 @@ class CheckpointManager:
             Job ID
         """
         async with self.get_connection() as conn:
+            # Make sure configuration is JSON serializable
+            safe_configuration = make_json_serializable(configuration)
+            safe_initial_state = make_json_serializable(initial_state or {})
+            
             job_id = await conn.fetchval(
                 """
                 INSERT INTO processing_jobs 
@@ -56,8 +86,8 @@ class CheckpointManager:
                 RETURNING id
                 """,
                 job_type,
-                json.dumps(configuration),
-                json.dumps(initial_state or {})
+                json.dumps(safe_configuration),
+                json.dumps(safe_initial_state)
             )
             logger.info(f"Created job {job_id} of type {job_type}")
             return job_id
@@ -82,17 +112,21 @@ class CheckpointManager:
         """
         async with self.get_connection() as conn:
             async with conn.transaction():
+                # Make sure checkpoint data is JSON serializable
+                safe_checkpoint_data = make_json_serializable(checkpoint_data)
+                
                 # Save checkpoint using the database function
                 await conn.execute(
                     "SELECT save_checkpoint($1, $2, $3, $4)",
                     job_id,
                     checkpoint_type,
-                    json.dumps(checkpoint_data),
+                    json.dumps(safe_checkpoint_data),
                     item_count
                 )
                 
                 # Update job state if provided
                 if update_state:
+                    safe_update_state = make_json_serializable(update_state)
                     await conn.execute(
                         """
                         UPDATE processing_jobs 
@@ -100,7 +134,7 @@ class CheckpointManager:
                         WHERE id = $1
                         """,
                         job_id,
-                        json.dumps(update_state)
+                        json.dumps(safe_update_state)
                     )
                 
                 logger.debug(f"Saved checkpoint for job {job_id}: {checkpoint_type}")

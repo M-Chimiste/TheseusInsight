@@ -25,6 +25,7 @@ from theseus_insight.data_access import (
     PaperRepository, LogsRepository, NewsletterRepository, 
     PodcastRepository, SettingsRepository
 )
+from theseus_insight.db import get_connection_pool
 from theseus_insight.inference import SentenceTransformerInference
 from theseus_insight.podcast import PodcastGenerator
 from theseus_insight.prompt import (
@@ -365,8 +366,9 @@ class TheseusInsight:
     async def _init_checkpoint_manager(self):
         """Initialize the checkpoint manager and create/resume job."""
         if self.checkpoint_manager is None and self.use_database_checkpoints:
-            self.checkpoint_manager = CheckpointManager()
-            await self.checkpoint_manager.initialize()
+            # Get database connection pool and initialize checkpoint manager
+            pool = await get_connection_pool()
+            self.checkpoint_manager = CheckpointManager(pool)
             
             # Create job configuration
             config = {
@@ -378,16 +380,10 @@ class TheseusInsight:
                 "task_id": self.task_id
             }
             
-            # Find or create job
-            self.job_id = await self.checkpoint_manager.find_resumable_job("newsletter_generation", config)
-            if self.job_id:
-                if self.verbose:
-                    print(f"🔄 Found resumable job {self.job_id}")
-                await self.checkpoint_manager.resume_job(self.job_id)
-            else:
-                self.job_id = await self.checkpoint_manager.create_job("newsletter_generation", config)
-                if self.verbose:
-                    print(f"📝 Created new job {self.job_id}")
+            # Create new job (simplified - we don't need resumable jobs for newsletter generation)
+            self.job_id = await self.checkpoint_manager.create_job("newsletter_generation", config)
+            if self.verbose:
+                print(f"📝 Created new newsletter job {self.job_id}")
 
     async def _save_checkpoint_async(self, stage: str, data: any):
         """Save a checkpoint using the database checkpoint manager."""

@@ -272,6 +272,22 @@ class NewsletterRunParams(BaseModel):
     profile_tags: Optional[List[str]] = Field(None, description="Generate newsletter for profiles with any of the tags")
     use_profile_recipients: bool = Field(False, description="Use profile-specific email recipients instead of email_recipients")
 
+# --- Pydantic Model for Profile-Specific Newsletter Generation ---
+class ProfileNewsletterRequest(BaseModel):
+    start_date: str = Field(..., example=date.today().strftime("%Y-%m-%d"))
+    end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
+    email_recipients: Optional[List[str]] = Field(default=None, example=["test@example.com"], description="Email recipients (if not provided, uses profile's configured recipients)")
+    research_interests: Optional[str] = Field(None, example="AI in healthcare", description="Research interests (if not provided, uses profile's research interests)")
+    topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers (overrides research_interests filtering)")
+    generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
+    use_profile_recipients: bool = Field(True, description="Use profile-specific email recipients (default: true for profile-specific requests)")
+
+class ProfileNewsletterResponse(BaseModel):
+    task_id: str = Field(..., description="Task ID for tracking newsletter generation progress")
+    message: str = Field(..., description="Success message")
+    profile_id: int = Field(..., description="Profile ID for which newsletter is being generated")
+    profile_name: str = Field(..., description="Name of the profile")
+
 # Models for Papers Page
 class PaperApiResponse(BaseModel):
     id: int

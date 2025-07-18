@@ -1,21 +1,27 @@
 """API router for research profiles management."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from typing import Optional, List, Dict, Any
 import json
+import uuid
+import asyncio
+import os
 from datetime import datetime
 
 from ..models import (
     ProfileResponse, ProfileCreateRequest, ProfileUpdateRequest,
     ProfileWithStatsResponse, ProfileTagSearchResponse,
     ProfileInterestResponse, ProfileInterestCreateRequest,
-    BulkJudgeRunRequest, BulkJudgeRunResponse
+    BulkJudgeRunRequest, BulkJudgeRunResponse,
+    ProfileNewsletterRequest, ProfileNewsletterResponse
 )
 from ...data_access.profiles import (
     ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
 )
 from ...data_access.papers import PaperRepository
 from ...data_access.settings import SettingsRepository
+from ..tasks import task_manager, TaskStatus
+from ...theseus_insight import TheseusInsight
 
 
 def _convert_profile_timestamps(profile_data: dict) -> dict:
@@ -662,6 +668,182 @@ async def get_profile_paper_stats(profile_id: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching profile paper stats: {str(e)}")
+
+
+# =====================================================================
+# Newsletter Generation Endpoints
+# =====================================================================
+
+@router.post("/{profile_id}/newsletter", response_model=ProfileNewsletterResponse)
+async def generate_profile_newsletter(
+    profile_id: int,
+    request: ProfileNewsletterRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Generate a newsletter for a specific profile.
+    
+    This endpoint generates a newsletter tailored to the specified profile's
+    research interests and configuration. It supports:
+    - Using profile's research interests (or override with custom ones)
+    - Using profile's email recipients (or override with custom ones)  
+    - Profile-specific arxiv filters and preferences
+    - Optional podcast generation
+    
+    Args:
+        profile_id: The ID of the profile to generate newsletter for
+        request: Newsletter generation parameters
+        background_tasks: Background task manager
+        
+    Returns:
+        Task information for tracking newsletter generation progress
+    """
+    try:
+        # Verify profile exists and is active
+        profile = ProfileRepository.get_by_id(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+        
+        if not profile.get('is_active', True):
+            raise HTTPException(status_code=400, detail=f"Profile {profile_id} is not active")
+        
+        # Get profile's research interests if not provided in request
+        research_interests_text = request.research_interests
+        if not research_interests_text:
+            interests = ProfileInterestsRepository.get_by_profile(profile_id)
+            if interests:
+                research_interests_text = "\n".join([interest["interest_text"] for interest in interests])
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Profile {profile_id} has no research interests configured and none provided in request"
+                )
+        
+        # Get email recipients - use profile's if requested and available, otherwise from request
+        email_recipients = request.email_recipients or []
+        if request.use_profile_recipients and profile.get('email_recipients'):
+            profile_recipients = profile['email_recipients']
+            if isinstance(profile_recipients, str):
+                try:
+                    profile_recipients = json.loads(profile_recipients)
+                except json.JSONDecodeError:
+                    profile_recipients = []
+            email_recipients = profile_recipients if profile_recipients else email_recipients
+        
+        if not email_recipients:
+            raise HTTPException(
+                status_code=400,
+                detail="No email recipients specified. Either provide email_recipients in request or configure them in the profile."
+            )
+        
+        # Create task ID and prepare configuration
+        task_id = str(uuid.uuid4())
+        run_db_path = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
+        loop = asyncio.get_event_loop()
+
+        def pipeline_progress_callback(stage: str, progress_val: float, message: str):
+            """Updates the task status with the current pipeline progress."""
+            status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
+            overall_status_for_tm = TaskStatus.PROCESSING
+            if stage.lower() == "newsletter_complete" and progress_val >= 100.0:
+                overall_status_for_tm = TaskStatus.COMPLETED
+
+            async def update_status_async():
+                await task_manager.update_task_status(
+                    task_id,
+                    overall_status_for_tm,
+                    message=status_detail,
+                    progress=progress_val,
+                    current_step=stage,
+                )
+
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(update_status_async(), loop)
+            else:
+                try:
+                    asyncio.create_task(update_status_async())
+                except RuntimeError as e:
+                    print(f"RuntimeError creating task for status update: {e}")
+
+        async def background_pipeline_run():
+            """Run the newsletter generation pipeline for the specific profile."""
+            try:
+                await task_manager.create_task(
+                    task_id=task_id,
+                    task_type="profile_newsletter_run",
+                    config={
+                        "profile_id": profile_id,
+                        "start_date": request.start_date,
+                        "end_date": request.end_date,
+                        "email_recipients": email_recipients,
+                        "research_interests": research_interests_text,
+                        "topic_id": request.topic_id,
+                        "generate_podcast_run": request.generate_podcast_run,
+                        "use_profile_recipients": request.use_profile_recipients
+                    }
+                )
+                
+                await task_manager.update_task_status(
+                    task_id,
+                    TaskStatus.PENDING,
+                    message="Profile newsletter pipeline initialized.",
+                    current_step="initializing",
+                )
+
+                # Create TheseusInsight instance with profile-specific configuration
+                ti_instance = TheseusInsight(
+                    research_interests_override=research_interests_text,
+                    start_date_override=request.start_date,
+                    end_date_override=request.end_date,
+                    receiver_address_override=email_recipients,
+                    profile_ids_override=[profile_id],  # Target specific profile
+                    generate_podcast=request.generate_podcast_run,
+                    db_saving=True,
+                    data_path=run_db_path,
+                    verbose=True,
+                    task_id=task_id
+                )
+                
+                await asyncio.to_thread(
+                    ti_instance.run,
+                    progress_callback=pipeline_progress_callback,
+                )
+                
+                current_task_status = task_manager.get_task_status(task_id)
+                if current_task_status and current_task_status.get("status") == TaskStatus.PROCESSING:
+                    await task_manager.update_task_status(
+                        task_id,
+                        TaskStatus.COMPLETED,
+                        message="Profile newsletter generation completed.",
+                        current_step="newsletter_complete",
+                    )
+
+            except Exception as e:
+                error_message = f"Error in profile newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"
+                if task_manager:
+                    await task_manager.update_task_status(
+                        task_id,
+                        TaskStatus.FAILED,
+                        error=error_message,
+                        message=error_message,
+                        current_step="newsletter_failed",
+                    )
+                print(error_message)
+
+        # Enqueue the background task
+        await task_manager.enqueue_task(lambda _tid: background_pipeline_run(), task_id)
+        
+        return ProfileNewsletterResponse(
+            task_id=task_id,
+            message=f"Newsletter generation started for profile '{profile['name']}'",
+            profile_id=profile_id,
+            profile_name=profile['name']
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting profile newsletter generation: {str(e)}")
 
 
 # =====================================================================

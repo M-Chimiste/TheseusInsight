@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 from psycopg import sql
 
@@ -708,7 +708,7 @@ class ProfileInterestsRepository:
             """, (profile_id,))
             
             rows = cur.fetchall()
-            interests = [row[0] for row in rows]
+            interests = [row['interest_text'] for row in rows]
             return '\n'.join(interests)
 
 

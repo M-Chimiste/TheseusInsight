@@ -70,15 +70,20 @@ class OptimizedKaggleProcessor:
         latest_date = None
         
         with open(self.dataset_path, 'r', encoding='utf-8') as f:
-            file_position = 0
+            line_num = 0
             
-            for line_num, line in enumerate(f, 1):
+            while True:
+                # Record position before reading line
+                line_start = f.tell()
+                line = f.readline()
+                
+                if not line:  # End of file
+                    break
+                    
+                line_num += 1
+                
                 if line_num % 100000 == 0:
                     print(f"   Processed {line_num:,} lines...")
-                
-                # Record position before reading line
-                line_start = file_position
-                file_position = f.tell()
                 
                 try:
                     # Quick JSON parse to get date

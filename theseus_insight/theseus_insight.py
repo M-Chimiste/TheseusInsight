@@ -1065,6 +1065,37 @@ Theseus Insight Team
                 # Restore original research interests
                 self.research_interests = original_research_interests
             
+            # Save profile-specific scores to paper_profile_scores table
+            if self.db_saving and not scored_df.empty:
+                from .data_access.profiles import ProfileScoreRepository
+                
+                if self.verbose:
+                    print(f"💾 Saving profile scores for {len(profile_ids)} profile(s)...")
+                
+                saved_scores = 0
+                for profile_id in profile_ids:
+                    for _, row in scored_df.iterrows():
+                        # Get the paper ID from database using URL
+                        existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                        if existing_paper:
+                            # Save profile score
+                            success = ProfileScoreRepository.create_or_update_score(
+                                paper_id=existing_paper['id'],
+                                profile_id=profile_id,
+                                score=int(row['score']),
+                                related=bool(row['related']),
+                                rationale=str(row['rationale']),
+                                judge_model=getattr(self.judge_inference, 'model_name', 'unknown')
+                            )
+                            if success:
+                                saved_scores += 1
+                        else:
+                            if self.verbose:
+                                print(f"⚠️ Paper not found in database: {row['title'][:50]}...")
+                
+                if self.verbose:
+                    print(f"✅ Saved {saved_scores} profile scores")
+            
             # Take top N papers
             top_df = scored_df.head(self.top_n)
             
@@ -1948,7 +1979,19 @@ Theseus Insight Team
                 # Embed abstracts
                 abstracts = list(new_df['abstract'])
                 embeddings = self.embedding_model.invoke(abstracts)
-                new_df['abstract_embedding'] = embeddings
+                
+                # Convert 2D embeddings array to list of 1D arrays for pandas
+                if hasattr(embeddings, 'tolist'):
+                    embeddings_list = embeddings.tolist()
+                elif isinstance(embeddings, list):
+                    embeddings_list = embeddings
+                else:
+                    # Handle numpy arrays or other tensor types
+                    import numpy as np
+                    embeddings_array = np.array(embeddings)
+                    embeddings_list = [embeddings_array[i] for i in range(len(embeddings_array))]
+                
+                new_df['abstract_embedding'] = embeddings_list
                 
                 # Calculate cosine similarity with research interests
                 if self.research_interests and self.research_interests.strip():

@@ -384,6 +384,37 @@ class TaskManager:
                     print(f"RuntimeError in progress_callback fallback: {e}. Status update for '{stage}' might be lost.")
         return callback
 
+    def _get_orchestration_config(self, verbose: bool = False) -> dict:
+        """
+        Get orchestration config with proper fallback hierarchy: DB -> config file -> defaults.
+        
+        Args:
+            verbose: Whether to print debug information about config source
+            
+        Returns:
+            Dictionary containing orchestration configuration
+        """
+        orchestration_json = SettingsRepository.get("orchestration")
+        if orchestration_json:
+            orchestration_config = json.loads(orchestration_json)
+            if verbose:
+                print("📊 Using orchestration config from database settings")
+            return orchestration_config
+        else:
+            # Fallback to config file
+            try:
+                from pathlib import Path
+                config_path = Path(__file__).resolve().parents[2] / "config" / "orchestration.json"
+                orchestration_config = json.loads(config_path.read_text())
+                if verbose:
+                    print("📊 Using orchestration config from config file")
+                return orchestration_config
+            except Exception as e:
+                print(f"Warning: Could not load orchestration config from file: {e}")
+                if verbose:
+                    print("📊 Using empty orchestration config (defaults only)")
+                return {}
+
     async def run_newsletter_task(self, task_id: str):
         """Run the newsletter generation task."""
         try:
@@ -1308,9 +1339,8 @@ class TaskManager:
             from ..pdf.processing import MarkitdownDocProcessor
             from ..inference.llm import LLMModelFactory
             
-            # Get embedding model configuration from orchestration settings
-            orchestration_json = SettingsRepository.get("orchestration")
-            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            # Get embedding model configuration with proper fallback hierarchy: DB -> config file -> defaults
+            orchestration_config = self._get_orchestration_config()
             embedding_config = orchestration_config.get("embedding_model", {})
             
             # Create embedding model
@@ -1510,9 +1540,8 @@ class TaskManager:
                     current_step=f"ingestion_{stage}",
                 )
             
-            # Get orchestration config and update ArXiv categories if specified
-            orchestration_json = SettingsRepository.get("orchestration")
-            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            # Get orchestration config with proper fallback hierarchy: DB -> config file -> defaults
+            orchestration_config = self._get_orchestration_config(verbose=True)
             
             # Update ArXiv categories if specified
             if arxiv_categories:
@@ -1623,7 +1652,7 @@ class TaskManager:
                 )
             
             # Run bulk judge scoring
-            judge_result = bulk_judge.run_bulk_judge(
+            judge_result = await bulk_judge.run_bulk_judge(
                 judge_request,
                 progress_callback=scoring_progress_callback
             )
@@ -1748,9 +1777,8 @@ class TaskManager:
                     current_step=f"embedding_{stage}",
                 )
             
-            # Get orchestration config
-            orchestration_json = SettingsRepository.get("orchestration")
-            orchestration_config = json.loads(orchestration_json) if orchestration_json else {}
+            # Get orchestration config with proper fallback hierarchy: DB -> config file -> defaults  
+            orchestration_config = self._get_orchestration_config()
             
             # Debug: Always print what we received
             print(f"[DEBUG] Task handler received arxiv_categories: {arxiv_categories} (type: {type(arxiv_categories)})")

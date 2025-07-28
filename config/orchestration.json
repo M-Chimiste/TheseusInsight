@@ -68,7 +68,7 @@
       "summary": {
         "model_name": "phi4-mini:3.8b-q8_0",
         "model_type": "ollama",
-        "max_new_tokens": 1024,
+        "max_new_tokens": 4096,
         "temperature": 0.1,
         "num_ctx": 120000,
         "trust_remote_code": null
@@ -76,7 +76,7 @@
       "analysis": {
         "model_name": "phi4-mini:3.8b-q8_0",
         "model_type": "ollama",
-        "max_new_tokens": 2048,
+        "max_new_tokens": 4096,
         "temperature": 0.1,
         "num_ctx": 120000,
         "trust_remote_code": null
@@ -84,7 +84,7 @@
       "search": {
         "model_name": "phi4-mini:3.8b-q8_0",
         "model_type": "ollama",
-        "max_new_tokens": 1024,
+        "max_new_tokens": 4096,
         "temperature": 0.1,
         "num_ctx": 120000,
         "trust_remote_code": null
@@ -105,10 +105,10 @@
       "trust_remote_code": null
     },
     "evidence_selector_model": {
-      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_name": "phi4-mini:3.8b-q8_0",
       "model_type": "ollama",
       "max_new_tokens": 4096,
-      "temperature": 0.2,
+      "temperature": 0.1,
       "num_ctx": 120000,
       "trust_remote_code": null
     },
@@ -128,18 +128,18 @@
       "num_ctx": 120000,
       "trust_remote_code": null
     },
-    "arxiv_rate_limit": 1.0
+    "arxiv_rate_limit": 3.0
   },
   "mind_map_config": {
     "k": 15,
     "similarity_threshold": 0.3,
     "layout_algorithm": "force",
     "summarization_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
-      "max_new_tokens": 512,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "max_new_tokens": 1024,
       "temperature": 0.3,
-      "num_ctx": 32000,
+      "num_ctx": null,
       "trust_remote_code": null
     },
     "expansion_order": 1,

@@ -24,6 +24,11 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Divider,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -44,7 +49,8 @@ import {
   type ResearchTaskResponse,
   type ResearchTaskResult,
   type ResearchTaskStatus,
-  type ResearchWebSocketMessage 
+  type ResearchWebSocketMessage,
+  type ResearchConfigResponse
 } from '../services/api';
 import { ActivityTimeline, type ProcessedEvent } from '../components/ActivityTimeline';
 import { useLayout } from '../contexts/LayoutContext';
@@ -91,6 +97,11 @@ const ResearchAgent: React.FC = () => {
   const [researchConfig, setResearchConfig] = useState<ResearchTaskRequest['config']>({});
   const [isReconnecting, setIsReconnecting] = useState(false);
   
+  // Dual-mode state
+  const [selectedMode, setSelectedMode] = useState<'single' | 'multi'>('single');
+  const [modeConfig, setModeConfig] = useState<ResearchConfigResponse | null>(null);
+  const [modeConfigLoading, setModeConfigLoading] = useState(true);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -99,6 +110,26 @@ const ResearchAgent: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Load mode configuration on mount
+  useEffect(() => {
+    const loadModeConfig = async () => {
+      try {
+        setModeConfigLoading(true);
+        const response = await researchAgentApi.getModes();
+        const config: ResearchConfigResponse = response.data;
+        setModeConfig(config);
+        setSelectedMode(config.current_mode);
+      } catch (error) {
+        console.error('Failed to load mode configuration:', error);
+        setError('Failed to load research agent configuration');
+      } finally {
+        setModeConfigLoading(false);
+      }
+    };
+
+    loadModeConfig();
+  }, []);
 
 
 
@@ -242,23 +273,63 @@ const ResearchAgent: React.FC = () => {
           if (message.progress) {
             const progress = message.progress;
             
-            // Create activity event if we have meaningful progress info
-            if (progress.status && progress.description) {
-              const activityEvent: ProcessedEvent = {
-                title: progress.status,
-                data: progress.description,
-                timestamp: message.timestamp,
-                node: progress.current_node,
-              };
+            // Handle different progress formats for single vs multi-agent
+            if (selectedMode === 'multi' && progress.agents_progress) {
+              // Multi-agent progress with agent status
+              const agentEvents: ProcessedEvent[] = [];
               
-              setActivityEvents(prev => {
-                // Avoid duplicate consecutive events
-                const lastEvent = prev[prev.length - 1];
-                if (lastEvent && lastEvent.title === activityEvent.title && lastEvent.data === activityEvent.data) {
-                  return prev;
+              Object.entries(progress.agents_progress).forEach(([agentId, agentProgress]: [string, any]) => {
+                if (agentProgress.current_task) {
+                  agentEvents.push({
+                    title: `Agent ${parseInt(agentId) + 1}: ${agentProgress.status}`,
+                    data: agentProgress.current_task,
+                    timestamp: message.timestamp,
+                    node: `agent_${agentId}`,
+                  });
                 }
-                return [...prev, activityEvent];
               });
+              
+              if (agentEvents.length > 0) {
+                setActivityEvents(prev => {
+                  // Replace agent events to avoid accumulation
+                  const nonAgentEvents = prev.filter(e => !e.node?.startsWith('agent_'));
+                  return [...nonAgentEvents, ...agentEvents];
+                });
+              }
+              
+              // Add overall orchestration status
+              if (progress.phase && progress.current_status) {
+                const orchestrationEvent: ProcessedEvent = {
+                  title: `Orchestration: ${progress.phase}`,
+                  data: progress.current_status,
+                  timestamp: message.timestamp,
+                  node: 'orchestration',
+                };
+                
+                setActivityEvents(prev => {
+                  const filtered = prev.filter(e => e.node !== 'orchestration');
+                  return [...filtered, orchestrationEvent];
+                });
+              }
+            } else {
+              // Single-agent progress
+              if (progress.status && (progress.description || progress.current_node)) {
+                const activityEvent: ProcessedEvent = {
+                  title: progress.status,
+                  data: progress.description || `Processing: ${progress.current_node}`,
+                  timestamp: message.timestamp,
+                  node: progress.current_node,
+                };
+                
+                setActivityEvents(prev => {
+                  // Avoid duplicate consecutive events
+                  const lastEvent = prev[prev.length - 1];
+                  if (lastEvent && lastEvent.title === activityEvent.title && lastEvent.data === activityEvent.data) {
+                    return prev;
+                  }
+                  return [...prev, activityEvent];
+                });
+              }
             }
           }
 
@@ -412,7 +483,7 @@ const ResearchAgent: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isResearching) return;
+    if (!inputValue.trim() || isResearching || modeConfigLoading) return;
 
     // Add user message
     const userMessage: ChatMessage = {
@@ -424,9 +495,10 @@ const ResearchAgent: React.FC = () => {
     
     setMessages(prev => [...prev, userMessage]);
 
-    // Start research
+    // Start research with selected mode
     const request: ResearchTaskRequest = {
       research_question: inputValue.trim(),
+      mode: selectedMode,
       config: researchConfig,
       save_to_library: true,
     };
@@ -698,17 +770,53 @@ Task ID: ${result.task_id}
     <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Box sx={{ display: 'flex', flexDirection: 'column', height: `calc(100vh - ${headerHeight + 160}px)` }}>
         {/* Header */}
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-          <Typography variant="h4" component="h1">
-            Research Agent
-          </Typography>
-          <Box>
-            <Tooltip title="Research Configuration">
-              <IconButton onClick={() => setConfigDialogOpen(true)}>
-                <SettingsIcon />
-              </IconButton>
-            </Tooltip>
+        <Box sx={{ mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <Typography variant="h4" component="h1">
+              Research Agent
+            </Typography>
+            <Box>
+              <Tooltip title="Research Configuration">
+                <IconButton onClick={() => setConfigDialogOpen(true)}>
+                  <SettingsIcon />
+                </IconButton>
+              </Tooltip>
+            </Box>
           </Box>
+          
+          {/* Mode Selection */}
+          {!modeConfigLoading && modeConfig && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Mode</InputLabel>
+                <Select
+                  value={selectedMode}
+                  label="Mode"
+                  onChange={(e) => setSelectedMode(e.target.value as 'single' | 'multi')}
+                  disabled={isResearching}
+                >
+                  <MenuItem value="single">Single Agent</MenuItem>
+                  <MenuItem value="multi">Multi Agent</MenuItem>
+                </Select>
+              </FormControl>
+              
+              <Typography variant="body2" color="text.secondary">
+                {selectedMode === 'single' 
+                  ? 'Sequential research workflow with iterative loops'
+                  : 'Parallel multi-agent orchestration with synthesis'
+                }
+              </Typography>
+              
+              {modeConfig.validation && !modeConfig.validation.valid && (
+                <Chip 
+                  label="Configuration Issues" 
+                  color="warning" 
+                  size="small"
+                  onClick={() => setConfigDialogOpen(true)}
+                />
+              )}
+            </Box>
+          )}
         </Box>
 
         {/* Error Alert with Reconnect option */}
@@ -853,9 +961,24 @@ Task ID: ${result.task_id}
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>Research Configuration</DialogTitle>
+        <DialogTitle>
+          Research Configuration - {selectedMode === 'single' ? 'Single Agent' : 'Multi Agent'} Mode
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2 }}>
+            {/* Mode Status */}
+            {modeConfig && (
+              <Alert 
+                severity={modeConfig.validation.valid ? 'success' : 'warning'} 
+                sx={{ mb: 3 }}
+              >
+                {modeConfig.validation.valid 
+                  ? `${selectedMode === 'single' ? 'Single' : 'Multi'}-agent mode is properly configured`
+                  : `Configuration issues: ${modeConfig.validation.issues.join(', ')}`
+                }
+              </Alert>
+            )}
+
             <Typography variant="h6" gutterBottom>
               Search Configuration
             </Typography>
@@ -928,6 +1051,54 @@ Task ID: ${result.task_id}
                 sx={{ flex: 1 }}
               />
             </Box>
+
+            {/* Multi-agent specific configuration */}
+            {selectedMode === 'multi' && (
+              <>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="h6" gutterBottom>
+                  Multi-Agent Configuration
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+                  <FormControl sx={{ flex: 1 }}>
+                    <InputLabel>Synthesis Strategy</InputLabel>
+                    <Select
+                      value={researchConfig?.synthesis_config?.strategy || 'weighted_consensus'}
+                      label="Synthesis Strategy"
+                      onChange={(e) =>
+                        setResearchConfig(prev => ({
+                          ...prev,
+                          synthesis_config: {
+                            ...prev?.synthesis_config,
+                            strategy: e.target.value as any,
+                          },
+                        }))
+                      }
+                    >
+                      <MenuItem value="weighted_consensus">Weighted Consensus</MenuItem>
+                      <MenuItem value="evidence_based">Evidence Based</MenuItem>
+                      <MenuItem value="confidence_weighted">Confidence Weighted</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <TextField
+                    label="Confidence Threshold"
+                    type="number"
+                    inputProps={{ step: 0.1, min: 0, max: 1 }}
+                    value={researchConfig?.synthesis_config?.confidence_threshold || 0.6}
+                    onChange={(e) =>
+                      setResearchConfig(prev => ({
+                        ...prev,
+                        synthesis_config: {
+                          ...prev?.synthesis_config,
+                          confidence_threshold: parseFloat(e.target.value),
+                        },
+                      }))
+                    }
+                    sx={{ flex: 1 }}
+                  />
+                </Box>
+              </>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

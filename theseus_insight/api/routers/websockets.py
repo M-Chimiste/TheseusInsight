@@ -214,7 +214,7 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
     """Specialized WebSocket handler for research agent tasks.
 
     This method handles the WebSocket connection specifically for research agent tasks,
-    providing real-time progress updates for each node in the workflow.
+    providing real-time progress updates for both single-agent and multi-agent workflows.
 
     Args:
         websocket (WebSocket): The WebSocket connection to handle.
@@ -236,15 +236,20 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
         
         # Send initial status
         task_info = research_tasks[task_id]
-        await websocket.send_json({
+        mode = task_info.get("mode", "single")
+        
+        initial_message = {
             "type": "status_update",
             "task_id": task_id,
             "status": task_info["status"],
+            "mode": mode,
             "progress": task_info.get("progress", {}),
             "timestamp": task_info["created_at"].isoformat()
-        })
+        }
+        await websocket.send_json(initial_message)
         
         # Monitor task progress
+        last_progress_hash = None
         while True:
             await asyncio.sleep(1)  # Poll every second
             
@@ -253,39 +258,84 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
             if not current_task_info:
                 break
             
-            # Send status update
-            status_message = {
-                "type": "status_update",
-                "task_id": task_id,
-                "status": current_task_info["status"],
-                "progress": current_task_info.get("progress", {}),
-                "timestamp": current_task_info.get("started_at", current_task_info["created_at"]).isoformat()
-            }
+            # Check if progress has actually changed to avoid unnecessary updates
+            current_progress = current_task_info.get("progress", {})
+            current_progress_hash = str(hash(str(current_progress)))
             
-            # Add error message if failed
-            if current_task_info.get("error_message"):
-                status_message["error_message"] = current_task_info["error_message"]
+            # Only send update if progress changed or status changed
+            should_send_update = (
+                last_progress_hash != current_progress_hash or
+                task_info.get("status") != current_task_info["status"]
+            )
             
-            await websocket.send_json(status_message)
+            if should_send_update:
+                # Prepare status message with mode information
+                status_message = {
+                    "type": "status_update",
+                    "task_id": task_id,
+                    "status": current_task_info["status"],
+                    "mode": current_task_info.get("mode", "single"),
+                    "progress": current_progress,
+                    "timestamp": current_task_info.get("started_at", current_task_info["created_at"]).isoformat()
+                }
+                
+                # Add error message if failed
+                if current_task_info.get("error_message"):
+                    status_message["error_message"] = current_task_info["error_message"]
+                
+                await websocket.send_json(status_message)
+                last_progress_hash = current_progress_hash
+                task_info = current_task_info  # Update reference for status comparison
             
             # If task is completed, send final results and close
             if current_task_info["status"] in ["completed", "failed", "cancelled"]:
                 if current_task_info["status"] == "completed":
                     results = task_results.get(task_id, {})
-                    final_message = {
-                        "type": "task_completed",
-                        "task_id": task_id,
-                        "status": "completed",
-                        "results": {
+                    
+                    # Prepare results based on mode
+                    if current_task_info.get("mode") == "multi":
+                        # Multi-agent results
+                        result_data = {
+                            "final_answer": results.get("final_answer"),
+                            "generation_summary": results.get("generation_summary"),
+                            "statistics": results.get("statistics", {}),
+                            "sub_queries": results.get("sub_queries", []),
+                            "sources_count": len(results.get("sources_gathered", [])),
+                            "evidence_count": len(results.get("evidence", [])),
+                            "agents_used": results.get("statistics", {}).get("agents_used", 0),
+                            "synthesis_confidence": results.get("statistics", {}).get("synthesis_confidence", 0.0)
+                        }
+                    else:
+                        # Single-agent results (backward compatible)
+                        result_data = {
                             "final_answer": results.get("final_answer"),
                             "statistics": results.get("statistics"),
                             "sub_queries": results.get("sub_queries", []),
                             "sources_count": len(results.get("sources_gathered", [])),
                             "evidence_count": len(results.get("evidence", []))
-                        },
+                        }
+                    
+                    final_message = {
+                        "type": "task_completed",
+                        "task_id": task_id,
+                        "status": "completed",
+                        "mode": current_task_info.get("mode", "single"),
+                        "results": result_data,
                         "timestamp": current_task_info.get("completed_at", current_task_info["created_at"]).isoformat()
                     }
                     await websocket.send_json(final_message)
+                elif current_task_info["status"] == "failed":
+                    # Send failure notification
+                    failure_message = {
+                        "type": "task_completed",
+                        "task_id": task_id,
+                        "status": "failed",
+                        "mode": current_task_info.get("mode", "single"),
+                        "error_message": current_task_info.get("error_message", "Research task failed"),
+                        "timestamp": current_task_info.get("completed_at", current_task_info["created_at"]).isoformat()
+                    }
+                    await websocket.send_json(failure_message)
+                
                 break
                 
     except WebSocketDisconnect:

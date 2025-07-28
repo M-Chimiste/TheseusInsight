@@ -348,14 +348,21 @@ export const researchAgentApi = {
   startResearchTask: (request: any) => api.post('/research-agent/run', request),
   getTaskStatus: (taskId: string) => api.get(`/research-agent/status/${taskId}`),
   getTaskResult: (taskId: string) => api.get(`/research-agent/result/${taskId}`),
-  getHistory: (limit: number = 50, offset: number = 0, statusFilter?: string) => {
+  getHistory: (limit: number = 50, offset: number = 0, statusFilter?: string, modeFilter?: string) => {
     const params: any = { limit, offset };
     if (statusFilter) params.status_filter = statusFilter;
+    if (modeFilter) params.mode_filter = modeFilter;
     return api.get('/research-agent/history', { params });
   },
   cancelTask: (taskId: string) => api.delete(`/research-agent/${taskId}`),
   getWorkflowInfo: () => api.get('/research-agent/workflow/info'),
   getHealth: () => api.get('/research-agent/health'),
+  
+  // Dual-mode configuration endpoints
+  getModes: () => api.get('/research-agent/modes'),
+  setMode: (mode: 'single' | 'multi') => api.put('/research-agent/mode', { mode }),
+  getModeConfig: (mode: 'single' | 'multi') => api.get(`/research-agent/config/${mode}`),
+  setModeConfig: (mode: 'single' | 'multi', config: any) => api.put(`/research-agent/config/${mode}`, config),
 };
 
 // Model Catalog API
@@ -659,6 +666,7 @@ export const papersApi = {
 // Research Agent Interfaces
 export interface ResearchTaskRequest {
   research_question: string;
+  mode?: 'single' | 'multi';
   config?: {
     search_config?: {
       local_limit?: number;
@@ -677,6 +685,10 @@ export interface ResearchTaskRequest {
       include_methodology?: boolean;
       include_limitations?: boolean;
     };
+    synthesis_config?: {
+      strategy?: 'weighted_consensus' | 'evidence_based' | 'confidence_weighted';
+      confidence_threshold?: number;
+    };
   };
   save_to_library?: boolean;
 }
@@ -686,11 +698,13 @@ export interface ResearchTaskResponse {
   status: string;
   created_at: string;
   research_question: string;
+  mode: 'single' | 'multi';
 }
 
 export interface ResearchTaskStatus {
   task_id: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  mode?: 'single' | 'multi';
   progress?: any;
   created_at: string;
   started_at?: string;
@@ -702,6 +716,7 @@ export interface ResearchTaskResult {
   task_id: string;
   status: string;
   research_question: string;
+  mode: 'single' | 'multi';
   final_answer?: string;
   generation_summary?: string;
   statistics?: {
@@ -711,6 +726,8 @@ export interface ResearchTaskResult {
     evidence_pieces: number;
     evidence_sufficient: boolean;
     compression_used: boolean;
+    agents_used?: number;
+    synthesis_confidence?: number;
   };
   sub_queries: string[];
   sources_gathered: any[];
@@ -728,6 +745,7 @@ export interface ResearchHistoryItem {
   task_id: string;
   research_question: string;
   status: string;
+  mode?: 'single' | 'multi';
   created_at: string;
   started_at?: string;
   completed_at?: string;
@@ -738,7 +756,34 @@ export interface ResearchHistoryItem {
     evidence_pieces: number;
     evidence_sufficient: boolean;
     compression_used: boolean;
+    agents_used?: number;
+    synthesis_confidence?: number;
   };
+}
+
+export interface ResearchModeResponse {
+  current_mode: 'single' | 'multi';
+  validation: {
+    valid: boolean;
+    issues: string[];
+    has_single_config: boolean;
+    has_multi_config: boolean;
+  };
+  success: boolean;
+  message: string;
+}
+
+export interface ResearchConfigResponse {
+  current_mode: 'single' | 'multi';
+  single_agent_config: any;
+  multi_agent_config: any;
+  validation: {
+    valid: boolean;
+    issues: string[];
+    has_single_config: boolean;
+    has_multi_config: boolean;
+  };
+  available_modes: string[];
 }
 
 export interface ResearchWebSocketMessage {

@@ -136,6 +136,15 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
 - **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers with PostgreSQL.
+- **Advanced Research Agent System**: Dual-mode AI research orchestration with support for both single-agent sequential workflows and multi-agent parallel processing.
+  - **Single-Agent Mode**: Sequential workflow with iterative research loops, evidence gathering, and adaptive compression for deep analysis.
+  - **Multi-Agent Mode**: Parallel orchestration with specialized agents (Research, Analysis, Verification, Alternative Perspectives) for comprehensive coverage.
+  - **Structured Output Support**: Direct structured output for compatible providers (Ollama, LlamaCPP) with automatic fallback parsing for cloud APIs.
+  - **Intelligent Model Routing**: Automatic model selection with provider-specific optimizations and rate limiting for local hardware.
+  - **Sequential Local Model Queuing**: Thread-safe queuing system ensures local Ollama/LlamaCPP models run sequentially to prevent resource conflicts.
+  - **Real-Time Progress Tracking**: WebSocket-powered progress updates with detailed agent status and execution metrics.
+  - **Configuration Management**: Comprehensive settings interface for model selection, workflow parameters, and agent specialization.
+  - **Research History**: Complete research run tracking with results persistence and analysis capabilities.
 
 ---
 
@@ -429,6 +438,71 @@ The trends system integrates seamlessly with existing Theseus Insight features:
 - **Newsletter API**: Enhanced with `topic_id` support for topic-focused newsletter generation
 
 📖 **[Complete Trends API Documentation](docs/trends_api_spec.md)** - Detailed API specification with examples and response schemas.
+
+### Research Agent System
+
+The Research Agent system provides AI-powered research orchestration with support for both single-agent sequential workflows and multi-agent parallel processing. The system automatically routes between modes based on configuration and provides comprehensive research capabilities.
+
+#### Core Research Endpoints
+
+**`POST /api/research-agent/research`** - Start a research task
+- **Parameters**: `research_question`, `mode` (single/multi), `config` (optional overrides), `save_to_library`
+- **Returns**: Task ID for background processing with WebSocket progress tracking
+- **Features**: Automatic mode detection, configurable parameters, research library integration
+- **Example**: Start multi-agent research with custom search limits
+
+**`GET /api/research-agent/tasks/{task_id}`** - Get research task status
+- **Returns**: Task status, progress information, agent details, execution metrics
+- **Features**: Real-time progress updates, detailed agent status for multi-agent mode
+
+**`GET /api/research-agent/tasks/{task_id}/result`** - Get research results
+- **Returns**: Final answer, evidence sources, sub-queries, workflow messages, statistics
+- **Features**: Comprehensive research output with sources, evidence, and synthesis details
+
+**`GET /api/research-agent/history`** - List research task history
+- **Parameters**: `limit`, `offset`, `status_filter`
+- **Returns**: Paginated list of research tasks with metadata and statistics
+- **Features**: Search and filtering capabilities, execution time analysis
+
+#### Mode Configuration Endpoints
+
+**`GET /api/research-agent/modes`** - Get current research mode configuration
+- **Returns**: Current mode, single-agent config, multi-agent config, validation status
+- **Features**: Configuration validation, available modes list
+
+**`POST /api/research-agent/modes`** - Switch research agent mode
+- **Parameters**: `mode` (single/multi)
+- **Returns**: Updated mode configuration with validation results
+- **Features**: Automatic configuration validation, mode switching
+
+**`PUT /api/research-agent/config/{mode}`** - Update mode-specific configuration
+- **Parameters**: Mode configuration object (models, parameters, thresholds)
+- **Returns**: Updated configuration with validation results
+- **Features**: Model validation, parameter validation, provider compatibility checks
+
+#### Research Agent Features
+
+**Single-Agent Mode**: Sequential workflow with research loops
+- **Boss Model**: Primary model that orchestrates the entire workflow
+- **Node-Specific Models**: Optional specialized models for Query Planning, Evidence Selection, Compression, Answer Generation
+- **Iterative Research**: Multiple research loops with evidence gathering and adaptive compression
+- **Context Management**: Automatic compression when token limits are exceeded
+
+**Multi-Agent Mode**: Parallel orchestration with specialized agents
+- **Boss Model**: Orchestrates question generation and final synthesis
+- **Specialized Agents**: Research, Analysis, Verification, Alternative Perspective agents
+- **Question Generation**: AI-powered decomposition of research questions into specialized sub-questions
+- **Parallel Execution**: Concurrent agent execution with progress tracking
+- **Synthesis Engine**: Conflict detection and resolution with comprehensive final synthesis
+
+**Technical Features**:
+- **Structured Output**: Direct JSON output for compatible providers (Ollama, LlamaCPP) with automatic fallback
+- **Model Routing**: Intelligent model selection with provider-specific optimizations
+- **Local Model Queuing**: Thread-safe sequential execution for local hardware to prevent resource conflicts
+- **Progress Tracking**: Real-time WebSocket updates with detailed agent status and execution metrics
+- **Error Handling**: Comprehensive error handling with fallback strategies and graceful degradation
+
+📖 **[Research Agent System Documentation](docs/research_agent_system.md)** - Complete technical documentation with configuration examples and workflow details.
 
 ### Profile Management
 

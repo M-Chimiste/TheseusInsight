@@ -33,26 +33,26 @@ The Research Agent System is built on a modular architecture that supports flexi
 │  └── Progress Tracking                                      │
 ├─────────────────────────────────────────────────────────────┤
 │  Orchestration Layer                                        │
-│  ├── Single-Agent Workflow                                 │
-│  ├── Multi-Agent Orchestrator                              │
+│  ├── Single-Agent Workflow                                  │
+│  ├── Multi-Agent Orchestrator                               │
 │  └── Question Generator                                     │
 ├─────────────────────────────────────────────────────────────┤
 │  Agent Management                                           │
-│  ├── Agent Types & Specializations                         │
-│  ├── Agent Manager (Parallel Execution)                    │
+│  ├── Agent Types & Specializations                          │
+│  ├── Agent Manager (Parallel Execution)                     │
 │  └── Synthesis Agent                                        │
 ├─────────────────────────────────────────────────────────────┤
 │  Model Infrastructure                                       │
-│  ├── Model Router                                          │
-│  ├── Structured Output Support                             │
-│  └── Local Model Queuing                                   │
+│  ├── Model Router                                           │
+│  ├── Structured Output Support                              │
+│  └── Local Model Queuing                                    │
 ├─────────────────────────────────────────────────────────────┤
-│  Search & Tools                                            │
-│  ├── Unified Search Tool                                   │
-│  ├── Local Search (PostgreSQL + pgvector)                 │
-│  ├── External Search (ArXiv, Semantic Scholar)            │
-│  ├── Deduplication Engine                                  │
-│  └── Cross-Encoder Reranking                              │
+│  Search & Tools                                             │
+│  ├── Unified Search Tool                                    │
+│  ├── Local Search (PostgreSQL + pgvector)                   │
+│  ├── External Search (ArXiv, Semantic Scholar)              │
+│  ├── Deduplication Engine                                   │
+│  └── Cross-Encoder Reranking                                │
 └─────────────────────────────────────────────────────────────┘
 ```
 

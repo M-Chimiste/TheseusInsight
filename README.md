@@ -17,7 +17,6 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Running the API](#running-the-api)
 - [Running the Frontend](#running-the-frontend)
 - [Custom Data Storage Location](#custom-data-storage-location)
-- [Desktop Build](#desktop-build)
 - [Key Endpoints](#key-endpoints)
   - [PDF Uploads](#pdf-uploads)
   - [Podcast Generation](#podcast-generation)

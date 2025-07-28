@@ -3,11 +3,13 @@ Model Router for Research Agent
 
 This module provides model instances for different research agent nodes
 based on the configuration settings using the unified LLMModelFactory.
+Enhanced to support both single-agent workflow and multi-agent orchestration.
 """
 
 import logging
 import time
 import asyncio
+import threading
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from ..inference.llm import LLMModelFactory, InferenceModel
@@ -19,7 +21,8 @@ logger = logging.getLogger(__name__)
 LOCAL_MODEL_RATE_LIMITER = {
     'last_call_time': 0,
     'min_interval': 1.0,  # Minimum 1 second between calls for local models
-    'lock': asyncio.Lock() if hasattr(asyncio, 'Lock') else None
+    # Use a standard threading lock for cross-thread serialization
+    'lock': threading.Lock()
 }
 
 
@@ -46,18 +49,25 @@ class ModelClient:
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str = "", schema: Any = None) -> str:
         """Invoke the model with rate limiting for local models."""
         if self.is_local_model:
-            self._apply_rate_limiting()
-        
+            with LOCAL_MODEL_RATE_LIMITER['lock']:
+                # Inside lock: enforce spacing between sequential local invocations
+                self._apply_rate_limiting()
+                result = self._safe_invoke(messages, system_prompt, schema)
+                return result
+        else:
+            return self._safe_invoke(messages, system_prompt, schema)
+
+    # ------------------------------------------------------------------
+    # Internal helper to wrap the actual client invocation
+    # ------------------------------------------------------------------
+    def _safe_invoke(self, messages: List[Dict[str, str]], system_prompt: str, schema: Any):
         try:
             if schema:
-                # Structured output
                 return self._client.invoke(messages, system_prompt, schema=schema)
-            else:
-                # Regular text output
-                return self._client.invoke(messages, system_prompt)
+            return self._client.invoke(messages, system_prompt)
         except Exception as e:
             self.logger.error(f"Model invocation failed for {self.provider}/{self.model_name}: {e}")
-            # Add extra delay for local models on error
+            # Additional back-off for local models
             if self.is_local_model:
                 time.sleep(2.0)
             raise
@@ -92,9 +102,100 @@ def supports_structured_output(model_type: str) -> bool:
     return model_type.lower() in structured_providers
 
 
+def get_model(node_name: str, config: Dict[str, Any]) -> ModelClient:
+    """
+    Unified model retrieval function supporting both single-agent workflow nodes
+    and multi-agent specialized agents.
+    
+    Args:
+        node_name: Name of the node/agent requesting the model
+        config: Configuration dictionary containing model settings
+        
+    Returns:
+        Configured ModelClient instance
+    """
+    
+    # For backward compatibility, delegate to get_model_for_node for workflow nodes
+    workflow_nodes = {
+        "query_planner", "evidence_selector", "scratchpad_compress", 
+        "answer_generator", "full_text_summarizer"
+    }
+    
+    if node_name in workflow_nodes:
+        return get_model_for_node(node_name, config)
+    
+    # For multi-agent specialized agents and new components
+    multi_agent_components = {
+        "question_generator", "synthesis_agent", "research", "analysis", 
+        "verification", "alternative"
+    }
+    
+    if node_name in multi_agent_components:
+        return get_model_for_multi_agent(node_name, config)
+    
+    # Fallback to workflow node handling for unknown nodes
+    logger.warning(f"Unknown node '{node_name}', falling back to workflow node handling")
+    return get_model_for_node(node_name, config)
+
+
+def get_model_for_multi_agent(agent_name: str, config: Dict[str, Any]) -> ModelClient:
+    """
+    Get model for multi-agent orchestration components.
+    
+    Args:
+        agent_name: Name of the multi-agent component
+        config: Configuration dictionary containing model settings
+        
+    Returns:
+        Configured ModelClient instance
+    """
+    try:
+        # Check for multi-agent configuration first
+        multi_agent_config = config.get("multi_agent_config", {})
+        
+        if multi_agent_config:
+            # Look for specialized model configuration
+            specialized_models = multi_agent_config.get("specialized_models", {})
+            agent_config = specialized_models.get(agent_name)
+            
+            # If no specialized config, use boss model
+            if not agent_config:
+                agent_config = multi_agent_config.get("boss_model")
+            
+            if agent_config:
+                return _create_model_client_from_config(agent_config, agent_name)
+        
+        # Fallback to single-agent configuration
+        research_config = config.get("research_agent_model_config", {})
+        if research_config:
+            # Map multi-agent component names to single-agent equivalents
+            single_agent_mapping = {
+                "question_generator": "query_planner_model",
+                "synthesis_agent": "answer_generator_model",
+                "research": "boss_model",
+                "analysis": "boss_model", 
+                "verification": "evidence_selector_model",
+                "alternative": "boss_model"
+            }
+            
+            mapped_node = single_agent_mapping.get(agent_name, "boss_model")
+            agent_config = research_config.get(mapped_node) or research_config.get("boss_model")
+            
+            if agent_config:
+                return _create_model_client_from_config(agent_config, agent_name)
+        
+        # Final fallback - require configuration
+        logger.error(f"No model configuration found for multi-agent component '{agent_name}'")
+        raise ValueError(f"No model configuration found for '{agent_name}'. Please configure research agent models in Settings.")
+        
+    except Exception as e:
+        logger.error(f"Error creating model for multi-agent component {agent_name}: {str(e)}")
+        raise ValueError(f"Failed to create model for {agent_name}: {str(e)}. Please check your model configuration.")
+
+
 def get_model_for_node(node_name: str, config: Dict[str, Any]) -> ModelClient:
     """
-    Get the appropriate model instance for a specific node using the unified LLMModelFactory.
+    Get the appropriate model instance for a specific workflow node using the unified LLMModelFactory.
     
     Args:
         node_name: Name of the node requesting the model
@@ -121,46 +222,151 @@ def get_model_for_node(node_name: str, config: Dict[str, Any]) -> ModelClient:
                 logger.error(f"No model configuration found for node {node_name}. Please configure models in Settings.tsx")
                 raise ValueError(f"No model configuration found for node {node_name}. Please configure research agent models in Settings.")
         
-        model_type = node_config.get("model_type")
-        model_name = node_config.get("model_name")
-        
-        if not model_type or not model_name:
-            logger.error(f"Invalid model configuration for {node_name}: missing model_type or model_name")
-            raise ValueError(f"Invalid model configuration for {node_name}: missing model_type or model_name")
-        
-        model_type = model_type.lower()
-        temperature = node_config.get("temperature", 0.1)
-        max_tokens = node_config.get("max_new_tokens", 4096)
-        
-        logger.info(f"Creating {model_type} model for {node_name}: {model_name}")
-        
-        # Prepare model kwargs based on type - NOTE: Remove model_name from kwargs to avoid duplicate
-        model_kwargs = {
-            "temperature": temperature,
-            "max_new_tokens": max_tokens
-        }
-        
-        # Add type-specific parameters
-        if model_type == "ollama":
-            model_kwargs["num_ctx"] = node_config.get("num_ctx", 131072)
-            if "url" in node_config:
-                model_kwargs["url"] = node_config["url"]
-        elif model_type == "custom-oai":
-            if "base_url" in node_config:
-                model_kwargs["base_url"] = node_config["base_url"]
-            if "api_key" in node_config:
-                model_kwargs["api_key"] = node_config["api_key"]
-        elif model_type == "llamacpp":
-            model_kwargs["num_ctx"] = node_config.get("num_ctx", 131072)
-            model_kwargs["n_gpu_layers"] = node_config.get("n_gpu_layers", -1)
-        
-        # Create model using the factory - model_name passed as positional argument only
-        return ModelClient(model_type, model_name, **model_kwargs)
+        return _create_model_client_from_config(node_config, node_name)
             
     except Exception as e:
         logger.error(f"Error creating model for {node_name}: {str(e)}")
         # DO NOT provide hardcoded fallback - let the error propagate
         raise ValueError(f"Failed to create model for {node_name}: {str(e)}. Please check your model configuration in Settings.")
+
+
+def _create_model_client_from_config(node_config: Dict[str, Any], node_name: str) -> ModelClient:
+    """
+    Create a ModelClient from a configuration dictionary.
+    
+    Args:
+        node_config: Model configuration dictionary
+        node_name: Name of the node/agent for logging
+        
+    Returns:
+        Configured ModelClient instance
+    """
+    model_type = node_config.get("model_type")
+    model_name = node_config.get("model_name")
+    
+    if not model_type or not model_name:
+        logger.error(f"Invalid model configuration for {node_name}: missing model_type or model_name")
+        raise ValueError(f"Invalid model configuration for {node_name}: missing model_type or model_name")
+    
+    model_type = model_type.lower()
+    temperature = node_config.get("temperature", 0.1)
+    max_tokens = node_config.get("max_new_tokens", 4096)
+    
+    logger.info(f"Creating {model_type} model for {node_name}: {model_name}")
+    
+    # Prepare model kwargs based on type - NOTE: Remove model_name from kwargs to avoid duplicate
+    model_kwargs = {
+        "temperature": temperature,
+        "max_new_tokens": max_tokens
+    }
+    
+    # Add type-specific parameters
+    if model_type == "ollama":
+        model_kwargs["num_ctx"] = node_config.get("num_ctx", 131072)
+        if "url" in node_config:
+            model_kwargs["url"] = node_config["url"]
+    elif model_type == "custom-oai":
+        if "base_url" in node_config:
+            model_kwargs["base_url"] = node_config["base_url"]
+        if "api_key" in node_config:
+            model_kwargs["api_key"] = node_config["api_key"]
+    elif model_type == "llamacpp":
+        model_kwargs["num_ctx"] = node_config.get("num_ctx", 131072)
+        model_kwargs["n_gpu_layers"] = node_config.get("n_gpu_layers", -1)
+    
+    # Create model using the factory - model_name passed as positional argument only
+    return ModelClient(model_type, model_name, **model_kwargs)
+
+
+def get_research_agent_mode(config: Dict[str, Any]) -> str:
+    """
+    Determine the current research agent mode from configuration.
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        "single" or "multi" based on configuration
+    """
+    # Check for explicit mode setting
+    mode = config.get("research_agent_mode")
+    if mode in ["single", "multi"]:
+        return mode
+    
+    # Infer mode from configuration presence
+    if "multi_agent_config" in config:
+        return "multi"
+    elif "research_agent_model_config" in config:
+        return "single"
+    else:
+        # Default to single mode
+        return "single"
+
+
+def validate_dual_mode_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate dual-mode research agent configuration.
+    
+    Args:
+        config: Configuration dictionary to validate
+        
+    Returns:
+        Dictionary with validation results
+    """
+    validation_results = {
+        "valid": True,
+        "issues": [],
+        "mode": None,
+        "single_agent_valid": False,
+        "multi_agent_valid": False
+    }
+    
+    try:
+        mode = get_research_agent_mode(config)
+        validation_results["mode"] = mode
+        
+        # Validate single-agent configuration
+        single_config = config.get("research_agent_model_config", {})
+        if single_config and "boss_model" in single_config:
+            boss_model = single_config["boss_model"]
+            if boss_model.get("model_type") and boss_model.get("model_name"):
+                validation_results["single_agent_valid"] = True
+            else:
+                validation_results["issues"].append("Single-agent boss_model missing model_type or model_name")
+        else:
+            validation_results["issues"].append("Single-agent configuration missing or incomplete")
+        
+        # Validate multi-agent configuration
+        multi_config = config.get("multi_agent_config", {})
+        if multi_config:
+            boss_model = multi_config.get("boss_model", {})
+            if boss_model.get("model_type") and boss_model.get("model_name"):
+                validation_results["multi_agent_valid"] = True
+                
+                # Check specialized models
+                specialized = multi_config.get("specialized_models", {})
+                for agent_name, agent_config in specialized.items():
+                    if not (agent_config.get("model_type") and agent_config.get("model_name")):
+                        validation_results["issues"].append(f"Multi-agent {agent_name} missing model_type or model_name")
+            else:
+                validation_results["issues"].append("Multi-agent boss_model missing model_type or model_name")
+        else:
+            validation_results["issues"].append("Multi-agent configuration missing")
+        
+        # Overall validation
+        if mode == "single" and not validation_results["single_agent_valid"]:
+            validation_results["valid"] = False
+        elif mode == "multi" and not validation_results["multi_agent_valid"]:
+            validation_results["valid"] = False
+        elif not validation_results["single_agent_valid"] and not validation_results["multi_agent_valid"]:
+            validation_results["valid"] = False
+        
+        return validation_results
+        
+    except Exception as e:
+        validation_results["valid"] = False
+        validation_results["issues"].append(f"Validation error: {str(e)}")
+        return validation_results
 
 
 def get_embedding_model(config: Dict[str, Any]) -> InferenceModel:
@@ -229,22 +435,9 @@ def validate_model_config(config: Dict[str, Any]) -> bool:
         True if configuration is valid, False otherwise
     """
     try:
-        # Check if we have at least one model configuration
-        has_default = "default_model" in config
-        has_research_config = "research_agent_model_config" in config
-        
-        if not (has_default or has_research_config):
-            logger.warning("No model configuration found")
-            return False
-        
-        # If we have research agent config, validate it
-        if has_research_config:
-            research_config = config["research_agent_model_config"]
-            if "boss_model" not in research_config:
-                logger.warning("Research agent config missing boss_model")
-                return False
-        
-        return True
+        # Use the enhanced dual-mode validation
+        validation_results = validate_dual_mode_config(config)
+        return validation_results["valid"]
         
     except Exception as e:
         logger.error(f"Error validating model config: {str(e)}")
@@ -306,4 +499,65 @@ def get_available_models() -> Dict[str, list]:
             "nomic-embed-text",
             "mxbai-embed-large"
         ]
+    }
+
+
+def create_default_dual_mode_config() -> Dict[str, Any]:
+    """
+    Create a default dual-mode configuration for research agent.
+    
+    Returns:
+        Default configuration dictionary supporting both single and multi-agent modes
+    """
+    # Default model configuration
+    default_model = {
+        "model_type": "openai",
+        "model_name": "gpt-4o-mini",
+        "temperature": 0.1,
+        "max_new_tokens": 4096
+    }
+    
+    return {
+        "research_agent_mode": "single",
+        "single_agent_config": {
+            "model_config": {
+                "boss_model": default_model.copy(),
+                "query_planner_model": default_model.copy(),
+                "evidence_selector_model": default_model.copy(),
+                "compression_model": default_model.copy(),
+                "answer_generator_model": default_model.copy()
+            },
+            "max_research_loops": 3,
+            "max_research_context_tokens": 15000,
+            "compress_to_ratio": 0.2,
+            "search_config": {
+                "local_limit": 20,
+                "external_limit": 15
+            }
+        },
+        "multi_agent_config": {
+            "parallel_agents": 4,
+            "task_timeout": 300,
+            "boss_model": default_model.copy(),
+            "specialized_models": {
+                "question_generator": default_model.copy(),
+                "research_agent": default_model.copy(),
+                "analysis_agent": default_model.copy(),
+                "verification_agent": default_model.copy(),
+                "synthesis_agent": default_model.copy()
+            },
+            "search_config": {
+                "local_limit": 25,
+                "external_limit": 20
+            },
+            "synthesis_config": {
+                "conflict_resolution": "weighted_consensus",
+                "citation_strategy": "comprehensive"
+            }
+        },
+        "embedding_model": {
+            "model_type": "sentence-transformer",
+            "model_name": "Alibaba-NLP/gte-large-en-v1.5",
+            "trust_remote_code": True
+        }
     } 

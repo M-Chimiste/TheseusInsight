@@ -137,6 +137,44 @@ class UnifiedSearchTool:
             return self._format_comprehensive_results(
                 query, ranked_results, duplicate_groups, search_summary, config
             )
+
+    # ------------------------------------------------------------------
+    # Compatibility helper for legacy callers (e.g., AgentManager)
+    # ------------------------------------------------------------------
+    def search(self, query: str, local_limit: int = 15, external_limit: int = 15, **kwargs) -> List[Dict[str, Any]]:
+        """Legacy helper that exposes a simple search interface.
+
+        Internally delegates to `comprehensive_search` with a SearchConfig
+        built from the supplied limits and returns a **list of dictionaries**
+        containing simplified paper metadata expected by the research agents.
+
+        Args:
+            query: Search query string
+            local_limit: Maximum number of local papers to retrieve
+            external_limit: Maximum number of external papers to retrieve
+            **kwargs: Ignored but accepted for forward-compatibility
+
+        Returns:
+            List[Dict[str, Any]] with keys: title, abstract, url, source, paper_id, relevance_score
+        """
+        cfg = SearchConfig(local_limit=local_limit, external_limit=external_limit)
+        results = self.comprehensive_search(query, config=cfg, return_raw_results=True)
+
+        ranked_results: List[RankedResult] = results.get('ranked_results', [])  # type: ignore
+        sources: List[Dict[str, Any]] = []
+        for ranked in ranked_results:
+            paper = ranked.paper_info
+            sources.append({
+                'paper_id': paper.paper_id,
+                'title': paper.title,
+                'abstract': paper.abstract,
+                'url': paper.url,
+                'source': paper.source,
+                'relevance_score': ranked.relevance_score,
+                'ranking_method': ranked.ranking_method,
+            })
+
+        return sources
     
     def _search_local_and_extract(self, query: str, limit: int) -> List[PaperInfo]:
         """Search local database and extract structured paper info."""

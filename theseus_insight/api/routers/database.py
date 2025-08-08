@@ -189,7 +189,7 @@ async def download_exported_database(task_id: str):
     if task["status"] != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail=f"Task is not completed (current status: {task['status']})")
 
-    result = task.get("result", {})
+    result = task.get("result_json", {})
     archive_path = result.get("archive_path")
     
     # Debug logging

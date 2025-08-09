@@ -23,7 +23,7 @@ CREATE TABLE scheduled_tasks (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     task_type scheduled_task_type NOT NULL,
-    profile_id INTEGER REFERENCES profiles(id) ON DELETE CASCADE,
+    profile_id INTEGER REFERENCES research_profiles(id) ON DELETE CASCADE,
     is_enabled BOOLEAN DEFAULT true,
     frequency schedule_frequency NOT NULL,
     

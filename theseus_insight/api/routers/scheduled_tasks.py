@@ -1,6 +1,7 @@
 """
 API router for scheduled tasks management.
 Handles CRUD operations for user-configurable scheduled tasks.
+Updated to fix 404 issues.
 """
 
 import asyncio
@@ -13,7 +14,7 @@ from ...scheduler import scheduler as theseus_scheduler
 from apscheduler.triggers.cron import CronTrigger
 import json
 
-router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled_tasks"])
+router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled_tasks"])
 
 
 class ScheduledTaskConfig(BaseModel):
@@ -308,7 +309,7 @@ async def run_scheduled_task(task_id: int):
         raise
 
 
-@router.get("/", response_model=List[ScheduledTaskResponse])
+@router.get("", response_model=List[ScheduledTaskResponse])
 async def get_scheduled_tasks(
     profile_id: Optional[int] = None,
     task_type: Optional[str] = None,
@@ -319,7 +320,7 @@ async def get_scheduled_tasks(
         query = """
             SELECT st.*, p.name as profile_name
             FROM scheduled_tasks st
-            LEFT JOIN profiles p ON st.profile_id = p.id
+            LEFT JOIN research_profiles p ON st.profile_id = p.id
             WHERE 1=1
         """
         params = []
@@ -348,12 +349,15 @@ async def get_scheduled_tasks(
 async def get_scheduled_task(task_id: int):
     """Get a specific scheduled task."""
     with get_cursor() as cursor:
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT st.*, p.name as profile_name
             FROM scheduled_tasks st
-            LEFT JOIN profiles p ON st.profile_id = p.id
+            LEFT JOIN research_profiles p ON st.profile_id = p.id
             WHERE st.id = %s
-        """, (task_id,))
+            """,
+            (task_id,),
+        )
         task = cursor.fetchone()
         
         if not task:
@@ -362,7 +366,7 @@ async def get_scheduled_task(task_id: int):
         return ScheduledTaskResponse(**task)
 
 
-@router.post("/", response_model=ScheduledTaskResponse)
+@router.post("", response_model=ScheduledTaskResponse)
 async def create_scheduled_task(task: ScheduledTaskCreate):
     """Create a new scheduled task."""
     with get_cursor() as cursor:
@@ -373,11 +377,12 @@ async def create_scheduled_task(task: ScheduledTaskCreate):
             task.minute,
             task.day_of_week,
             task.day_of_month,
-            task.timezone
+            task.timezone,
         )
         
         # Insert the task
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO scheduled_tasks (
                 name, task_type, profile_id, is_enabled, frequency,
                 day_of_week, day_of_month, hour, minute, timezone,
@@ -385,20 +390,22 @@ async def create_scheduled_task(task: ScheduledTaskCreate):
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             ) RETURNING id
-        """, (
-            task.name,
-            task.task_type,
-            task.profile_id,
-            task.is_enabled,
-            task.frequency,
-            task.day_of_week,
-            task.day_of_month,
-            task.hour,
-            task.minute,
-            task.timezone,
-            json.dumps(task.config.dict()),
-            next_run_at
-        ))
+            """,
+            (
+                task.name,
+                task.task_type,
+                task.profile_id,
+                task.is_enabled,
+                task.frequency,
+                task.day_of_week,
+                task.day_of_month,
+                task.hour,
+                task.minute,
+                task.timezone,
+                json.dumps(task.config.dict()),
+                next_run_at,
+            ),
+        )
         task_id = cursor.fetchone()['id']
         
         # If enabled, schedule in APScheduler
@@ -410,17 +417,20 @@ async def create_scheduled_task(task: ScheduledTaskCreate):
                 'hour': task.hour,
                 'minute': task.minute,
                 'day_of_week': task.day_of_week,
-                'day_of_month': task.day_of_month
+                'day_of_month': task.day_of_month,
             }
             await schedule_task_in_apscheduler(task_id, task_data)
         
         # Fetch and return the created task
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT st.*, p.name as profile_name
             FROM scheduled_tasks st
-            LEFT JOIN profiles p ON st.profile_id = p.id
+            LEFT JOIN research_profiles p ON st.profile_id = p.id
             WHERE st.id = %s
-        """, (task_id,))
+            """,
+            (task_id,),
+        )
         
         return ScheduledTaskResponse(**cursor.fetchone())
 
@@ -526,7 +536,7 @@ async def update_scheduled_task(task_id: int, update: ScheduledTaskUpdate):
         cursor.execute("""
             SELECT st.*, p.name as profile_name
             FROM scheduled_tasks st
-            LEFT JOIN profiles p ON st.profile_id = p.id
+            LEFT JOIN research_profiles p ON st.profile_id = p.id
             WHERE st.id = %s
         """, (task_id,))
         

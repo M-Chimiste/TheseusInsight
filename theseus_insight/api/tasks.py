@@ -227,6 +227,13 @@ class TaskManager:
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
+        # Handle graceful completion: if task is already completed/failed, don't overwrite unless it's an error
+        existing_status = task.get('status', '')
+        if existing_status in ['completed', 'failed'] and status == TaskStatus.COMPLETED:
+            # Task already completed, just return without error
+            print(f"Task {task_id} already marked as {existing_status}, skipping duplicate completion")
+            return
+        
         # Calculate final progress based on status
         final_progress = progress if status == TaskStatus.PROCESSING else (100 if status == TaskStatus.COMPLETED else 0)
         

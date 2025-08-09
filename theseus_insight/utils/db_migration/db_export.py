@@ -1102,6 +1102,87 @@ class DatabaseExporter:
         print(f"Exported {len(summaries)} label summaries to {output_file}")
         return str(output_file)
     
+    def export_scheduled_tasks(self) -> str:
+        """Export scheduled tasks configuration."""
+        print("Exporting scheduled tasks...")
+        
+        tasks = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, name, task_type, profile_id, is_enabled, frequency,
+                       day_of_week, day_of_month, hour, minute, timezone,
+                       config, last_run_at, next_run_at, last_run_status,
+                       last_run_task_id, run_count, error_count,
+                       created_at, updated_at
+                FROM scheduled_tasks
+                ORDER BY id
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                tasks.append({
+                    'id': row['id'],
+                    'name': row['name'],
+                    'task_type': row['task_type'],
+                    'profile_id': row['profile_id'],
+                    'is_enabled': row['is_enabled'],
+                    'frequency': row['frequency'],
+                    'day_of_week': row['day_of_week'],
+                    'day_of_month': row['day_of_month'],
+                    'hour': row['hour'],
+                    'minute': row['minute'],
+                    'timezone': row['timezone'],
+                    'config': row['config'],
+                    'last_run_at': row['last_run_at'].isoformat() if row['last_run_at'] else None,
+                    'next_run_at': row['next_run_at'].isoformat() if row['next_run_at'] else None,
+                    'last_run_status': row['last_run_status'],
+                    'last_run_task_id': row['last_run_task_id'],
+                    'run_count': row['run_count'],
+                    'error_count': row['error_count'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+        
+        output_file = self.output_dir / "scheduled_tasks.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(tasks, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(tasks)} scheduled tasks to {output_file}")
+        return str(output_file)
+    
+    def export_scheduled_task_runs(self) -> str:
+        """Export scheduled task run history."""
+        print("Exporting scheduled task runs...")
+        
+        runs = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, scheduled_task_id, task_id, started_at, completed_at,
+                       status, error_message, result
+                FROM scheduled_task_runs
+                ORDER BY started_at DESC
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                runs.append({
+                    'id': row['id'],
+                    'scheduled_task_id': row['scheduled_task_id'],
+                    'task_id': row['task_id'],
+                    'started_at': row['started_at'].isoformat() if row['started_at'] else None,
+                    'completed_at': row['completed_at'].isoformat() if row['completed_at'] else None,
+                    'status': row['status'],
+                    'error_message': row['error_message'],
+                    'result': row['result']
+                })
+        
+        output_file = self.output_dir / "scheduled_task_runs.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(runs, f, indent=2, ensure_ascii=False)
+        
+        print(f"Exported {len(runs)} scheduled task runs to {output_file}")
+        return str(output_file)
+    
     def create_metadata(self) -> str:
         """Create metadata file with export information."""
         # Extract schema version if available
@@ -1129,7 +1210,8 @@ class DatabaseExporter:
                 "research_runs", "research_agent_state", "paper_fulltext", 
                 "mindmap_reports", "model_catalog", "topics", "topic_metrics",
                 "paper_topics", "research_interests", "research_interest_metrics",
-                "paper_research_interests", "label_summaries"
+                "paper_research_interests", "label_summaries", "scheduled_tasks",
+                "scheduled_task_runs"
             ],
             "description": "Theseus Insight database export with Research Profiles, Trends, Research Interests, and full feature set",
             "backwards_compatible": True,
@@ -1139,7 +1221,8 @@ class DatabaseExporter:
                 "research_runs", "research_agent_state", "paper_fulltext",
                 "mindmap_reports", "model_catalog", "topics", "topic_metrics",
                 "paper_topics", "research_interests", "research_interest_metrics",
-                "paper_research_interests", "label_summaries"
+                "paper_research_interests", "label_summaries", "scheduled_tasks",
+                "scheduled_task_runs"
             ]
         }
         
@@ -1439,6 +1522,22 @@ class DatabaseExporter:
                 result["files"]["label_summaries"] = label_summaries_file
             except Exception as e:
                 print(f"Warning: Could not export label summaries: {e}")
+            
+            try:
+                scheduled_tasks_file = self.export_scheduled_tasks()
+                if progress_callback:
+                    progress_callback(98, "scheduled_tasks_exported")
+                result["files"]["scheduled_tasks"] = scheduled_tasks_file
+            except Exception as e:
+                print(f"Warning: Could not export scheduled tasks: {e}")
+            
+            try:
+                scheduled_task_runs_file = self.export_scheduled_task_runs()
+                if progress_callback:
+                    progress_callback(99, "scheduled_task_runs_exported")
+                result["files"]["scheduled_task_runs"] = scheduled_task_runs_file
+            except Exception as e:
+                print(f"Warning: Could not export scheduled task runs: {e}")
         
         metadata_file = self.create_metadata()
         if progress_callback:

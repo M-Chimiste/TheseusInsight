@@ -596,6 +596,13 @@ def rank_papers(
                     
                     try:
                         resp_json = json_repair.loads(resp)
+                        
+                        # Ensure resp_json is a dictionary
+                        if not isinstance(resp_json, dict):
+                            if attempts >= 3:
+                                raise TypeError(f"Expected dict from JSON parsing, got {type(resp_json)}")
+                            continue
+                            
                     except Exception:
                         if attempts >= 3:
                             raise

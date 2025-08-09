@@ -343,19 +343,128 @@ export const runsApi = {
   deleteRunArtifact: (runId: number) => api.delete(`/runs/${runId}/artifact`),
 };
 
+// Scheduled Tasks Types
+export interface ScheduledTaskConfig {
+  emailRecipients?: string[];
+  researchInterests?: string[];
+  use_profile_recipients?: boolean;
+  lookback_months?: number;
+  duration_months?: number;
+  min_papers?: number;
+  months_to_keep?: number;
+}
+
+export interface ScheduledTaskCreate {
+  name: string;
+  task_type: 'newsletter' | 'trends_recomputation' | 'database_cleanup' | 'profile_ingestion' | 'bulk_embedding';
+  profile_id?: number;
+  is_enabled: boolean;
+  frequency: 'hourly' | 'daily' | 'weekly' | 'monthly';
+  day_of_week?: number; // 0=Monday, 6=Sunday
+  day_of_month?: number; // 1-31
+  hour: number; // 0-23
+  minute?: number; // 0-59
+  timezone?: string;
+  config: ScheduledTaskConfig;
+}
+
+export interface ScheduledTaskUpdate {
+  name?: string;
+  is_enabled?: boolean;
+  frequency?: 'hourly' | 'daily' | 'weekly' | 'monthly';
+  day_of_week?: number;
+  day_of_month?: number;
+  hour?: number;
+  minute?: number;
+  timezone?: string;
+  config?: ScheduledTaskConfig;
+}
+
+export interface ScheduledTask {
+  id: number;
+  name: string;
+  task_type: string;
+  profile_id?: number;
+  is_enabled: boolean;
+  frequency: string;
+  day_of_week?: number;
+  day_of_month?: number;
+  hour: number;
+  minute: number;
+  timezone: string;
+  config: ScheduledTaskConfig;
+  last_run_at?: string;
+  next_run_at?: string;
+  last_run_status?: string;
+  last_run_task_id?: string;
+  run_count: number;
+  error_count: number;
+  created_at: string;
+  updated_at: string;
+  profile_name?: string;
+}
+
+export interface ScheduledTaskRun {
+  id: number;
+  scheduled_task_id: number;
+  task_id: string;
+  started_at: string;
+  completed_at?: string;
+  status: string;
+  error_message?: string;
+  result?: any;
+}
+
+// Scheduled Tasks API
+export const scheduledTasksApi = {
+  // Get all scheduled tasks
+  getTasks: (params?: { profile_id?: number; task_type?: string; is_enabled?: boolean }) => 
+    api.get<ScheduledTask[]>('/scheduled-tasks', { params }),
+  
+  // Get a specific task
+  getTask: (taskId: number) => api.get<ScheduledTask>(`/scheduled-tasks/${taskId}`),
+  
+  // Create a new scheduled task
+  createTask: (task: ScheduledTaskCreate) => api.post<ScheduledTask>('/scheduled-tasks', task),
+  
+  // Update a scheduled task
+  updateTask: (taskId: number, update: ScheduledTaskUpdate) => 
+    api.put<ScheduledTask>(`/scheduled-tasks/${taskId}`, update),
+  
+  // Delete a scheduled task
+  deleteTask: (taskId: number) => api.delete(`/scheduled-tasks/${taskId}`),
+  
+  // Get run history for a task
+  getTaskRuns: (taskId: number, limit?: number, offset?: number) => 
+    api.get<ScheduledTaskRun[]>(`/scheduled-tasks/${taskId}/runs`, { params: { limit, offset } }),
+  
+  // Manually run a task
+  runTaskNow: (taskId: number) => api.post(`/scheduled-tasks/${taskId}/run`),
+  
+  // Sync all tasks (e.g., after server restart)
+  syncTasks: () => api.post('/scheduled-tasks/sync'),
+};
+
 // Research Agent API
 export const researchAgentApi = {
   startResearchTask: (request: any) => api.post('/research-agent/run', request),
   getTaskStatus: (taskId: string) => api.get(`/research-agent/status/${taskId}`),
   getTaskResult: (taskId: string) => api.get(`/research-agent/result/${taskId}`),
-  getHistory: (limit: number = 50, offset: number = 0, statusFilter?: string) => {
+  getHistory: (limit: number = 50, offset: number = 0, statusFilter?: string, modeFilter?: string) => {
     const params: any = { limit, offset };
     if (statusFilter) params.status_filter = statusFilter;
+    if (modeFilter) params.mode_filter = modeFilter;
     return api.get('/research-agent/history', { params });
   },
   cancelTask: (taskId: string) => api.delete(`/research-agent/${taskId}`),
   getWorkflowInfo: () => api.get('/research-agent/workflow/info'),
   getHealth: () => api.get('/research-agent/health'),
+  
+  // Dual-mode configuration endpoints
+  getModes: () => api.get('/research-agent/modes'),
+  setMode: (mode: 'single' | 'multi') => api.put('/research-agent/mode', { mode }),
+  getModeConfig: (mode: 'single' | 'multi') => api.get(`/research-agent/config/${mode}`),
+  setModeConfig: (mode: 'single' | 'multi', config: any) => api.put(`/research-agent/config/${mode}`, config),
 };
 
 // Model Catalog API
@@ -659,6 +768,7 @@ export const papersApi = {
 // Research Agent Interfaces
 export interface ResearchTaskRequest {
   research_question: string;
+  mode?: 'single' | 'multi';
   config?: {
     search_config?: {
       local_limit?: number;
@@ -677,6 +787,10 @@ export interface ResearchTaskRequest {
       include_methodology?: boolean;
       include_limitations?: boolean;
     };
+    synthesis_config?: {
+      strategy?: 'weighted_consensus' | 'evidence_based' | 'confidence_weighted';
+      confidence_threshold?: number;
+    };
   };
   save_to_library?: boolean;
 }
@@ -686,11 +800,13 @@ export interface ResearchTaskResponse {
   status: string;
   created_at: string;
   research_question: string;
+  mode: 'single' | 'multi';
 }
 
 export interface ResearchTaskStatus {
   task_id: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  mode?: 'single' | 'multi';
   progress?: any;
   created_at: string;
   started_at?: string;
@@ -702,6 +818,7 @@ export interface ResearchTaskResult {
   task_id: string;
   status: string;
   research_question: string;
+  mode: 'single' | 'multi';
   final_answer?: string;
   generation_summary?: string;
   statistics?: {
@@ -711,6 +828,8 @@ export interface ResearchTaskResult {
     evidence_pieces: number;
     evidence_sufficient: boolean;
     compression_used: boolean;
+    agents_used?: number;
+    synthesis_confidence?: number;
   };
   sub_queries: string[];
   sources_gathered: any[];
@@ -728,6 +847,7 @@ export interface ResearchHistoryItem {
   task_id: string;
   research_question: string;
   status: string;
+  mode?: 'single' | 'multi';
   created_at: string;
   started_at?: string;
   completed_at?: string;
@@ -738,7 +858,34 @@ export interface ResearchHistoryItem {
     evidence_pieces: number;
     evidence_sufficient: boolean;
     compression_used: boolean;
+    agents_used?: number;
+    synthesis_confidence?: number;
   };
+}
+
+export interface ResearchModeResponse {
+  current_mode: 'single' | 'multi';
+  validation: {
+    valid: boolean;
+    issues: string[];
+    has_single_config: boolean;
+    has_multi_config: boolean;
+  };
+  success: boolean;
+  message: string;
+}
+
+export interface ResearchConfigResponse {
+  current_mode: 'single' | 'multi';
+  single_agent_config: any;
+  multi_agent_config: any;
+  validation: {
+    valid: boolean;
+    issues: string[];
+    has_single_config: boolean;
+    has_multi_config: boolean;
+  };
+  available_modes: string[];
 }
 
 export interface ResearchWebSocketMessage {

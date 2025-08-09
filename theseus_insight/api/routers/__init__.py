@@ -14,6 +14,7 @@ from .profiles import router as profiles_router
 from .jobs import router as jobs_router
 from .bulk_operations import router as bulk_operations_router
 from .websockets import router as websockets_router, manager as websocket_manager
+from .scheduled_tasks import router as scheduled_tasks_router
 
 # List of all routers for easy importing in main.py
 all_routers = [
@@ -32,7 +33,8 @@ all_routers = [
     profiles_router,
     jobs_router,
     bulk_operations_router,
-    websockets_router
+    websockets_router,
+    scheduled_tasks_router
 ]
 
 __all__ = [
@@ -53,5 +55,6 @@ __all__ = [
     "bulk_operations_router",
     "websockets_router",
     "websocket_manager",
+    "scheduled_tasks_router",
     "all_routers"
 ] 

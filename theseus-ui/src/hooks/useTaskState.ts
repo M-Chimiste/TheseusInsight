@@ -61,10 +61,55 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
           task.task_type === `custom_${taskType}_run`
         );
         
-        // Skip checking for completed tasks on mount to prevent unnecessary WebSocket connections
-        // Only active (running) tasks should be restored to prevent navigation issues
+        // If no active task found, check sessionStorage for recent task info
+        // This handles reconnection after page refresh
         if (!activeTask) {
-          console.log(`[useTaskState] No active tasks found. Not checking completed tasks to prevent WebSocket issues.`);
+          console.log(`[useTaskState] No active tasks found. Checking sessionStorage for recent task.`);
+          
+          try {
+            // Look for stored task info in sessionStorage
+            const storedTaskId = sessionStorage.getItem(`last_${taskType}_task_id`);
+            const storedTaskTimestamp = sessionStorage.getItem(`last_${taskType}_task_timestamp`);
+            
+            if (storedTaskId && storedTaskTimestamp) {
+              const timestamp = parseInt(storedTaskTimestamp);
+              const now = Date.now();
+              // Only consider if task was started within last 10 minutes
+              if (now - timestamp < 10 * 60 * 1000) {
+                console.log(`[useTaskState] Found recent task in sessionStorage: ${storedTaskId}`);
+                
+                // Verify this task still exists and get its current status
+                try {
+                  const taskResponse = await taskApi.getTaskStatus(storedTaskId);
+                  const taskData = taskResponse.data;
+                  
+                  if (taskData && (taskData.status === 'processing' || taskData.status === 'pending')) {
+                    console.log(`[useTaskState] Reconnecting to stored task: ${storedTaskId}`);
+                    activeTask = {
+                      task_id: storedTaskId,
+                      type: taskType,
+                      status: taskData.status,
+                      progress: taskData.progress || 0,
+                      current_step: taskData.current_step || '',
+                      message: taskData.message || '',
+                      error: taskData.error || null
+                    };
+                  } else {
+                    // Task is no longer active, clean up sessionStorage
+                    sessionStorage.removeItem(`last_${taskType}_task_id`);
+                    sessionStorage.removeItem(`last_${taskType}_task_timestamp`);
+                  }
+                } catch (error) {
+                  console.error(`[useTaskState] Error verifying stored task:`, error);
+                  // Clean up invalid stored task
+                  sessionStorage.removeItem(`last_${taskType}_task_id`);
+                  sessionStorage.removeItem(`last_${taskType}_task_timestamp`);
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`[useTaskState] Error checking sessionStorage:`, error);
+          }
         }
         
         console.log(`[useTaskState] Found task for ${taskType}:`, activeTask);
@@ -196,6 +241,14 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
 
   const setTaskId = useCallback((taskId: string | null) => {
     if (taskId) {
+      // Store task info in sessionStorage for reconnection
+      try {
+        sessionStorage.setItem(`last_${taskType}_task_id`, taskId);
+        sessionStorage.setItem(`last_${taskType}_task_timestamp`, Date.now().toString());
+      } catch (e) {
+        // Handle quota exceeded errors silently
+      }
+      
       setTaskState(prev => ({
         ...prev,
         taskId,
@@ -206,6 +259,14 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
         error: null,
       }));
     } else {
+      // Clear sessionStorage when task is cleared
+      try {
+        sessionStorage.removeItem(`last_${taskType}_task_id`);
+        sessionStorage.removeItem(`last_${taskType}_task_timestamp`);
+      } catch (e) {
+        // Handle errors silently
+      }
+      
       setTaskState(DEFAULT_TASK_STATE);
     }
   }, [taskType]);

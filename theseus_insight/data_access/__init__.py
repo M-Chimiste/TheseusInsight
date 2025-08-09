@@ -17,4 +17,5 @@ from .trends import (
 )
 from .label_summaries import LabelSummariesRepository
 from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
-from .bulk_operations import BulkImporter, BulkExporter 
+from .bulk_operations import BulkImporter, BulkExporter
+from .scheduled_tasks import ScheduledTasksRepository, ScheduledTaskRunsRepository 

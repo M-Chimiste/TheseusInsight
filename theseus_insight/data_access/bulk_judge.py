@@ -505,9 +505,18 @@ class BulkJudgeRunner:
             # Parse JSON response
             try:
                 response_json = json_repair.loads(response)
+                
+                # Ensure response_json is a dictionary
+                if not isinstance(response_json, dict):
+                    if self.verbose:
+                        print(f"⚠️ Expected dict from JSON parsing, got {type(response_json)}")
+                        print(f"Raw response: {response[:200]}...")
+                    return None
+                    
             except Exception as e:
                 if self.verbose:
                     print(f"⚠️ JSON parsing failed: {e}")
+                    print(f"Raw response: {response[:200]}...")
                 return None
             
             # Validate required fields

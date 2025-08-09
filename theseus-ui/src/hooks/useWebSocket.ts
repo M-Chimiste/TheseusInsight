@@ -70,6 +70,29 @@ export const useWebSocket = (
   const webSocketRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef<number>(0);
 
+  // Helper function to restore last message from sessionStorage
+  const restoreLastMessage = (taskId: string) => {
+    try {
+      const storedMessage = sessionStorage.getItem(`ws_last_message_${taskId}`);
+      const storedTimestamp = sessionStorage.getItem(`ws_last_message_timestamp_${taskId}`);
+      
+      if (storedMessage && storedTimestamp) {
+        const timestamp = parseInt(storedTimestamp);
+        const now = Date.now();
+        // Only restore if message is less than 10 minutes old
+        if (now - timestamp < 10 * 60 * 1000) {
+          const parsedMessage = JSON.parse(storedMessage);
+          setLastMessage(parsedMessage);
+          console.log(`[useWebSocket] Restored last message for task ${taskId}:`, parsedMessage);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore last message:', e);
+    }
+    return false;
+  };
+
   const constructWebSocketUrl = (currentTaskId: string, currentType: 'newsletter' | 'podcast' | 'visualizer'): string => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Assuming your backend runs on port 8000. Adjust if different.
@@ -112,6 +135,12 @@ export const useWebSocket = (
       setReadyState(WebSocketReadyState.OPEN);
       setError(null);
       retryCountRef.current = 0; // Reset retry count on successful connection
+      
+      // Try to restore last message from sessionStorage for reconnection
+      if (taskId && !taskId.includes('dummy')) {
+        restoreLastMessage(taskId);
+      }
+      
       if (options?.onOpen) options.onOpen(event);
     };
 
@@ -129,7 +158,19 @@ export const useWebSocket = (
           hasNodes: !!(parsedData?.nodes),
           nodeCount: parsedData?.nodes?.length || 0
         });
+        
         setLastMessage(parsedData as RunStatusPayload); // Assume it's RunStatusPayload
+        
+        // Store latest message in sessionStorage for reconnection
+        if (taskId && !taskId.includes('dummy')) {
+          try {
+            sessionStorage.setItem(`ws_last_message_${taskId}`, JSON.stringify(parsedData));
+            sessionStorage.setItem(`ws_last_message_timestamp_${taskId}`, Date.now().toString());
+          } catch (e) {
+            // Handle quota exceeded errors silently
+          }
+        }
+        
         if (options?.onMessage) options.onMessage(event);
       } catch (e) {
         console.error('useWebSocket: Failed to parse message data:', e);

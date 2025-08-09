@@ -2116,6 +2116,118 @@ class DatabaseImporter:
         print(f"Label summaries import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
 
+    def import_scheduled_tasks(self, scheduled_tasks_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """Import scheduled tasks configuration."""
+        print(f"Importing scheduled tasks from {scheduled_tasks_file}...")
+        
+        with open(scheduled_tasks_file, 'r', encoding='utf-8') as f:
+            tasks = json.load(f)
+        
+        imported_count = 0
+        skipped_count = 0
+        
+        with get_cursor() as cursor:
+            for i, task in enumerate(tasks):
+                if progress_callback:
+                    progress_callback(i, len(tasks), f"Importing scheduled task {i+1}/{len(tasks)}")
+                
+                # Check if task already exists by name
+                if skip_duplicates:
+                    cursor.execute(
+                        "SELECT id FROM scheduled_tasks WHERE name = %s",
+                        (task['name'],)
+                    )
+                    if cursor.fetchone():
+                        skipped_count += 1
+                        continue
+                
+                # Insert scheduled task
+                cursor.execute("""
+                    INSERT INTO scheduled_tasks (
+                        name, task_type, profile_id, is_enabled, frequency,
+                        day_of_week, day_of_month, hour, minute, timezone,
+                        config, last_run_at, next_run_at, last_run_status,
+                        last_run_task_id, run_count, error_count,
+                        created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    task['name'],
+                    task['task_type'],
+                    task.get('profile_id'),
+                    task.get('is_enabled', True),
+                    task['frequency'],
+                    task.get('day_of_week'),
+                    task.get('day_of_month'),
+                    task['hour'],
+                    task.get('minute', 0),
+                    task.get('timezone', 'UTC'),
+                    json.dumps(task.get('config', {})),
+                    task.get('last_run_at'),
+                    task.get('next_run_at'),
+                    task.get('last_run_status'),
+                    task.get('last_run_task_id'),
+                    task.get('run_count', 0),
+                    task.get('error_count', 0),
+                    task.get('created_at'),
+                    task.get('updated_at')
+                ))
+                imported_count += 1
+        
+        print(f"Imported {imported_count} scheduled tasks, skipped {skipped_count}")
+        
+        return {"imported": imported_count, "skipped": skipped_count, "errors": 0}
+    
+    def import_scheduled_task_runs(self, scheduled_task_runs_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """Import scheduled task run history."""
+        print(f"Importing scheduled task runs from {scheduled_task_runs_file}...")
+        
+        with open(scheduled_task_runs_file, 'r', encoding='utf-8') as f:
+            runs = json.load(f)
+        
+        imported_count = 0
+        skipped_count = 0
+        
+        with get_cursor() as cursor:
+            for i, run in enumerate(runs):
+                if progress_callback:
+                    progress_callback(i, len(runs), f"Importing task run {i+1}/{len(runs)}")
+                
+                # Check if run already exists by task_id
+                if skip_duplicates:
+                    cursor.execute(
+                        "SELECT id FROM scheduled_task_runs WHERE task_id = %s",
+                        (run['task_id'],)
+                    )
+                    if cursor.fetchone():
+                        skipped_count += 1
+                        continue
+                
+                # Insert task run
+                cursor.execute("""
+                    INSERT INTO scheduled_task_runs (
+                        scheduled_task_id, task_id, started_at, completed_at,
+                        status, error_message, result
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    run['scheduled_task_id'],
+                    run['task_id'],
+                    run['started_at'],
+                    run.get('completed_at'),
+                    run['status'],
+                    run.get('error_message'),
+                    json.dumps(run.get('result')) if run.get('result') else None
+                ))
+                imported_count += 1
+        
+        print(f"Imported {imported_count} scheduled task runs, skipped {skipped_count}")
+        
+        return {"imported": imported_count, "skipped": skipped_count, "errors": 0}
+
     def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
@@ -2172,7 +2284,9 @@ class DatabaseImporter:
             "research_interests": "research_interests.json",
             "research_interest_metrics": "research_interest_metrics.json",
             "paper_research_interests": "paper_research_interests.json",
-            "label_summaries": "label_summaries.json"
+            "label_summaries": "label_summaries.json",
+            "scheduled_tasks": "scheduled_tasks.json",
+            "scheduled_task_runs": "scheduled_task_runs.json"
         }
         
         for table_name, filename in file_map.items():
@@ -2274,6 +2388,14 @@ class DatabaseImporter:
                     )
                 elif table_name == "label_summaries":
                     results[table_name] = self.import_label_summaries(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "scheduled_tasks":
+                    results[table_name] = self.import_scheduled_tasks(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "scheduled_task_runs":
+                    results[table_name] = self.import_scheduled_task_runs(
                         str(file_path), skip_duplicates, create_progress_callback(i, table_name)
                     )
             except Exception as e:
@@ -2497,11 +2619,12 @@ class DatabaseImporter:
         
         # Tables to clear in order (respecting potential foreign key constraints)
         tables_to_clear = [
-            'logs', 'tasks', 'research_agent_state', 'research_runs', 'lit_reviews', 
-            'mindmap_reports', 'model_catalog', 'paper_fulltext', 'newsletters', 'podcasts', 
-            'paper_topics', 'topic_metrics', 'topics', 'paper_research_interests', 
-            'research_interest_metrics', 'research_interests', 'label_summaries', 
-            'paper_profile_scores', 'profile_research_interests', 'papers', 'research_profiles'
+            'logs', 'tasks', 'scheduled_task_runs', 'scheduled_tasks', 'research_agent_state', 
+            'research_runs', 'lit_reviews', 'mindmap_reports', 'model_catalog', 'paper_fulltext', 
+            'newsletters', 'podcasts', 'paper_topics', 'topic_metrics', 'topics', 
+            'paper_research_interests', 'research_interest_metrics', 'research_interests', 
+            'label_summaries', 'paper_profile_scores', 'profile_research_interests', 
+            'papers', 'research_profiles'
         ]
         deletion_counts = {}
         total_tables = len(tables_to_clear)

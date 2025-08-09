@@ -3,19 +3,21 @@ FastAPI Router for Research Agent
 
 Provides REST API endpoints for research agent functionality including
 task management, status tracking, result retrieval, and history management.
+Enhanced to support both single-agent and multi-agent modes.
 """
 
 import asyncio
 import logging
 import uuid
 from datetime import datetime, date
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
 from ...research_agent.workflow import ResearchAgentWorkflow, create_research_workflow
 from ...research_agent.tools import UnifiedSearchTool, LocalSearchTool, ExternalSearchTool, SearchConfig
 from ...research_agent.model_router import get_embedding_model
+from ...research_agent.orchestrator import MultiAgentOrchestrator, OrchestrationConfig, OrchestrationResult
 from ..models import ResearchAgentModelConfigApi
 from ...data_access import (
     ResearchRunRepository, ResearchAgentStateRepository, 
@@ -29,6 +31,7 @@ import os
 class ResearchTaskRequest(BaseModel):
     """Request model for starting a research task."""
     research_question: str = Field(..., description="The research question to investigate")
+    mode: Optional[Literal["single", "multi"]] = Field(None, description="Research agent mode ('single' or 'multi'). If not specified, uses current system setting.")
     config: Optional[Dict[str, Any]] = Field(None, description="Optional configuration overrides")
     save_to_library: bool = Field(True, description="Whether to save results to research library")
     
@@ -36,14 +39,14 @@ class ResearchTaskRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "research_question": "What are the latest developments in quantum computing for machine learning?",
+                "mode": "multi",
                 "config": {
                     "search_config": {
                         "local_limit": 20,
                         "external_limit": 15
                     },
-                    "evidence_config": {
-                        "min_evidence_threshold": 3,
-                        "quality_threshold": 0.7
+                    "synthesis_config": {
+                        "strategy": "weighted_consensus"
                     }
                 },
                 "save_to_library": True
@@ -57,12 +60,14 @@ class ResearchTaskResponse(BaseModel):
     status: str = Field(..., description="Current status of the task")
     created_at: str = Field(..., description="Task creation timestamp")
     research_question: str = Field(..., description="The research question being investigated")
+    mode: str = Field(..., description="Research agent mode used ('single' or 'multi')")
 
 
 class ResearchTaskStatus(BaseModel):
     """Response model for research task status."""
     task_id: str
     status: str  # "pending", "running", "completed", "failed", "cancelled"
+    mode: Optional[str] = None  # "single" or "multi"
     progress: Optional[Dict[str, Any]] = None
     created_at: str
     started_at: Optional[str] = None
@@ -75,6 +80,7 @@ class ResearchTaskResult(BaseModel):
     task_id: str
     status: str
     research_question: str
+    mode: str  # "single" or "multi"
     final_answer: Optional[str] = None
     generation_summary: Optional[str] = None
     statistics: Optional[Dict[str, Any]] = None
@@ -95,6 +101,7 @@ class ResearchHistoryItem(BaseModel):
     task_id: str
     research_question: str
     status: str
+    mode: Optional[str] = None  # "single" or "multi"
     created_at: str
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -107,6 +114,28 @@ class ResearchHistoryResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ResearchModeRequest(BaseModel):
+    """Request model for switching research agent mode."""
+    mode: Literal["single", "multi"] = Field(..., description="New research agent mode")
+
+
+class ResearchModeResponse(BaseModel):
+    """Response model for research mode operations."""
+    current_mode: str
+    validation: Dict[str, Any]
+    success: bool
+    message: str
+
+
+class ResearchConfigResponse(BaseModel):
+    """Response model for research configuration."""
+    current_mode: str
+    single_agent_config: Dict[str, Any]
+    multi_agent_config: Dict[str, Any]
+    validation: Dict[str, Any]
+    available_modes: List[str] = Field(default=["single", "multi"])
 
 
 # Router setup
@@ -125,37 +154,98 @@ research_tasks: Dict[str, Dict[str, Any]] = {}
 task_results: Dict[str, Dict[str, Any]] = {}
 
 
-def _serialize_paper_info(obj):
+def _serialize_paper_info(obj, visited=None):
     """
     Convert PaperInfo objects and other non-serializable objects to dictionaries.
     
     Args:
         obj: Object to serialize (could be PaperInfo, list, dict, etc.)
+        visited: Set of object IDs already visited (for cycle detection)
         
     Returns:
         JSON-serializable version of the object
     """
     from ...research_agent.tools.deduplication import PaperInfo
+    from types import MappingProxyType
+    import datetime
+    import uuid
     
-    if isinstance(obj, PaperInfo):
-        return {
-            'paper_id': obj.paper_id,
-            'title': obj.title,
-            'abstract': obj.abstract,
-            'url': obj.url,
-            'source': obj.source,
-            'raw_data': _serialize_paper_info(obj.raw_data)  # Recursively serialize raw_data
-        }
-    elif isinstance(obj, list):
-        return [_serialize_paper_info(item) for item in obj]
-    elif isinstance(obj, dict):
-        return {key: _serialize_paper_info(value) for key, value in obj.items()}
-    elif hasattr(obj, '__dict__'):
-        # For other objects with __dict__, convert to dict
-        return _serialize_paper_info(obj.__dict__)
-    else:
-        # For primitive types (str, int, float, bool, None), return as-is
-        return obj
+    # Initialize visited set for cycle detection
+    if visited is None:
+        visited = set()
+    
+    # Check for circular references
+    obj_id = id(obj)
+    if obj_id in visited:
+        # Return a placeholder for circular references
+        return f"<circular-reference: {type(obj).__name__}>"
+    
+    try:
+        if isinstance(obj, PaperInfo):
+            visited.add(obj_id)
+            result = {
+                'paper_id': obj.paper_id,
+                'title': obj.title,
+                'abstract': obj.abstract,
+                'url': obj.url,
+                'source': obj.source,
+                'raw_data': _serialize_paper_info(obj.raw_data, visited)  # Recursively serialize raw_data
+            }
+            visited.discard(obj_id)
+            return result
+        elif isinstance(obj, MappingProxyType):
+            visited.add(obj_id)
+            # Convert mappingproxy to regular dict
+            result = {key: _serialize_paper_info(value, visited) for key, value in obj.items()}
+            visited.discard(obj_id)
+            return result
+        elif isinstance(obj, (datetime.datetime, datetime.date)):
+            # Convert datetime objects to ISO format strings
+            return obj.isoformat()
+        elif isinstance(obj, uuid.UUID):
+            # Convert UUID objects to strings
+            return str(obj)
+        elif isinstance(obj, set):
+            visited.add(obj_id)
+            # Convert sets to lists
+            result = [_serialize_paper_info(item, visited) for item in obj]
+            visited.discard(obj_id)
+            return result
+        elif isinstance(obj, tuple):
+            visited.add(obj_id)
+            # Convert tuples to lists
+            result = [_serialize_paper_info(item, visited) for item in obj]
+            visited.discard(obj_id)
+            return result
+        elif isinstance(obj, list):
+            visited.add(obj_id)
+            result = [_serialize_paper_info(item, visited) for item in obj]
+            visited.discard(obj_id)
+            return result
+        elif isinstance(obj, dict):
+            visited.add(obj_id)
+            result = {key: _serialize_paper_info(value, visited) for key, value in obj.items()}
+            visited.discard(obj_id)
+            return result
+        elif hasattr(obj, '__dict__'):
+            visited.add(obj_id)
+            # For other objects with __dict__, convert to dict
+            result = _serialize_paper_info(obj.__dict__, visited)
+            visited.discard(obj_id)
+            return result
+        # Handle callable objects by returning their name, preventing serialization errors
+        elif callable(obj):
+            return f"<callable: {getattr(obj, '__name__', 'unnamed')}"
+        else:
+            # For primitive types (str, int, float, bool, None), return as-is
+            return obj
+    except Exception as e:
+        # Remove from visited set on error
+        if obj_id in visited:
+            visited.discard(obj_id)
+        logger.warning(f"Failed to serialize object of type {type(obj).__name__}: {e}")
+        # Return a string representation as fallback
+        return f"<non-serializable: {type(obj).__name__}>"
 
 
 def _mark_orphaned_research_tasks_as_failed():
@@ -205,7 +295,7 @@ _mark_orphaned_research_tasks_as_failed()
 
 async def get_research_workflow() -> ResearchAgentWorkflow:
     """
-    Dependency to create and configure a research workflow.
+    Dependency to create and configure a single-agent research workflow.
     
     Returns:
         Configured ResearchAgentWorkflow instance
@@ -291,24 +381,100 @@ async def get_research_workflow() -> ResearchAgentWorkflow:
         raise HTTPException(status_code=500, detail=f"Failed to initialize research workflow: {str(e)}")
 
 
+async def get_multi_agent_orchestrator() -> MultiAgentOrchestrator:
+    """
+    Dependency to create and configure a multi-agent orchestrator.
+    
+    Returns:
+        Configured MultiAgentOrchestrator instance
+    """
+    try:
+        # Ensure dual-mode configuration exists
+        SettingsRepository.ensure_dual_mode_config()
+        
+        # Get orchestration configuration
+        orchestration_config = SettingsRepository.get_orchestration_config()
+        
+        # Create embedding model
+        embedding_model = get_embedding_model(orchestration_config)
+        
+        # Create search tools
+        local_search_tool = LocalSearchTool(embedding_model)
+        external_search_tool = ExternalSearchTool()
+        unified_search_tool = UnifiedSearchTool(
+            local_search_tool=local_search_tool,
+            external_search_tool=external_search_tool
+        )
+        
+        # Get multi-agent configuration
+        multi_agent_config = SettingsRepository.get_multi_agent_config()
+        
+        if not multi_agent_config or not multi_agent_config.get("boss_model"):
+            logger.error("No multi-agent configuration found. Please configure multi-agent models in Settings.")
+            raise HTTPException(
+                status_code=500,
+                detail="Multi-agent not configured. Please configure multi-agent models in Settings → Research Agent Configuration"
+            )
+        
+        # Create orchestration configuration
+        orchestration_config_obj = OrchestrationConfig(
+            parallel_agents=multi_agent_config.get("parallel_agents", 4),
+            task_timeout=multi_agent_config.get("task_timeout", 300),
+            max_concurrent_agents=min(multi_agent_config.get("parallel_agents", 4), 6),
+            synthesis_config=multi_agent_config.get("synthesis_config", {})
+        )
+        
+        # Create orchestrator
+        orchestrator = MultiAgentOrchestrator(
+            model_config=orchestration_config,
+            search_tool=unified_search_tool,
+            config=orchestration_config_obj
+        )
+        
+        logger.info(f"Created multi-agent orchestrator with {orchestration_config_obj.parallel_agents} agents")
+        return orchestrator
+        
+    except Exception as e:
+        logger.error(f"Error creating multi-agent orchestrator: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to initialize multi-agent orchestrator: {str(e)}")
+
+
+def get_effective_mode(request_mode: Optional[str] = None) -> str:
+    """
+    Get the effective research agent mode for a request.
+    
+    Args:
+        request_mode: Mode specified in the request (optional)
+        
+    Returns:
+        Effective mode to use ("single" or "multi")
+    """
+    if request_mode and request_mode in ["single", "multi"]:
+        return request_mode
+    
+    # Use system default
+    return SettingsRepository.get_research_agent_mode()
+
+
 @router.post("/run", response_model=ResearchTaskResponse)
 async def start_research_task(
     request: ResearchTaskRequest,
-    background_tasks: BackgroundTasks,
-    workflow: ResearchAgentWorkflow = Depends(get_research_workflow)
+    background_tasks: BackgroundTasks
 ) -> ResearchTaskResponse:
     """
-    Start a new research task.
+    Start a new research task using either single-agent or multi-agent mode.
     
     Args:
-        request: Research task request with question and configuration
+        request: Research task request with question, mode, and configuration
         background_tasks: FastAPI background tasks for async execution
-        workflow: Research agent workflow instance
         
     Returns:
         Research task response with task ID and status
     """
     try:
+        # Determine effective mode
+        effective_mode = get_effective_mode(request.mode)
+        
         # Generate unique task ID
         task_id = str(uuid.uuid4())
         created_at = datetime.utcnow()
@@ -317,6 +483,7 @@ async def start_research_task(
         research_tasks[task_id] = {
             "task_id": task_id,
             "research_question": request.research_question,
+            "mode": effective_mode,
             "status": "pending",
             "created_at": created_at,
             "progress": {"status": "Task created and queued for execution"}
@@ -325,13 +492,13 @@ async def start_research_task(
         # Create task in general tasks table for job history
         TaskRepository.insert_task(
             task_id=task_id,
-            task_type="research-agent",
+            task_type=f"research-agent-{effective_mode}",
             status="pending",
-            config_json=request.config or {},
+            config_json={"mode": effective_mode, "config": request.config or {}},
             start_time=created_at.isoformat(),
             progress=0.0,
             current_step="Initializing research workflow",
-            message="Research task created and queued for execution"
+            message=f"Research task created for {effective_mode}-agent mode"
         )
         
         # Create specific research run entry for Research Library
@@ -339,32 +506,151 @@ async def start_research_task(
             task_id=task_id,
             research_question=request.research_question,
             status="pending",
-            config=request.config or {},
+            config={"mode": effective_mode, "config": request.config or {}},
             save_to_library=request.save_to_library
         )
         
-        # Start the research task in the background
-        background_tasks.add_task(
-            _run_research_task,
-            task_id,
-            request.research_question,
-            request.config,
-            request.save_to_library,
-            workflow
-        )
+        # Start the research task in the background based on mode
+        if effective_mode == "multi":
+            background_tasks.add_task(
+                _run_multi_agent_research_task,
+                task_id,
+                request.research_question,
+                request.config,
+                request.save_to_library
+            )
+        else:
+            background_tasks.add_task(
+                _run_single_agent_research_task,
+                task_id,
+                request.research_question,
+                request.config,
+                request.save_to_library
+            )
         
-        logger.info(f"Started research task {task_id} for question: {request.research_question[:100]}")
+        logger.info(f"Started {effective_mode}-agent research task {task_id} for question: {request.research_question[:100]}")
         
         return ResearchTaskResponse(
             task_id=task_id,
             status="pending",
             created_at=_convert_datetime_to_string(created_at),
-            research_question=request.research_question
+            research_question=request.research_question,
+            mode=effective_mode
         )
         
     except Exception as e:
         logger.error(f"Error starting research task: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start research task: {str(e)}")
+
+
+# New endpoints for dual-mode configuration management
+
+@router.get("/modes", response_model=ResearchConfigResponse)
+async def get_research_modes() -> ResearchConfigResponse:
+    """
+    Get current research agent mode configuration and available modes.
+    
+    Returns:
+        Current mode configuration and validation status
+    """
+    try:
+        # Ensure dual-mode configuration exists
+        SettingsRepository.ensure_dual_mode_config()
+        
+        current_mode = SettingsRepository.get_research_agent_mode()
+        single_config = SettingsRepository.get_single_agent_config()
+        multi_config = SettingsRepository.get_multi_agent_config()
+        validation = SettingsRepository.validate_research_agent_config()
+        
+        return ResearchConfigResponse(
+            current_mode=current_mode,
+            single_agent_config=single_config,
+            multi_agent_config=multi_config,
+            validation=validation,
+            available_modes=["single", "multi"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting research modes: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get research modes: {str(e)}")
+
+
+@router.put("/mode", response_model=ResearchModeResponse)
+async def set_research_mode(request: ResearchModeRequest) -> ResearchModeResponse:
+    """
+    Switch research agent mode between single and multi-agent.
+    
+    Args:
+        request: New mode to switch to
+        
+    Returns:
+        Mode switch results and validation status
+    """
+    try:
+        validation_results = SettingsRepository.switch_research_agent_mode(request.mode)
+        
+        return ResearchModeResponse(
+            current_mode=request.mode,
+            validation=validation_results,
+            success=validation_results["valid"],
+            message=f"Successfully switched to {request.mode}-agent mode" if validation_results["valid"] 
+                   else f"Switched to {request.mode}-agent mode but configuration has issues: {', '.join(validation_results['issues'])}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error setting research mode: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to set research mode: {str(e)}")
+
+
+@router.get("/config/{mode}")
+async def get_mode_config(mode: Literal["single", "multi"]) -> Dict[str, Any]:
+    """
+    Get configuration for a specific research agent mode.
+    
+    Args:
+        mode: Mode to get configuration for
+        
+    Returns:
+        Configuration dictionary for the specified mode
+    """
+    try:
+        if mode == "single":
+            return SettingsRepository.get_single_agent_config()
+        elif mode == "multi":
+            return SettingsRepository.get_multi_agent_config()
+        else:
+            raise HTTPException(status_code=400, detail="Invalid mode. Must be 'single' or 'multi'")
+            
+    except Exception as e:
+        logger.error(f"Error getting {mode} config: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get {mode} configuration: {str(e)}")
+
+
+@router.put("/config/{mode}")
+async def set_mode_config(mode: Literal["single", "multi"], config: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Set configuration for a specific research agent mode.
+    
+    Args:
+        mode: Mode to set configuration for
+        config: Configuration dictionary
+        
+    Returns:
+        Success confirmation
+    """
+    try:
+        if mode == "single":
+            SettingsRepository.set_single_agent_config(config)
+        elif mode == "multi":
+            SettingsRepository.set_multi_agent_config(config)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid mode. Must be 'single' or 'multi'")
+        
+        return {"message": f"Successfully updated {mode}-agent configuration"}
+        
+    except Exception as e:
+        logger.error(f"Error setting {mode} config: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to set {mode} configuration: {str(e)}")
 
 
 @router.get("/status/{task_id}", response_model=ResearchTaskStatus)
@@ -381,9 +667,14 @@ async def get_research_task_status(task_id: str) -> ResearchTaskStatus:
     # Try to get from research runs first (more detailed)
     research_run = ResearchRunRepository.get_research_run(task_id)
     if research_run:
+        # Extract mode from config if available
+        config = research_run.get("config", {})
+        mode = config.get("mode") if isinstance(config, dict) else None
+        
         return ResearchTaskStatus(
             task_id=task_id,
             status=research_run["status"],
+            mode=mode,
             progress=research_run.get("progress"),
             created_at=_convert_datetime_to_string(research_run["created_at"]),
             started_at=_convert_datetime_to_string(research_run.get("started_at")),
@@ -394,9 +685,14 @@ async def get_research_task_status(task_id: str) -> ResearchTaskStatus:
     # Fallback to general task table
     task = TaskRepository.get_task(task_id)
     if task:
+        # Extract mode from config if available
+        config = task.get("config_json", {})
+        mode = config.get("mode") if isinstance(config, dict) else None
+        
         return ResearchTaskStatus(
             task_id=task_id,
             status=task["status"],
+            mode=mode,
             progress={"progress": task.get("progress", 0)},
             created_at=_convert_datetime_to_string(task["start_time"]),
             started_at=_convert_datetime_to_string(task["start_time"]) if task["status"] != "pending" else None,
@@ -425,10 +721,15 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
     if research_run["status"] not in ["completed", "failed"]:
         raise HTTPException(status_code=400, detail="Research task is not yet completed")
     
+    # Extract mode from config
+    config = research_run.get("config", {})
+    mode = config.get("mode", "single") if isinstance(config, dict) else "single"
+    
     return ResearchTaskResult(
         task_id=task_id,
         status=research_run["status"],
         research_question=research_run["research_question"],
+        mode=mode,
         final_answer=research_run.get("final_answer"),
         generation_summary=research_run.get("generation_summary"),
         statistics=research_run.get("statistics"),
@@ -449,7 +750,8 @@ async def get_research_task_result(task_id: str) -> ResearchTaskResult:
 async def get_research_history(
     limit: int = 50,
     offset: int = 0,
-    status_filter: Optional[str] = None
+    status_filter: Optional[str] = None,
+    mode_filter: Optional[Literal["single", "multi"]] = None
 ) -> ResearchHistoryResponse:
     """
     Get research task history from the database.
@@ -458,6 +760,7 @@ async def get_research_history(
         limit: Maximum number of items to return
         offset: Number of items to skip
         status_filter: Optional status filter ("completed", "failed", etc.)
+        mode_filter: Optional mode filter ("single", "multi")
         
     Returns:
         Paginated list of research history items
@@ -470,15 +773,29 @@ async def get_research_history(
             status_filter=status_filter
         )
         
+        # Apply mode filter if specified
+        if mode_filter:
+            filtered_runs = []
+            for run in research_runs:
+                config = run.get("config", {})
+                mode = config.get("mode", "single") if isinstance(config, dict) else "single"
+                if mode == mode_filter:
+                    filtered_runs.append(run)
+            research_runs = filtered_runs
+        
         # Get total count for pagination
         from ...db import get_cursor
         with get_cursor() as cursor:
             query = "SELECT COUNT(*) FROM research_runs"
             params = []
             
+            conditions = []
             if status_filter:
-                query += " WHERE status = %s"
+                conditions.append("status = %s")
                 params.append(status_filter)
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
             
             cursor.execute(query, params)
             total = cursor.fetchone()["count"]
@@ -486,10 +803,15 @@ async def get_research_history(
         # Convert to response model
         history_items = []
         for run in research_runs:
+            # Extract mode from config
+            config = run.get("config", {})
+            mode = config.get("mode", "single") if isinstance(config, dict) else "single"
+            
             history_items.append(ResearchHistoryItem(
                 task_id=run["task_id"],
                 research_question=run["research_question"],
                 status=run["status"],
+                mode=mode,
                 created_at=_convert_datetime_to_string(run["created_at"]),
                 started_at=_convert_datetime_to_string(run.get("started_at")),
                 completed_at=_convert_datetime_to_string(run.get("completed_at")),
@@ -571,26 +893,214 @@ async def delete_research_task(task_id: str) -> Dict[str, str]:
 
 
 @router.get("/workflow/info")
-async def get_workflow_info(
-    workflow: ResearchAgentWorkflow = Depends(get_research_workflow)
-) -> Dict[str, Any]:
+async def get_workflow_info() -> Dict[str, Any]:
     """
     Get information about the research workflow configuration.
     
-    Args:
-        workflow: Research agent workflow instance
-        
     Returns:
-        Workflow configuration information
+        Workflow configuration information for both modes
     """
     try:
-        return workflow.get_workflow_info()
+        current_mode = SettingsRepository.get_research_agent_mode()
+        status = SettingsRepository.get_dual_mode_status()
+        
+        workflow_info = {
+            "current_mode": current_mode,
+            "dual_mode_status": status,
+            "modes": {
+                "single": {
+                    "description": "Sequential workflow with research loops",
+                    "workflow_type": "langgraph", 
+                    "available": status["has_single_config"]
+                },
+                "multi": {
+                    "description": "Parallel multi-agent orchestration",
+                    "workflow_type": "orchestrator",
+                    "available": status["has_multi_config"]
+                }
+            }
+        }
+        
+        # Add mode-specific details
+        if current_mode == "single":
+            try:
+                single_workflow = await get_research_workflow()
+                workflow_info["current_workflow"] = single_workflow.get_workflow_info()
+            except Exception as e:
+                workflow_info["current_workflow"] = {"error": str(e)}
+        else:
+            try:
+                multi_orchestrator = await get_multi_agent_orchestrator()
+                workflow_info["current_workflow"] = multi_orchestrator.get_orchestration_info()
+            except Exception as e:
+                workflow_info["current_workflow"] = {"error": str(e)}
+        
+        return workflow_info
+        
     except Exception as e:
         logger.error(f"Error getting workflow info: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get workflow info: {str(e)}")
 
 
-async def _run_research_task(
+async def _run_single_agent_research_task(
+    task_id: str,
+    research_question: str,
+    config: Optional[Dict[str, Any]],
+    save_to_library: bool
+) -> None:
+    """
+    Background task to run the single-agent research workflow.
+    
+    Args:
+        task_id: Unique identifier for the research task
+        research_question: The research question to investigate
+        config: Optional configuration overrides
+        save_to_library: Whether to save results to research library
+    """
+    try:
+        # Get the workflow
+        workflow = await get_research_workflow()
+        
+        # Run the existing single-agent workflow logic
+        await _run_research_task_workflow(task_id, research_question, config, save_to_library, workflow)
+        
+    except Exception as e:
+        logger.error(f"Single-agent research task {task_id} failed: {e}")
+        await _handle_research_task_failure(task_id, str(e))
+
+
+async def _run_multi_agent_research_task(
+    task_id: str,
+    research_question: str,
+    config: Optional[Dict[str, Any]],
+    save_to_library: bool
+) -> None:
+    """
+    Background task to run the multi-agent research orchestration.
+    
+    Args:
+        task_id: Unique identifier for the research task
+        research_question: The research question to investigate
+        config: Optional configuration overrides
+        save_to_library: Whether to save results to research library
+    """
+    try:
+        # Get the orchestrator
+        orchestrator = await get_multi_agent_orchestrator()
+        
+        # Initialize task progress
+        started_at = datetime.utcnow()
+        research_tasks[task_id] = {
+            "task_id": task_id,
+            "research_question": research_question,
+            "mode": "multi",
+            "status": "running",
+            "created_at": started_at,
+            "started_at": started_at,
+            "progress": {"phase": "initializing", "status": "Starting multi-agent orchestration"}
+        }
+        
+        # Update task status to running
+        started_at_iso = started_at.isoformat()
+        
+        TaskRepository.update_task_status(
+            task_id=task_id,
+            status="running",
+            progress=0.1,
+            current_step="Starting multi-agent orchestration",
+            message="Multi-agent research workflow initialized"
+        )
+        
+        ResearchRunRepository.update_research_run_status(
+            task_id=task_id,
+            status="running",
+            started_at=started_at_iso
+        )
+        
+        logger.info(f"Starting multi-agent orchestration for task {task_id}")
+        
+        # Define progress callback for orchestrator
+        def orchestration_progress_callback(task_id_progress: str, progress):
+            # Update global progress tracking
+            if task_id in research_tasks:
+                research_tasks[task_id]["progress"] = {
+                    "phase": progress.phase,
+                    "overall_progress": progress.overall_progress,
+                    "status": progress.current_status,
+                    "agents_progress": {
+                        agent_id: {
+                            "status": agent_progress.status.value,
+                            "current_task": agent_progress.current_task,
+                            "progress_percentage": agent_progress.progress_percentage,
+                            "sources_found": agent_progress.sources_found
+                        }
+                        for agent_id, agent_progress in progress.agents_progress.items()
+                    }
+                }
+        
+        # Run orchestration
+        result: OrchestrationResult = await orchestrator.orchestrate_research(
+            research_question=research_question,
+            task_id=task_id,
+            progress_callback=orchestration_progress_callback,
+            config_overrides=config
+        )
+        
+        # Update completion status
+        completed_at = datetime.utcnow().isoformat()
+        
+        if result.success:
+            # Update global dictionaries
+            if task_id in research_tasks:
+                research_tasks[task_id]["status"] = "completed"
+                research_tasks[task_id]["completed_at"] = datetime.utcnow()
+            
+            task_results[task_id] = result
+            
+            # Update general task status
+            TaskRepository.update_task_status(
+                task_id=task_id,
+                status="completed",
+                progress=1.0,
+                current_step="Multi-agent research completed",
+                message="Multi-agent orchestration completed successfully",
+                result_json=_serialize_paper_info(result.__dict__),
+                end_time=completed_at
+            )
+            
+            # Update research run with results
+            ResearchRunRepository.update_research_run_status(
+                task_id=task_id,
+                status="completed",
+                completed_at=completed_at
+            )
+            
+            # Save detailed results
+            ResearchRunRepository.update_research_run_results(
+                task_id=task_id,
+                final_answer=result.final_answer,
+                generation_summary=result.generation_summary,
+                statistics=result.statistics,
+                sub_queries=result.sub_queries,
+                sources_gathered=_serialize_paper_info(result.sources_gathered),
+                judged_sources=_serialize_paper_info(result.judged_sources),
+                evidence=result.evidence,
+                compressed_notes=result.compressed_notes,
+                workflow_messages=_serialize_paper_info(result.workflow_messages),
+                research_loop_count=result.statistics.get("research_loops", 1),
+                is_sufficient=result.success
+            )
+            
+            logger.info(f"Multi-agent research task {task_id} completed successfully")
+        else:
+            await _handle_research_task_failure(task_id, result.error_message or "Multi-agent orchestration failed")
+        
+    except Exception as e:
+        logger.error(f"Multi-agent research task {task_id} failed: {e}")
+        await _handle_research_task_failure(task_id, str(e))
+
+
+async def _run_research_task_workflow(
     task_id: str,
     research_question: str,
     config: Optional[Dict[str, Any]],
@@ -598,21 +1108,17 @@ async def _run_research_task(
     workflow: ResearchAgentWorkflow
 ) -> None:
     """
-    Background task to run the research workflow.
-    
-    Args:
-        task_id: Unique identifier for the research task
-        research_question: The research question to investigate
-        config: Optional configuration overrides
-        save_to_library: Whether to save results to research library
-        workflow: Research agent workflow instance
+    Run the existing single-agent research workflow (reusing existing implementation).
     """
+    # This is the existing implementation from the original file
+    # We keep it unchanged to maintain backward compatibility
     try:
         # Initialize task in global dictionaries for WebSocket tracking
         started_at = datetime.utcnow()
         research_tasks[task_id] = {
             "task_id": task_id,
             "research_question": research_question,
+            "mode": "single",
             "status": "running",
             "created_at": started_at,
             "started_at": started_at,
@@ -689,63 +1195,42 @@ async def _run_research_task(
             logger.info(f"Research task {task_id} completed successfully and saved to research library")
         else:
             error_message = results.get("error", "Unknown error")
-            
-            # Update global dictionaries
-            if task_id in research_tasks:
-                research_tasks[task_id]["status"] = "failed"
-                research_tasks[task_id]["completed_at"] = datetime.utcnow()
-                research_tasks[task_id]["error_message"] = error_message
-            
-            # Update general task status
-            TaskRepository.update_task_status(
-                task_id=task_id,
-                status="failed",
-                progress=0.0,
-                current_step="Research failed",
-                message="Research workflow encountered an error",
-                error=error_message,
-                end_time=completed_at
-            )
-            
-            # Update research run status
-            ResearchRunRepository.update_research_run_status(
-                task_id=task_id,
-                status="failed",
-                completed_at=completed_at,
-                error_message=error_message
-            )
-            
-            logger.error(f"Research task {task_id} failed: {error_message}")
+            await _handle_research_task_failure(task_id, error_message)
         
     except Exception as e:
         logger.error(f"Error in research task {task_id}: {e}")
-        
-        # Update global dictionaries
-        if task_id in research_tasks:
-            research_tasks[task_id]["status"] = "failed"
-            research_tasks[task_id]["completed_at"] = datetime.utcnow()
-            research_tasks[task_id]["error_message"] = str(e)
-        
-        # Update task status to failed in both tables
-        completed_at = datetime.utcnow().isoformat()
-        error_message = str(e)
-        
-        TaskRepository.update_task_status(
-            task_id=task_id,
-            status="failed",
-            progress=0.0,
-            current_step="Error occurred",
-            message="Research workflow encountered an unexpected error",
-            error=error_message,
-            end_time=completed_at
-        )
-        
-        ResearchRunRepository.update_research_run_status(
-            task_id=task_id,
-            status="failed",
-            completed_at=completed_at,
-            error_message=error_message
-        )
+        await _handle_research_task_failure(task_id, str(e))
+
+
+async def _handle_research_task_failure(task_id: str, error_message: str) -> None:
+    """
+    Handle research task failure for both single and multi-agent modes.
+    """
+    # Update global dictionaries
+    if task_id in research_tasks:
+        research_tasks[task_id]["status"] = "failed"
+        research_tasks[task_id]["completed_at"] = datetime.utcnow()
+        research_tasks[task_id]["error_message"] = error_message
+    
+    # Update task status to failed in both tables
+    completed_at = datetime.utcnow().isoformat()
+    
+    TaskRepository.update_task_status(
+        task_id=task_id,
+        status="failed",
+        progress=0.0,
+        current_step="Research failed",
+        message="Research workflow encountered an error",
+        error=error_message,
+        end_time=completed_at
+    )
+    
+    ResearchRunRepository.update_research_run_status(
+        task_id=task_id,
+        status="failed",
+        completed_at=completed_at,
+        error_message=error_message
+    )
 
 
 # Health check endpoint
@@ -755,5 +1240,7 @@ async def health_check() -> Dict[str, str]:
     return {
         "status": "healthy",
         "service": "research_agent",
-        "timestamp": _convert_datetime_to_string(datetime.utcnow())
+        "timestamp": _convert_datetime_to_string(datetime.utcnow()),
+        "dual_mode_ready": True,
+        "current_mode": SettingsRepository.get_research_agent_mode()
     } 

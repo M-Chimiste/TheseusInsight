@@ -237,7 +237,24 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             if self.text_inference.provider == "anthropic":
                 raw_response = "{" + raw_response
 
-        data = json_repair.loads(raw_response)
+        # Parse JSON response with error handling
+        try:
+            data = json_repair.loads(raw_response)
+            
+            # Ensure data is a dictionary
+            if not isinstance(data, dict):
+                if self.verbose:
+                    print(f"Warning: Expected dict from JSON parsing, got {type(data)}")
+                    print(f"Raw response: {raw_response[:200]}...")
+                return None
+                
+        except Exception as json_error:
+            if self.verbose:
+                print(f"JSON parsing failed in podcast generator")
+                print(f"Error: {json_error}")
+                print(f"Raw response: {raw_response[:200]}...")
+            return None
+            
         if self.verbose:
             print("LLM response received")
         # Validate with Pydantic

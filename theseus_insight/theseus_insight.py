@@ -635,6 +635,87 @@ Theseus Insight Team
                     print(f"Failed to send 'no papers found' notification: {e}")
                 self._log_error(500, e)
 
+    def rank_papers_with_historical_scores(self, data_df):
+        """Optimized ranking that uses existing scores when available, only ranking new papers."""
+        try:
+            if self.verbose:
+                print(f"\n🏃‍♂️ OPTIMIZED RANKING WITH HISTORICAL SCORES")
+                print(f"Total papers to process: {len(data_df)}")
+                print("="*60)
+            
+            # Separate papers into those with and without existing scores
+            papers_with_scores = []
+            papers_without_scores = []
+            
+            for idx, row in data_df.iterrows():
+                existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                if existing_paper and existing_paper.get('score') is not None and existing_paper.get('score') > 0:
+                    # Paper has existing score - use it
+                    paper_data = row.to_dict()
+                    paper_data['score'] = existing_paper['score']
+                    paper_data['related'] = existing_paper.get('related', True)
+                    paper_data['rationale'] = existing_paper.get('rationale', 'Historical score')
+                    papers_with_scores.append(paper_data)
+                else:
+                    # Paper needs to be scored
+                    papers_without_scores.append(row.to_dict())
+            
+            if self.verbose:
+                print(f"📊 Papers with existing scores: {len(papers_with_scores)}")
+                print(f"🔄 Papers needing new scores: {len(papers_without_scores)}")
+            
+            # Create DataFrames
+            scored_papers_df = pd.DataFrame(papers_with_scores) if papers_with_scores else pd.DataFrame()
+            unscored_papers_df = pd.DataFrame(papers_without_scores) if papers_without_scores else pd.DataFrame()
+            
+            # Score the papers that don't have scores yet
+            if not unscored_papers_df.empty:
+                if self.verbose:
+                    print(f"🧠 Running LLM judge on {len(unscored_papers_df)} unscored papers...")
+                newly_scored_df = self.rank_papers(unscored_papers_df)
+            else:
+                newly_scored_df = pd.DataFrame()
+            
+            # Combine all papers
+            if not scored_papers_df.empty and not newly_scored_df.empty:
+                combined_df = pd.concat([scored_papers_df, newly_scored_df], ignore_index=True)
+            elif not scored_papers_df.empty:
+                combined_df = scored_papers_df
+            elif not newly_scored_df.empty:
+                combined_df = newly_scored_df
+            else:
+                combined_df = pd.DataFrame()
+            
+            if combined_df.empty:
+                if self.verbose:
+                    print("⚠️ No papers available after scoring")
+                return pd.DataFrame()
+            
+            # Sort by score and return top papers
+            combined_df = combined_df.sort_values(by='score', ascending=False)
+            
+            # Get more papers than needed to allow for PDF conversion failures
+            backup_multiplier = 2
+            extended_count = min(len(combined_df), self.top_n * backup_multiplier)
+            top_n_df = combined_df.head(extended_count)
+            
+            if self.verbose:
+                print(f"✅ Final ranking complete:")
+                print(f"   Total papers ranked: {len(combined_df)}")
+                print(f"   Papers with historical scores: {len(papers_with_scores)}")
+                print(f"   Papers newly scored: {len(newly_scored_df) if not newly_scored_df.empty else 0}")
+                print(f"   Top papers selected: {len(top_n_df)} (target: {self.top_n})")
+                if len(top_n_df) > 0:
+                    print(f"   Score range: {top_n_df['score'].min():.1f} - {top_n_df['score'].max():.1f}")
+            
+            return top_n_df
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error in optimized ranking: {e}")
+            # Fallback to original ranking method
+            return self.rank_papers(data_df)
+
     def rank_papers(self, data_df):
         """Given embedded papers, use judge model to score them."""
         try:
@@ -692,6 +773,16 @@ Theseus Insight Team
                         # Parse and validate JSON response
                         try:
                             response_json = json_repair.loads(response)
+                            
+                            # Ensure response_json is a dictionary
+                            if not isinstance(response_json, dict):
+                                if self.verbose:
+                                    print(f"Paper ranking expected dict, got {type(response_json)} for paper {actual_index+1}, attempt {attempts}")
+                                    print(f"Raw response: {response[:200]}...")
+                                if attempts == max_attempts:
+                                    raise TypeError(f"Expected dict from JSON parsing, got {type(response_json)}")
+                                continue
+                                
                         except Exception as json_error:
                             if self.verbose:
                                 print(f"JSON parsing failed for paper {actual_index+1}, attempt {attempts}: {json_error}")
@@ -775,7 +866,15 @@ Theseus Insight Team
             data_df['related'] = related
             data_df['rationale'] = rationale
             data_df = data_df.sort_values(by='score', ascending=False)
-            top_n_df = data_df.head(self.top_n)
+            
+            # Get more papers than needed to allow for PDF conversion failures
+            # We'll take 2x the requested amount as backup
+            backup_multiplier = 2
+            extended_count = min(len(data_df), self.top_n * backup_multiplier)
+            top_n_df = data_df.head(extended_count)
+            
+            if self.verbose:
+                print(f"Selected top {extended_count} papers (target: {self.top_n}) to allow for PDF conversion failures")
 
             if self.db_saving:
                 print("Saving papers to DB")
@@ -868,9 +967,7 @@ Theseus Insight Team
                 print(f"Min score: {min_score}")
                 print("="*60)
             
-            from .data_access import PaperRepository
             from .db import get_cursor
-            import pandas as pd
             
             # Get papers with profile scores
             papers_data = []
@@ -885,7 +982,7 @@ Theseus Insight Team
                       AND p.date <= %s
                     ORDER BY pps.score DESC, p.date DESC
                     LIMIT %s
-                """, (profile_ids, min_score, self.start_date, self.end_date, self.top_n * 3))  # Get more than needed for ranking
+                """, (profile_ids, min_score, self.start_date, self.end_date, self.top_n * 4))  # Get 4x more than needed for PDF failures
                 
                 papers_data = cur.fetchall()
             
@@ -911,8 +1008,10 @@ Theseus Insight Team
             
             df = pd.DataFrame(papers_list)
             
-            # Take top N papers by profile score
-            top_df = df.head(self.top_n)
+            # Take more papers than needed to allow for PDF conversion failures
+            backup_multiplier = 2
+            extended_count = min(len(df), self.top_n * backup_multiplier)
+            top_df = df.head(extended_count)
             
             if self.verbose:
                 print(f"✅ Retrieved {len(top_df)} profile-scored papers")
@@ -947,9 +1046,8 @@ Theseus Insight Team
                 print(f"Date range: {self.start_date} to {self.end_date}")
                 print("="*60)
             
-            from .data_access import PaperRepository, ProfileRepository, ProfileInterestsRepository
+            from .data_access import ProfileRepository, ProfileInterestsRepository
             from .db import get_cursor
-            import pandas as pd
             
             # Get research interests for the profile
             research_interests_list = []
@@ -1059,8 +1157,8 @@ Theseus Insight Team
             self.research_interests = research_interests_text
             
             try:
-                # Score papers using the rank_papers method
-                scored_df = self.rank_papers(df)
+                # Score papers using the optimized ranking method
+                scored_df = self.rank_papers_with_historical_scores(df)
             finally:
                 # Restore original research interests
                 self.research_interests = original_research_interests
@@ -1096,8 +1194,13 @@ Theseus Insight Team
                 if self.verbose:
                     print(f"✅ Saved {saved_scores} profile scores")
             
-            # Take top N papers
-            top_df = scored_df.head(self.top_n)
+            # Take more papers than needed to allow for PDF conversion failures  
+            backup_multiplier = 2
+            extended_count = min(len(scored_df), self.top_n * backup_multiplier)
+            top_df = scored_df.head(extended_count)
+            
+            if self.verbose:
+                print(f"Selected top {extended_count} papers (target: {self.top_n}) to allow for PDF conversion failures")
             
             if self.verbose:
                 print(f"✅ Scored and selected top {len(top_df)} papers")
@@ -1330,10 +1433,37 @@ Theseus Insight Team
                             
                             if len(new_papers_df) == 0:
                                 if self.verbose:
-                                    print("All papers already exist in database - no new papers to process")
-                                # Handle no new papers case and exit early
-                                self._handle_no_papers_found(reason="all_duplicates")
-                                return
+                                    print("All papers already exist in database - loading existing papers for newsletter generation")
+                                
+                                # Load existing papers from database instead of exiting
+                                # Get papers from the same date range that were downloaded
+                                
+                                existing_papers_list = []
+                                for _, row in data_df.iterrows():
+                                    existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                                    if existing_paper:
+                                        # Convert database row to expected format
+                                        paper_data = {
+                                            'title': existing_paper['title'],
+                                            'abstract': existing_paper['abstract'],
+                                            'pdf_url': existing_paper['url'],
+                                            'date': existing_paper['date'],
+                                            'cosine_similarity': existing_paper.get('cosine_similarity', 0.0),
+                                            'abstract_embedding': existing_paper.get('embedding', [])
+                                        }
+                                        existing_papers_list.append(paper_data)
+                                
+                                if existing_papers_list:
+                                    # Create DataFrame from existing papers
+                                    filtered_df = pd.DataFrame(existing_papers_list)
+                                    if self.verbose:
+                                        print(f"✅ Loaded {len(filtered_df)} existing papers for newsletter generation")
+                                else:
+                                    # Still no papers - this shouldn't happen but handle gracefully
+                                    if self.verbose:
+                                        print("No existing papers found in database")
+                                    self._handle_no_papers_found(reason="all_duplicates")
+                                    return
                             else:
                                 # Process only new papers
                                 abstracts = list(new_papers_df['abstract'])
@@ -1357,10 +1487,37 @@ Theseus Insight Team
                                 # Check if no papers meet the threshold criteria
                                 if len(filtered_df) == 0:
                                     if self.verbose:
-                                        print(f"No papers meet the cosine similarity threshold ({self.cosine_similarity_threshold})")
-                                    # Handle no papers meeting criteria and exit early
-                                    self._handle_no_papers_found(reason="threshold_not_met")
-                                    return
+                                        print(f"No new papers meet the cosine similarity threshold ({self.cosine_similarity_threshold})")
+                                        print("Loading existing papers from database for newsletter generation...")
+                                    
+                                    # Load existing papers from database instead of exiting
+                                    existing_papers = PaperRepository.get_papers_in_date_range(
+                                        start_date=self.start_date.strftime('%Y-%m-%d'),
+                                        end_date=self.end_date.strftime('%Y-%m-%d')
+                                    )
+                                    
+                                    if existing_papers:
+                                        # Convert to DataFrame format expected by newsletter generation
+                                        papers_list = []
+                                        for paper in existing_papers:
+                                            papers_list.append({
+                                                'title': paper['title'],
+                                                'abstract': paper['abstract'],
+                                                'pdf_url': paper['url'],
+                                                'date': paper['date'],
+                                                'cosine_similarity': paper.get('cosine_similarity', 0.0),
+                                                'abstract_embedding': paper.get('embedding', [])
+                                            })
+                                        
+                                        filtered_df = pd.DataFrame(papers_list)
+                                        if self.verbose:
+                                            print(f"✅ Loaded {len(filtered_df)} existing papers for newsletter generation")
+                                    else:
+                                        # No existing papers found - this is the real "no papers" case
+                                        if self.verbose:
+                                            print("No existing papers found in database for date range")
+                                        self._handle_no_papers_found(reason="threshold_not_met")
+                                        return
                         else:
                             # Original behavior when not saving to DB
                             abstracts = list(data_df['abstract'])
@@ -1384,10 +1541,37 @@ Theseus Insight Team
                             # Check if no papers meet the threshold criteria
                             if len(filtered_df) == 0:
                                 if self.verbose:
-                                    print(f"No papers meet the cosine similarity threshold ({self.cosine_similarity_threshold})")
-                                # Handle no papers meeting criteria and exit early
-                                self._handle_no_papers_found(reason="threshold_not_met")
-                                return
+                                    print(f"No new papers meet the cosine similarity threshold ({self.cosine_similarity_threshold})")
+                                    print("Loading existing papers from database for newsletter generation...")
+                                
+                                # Load existing papers from database instead of exiting
+                                existing_papers = PaperRepository.get_papers_in_date_range(
+                                    start_date=self.start_date.strftime('%Y-%m-%d'),
+                                    end_date=self.end_date.strftime('%Y-%m-%d')
+                                )
+                                
+                                if existing_papers:
+                                    # Convert to DataFrame format expected by newsletter generation
+                                    papers_list = []
+                                    for paper in existing_papers:
+                                        papers_list.append({
+                                            'title': paper['title'],
+                                            'abstract': paper['abstract'],
+                                            'pdf_url': paper['url'],
+                                            'date': paper['date'],
+                                            'cosine_similarity': paper.get('cosine_similarity', 0.0),
+                                            'abstract_embedding': paper.get('embedding', [])
+                                        })
+                                    
+                                    filtered_df = pd.DataFrame(papers_list)
+                                    if self.verbose:
+                                        print(f"✅ Loaded {len(filtered_df)} existing papers for newsletter generation")
+                                else:
+                                    # No existing papers found - this is the real "no papers" case
+                                    if self.verbose:
+                                        print("No existing papers found in database for date range")
+                                    self._handle_no_papers_found(reason="threshold_not_met")
+                                    return
                         
                         # Ensure filtered_df is always defined (safety check)
                         if 'filtered_df' not in locals():
@@ -1433,12 +1617,53 @@ Theseus Insight Team
                         if len(embedded_df) == 0:
                             if self.verbose:
                                 print("No new papers to rank (all papers already exist in database)")
-                            # Create empty top_n_df
-                            top_n_df = embedded_df.copy()  # Empty dataframe with same structure
+                                print("Loading existing papers from database for newsletter generation...")
+                            
+                            # Load existing papers from database within date range for newsletter generation
+                            existing_papers = PaperRepository.get_papers_in_date_range(
+                                start_date=self.start_date.strftime('%Y-%m-%d'),
+                                end_date=self.end_date.strftime('%Y-%m-%d')
+                            )
+                            
+                            if existing_papers:
+                                # Convert to DataFrame format expected by newsletter generation
+                                papers_list = []
+                                for paper in existing_papers:
+                                    papers_list.append({
+                                        'title': paper['title'],
+                                        'abstract': paper['abstract'],
+                                        'pdf_url': paper['url'],
+                                        'date': paper['date'],
+                                        'score': paper.get('score', 5.0),  # Use existing score or default
+                                        'related': paper.get('related', True),
+                                        'rationale': paper.get('rationale', 'Previously scored paper'),
+                                        'cosine_similarity': paper.get('cosine_similarity', 0.0),
+                                        'abstract_embedding': paper.get('embedding', [])
+                                    })
+                                
+                                df = pd.DataFrame(papers_list)
+                                # Sort by score if available, otherwise by date
+                                if 'score' in df.columns:
+                                    df = df.sort_values('score', ascending=False)
+                                else:
+                                    df = df.sort_values('date', ascending=False)
+                                
+                                # Get more papers than needed to allow for PDF conversion failures
+                                backup_multiplier = 2
+                                extended_count = min(len(df), self.top_n * backup_multiplier)
+                                top_n_df = df.head(extended_count)
+                                
+                                if self.verbose:
+                                    print(f"✅ Loaded {len(top_n_df)} existing papers for newsletter generation")
+                            else:
+                                # No papers found in database for date range
+                                top_n_df = embedded_df.copy()  # Empty dataframe with same structure
+                                if self.verbose:
+                                    print("No existing papers found in database for date range")
                         else:
                             if self.verbose:
                                 print("Ranking papers...")
-                            top_n_df = self.rank_papers(embedded_df)
+                            top_n_df = self.rank_papers_with_historical_scores(embedded_df)
                     
                     await self._save_checkpoint_async('papers_ranked', top_n_df)
 
@@ -1474,18 +1699,71 @@ Theseus Insight Team
                         if self.verbose:
                             print("Generating newsletter sections (paper-by-paper) ...")
 
-                        converter = DocumentConverter()
+                        # Initialize DocumentConverter with error handling
+                        converter = None
+                        try:
+                            converter = DocumentConverter()
+                            if self.verbose:
+                                print("✅ DocumentConverter initialized successfully")
+                        except Exception as converter_error:
+                            if self.verbose:
+                                print(f"⚠️ Failed to initialize DocumentConverter: {converter_error}")
+                                print("   Will use abstracts only for content extraction")
+                        
                         sections = []
                         urls_and_titles = []
+                        successful_sections = 0
+                        target_sections = self.top_n
+                        papers_processed = 0
+
+                        if self.verbose:
+                            print(f"Processing papers to generate {target_sections} newsletter sections...")
+                            print(f"Available papers: {len(top_n_df)}")
 
                         for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Sections"):
+                            # Stop if we've already got enough successful sections
+                            if successful_sections >= target_sections:
+                                if self.verbose:
+                                    print(f"✅ Reached target of {target_sections} sections, stopping")
+                                break
+                                
+                            papers_processed += 1
                             intro_text = random.choice(INTRO_TEXT)
                             
-                            # Convert PDF to markdown
-                            response = converter.convert(row['pdf_url'])
-                            markdown = response.document.export_to_markdown()
+                            # Convert PDF to markdown with simple error handling
+                            markdown = None
+                            pdf_conversion_failed = False
+                            
+                            if converter is not None:
+                                try:
+                                    if self.verbose:
+                                        print(f"Converting PDF {papers_processed}/{len(top_n_df)}: {row['title'][:50]}...")
+                                    
+                                    # Synchronous PDF conversion - let it take as long as it needs
+                                    response = converter.convert(row['pdf_url'])
+                                    markdown = response.document.export_to_markdown()
+                                    if self.verbose:
+                                        print(f"✅ PDF conversion successful")
+                                            
+                                except Exception as pdf_error:
+                                    pdf_conversion_failed = True
+                                    if self.verbose:
+                                        print(f"❌ PDF conversion error for {row['title']}: {pdf_error}")
+                                        print(f"   PDF URL: {row['pdf_url']}")
+                                        print(f"   Skipping this paper and trying next one...")
+                            else:
+                                # No converter available - skip paper
+                                pdf_conversion_failed = True
+                                if self.verbose:
+                                    print(f"❌ No PDF converter available for {row['title'][:50]}... - skipping")
+                            
+                            # Skip this paper if PDF conversion failed
+                            if pdf_conversion_failed:
+                                if self.verbose:
+                                    print(f"📝 Skipped paper {papers_processed} - {successful_sections}/{target_sections} sections completed")
+                                continue
 
-                            # Summarize the PDF content
+                            # Summarize the PDF content (or abstract if PDF failed)
                             messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
                             
                             if self.content_extraction_inference.provider == "ollama":
@@ -1500,8 +1778,28 @@ Theseus Insight Team
                                     system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
                                 )
 
-                            resp_json = json_repair.loads(resp)
-                            summarized_paper = resp_json.get('content', resp)
+                            # Parse JSON response with error handling
+                            try:
+                                resp_json = json_repair.loads(resp)
+                                
+                                # Ensure resp_json is a dictionary
+                                if not isinstance(resp_json, dict):
+                                    if self.verbose:
+                                        print(f"Warning: Content extraction expected dict, got {type(resp_json)}")
+                                        print(f"Raw response: {resp[:200]}...")
+                                    # Fallback: use the raw response
+                                    summarized_paper = resp
+                                else:
+                                    # Extract content from JSON response
+                                    summarized_paper = resp_json.get('content', resp)
+                                    
+                            except Exception as json_error:
+                                if self.verbose:
+                                    print(f"Content extraction JSON parsing failed for paper: {row['title']}")
+                                    print(f"Error: {json_error}")
+                                    print(f"Raw response: {resp[:200]}...")
+                                # Fallback: use the raw response
+                                summarized_paper = resp
 
                             # Now produce the "newsletter section" for that paper
                             context = (
@@ -1527,10 +1825,48 @@ Theseus Insight Team
                                     system_prompt=NEWSLETTER_SYSTEM_PROMPT
                                 )
 
-                            resp_json = json_repair.loads(resp)
-                            draft = f"## {row['title']}\n\n{resp_json['draft']}"
+                            # Parse JSON response with error handling
+                            try:
+                                resp_json = json_repair.loads(resp)
+                                
+                                # Ensure resp_json is a dictionary
+                                if not isinstance(resp_json, dict):
+                                    if self.verbose:
+                                        print(f"Warning: Expected dict from JSON parsing, got {type(resp_json)}")
+                                        print(f"Raw response: {resp[:200]}...")
+                                    # Fallback: use the raw response as the draft
+                                    draft = f"## {row['title']}\n\n{resp}"
+                                else:
+                                    # Extract draft from JSON response
+                                    draft_content = resp_json.get('draft', resp)
+                                    draft = f"## {row['title']}\n\n{draft_content}"
+                                    
+                            except Exception as json_error:
+                                if self.verbose:
+                                    print(f"JSON parsing failed for paper: {row['title']}")
+                                    print(f"Error: {json_error}")
+                                    print(f"Raw response: {resp[:200]}...")
+                                # Fallback: use the raw response as the draft
+                                draft = f"## {row['title']}\n\n{resp}"
+                            
                             sections.append(draft)
                             urls_and_titles.append(f"{row['title']}: {row['pdf_url']}")
+                            successful_sections += 1
+                            
+                            if self.verbose:
+                                print(f"✅ Successfully processed paper {papers_processed} - {successful_sections}/{target_sections} sections completed")
+
+                        # Final summary
+                        if self.verbose:
+                            print(f"\n📊 Newsletter section generation summary:")
+                            print(f"   Target sections: {target_sections}")
+                            print(f"   Successful sections: {successful_sections}")
+                            print(f"   Papers processed: {papers_processed}")
+                            print(f"   Papers available: {len(top_n_df)}")
+                            if successful_sections < target_sections:
+                                print(f"   ⚠️ Only generated {successful_sections}/{target_sections} sections due to PDF conversion failures")
+                            else:
+                                print(f"   ✅ Successfully generated all {successful_sections} target sections")
 
                         sections_data = {
                             'sections': sections,
@@ -1583,8 +1919,21 @@ Theseus Insight Team
 
                         try:
                             resp_json = json_repair.loads(resp)
-                            intro_text = resp_json['draft']
-                        except:
+                            
+                            # Ensure resp_json is a dictionary
+                            if not isinstance(resp_json, dict):
+                                if self.verbose:
+                                    print(f"Warning: Newsletter intro expected dict, got {type(resp_json)}")
+                                    print(f"Raw response: {resp[:200]}...")
+                                intro_text = resp
+                            else:
+                                intro_text = resp_json.get('draft', resp)
+                                
+                        except Exception as json_error:
+                            if self.verbose:
+                                print(f"Newsletter intro JSON parsing failed")
+                                print(f"Error: {json_error}")
+                                print(f"Raw response: {resp[:200]}...")
                             intro_text = resp
 
                                                  # Final newsletter

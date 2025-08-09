@@ -260,15 +260,14 @@ async def run_newsletter_pipeline_endpoint(
                 progress_callback=pipeline_progress_callback,
             )
             
-            current_task_status = task_manager.get_task_status(task_id)
-            # If the progress callback hasn't already marked completion
-            if current_task_status and current_task_status.get("status") == TaskStatus.PROCESSING:
-                await task_manager.update_task_status(
-                    task_id,
-                    TaskStatus.COMPLETED,
-                    message="Pipeline finished processing.",
-                    current_step="newsletter_complete",
-                )
+            # Always mark as completed if we reach here successfully
+            # The progress callback may have already marked it completed, which is fine
+            await task_manager.update_task_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                message="Pipeline finished processing.",
+                current_step="newsletter_complete",
+            )
 
         except Exception as e:
             error_message = f"Error in newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"

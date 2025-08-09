@@ -56,6 +56,9 @@ class TheseusScheduler:
             # Add a test to verify the scheduler is working
             logger.info("🔍 Scheduler health check - all jobs scheduled correctly")
             
+            # Sync user-configured scheduled tasks from database
+            await self._sync_scheduled_tasks()
+            
     async def stop(self):
         """Stop the scheduler."""
         if self.is_running:
@@ -297,6 +300,48 @@ class TheseusScheduler:
             return f"{hours} hours, {minutes} minutes"
         else:
             return f"{minutes} minutes"
+    
+    async def _sync_scheduled_tasks(self):
+        """Sync user-configured scheduled tasks from database."""
+        try:
+            from .data_access import ScheduledTasksRepository
+            from .api.routers.scheduled_tasks import schedule_task_in_apscheduler
+            from .db import get_cursor
+            
+            # First check if the scheduled_tasks table exists
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'scheduled_tasks'
+                    )
+                """)
+                table_exists = cursor.fetchone()['exists']
+                
+            if not table_exists:
+                logger.info("📅 Scheduled tasks table not yet created, skipping sync")
+                return
+            
+            logger.info("📅 Syncing user-configured scheduled tasks...")
+            
+            # Get all enabled tasks
+            tasks = ScheduledTasksRepository.get_enabled_tasks()
+            synced_count = 0
+            
+            for task in tasks:
+                try:
+                    await schedule_task_in_apscheduler(task['id'], task)
+                    synced_count += 1
+                    logger.info(f"✅ Scheduled task '{task['name']}' synced successfully")
+                except Exception as e:
+                    logger.error(f"Failed to sync task {task['id']} ({task['name']}): {e}")
+            
+            logger.info(f"📅 Synced {synced_count} user-configured scheduled tasks")
+            
+        except Exception as e:
+            logger.error(f"Error syncing scheduled tasks: {e}")
+            # Don't fail startup if sync fails
 
 # Global scheduler instance
 scheduler = TheseusScheduler() 

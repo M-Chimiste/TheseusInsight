@@ -48,6 +48,7 @@ import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useLayout } from '../contexts/LayoutContext';
+import { ScheduledTasksSettings } from '../components/ScheduledTasksSettings';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -2090,6 +2091,19 @@ const Settings: React.FC = () => {
           </Box>
         </CardContent>
       </Card>
+
+      {/* Scheduled Tasks Section */}
+      <Box sx={{ mb: 4 }}>
+        <ScheduledTasksSettings 
+          onStatusChange={(message, severity) => {
+            if (severity === 'success') {
+              setSuccess(message);
+            } else if (severity === 'error') {
+              setError(message);
+            }
+          }}
+        />
+      </Box>
 
       {/* API Credentials Section */}
       <Accordion sx={{ mb: 4 }}>

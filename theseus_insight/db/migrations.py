@@ -47,6 +47,7 @@ class MigrationRunner:
             (4, "004_add_staging_tables.sql", "Add staging tables for bulk operations"),
             (5, "005_optimize_indexes.sql", "Optimize indexes for performance"),
             (6, "006_add_processing_checkpoints.sql", "Add checkpoint system for resumable processing"),
+            (7, "007_add_scheduled_tasks.sql", "Add scheduled tasks configuration"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:
@@ -137,7 +138,9 @@ class MigrationRunner:
             "paper_profile_scores",
             "topics",
             "settings",
-            "model_providers"
+            "model_providers",
+            "scheduled_tasks",
+            "scheduled_task_runs"
         ]
         
         missing_tables = []

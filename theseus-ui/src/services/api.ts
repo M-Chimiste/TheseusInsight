@@ -343,6 +343,108 @@ export const runsApi = {
   deleteRunArtifact: (runId: number) => api.delete(`/runs/${runId}/artifact`),
 };
 
+// Scheduled Tasks Types
+export interface ScheduledTaskConfig {
+  emailRecipients?: string[];
+  researchInterests?: string[];
+  use_profile_recipients?: boolean;
+  lookback_months?: number;
+  duration_months?: number;
+  min_papers?: number;
+  months_to_keep?: number;
+}
+
+export interface ScheduledTaskCreate {
+  name: string;
+  task_type: 'newsletter' | 'trends_recomputation' | 'database_cleanup' | 'profile_ingestion' | 'bulk_embedding';
+  profile_id?: number;
+  is_enabled: boolean;
+  frequency: 'hourly' | 'daily' | 'weekly' | 'monthly';
+  day_of_week?: number; // 0=Monday, 6=Sunday
+  day_of_month?: number; // 1-31
+  hour: number; // 0-23
+  minute?: number; // 0-59
+  timezone?: string;
+  config: ScheduledTaskConfig;
+}
+
+export interface ScheduledTaskUpdate {
+  name?: string;
+  is_enabled?: boolean;
+  frequency?: 'hourly' | 'daily' | 'weekly' | 'monthly';
+  day_of_week?: number;
+  day_of_month?: number;
+  hour?: number;
+  minute?: number;
+  timezone?: string;
+  config?: ScheduledTaskConfig;
+}
+
+export interface ScheduledTask {
+  id: number;
+  name: string;
+  task_type: string;
+  profile_id?: number;
+  is_enabled: boolean;
+  frequency: string;
+  day_of_week?: number;
+  day_of_month?: number;
+  hour: number;
+  minute: number;
+  timezone: string;
+  config: ScheduledTaskConfig;
+  last_run_at?: string;
+  next_run_at?: string;
+  last_run_status?: string;
+  last_run_task_id?: string;
+  run_count: number;
+  error_count: number;
+  created_at: string;
+  updated_at: string;
+  profile_name?: string;
+}
+
+export interface ScheduledTaskRun {
+  id: number;
+  scheduled_task_id: number;
+  task_id: string;
+  started_at: string;
+  completed_at?: string;
+  status: string;
+  error_message?: string;
+  result?: any;
+}
+
+// Scheduled Tasks API
+export const scheduledTasksApi = {
+  // Get all scheduled tasks
+  getTasks: (params?: { profile_id?: number; task_type?: string; is_enabled?: boolean }) => 
+    api.get<ScheduledTask[]>('/scheduled-tasks', { params }),
+  
+  // Get a specific task
+  getTask: (taskId: number) => api.get<ScheduledTask>(`/scheduled-tasks/${taskId}`),
+  
+  // Create a new scheduled task
+  createTask: (task: ScheduledTaskCreate) => api.post<ScheduledTask>('/scheduled-tasks', task),
+  
+  // Update a scheduled task
+  updateTask: (taskId: number, update: ScheduledTaskUpdate) => 
+    api.put<ScheduledTask>(`/scheduled-tasks/${taskId}`, update),
+  
+  // Delete a scheduled task
+  deleteTask: (taskId: number) => api.delete(`/scheduled-tasks/${taskId}`),
+  
+  // Get run history for a task
+  getTaskRuns: (taskId: number, limit?: number, offset?: number) => 
+    api.get<ScheduledTaskRun[]>(`/scheduled-tasks/${taskId}/runs`, { params: { limit, offset } }),
+  
+  // Manually run a task
+  runTaskNow: (taskId: number) => api.post(`/scheduled-tasks/${taskId}/run`),
+  
+  // Sync all tasks (e.g., after server restart)
+  syncTasks: () => api.post('/scheduled-tasks/sync'),
+};
+
 // Research Agent API
 export const researchAgentApi = {
   startResearchTask: (request: any) => api.post('/research-agent/run', request),

@@ -51,6 +51,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Adjust these COPY commands based on your project structure
 COPY ./theseus_insight ./theseus_insight
 COPY ./config ./config
+# Copy SQL migration scripts
+COPY ./scripts/*.sql ./sql/
 # main.py is inside theseus_insight directory, not in root
 # COPY main.py .
 # Add any other necessary files/folders for the backend (e.g., scripts, utils)

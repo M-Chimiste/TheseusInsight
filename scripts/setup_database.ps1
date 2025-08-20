@@ -197,6 +197,34 @@ catch {
 
 Write-Success "✅ pgvector extension enabled for database `"$DbName`"."
 
+# Create migration tracking table
+if (Test-Path $CreateMigrationTrackingFile) {
+    Write-Status "📊 Creating migration tracking table..."
+    try {
+        & psql -U $DbUser -d $DbName -f $CreateMigrationTrackingFile 2>$null
+    }
+    catch {
+        # Table might already exist, continue
+    }
+}
+
+# Apply migration compatibility functions
+if (Test-Path $MigrationCompatFile) {
+    Write-Status "🔧 Setting up migration compatibility functions..."
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $MigrationCompatFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply migration compatibility from $MigrationCompatFile"
+            exit 1
+        }
+        Write-Success "✅ Migration compatibility functions created"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply migration compatibility from $MigrationCompatFile"
+        exit 1
+    }
+}
+
 # Apply initial schema
 Write-Status "📋 Applying initial schema from: $SchemaFile"
 try {
@@ -211,21 +239,29 @@ catch {
     exit 1
 }
 
-# Apply profile migrations
-Write-Status "🔄 Applying profile migrations..."
+# Apply database migrations
+Write-Status "🔄 Applying database migrations..."
 
 # Determine migration file paths based on environment
 if ($Environment -eq "docker") {
+    $MigrationCompatFile = "C:\app\sql\000_migration_compatibility.sql"
     $MigrateToProfilesFile = "C:\app\sql\002_migrate_to_profiles.sql"
     $ProfilesTrendsFile = "C:\app\sql\003_profiles_trends_integration.sql"
     $StagingTablesFile = "C:\app\sql\004_add_staging_tables.sql"
     $OptimizeIndexesFile = "C:\app\sql\005_optimize_indexes.sql"
+    $ProcessingCheckpointsFile = "C:\app\sql\006_add_processing_checkpoints.sql"
+    $ScheduledTasksFile = "C:\app\sql\007_add_scheduled_tasks.sql"
+    $CreateMigrationTrackingFile = "C:\app\sql\create_migration_tracking.sql"
 }
 else {
+    $MigrationCompatFile = "$PSScriptRoot\000_migration_compatibility.sql"
     $MigrateToProfilesFile = "$PSScriptRoot\002_migrate_to_profiles.sql"
     $ProfilesTrendsFile = "$PSScriptRoot\003_profiles_trends_integration.sql"
     $StagingTablesFile = "$PSScriptRoot\004_add_staging_tables.sql"
     $OptimizeIndexesFile = "$PSScriptRoot\005_optimize_indexes.sql"
+    $ProcessingCheckpointsFile = "$PSScriptRoot\006_add_processing_checkpoints.sql"
+    $ScheduledTasksFile = "$PSScriptRoot\007_add_scheduled_tasks.sql"
+    $CreateMigrationTrackingFile = "$PSScriptRoot\create_migration_tracking.sql"
 }
 
 # Apply profile migration
@@ -310,6 +346,48 @@ if (Test-Path $OptimizeIndexesFile) {
 else {
     Write-Warning "⚠️  Warning: Index optimization file not found at $OptimizeIndexesFile"
     Write-Host "   Database performance may not be optimal"
+}
+
+# Apply processing checkpoints migration
+if (Test-Path $ProcessingCheckpointsFile) {
+    Write-Status "📋 Applying processing checkpoints migration from: $ProcessingCheckpointsFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $ProcessingCheckpointsFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply processing checkpoints migration from $ProcessingCheckpointsFile"
+            exit 1
+        }
+        Write-Success "✅ Processing checkpoints migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply processing checkpoints migration from $ProcessingCheckpointsFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Processing checkpoints migration file not found at $ProcessingCheckpointsFile"
+    Write-Host "   Processing tracking features may not be available"
+}
+
+# Apply scheduled tasks migration
+if (Test-Path $ScheduledTasksFile) {
+    Write-Status "📋 Applying scheduled tasks migration from: $ScheduledTasksFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $ScheduledTasksFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply scheduled tasks migration from $ScheduledTasksFile"
+            exit 1
+        }
+        Write-Success "✅ Scheduled tasks migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply scheduled tasks migration from $ScheduledTasksFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Scheduled tasks migration file not found at $ScheduledTasksFile"
+    Write-Host "   Scheduled task features may not be available"
 }
 
 Write-Host ""

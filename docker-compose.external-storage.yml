@@ -22,11 +22,14 @@ services:
       # Keep the setup script mount as-is (it's just a small initialization file)
       - ./scripts/setup_database.sh:/docker-entrypoint-initdb.d/setup_database.sh
       # Mount SQL files to separate directory for setup script to access
+      - ./scripts/000_migration_compatibility.sql:/app/sql/000_migration_compatibility.sql
       - ./scripts/001_init_schema_postgres.sql:/app/sql/001_init_schema_postgres.sql
       - ./scripts/002_migrate_to_profiles.sql:/app/sql/002_migrate_to_profiles.sql
       - ./scripts/003_profiles_trends_integration.sql:/app/sql/003_profiles_trends_integration.sql
       - ./scripts/004_add_staging_tables.sql:/app/sql/004_add_staging_tables.sql
       - ./scripts/005_optimize_indexes.sql:/app/sql/005_optimize_indexes.sql
+      - ./scripts/006_add_processing_checkpoints.sql:/app/sql/006_add_processing_checkpoints.sql
+      - ./scripts/007_add_scheduled_tasks.sql:/app/sql/007_add_scheduled_tasks.sql
       # Mount migration tracking files
       - ./scripts/create_migration_tracking.sql:/app/sql/create_migration_tracking.sql
       - ./scripts/check_and_apply_migrations.sh:/app/sql/check_and_apply_migrations.sh

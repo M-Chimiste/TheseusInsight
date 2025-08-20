@@ -123,6 +123,23 @@ if %errorlevel% neq 0 (
 
 echo ✅ pgvector extension enabled for database "%DB_NAME%".
 
+REM Create migration tracking table
+if exist "%CREATE_MIGRATION_TRACKING_FILE%" (
+    echo 📊 Creating migration tracking table...
+    psql -U "%DB_USER%" -d "%DB_NAME%" -f "%CREATE_MIGRATION_TRACKING_FILE%" >nul 2>&1
+)
+
+REM Apply migration compatibility functions
+if exist "%MIGRATION_COMPAT_FILE%" (
+    echo 🔧 Setting up migration compatibility functions...
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%MIGRATION_COMPAT_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply migration compatibility from %MIGRATION_COMPAT_FILE%
+        exit /b 1
+    )
+    echo ✅ Migration compatibility functions created
+)
+
 REM Apply initial schema
 echo 📋 Applying initial schema from: %SCHEMA_FILE%
 psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%SCHEMA_FILE%"
@@ -132,19 +149,27 @@ if %errorlevel% neq 0 (
 )
 
 REM Apply profile migrations
-echo 🔄 Applying profile migrations...
+echo 🔄 Applying database migrations...
 
 REM Determine migration file paths based on environment
 if "%ENVIRONMENT%"=="docker" (
+    set MIGRATION_COMPAT_FILE=C:\app\sql\000_migration_compatibility.sql
     set MIGRATE_TO_PROFILES_FILE=C:\app\sql\002_migrate_to_profiles.sql
     set PROFILES_TRENDS_FILE=C:\app\sql\003_profiles_trends_integration.sql
     set STAGING_TABLES_FILE=C:\app\sql\004_add_staging_tables.sql
     set OPTIMIZE_INDEXES_FILE=C:\app\sql\005_optimize_indexes.sql
+    set PROCESSING_CHECKPOINTS_FILE=C:\app\sql\006_add_processing_checkpoints.sql
+    set SCHEDULED_TASKS_FILE=C:\app\sql\007_add_scheduled_tasks.sql
+    set CREATE_MIGRATION_TRACKING_FILE=C:\app\sql\create_migration_tracking.sql
 ) else (
+    set MIGRATION_COMPAT_FILE=%~dp0000_migration_compatibility.sql
     set MIGRATE_TO_PROFILES_FILE=%~dp0002_migrate_to_profiles.sql
     set PROFILES_TRENDS_FILE=%~dp0003_profiles_trends_integration.sql
     set STAGING_TABLES_FILE=%~dp0004_add_staging_tables.sql
     set OPTIMIZE_INDEXES_FILE=%~dp0005_optimize_indexes.sql
+    set PROCESSING_CHECKPOINTS_FILE=%~dp0006_add_processing_checkpoints.sql
+    set SCHEDULED_TASKS_FILE=%~dp0007_add_scheduled_tasks.sql
+    set CREATE_MIGRATION_TRACKING_FILE=%~dp0create_migration_tracking.sql
 )
 
 REM Apply profile migration
@@ -201,6 +226,34 @@ if exist "%OPTIMIZE_INDEXES_FILE%" (
 ) else (
     echo ⚠️  Warning: Index optimization file not found at %OPTIMIZE_INDEXES_FILE%
     echo    Database performance may not be optimal
+)
+
+REM Apply processing checkpoints migration
+if exist "%PROCESSING_CHECKPOINTS_FILE%" (
+    echo 📋 Applying processing checkpoints migration from: %PROCESSING_CHECKPOINTS_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%PROCESSING_CHECKPOINTS_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply processing checkpoints migration from %PROCESSING_CHECKPOINTS_FILE%
+        exit /b 1
+    )
+    echo ✅ Processing checkpoints migration completed successfully
+) else (
+    echo ⚠️  Warning: Processing checkpoints migration file not found at %PROCESSING_CHECKPOINTS_FILE%
+    echo    Processing tracking features may not be available
+)
+
+REM Apply scheduled tasks migration
+if exist "%SCHEDULED_TASKS_FILE%" (
+    echo 📋 Applying scheduled tasks migration from: %SCHEDULED_TASKS_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%SCHEDULED_TASKS_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply scheduled tasks migration from %SCHEDULED_TASKS_FILE%
+        exit /b 1
+    )
+    echo ✅ Scheduled tasks migration completed successfully
+) else (
+    echo ⚠️  Warning: Scheduled tasks migration file not found at %SCHEDULED_TASKS_FILE%
+    echo    Scheduled task features may not be available
 )
 
 echo.

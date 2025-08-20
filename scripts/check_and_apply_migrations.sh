@@ -87,6 +87,7 @@ migration_files=(
     "004_add_staging_tables.sql"
     "005_optimize_indexes.sql"
     "006_add_processing_checkpoints.sql"
+    "007_add_scheduled_tasks.sql"
 )
 
 migration_descriptions=(
@@ -97,6 +98,7 @@ migration_descriptions=(
     "Add staging tables for bulk operations"
     "Optimize indexes for performance"
     "Add checkpoint system for resumable processing"
+    "Add scheduled task system"
 )
 
 # Check and apply migrations
@@ -134,7 +136,7 @@ done
 # Summary
 echo ""
 echo -e "${BLUE}📊 Migration Summary:${NC}"
-echo "  Total migrations: 5"
+echo "  Total migrations: ${#migration_files[@]}"
 echo "  Already applied: $migrations_applied"
 echo "  Newly applied: $migrations_needed"
 

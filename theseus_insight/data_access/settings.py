@@ -34,6 +34,36 @@ class SettingsRepository:
             )
 
     @staticmethod
+    def get_int(key: str, default: int = 0) -> int:
+        """Get a setting value as integer with fallback."""
+        value = SettingsRepository.get(key)
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def get_float(key: str, default: float = 0.0) -> float:
+        """Get a setting value as float with fallback."""
+        value = SettingsRepository.get(key)
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def get_bool(key: str, default: bool = False) -> bool:
+        """Get a setting value as boolean with fallback."""
+        value = SettingsRepository.get(key)
+        if value is None:
+            return default
+        return value.lower() in ('true', '1', 'yes', 'on')
+
+    @staticmethod
     def delete(key: str) -> None:
         with get_cursor() as cur:
             cur.execute("DELETE FROM settings WHERE key = %s", (key,))

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 import json
 
 from psycopg import sql
@@ -868,14 +868,18 @@ class PaperRepository:
     def get_papers_in_date_range(start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get papers within a date range.
-        
+
         Args:
             start_date: Start date in YYYY-MM-DD format (inclusive)
             end_date: End date in YYYY-MM-DD format (inclusive)
-            
+
         Returns:
             List of paper dictionaries
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"PaperRepository.get_papers_in_date_range called with start_date={start_date}, end_date={end_date}")
+
         with get_cursor() as cur:
             query = """
                 SELECT id, title, abstract, date, url, score, related, rationale, 
@@ -897,7 +901,9 @@ class PaperRepository:
             
             cur.execute(query, params)
             rows = cur.fetchall()
-            
+            logger.info(f"Query executed with params: {params}")
+            logger.info(f"Query returned {len(rows)} rows")
+
             return [
                 {
                     'id': row['id'],

@@ -990,6 +990,9 @@ class ProfileAwareIngestRequest(BaseModel):
     arxiv_categories: Optional[List[str]] = None
     batch_size: int = 10
     send_error_notifications: bool = False
+    # Multi-server configuration (only used when LLM-as-Judge uses Ollama)
+    use_multi_server: bool = False
+    server_ids: Optional[List[int]] = None
 
 class ProfileAwareIngestResponse(BaseModel):
     """Response model for profile-aware paper ingestion."""

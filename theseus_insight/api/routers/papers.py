@@ -654,8 +654,12 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
     """
     try:
         import uuid
+        import logging
         from ..tasks import task_manager
         from ...data_access.profiles import ProfileRepository
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"📝 Starting profile-aware ingestion request: use_multi_server={request.use_multi_server}, profile_ids={request.profile_ids}, server_ids={request.server_ids}")
         
         # Validate profiles exist if specified
         if request.profile_ids:
@@ -692,56 +696,107 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
             "cosine_threshold": request.cosine_threshold,
             "arxiv_categories": request.arxiv_categories,
             "batch_size": request.batch_size,
-            "send_error_notifications": request.send_error_notifications
+            "send_error_notifications": request.send_error_notifications,
+            # Multi-server configuration
+            "use_multi_server": request.use_multi_server,
+            "server_ids": request.server_ids
         }
-        
-        # Create task in database
-        await task_manager.create_task(task_id, "profile_aware_ingest", config)
-        
-        # Enqueue task for processing
-        await task_manager.enqueue_task(task_manager.run_profile_aware_ingest_task, task_id)
-        
-        # Estimate target profiles and papers
-        target_profiles = []
-        if request.profile_ids:
-            target_profiles.extend([ProfileRepository.get_by_id(pid) for pid in request.profile_ids])
-        if request.profile_tags:
-            target_profiles.extend(ProfileRepository.get_by_tags(request.profile_tags))
-        if request.score_all_profiles and not target_profiles:
-            target_profiles = ProfileRepository.get_all_active()
-        
-        # Filter active profiles and remove duplicates
-        active_profiles = [p for p in target_profiles if p and p['is_active']]
-        unique_profiles = []
-        seen_ids = set()
-        for p in active_profiles:
-            if p['id'] not in seen_ids:
-                unique_profiles.append(p)
-                seen_ids.add(p['id'])
-        
-        # Estimate papers (rough calculation based on typical ArXiv daily volume)
-        from datetime import datetime, timedelta
-        if request.start_date and request.end_date:
-            start = datetime.strptime(request.start_date, '%Y-%m-%d')
-            end = datetime.strptime(request.end_date, '%Y-%m-%d')
-            days = (end - start).days + 1
+
+        # Handle multi-server requests differently
+        logger.info("🔀 Checking multi-server routing logic")
+        if request.use_multi_server:
+            logger.info("🚀 Multi-server request detected, routing to bulk operations")
+            # Route to bulk operations API for multi-server processing
+            from .bulk_operations import _start_bulk_judge_operation
+            from fastapi import BackgroundTasks
+
+            # Convert to BulkJudgeRequest format
+            logger.info("🔄 Converting ProfileAwareIngestRequest to BulkJudgeRequest")
+            from .bulk_operations import BulkJudgeRequest
+            bulk_request = BulkJudgeRequest(
+                profile_ids=[str(pid) for pid in request.profile_ids] if request.profile_ids else None,
+                all_profiles=request.score_all_profiles,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                limit=None,  # No limit for full ingestion
+                use_multi_server=True,
+                server_ids=request.server_ids,
+                request_timeout_sec=None,  # Use defaults
+                max_retries=None,  # Use defaults
+                suspend_scheduled_tasks=True,  # Suspend during bulk processing
+                overwrite_existing=request.overwrite_existing,
+                batch_size=request.batch_size
+            )
+            logger.info(f"✅ BulkJudgeRequest created: profile_ids={bulk_request.profile_ids}, server_ids={bulk_request.server_ids}")
+
+            # Create background tasks dependency
+            background_tasks = BackgroundTasks()
+
+            # Call bulk judge core operation
+            logger.info("⚡ Calling _start_bulk_judge_operation...")
+            bulk_response = await _start_bulk_judge_operation(bulk_request, background_tasks)
+            logger.info(f"✅ Bulk judge operation completed: job_id={bulk_response.job_id}")
+
+            # Return response in expected format
+            logger.info("📤 Returning successful response")
+            return ProfileAwareIngestResponse(
+                task_id=str(bulk_response.job_id),  # Convert UUID to string
+                message="Multi-server profile-aware ingestion started successfully",
+                profile_count=len(request.profile_ids) if request.profile_ids else 0,
+                estimated_papers=0,  # Will be calculated by bulk judge
+                status="running"
+            )
         else:
-            days = 7  # Default to 7 days if not specified
-        
-        # Rough estimate: 200-300 papers per day from ArXiv
-        estimated_papers = days * 250
-        
-        return ProfileAwareIngestResponse(
-            task_id=task_id,
-            message=f"Profile-aware ingestion task started successfully. Processing {len(unique_profiles)} profiles.",
-            profile_count=len(unique_profiles),
-            estimated_papers=estimated_papers,
-            status="started"
-        )
+            # Use regular single-server processing
+            logger.info("🔄 Single-server request detected, using regular task manager")
+            # Create task in database
+            await task_manager.create_task(task_id, "profile_aware_ingest", config)
+
+            # Enqueue task for processing
+            await task_manager.enqueue_task(task_manager.run_profile_aware_ingest_task, task_id)
+
+            # Estimate target profiles and papers for single-server response
+            target_profiles = []
+            if request.profile_ids:
+                target_profiles.extend([ProfileRepository.get_by_id(pid) for pid in request.profile_ids])
+            if request.profile_tags:
+                target_profiles.extend(ProfileRepository.get_by_tags(request.profile_tags))
+            if request.score_all_profiles and not target_profiles:
+                target_profiles = ProfileRepository.get_all_active()
+
+            # Filter active profiles and remove duplicates
+            active_profiles = [p for p in target_profiles if p and p['is_active']]
+            unique_profiles = []
+            seen_ids = set()
+            for p in active_profiles:
+                if p['id'] not in seen_ids:
+                    unique_profiles.append(p)
+                    seen_ids.add(p['id'])
+
+            # Estimate papers (rough calculation based on typical ArXiv daily volume)
+            from datetime import datetime, timedelta
+            if request.start_date and request.end_date:
+                start = datetime.strptime(request.start_date, '%Y-%m-%d')
+                end = datetime.strptime(request.end_date, '%Y-%m-%d')
+                days = (end - start).days + 1
+            else:
+                days = 7  # Default to 7 days if not specified
+
+            # Rough estimate: 200-300 papers per day from ArXiv
+            estimated_papers = days * 250
+
+            return ProfileAwareIngestResponse(
+                task_id=task_id,
+                message=f"Profile-aware ingestion task started successfully. Processing {len(unique_profiles)} profiles.",
+                profile_count=len(unique_profiles),
+                estimated_papers=estimated_papers,
+                status="running"
+            )
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"❌ Error in profile-aware ingestion: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start profile-aware ingestion: {str(e)}")
 
 @router.post("/bulk-embed")

@@ -348,6 +348,112 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
     finally:
         manager.disconnect(task_id, websocket)
 
+async def handle_bulk_judge_connection(websocket: WebSocket, job_id: str):
+    """Specialized WebSocket handler for bulk judge jobs with enhanced monitoring."""
+    try:
+        print(f"🔌 WebSocket connection attempt for job_id: {job_id}")
+        
+        # Validate job_id format first
+        try:
+            from uuid import UUID
+            job_uuid = UUID(job_id)
+            print(f"✅ Valid UUID format: {job_uuid}")
+        except ValueError as e:
+            print(f"❌ Invalid UUID format for job_id: {job_id}, error: {e}")
+            await websocket.close(code=4004, reason=f"Invalid job ID format: {job_id}")
+            return
+
+        await manager.connect(job_id, websocket)
+        print(f"✅ WebSocket connected for job: {job_id}")
+
+        # Send initial job status
+        try:
+            from ..routers.bulk_operations import get_job_metrics
+
+            # Get initial job metrics
+            print(f"🔍 Getting metrics for job: {job_uuid}")
+            metrics = await get_job_metrics(job_uuid)
+            print(f"✅ Got metrics for job: {job_id}")
+
+            initial_message = {
+                "type": "bulk_judge_status",
+                "job_id": job_id,
+                "status": "connected",
+                "message": "Connected to bulk judge monitoring",
+                "data": metrics
+            }
+
+            await websocket.send_json(initial_message)
+            print(f"✅ Sent initial message for job: {job_id}")
+
+        except Exception as e:
+            print(f"❌ Failed to get initial job status for {job_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Failed to get initial job status: {str(e)}"
+            })
+
+        # Main monitoring loop
+        while True:
+            try:
+                # Check for updated job status
+                try:
+                    from ..routers.bulk_operations import get_job_metrics
+
+                    # Get current job metrics
+                    metrics = await get_job_metrics(job_uuid)
+
+                    from datetime import datetime
+                    
+                    status_message = {
+                        "type": "bulk_judge_update",
+                        "job_id": job_id,
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "data": metrics
+                    }
+
+                    await websocket.send_json(status_message)
+
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Failed to get job metrics: {str(e)}"
+                    })
+
+                # Wait before next update (more frequent for bulk judge due to distributed nature)
+                await asyncio.sleep(5)  # 5 second intervals for real-time monitoring
+
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                error_message = {
+                    "type": "error",
+                    "message": f"Monitoring error: {str(e)}"
+                }
+                try:
+                    await websocket.send_json(error_message)
+                except:
+                    break
+                await asyncio.sleep(10)  # Back off on errors
+
+    except Exception as e:
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Connection error: {str(e)}"
+            })
+        except:
+            pass
+        try:
+            await websocket.close(code=4000, reason=str(e))
+        except:
+            pass
+    finally:
+        manager.disconnect(job_id, websocket)
+
 # WebSocket endpoints
 @router.websocket("/ws/newsletter/{task_id}")
 async def newsletter_status(websocket: WebSocket, task_id: str):
@@ -392,4 +498,9 @@ async def mindmap_pdf_parse_status(websocket: WebSocket, task_id: str):
 @router.websocket("/ws/trends/{task_id}")
 async def trends_recompute_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for trends recomputation status updates."""
-    await handle_websocket_connection(websocket, task_id, "trends") 
+    await handle_websocket_connection(websocket, task_id, "trends")
+
+@router.websocket("/ws/bulk-judge/{job_id}")
+async def bulk_judge_status(websocket: WebSocket, job_id: str):
+    """WebSocket endpoint for bulk judge job status updates."""
+    await handle_bulk_judge_connection(websocket, job_id) 

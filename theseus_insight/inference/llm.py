@@ -69,9 +69,11 @@ class OllamaInference(InferenceModel):
                  max_new_tokens: int = 4096,
                  temperature: float = 0.1,
                  url: str = None,
-                 num_ctx: int = 131072):
+                 num_ctx: int = 131072,
+                 request_timeout: Optional[float] = None):
         self.url = url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
         self.num_ctx = num_ctx
+        self.request_timeout = request_timeout  # Timeout in seconds, None = no timeout
         super().__init__(model_name, max_new_tokens, temperature)
 
     def _get_provider(self) -> str:
@@ -79,7 +81,11 @@ class OllamaInference(InferenceModel):
 
     def _load_model(self):
         from ollama import Client
-        return Client(host=self.url)
+        # Create client with timeout if specified
+        if self.request_timeout is not None:
+            return Client(host=self.url, timeout=self.request_timeout)
+        else:
+            return Client(host=self.url)
     
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
                streaming: bool = False,

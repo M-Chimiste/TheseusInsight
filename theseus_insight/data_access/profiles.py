@@ -239,17 +239,17 @@ class ProfileRepository:
             rows = cur.fetchall()
             return [
                 {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'color': row[3],
-                    'tags': row[4],
-                    'email_recipients': row[5],
-                    'arxiv_filters': row[6],
-                    'is_active': row[7],
-                    'is_default': row[8],
-                    'created_at': row[9],
-                    'updated_at': row[10]
+                    'id': row['id'],
+                    'name': row['name'],
+                    'description': row['description'],
+                    'color': row['color'],
+                    'tags': row['tags'],
+                    'email_recipients': row['email_recipients'],
+                    'arxiv_filters': row['arxiv_filters'],
+                    'is_active': row['is_active'],
+                    'is_default': row['is_default'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
                 }
                 for row in rows
             ]
@@ -356,17 +356,17 @@ class ProfileRepository:
             rows = cur.fetchall()
             return [
                 {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'color': row[3],
-                    'tags': row[4],
-                    'email_recipients': row[5],
-                    'arxiv_filters': row[6],
-                    'is_active': row[7],
-                    'is_default': row[8],
-                    'created_at': row[9],
-                    'updated_at': row[10]
+                    'id': row['id'],
+                    'name': row['name'],
+                    'description': row['description'],
+                    'color': row['color'],
+                    'tags': row['tags'],
+                    'email_recipients': row['email_recipients'],
+                    'arxiv_filters': row['arxiv_filters'],
+                    'is_active': row['is_active'],
+                    'is_default': row['is_default'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
                 }
                 for row in rows
             ]

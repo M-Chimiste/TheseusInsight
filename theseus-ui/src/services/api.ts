@@ -425,6 +425,18 @@ export const bulkOperationsApi = {
   }>> => {
     return api.delete('/bulk-operations/clear-queue', { params });
   },
+
+  retryWorker: (workerId: string, serverUrl: string, jobId: string): Promise<AxiosResponse<{
+    message: string;
+    worker_id: string;
+    server_url: string;
+    requeued_tasks: number;
+    status: string;
+  }>> => {
+    return api.post(`/bulk-operations/worker/${workerId}/retry`, {}, {
+      params: { server_url: serverUrl, job_id: jobId }
+    });
+  },
 };
 
 // Newsletter API

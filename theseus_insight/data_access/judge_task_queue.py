@@ -173,6 +173,58 @@ class JudgeTaskQueueRepository:
             return cursor.rowcount
 
     @staticmethod
+    def requeue_failed_worker_tasks(worker_id: str, server_url: str, job_id: UUID) -> int:
+        """Re-queue tasks assigned to a failed worker for redistribution."""
+        with get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE judge_task_queue
+                SET status = 'pending',
+                    assigned_server_url = NULL,
+                    leased_until = NULL,
+                    leased_by_worker = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE job_id = %s 
+                  AND leased_by_worker = %s
+                  AND status IN ('leased', 'in_progress')
+            """, (str(job_id), worker_id))
+            return cursor.rowcount
+
+    @staticmethod
+    def redistribute_server_tasks(failed_server_url: str, job_id: UUID, available_servers: List[str]) -> int:
+        """Redistribute tasks from a failed server to available servers."""
+        if not available_servers:
+            return 0
+            
+        with get_cursor() as cursor:
+            # Get all pending tasks assigned to the failed server
+            cursor.execute("""
+                SELECT id FROM judge_task_queue
+                WHERE job_id = %s 
+                  AND assigned_server_url = %s
+                  AND status = 'pending'
+                ORDER BY created_at ASC
+            """, (str(job_id), failed_server_url))
+            
+            task_ids = [row['id'] for row in cursor.fetchall()]
+            
+            if not task_ids:
+                return 0
+            
+            # Redistribute tasks round-robin to available servers
+            redistributed = 0
+            for i, task_id in enumerate(task_ids):
+                new_server = available_servers[i % len(available_servers)]
+                cursor.execute("""
+                    UPDATE judge_task_queue
+                    SET assigned_server_url = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """, (new_server, task_id))
+                redistributed += cursor.rowcount
+            
+            return redistributed
+
+    @staticmethod
     def mark_task_in_progress(task_id: int, worker_id: str) -> bool:
         """Mark a leased task as in progress."""
         with get_cursor() as cursor:

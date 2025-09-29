@@ -19,7 +19,10 @@ class WorkerHeartbeat:
         last_heartbeat: Optional[datetime] = None,
         tasks_processed: int = 0,
         current_task_id: Optional[int] = None,
-        created_at: Optional[datetime] = None
+        created_at: Optional[datetime] = None,
+        failure_reason: Optional[str] = None,
+        failure_count: int = 0,
+        last_failure_at: Optional[datetime] = None
     ):
         self.id = id
         self.worker_id = worker_id
@@ -30,6 +33,9 @@ class WorkerHeartbeat:
         self.tasks_processed = tasks_processed
         self.current_task_id = current_task_id
         self.created_at = created_at
+        self.failure_reason = failure_reason
+        self.failure_count = failure_count
+        self.last_failure_at = last_failure_at
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'WorkerHeartbeat':
@@ -53,7 +59,10 @@ class WorkerHeartbeat:
             last_heartbeat=data.get('last_heartbeat'),
             tasks_processed=data.get('tasks_processed', 0),
             current_task_id=data.get('current_task_id'),
-            created_at=data.get('created_at')
+            created_at=data.get('created_at'),
+            failure_reason=data.get('failure_reason'),
+            failure_count=data.get('failure_count', 0),
+            last_failure_at=data.get('last_failure_at')
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -67,7 +76,10 @@ class WorkerHeartbeat:
             'last_heartbeat': self.last_heartbeat.isoformat() if self.last_heartbeat else None,
             'tasks_processed': self.tasks_processed,
             'current_task_id': self.current_task_id,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'failure_reason': self.failure_reason,
+            'failure_count': self.failure_count,
+            'last_failure_at': self.last_failure_at.isoformat() if self.last_failure_at else None
         }
 
 
@@ -153,6 +165,86 @@ class WorkerHeartbeatsRepository:
                 UPDATE worker_heartbeats
                 SET status = 'inactive', last_heartbeat = CURRENT_TIMESTAMP
                 WHERE worker_id = %s AND server_url = %s AND job_id = %s
+            """, (worker_id, server_url, str(job_id) if job_id else None))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def mark_worker_failed(
+        worker_id: str, 
+        server_url: str, 
+        job_id: Optional[UUID] = None, 
+        failure_reason: str = "Unknown error"
+    ) -> bool:
+        """Mark a worker as failed with a reason."""
+        with get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE worker_heartbeats
+                SET status = 'failed', 
+                    last_heartbeat = CURRENT_TIMESTAMP,
+                    failure_reason = %s,
+                    failure_count = failure_count + 1,
+                    last_failure_at = CURRENT_TIMESTAMP
+                WHERE worker_id = %s AND server_url = %s AND job_id = %s
+            """, (failure_reason, worker_id, server_url, str(job_id) if job_id else None))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def get_all_workers(job_id: Optional[UUID] = None, include_failed: bool = True) -> List[WorkerHeartbeat]:
+        """Get all workers including failed ones for visibility."""
+        with get_cursor() as cursor:
+            if job_id is None:
+                # Get all workers regardless of job_id
+                if include_failed:
+                    cursor.execute("""
+                        SELECT id, worker_id, server_url, job_id, status,
+                               last_heartbeat, tasks_processed, current_task_id, created_at,
+                               failure_reason, failure_count, last_failure_at
+                        FROM worker_heartbeats
+                        ORDER BY created_at ASC
+                    """)
+                else:
+                    cursor.execute("""
+                        SELECT id, worker_id, server_url, job_id, status,
+                               last_heartbeat, tasks_processed, current_task_id, created_at,
+                               failure_reason, failure_count, last_failure_at
+                        FROM worker_heartbeats
+                        WHERE status != 'failed'
+                        ORDER BY created_at ASC
+                    """)
+            else:
+                # Get workers for specific job_id
+                if include_failed:
+                    cursor.execute("""
+                        SELECT id, worker_id, server_url, job_id, status,
+                               last_heartbeat, tasks_processed, current_task_id, created_at,
+                               failure_reason, failure_count, last_failure_at
+                        FROM worker_heartbeats
+                        WHERE job_id = %s
+                        ORDER BY created_at ASC
+                    """, (str(job_id),))
+                else:
+                    cursor.execute("""
+                        SELECT id, worker_id, server_url, job_id, status,
+                               last_heartbeat, tasks_processed, current_task_id, created_at,
+                               failure_reason, failure_count, last_failure_at
+                        FROM worker_heartbeats
+                        WHERE job_id = %s AND status != 'failed'
+                        ORDER BY created_at ASC
+                    """, (str(job_id),))
+            
+            rows = cursor.fetchall()
+            return [WorkerHeartbeat.from_dict(dict(row)) for row in rows]
+
+    @staticmethod
+    def retry_failed_worker(worker_id: str, server_url: str, job_id: Optional[UUID] = None) -> bool:
+        """Reset a failed worker to pending status for retry."""
+        with get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE worker_heartbeats
+                SET status = 'pending', 
+                    last_heartbeat = CURRENT_TIMESTAMP,
+                    failure_reason = NULL
+                WHERE worker_id = %s AND server_url = %s AND job_id = %s AND status = 'failed'
             """, (worker_id, server_url, str(job_id) if job_id else None))
             return cursor.rowcount > 0
 

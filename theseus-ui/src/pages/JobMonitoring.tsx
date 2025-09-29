@@ -29,8 +29,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  TextField,
-
   IconButton,
   Tooltip,
 } from '@mui/material';
@@ -70,8 +68,6 @@ const JobMonitoring: React.FC = () => {
 
   // Queue management state
   const [clearQueueDialog, setClearQueueDialog] = useState(false);
-  const [clearJobId, setClearJobId] = useState<string>('');
-  const [clearStatusFilter, setClearStatusFilter] = useState<string>('');
 
   // Get job ID from URL params
   useEffect(() => {
@@ -144,8 +140,6 @@ const JobMonitoring: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['queueStatus'] });
       queryClient.invalidateQueries({ queryKey: ['activeJobs'] });
       setClearQueueDialog(false);
-      setClearJobId('');
-      setClearStatusFilter('');
       // Could show success notification here
       console.log('Queue cleared successfully:', data);
     },
@@ -171,10 +165,8 @@ const JobMonitoring: React.FC = () => {
   };
 
   const handleClearQueue = () => {
-    const params: { job_id?: string; status_filter?: string } = {};
-    if (clearJobId) params.job_id = clearJobId;
-    if (clearStatusFilter) params.status_filter = clearStatusFilter;
-    clearQueueMutation.mutate(params);
+    // Clear all tasks without any filters
+    clearQueueMutation.mutate({});
   };
 
   const handleJobHistoryFilter = () => {
@@ -457,116 +449,124 @@ const JobMonitoring: React.FC = () => {
 
           {/* Server Health Overview */}
           <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <MemoryIcon color="primary" />
                   <Typography variant="h6">Server Health</Typography>
                 </Box>
 
-                {serverLoading ? (
-                  <Box display="flex" justifyContent="center" p={2}>
-                    <CircularProgress size={24} />
-                  </Box>
-                ) : serverMetrics ? (
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 4 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="success.main">
-                          {serverMetrics.summary.healthy}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          Healthy
-                        </Typography>
-                      </Box>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  {serverLoading ? (
+                    <Box display="flex" justifyContent="center" width="100%" p={2}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  ) : serverMetrics ? (
+                    <Grid container spacing={2} sx={{ width: '100%' }}>
+                      <Grid size={{ xs: 4 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="success.main">
+                            {serverMetrics.summary.healthy}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Healthy
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 4 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="error.main">
+                            {serverMetrics.summary.unhealthy}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Unhealthy
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 4 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="textSecondary">
+                            {serverMetrics.summary.total}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Total
+                          </Typography>
+                        </Box>
+                      </Grid>
                     </Grid>
-                    <Grid size={{ xs: 4 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="error.main">
-                          {serverMetrics.summary.unhealthy}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          Unhealthy
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid size={{ xs: 4 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="textSecondary">
-                          {serverMetrics.summary.total}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          Total
-                        </Typography>
-                      </Box>
-                    </Grid>
-                  </Grid>
-                ) : (
-                  <Typography color="textSecondary">No server data available</Typography>
-                )}
+                  ) : (
+                    <Box display="flex" justifyContent="center" width="100%">
+                      <Typography color="textSecondary">No server data available</Typography>
+                    </Box>
+                  )}
+                </Box>
               </CardContent>
             </Card>
           </Grid>
 
           {/* Queue Status */}
           <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <QueueIcon color="primary" />
                   <Typography variant="h6">Queue Status</Typography>
                 </Box>
 
-                {queueLoading ? (
-                  <Box display="flex" justifyContent="center" p={2}>
-                    <CircularProgress size={24} />
-                  </Box>
-                ) : queueStatus ? (
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 6 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="warning.main">
-                          {queueStatus.queue_stats.pending_tasks || 0}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          Pending
-                        </Typography>
-                      </Box>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  {queueLoading ? (
+                    <Box display="flex" justifyContent="center" width="100%" p={2}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  ) : queueStatus ? (
+                    <Grid container spacing={2} sx={{ width: '100%' }}>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="warning.main">
+                            {queueStatus.queue_stats.pending_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Pending
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="info.main">
+                            {queueStatus.queue_stats.in_progress_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            In Progress
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="success.main">
+                            {queueStatus.queue_stats.completed_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Completed
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="error.main">
+                            {queueStatus.queue_stats.failed_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Failed
+                          </Typography>
+                        </Box>
+                      </Grid>
                     </Grid>
-                    <Grid size={{ xs: 6 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="info.main">
-                          {queueStatus.queue_stats.in_progress_tasks || 0}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          In Progress
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid size={{ xs: 6 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="success.main">
-                          {queueStatus.queue_stats.completed_tasks || 0}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          Completed
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid size={{ xs: 6 }}>
-                      <Box textAlign="center">
-                        <Typography variant="h4" color="error.main">
-                          {queueStatus.queue_stats.failed_tasks || 0}
-                        </Typography>
-                        <Typography variant="body2" color="textSecondary">
-                          Failed
-                        </Typography>
-                      </Box>
-                    </Grid>
-                  </Grid>
-                ) : (
-                  <Typography color="textSecondary">No queue data available</Typography>
-                )}
+                  ) : (
+                    <Box display="flex" justifyContent="center" width="100%">
+                      <Typography color="textSecondary">No queue data available</Typography>
+                    </Box>
+                  )}
+                </Box>
               </CardContent>
             </Card>
           </Grid>
@@ -894,10 +894,10 @@ const JobMonitoring: React.FC = () => {
                                 <Button
                                   size="small"
                                   variant="outlined"
-                                  onClick={() => setClearJobId(job.job_id)}
+                                  onClick={() => setClearQueueDialog(true)}
                                   startIcon={<ClearIcon />}
                                 >
-                                  Clear
+                                  Clear All
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -927,38 +927,12 @@ const JobMonitoring: React.FC = () => {
         <DialogTitle>Clear Queue</DialogTitle>
         <DialogContent>
           <Typography gutterBottom>
-            Clear tasks from the processing queue. This action cannot be undone.
+            This will completely clear all tasks from the processing queue. This action cannot be undone.
           </Typography>
-
-          <Box mt={2} display="flex" flexDirection="column" gap={2}>
-            <TextField
-              label="Job ID (optional)"
-              value={clearJobId}
-              onChange={(e) => setClearJobId(e.target.value)}
-              placeholder="Leave empty to clear all jobs"
-              size="small"
-              fullWidth
-            />
-
-            <FormControl size="small" fullWidth>
-              <InputLabel>Status Filter</InputLabel>
-              <Select
-                value={clearStatusFilter}
-                label="Status Filter"
-                onChange={(e) => setClearStatusFilter(e.target.value)}
-              >
-                <MenuItem value="">All Statuses</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="leased">Leased</MenuItem>
-                <MenuItem value="in_progress">In Progress</MenuItem>
-                <MenuItem value="failed">Failed</MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
 
           <Alert severity="warning" sx={{ mt: 2 }}>
             <Typography variant="body2">
-              This will permanently remove tasks from the queue. Make sure you want to proceed.
+              This will permanently remove ALL tasks from the queue, regardless of their status or job. Make sure you want to proceed.
             </Typography>
           </Alert>
         </DialogContent>
@@ -971,7 +945,7 @@ const JobMonitoring: React.FC = () => {
             disabled={clearQueueMutation.isPending}
             startIcon={clearQueueMutation.isPending ? <CircularProgress size={16} /> : <ClearQueueIcon />}
           >
-            {clearQueueMutation.isPending ? 'Clearing...' : 'Clear Queue'}
+            {clearQueueMutation.isPending ? 'Clearing...' : 'Clear All Tasks'}
           </Button>
         </DialogActions>
       </Dialog>

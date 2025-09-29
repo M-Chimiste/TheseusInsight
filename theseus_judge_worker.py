@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import logging
 import signal
 import sys
@@ -62,6 +63,7 @@ class JudgeWorker:
         self.tasks_processed = 0
         self.consecutive_failures = 0
         self.circuit_breaker_threshold = 5
+        self._start_time = None  # Will be set when worker starts
 
         # Initialize Ollama client with timeout for bulk processing
         self.ollama_client = OllamaInference(
@@ -79,6 +81,7 @@ class JudgeWorker:
         """Start the worker process."""
         logger.info(f"Starting worker {self.worker_id} for job {self.job_id}")
         self.running = True
+        self._start_time = asyncio.get_event_loop().time()  # Track start time for failure logging
 
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -171,12 +174,14 @@ class JudgeWorker:
             await asyncio.to_thread(JudgeTaskQueueRepository.mark_task_completed, task.id)
 
             self.tasks_processed += 1
-            self.consecutive_failures = 0
+            self.consecutive_failures = 0  # Reset on successful completion
 
-            logger.info(f"Worker {self.worker_id} completed task {task.id} with score {score_data['score']}")
+            logger.info(f"Worker {self.worker_id} completed task {task.id} with score {score_data['score']} (total processed: {self.tasks_processed})")
 
         except Exception as e:
-            await self._handle_task_error(task, str(e))
+            # Classify the error to determine if it should trigger circuit breaker
+            error_type = self._classify_error(e)
+            await self._handle_task_error(task, str(e), error_type)
 
     async def _score_paper(self, paper: dict, research_interests: str) -> dict:
         """Score a paper using LLM judge."""
@@ -199,34 +204,157 @@ class JudgeWorker:
             'rationale': str(response_json.get('rationale', ''))
         }
 
-    async def _handle_task_error(self, task, error_message: str):
-        """Handle task processing errors."""
+    def _classify_error(self, error: Exception) -> str:
+        """Classify error type to determine appropriate handling."""
+        error_str = str(error).lower()
+        error_type = type(error).__name__
+        
+        # Server connectivity issues - should trigger circuit breaker
+        if any(keyword in error_str for keyword in [
+            'connection refused', 'connection timeout', 'connection error',
+            'network unreachable', 'host unreachable', 'timeout',
+            'connection reset', 'connection aborted', 'server unavailable',
+            'service unavailable', 'bad gateway', 'gateway timeout'
+        ]):
+            return 'SERVER_CONNECTIVITY'
+        
+        # HTTP/API errors that indicate server issues
+        if any(keyword in error_str for keyword in [
+            '500 internal server error', '502 bad gateway', '503 service unavailable',
+            '504 gateway timeout', 'ollama server error'
+        ]):
+            return 'SERVER_ERROR'
+        
+        # Data/validation errors - should not trigger circuit breaker
+        if any(keyword in error_str for keyword in [
+            'not found', 'no research interests', 'paper', 'profile',
+            'invalid data', 'missing data', 'validation error'
+        ]) or error_type in ['ValueError', 'KeyError']:
+            return 'DATA_ERROR'
+        
+        # LLM/inference errors - should not trigger circuit breaker
+        if any(keyword in error_str for keyword in [
+            'json', 'parsing', 'invalid response', 'model error',
+            'inference error', 'generation failed', 'token limit'
+        ]):
+            return 'INFERENCE_ERROR'
+        
+        # Default to inference error for unknown errors (safer approach)
+        return 'INFERENCE_ERROR'
+
+    async def _handle_task_error(self, task, error_message: str, error_type: str = 'INFERENCE_ERROR'):
+        """Handle task processing errors with intelligent error classification and server health verification."""
         task.attempts += 1
-        self.consecutive_failures += 1
-
-        logger.warning(f"Worker {self.worker_id} task {task.id} failed (attempt {task.attempts}): {error_message}")
-
-        # Check if we should retry or fail permanently (run in thread pool)
-        if task.attempts >= self.max_retries:
-            await asyncio.to_thread(
-                JudgeTaskQueueRepository.mark_task_failed,
-                task.id,
-                error_message,
-                increment_attempts=False
-            )
-            logger.error(f"Worker {self.worker_id} permanently failed task {task.id} after {task.attempts} attempts")
+        
+        # Track consecutive server failures
+        if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR']:
+            self.consecutive_failures += 1
+            logger.error(f"Worker {self.worker_id} server error on task {task.id} (attempt {task.attempts}): {error_message}")
         else:
+            self.consecutive_failures = 0
+            logger.warning(f"Worker {self.worker_id} task error on task {task.id} (attempt {task.attempts}, type: {error_type}): {error_message}")
+
+        # Log detailed error information
+        await self._log_task_error(task, error_message, error_type)
+
+        # After 3rd retry - need to decide if this is a server or paper problem
+        if task.attempts >= self.max_retries:
+            logger.warning(f"Task {task.id} exhausted {self.max_retries} retries")
+            
+            # For SERVER errors: verify server health before deciding action
+            if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR']:
+                logger.info(f"Performing server health check for {self.server_url}...")
+                server_is_healthy = await self._check_server_health()
+                
+                if server_is_healthy:
+                    # Server is fine, this paper is just problematic
+                    logger.warning(
+                        f"✅ Server {self.server_url} is healthy - this paper is the problem. "
+                        f"Marking task {task.id} as permanently failed and continuing."
+                    )
+                    await asyncio.to_thread(
+                        JudgeTaskQueueRepository.mark_task_failed,
+                        task.id,
+                        f"[PAPER_ISSUE] Failed {self.max_retries} times but server is healthy: {error_message}",
+                        increment_attempts=False
+                    )
+                    self.consecutive_failures = 0  # Reset since server is fine
+                    return  # Continue to next task
+                else:
+                    # Server is actually down
+                    logger.error(f"❌ Server {self.server_url} health check FAILED - shutting down worker")
+                    await self._shutdown_worker(f"Server unreachable after {task.attempts} attempts on task {task.id}")
+                    return
+            else:
+                # Non-server errors (LLM inference, data issues): mark failed and continue
+                logger.warning(
+                    f"Task {task.id} permanently failed due to {error_type} after {task.attempts} attempts - continuing with next task"
+                )
+                await asyncio.to_thread(
+                    JudgeTaskQueueRepository.mark_task_failed,
+                    task.id,
+                    f"[{error_type}] {error_message}",
+                    increment_attempts=False
+                )
+                self.consecutive_failures = 0
+                return  # Continue to next task
+        else:
+            # Still have retries left - mark failed for requeue
             await asyncio.to_thread(
                 JudgeTaskQueueRepository.mark_task_failed,
                 task.id,
-                error_message
+                f"[{error_type}] {error_message}"
             )
-            logger.info(f"Worker {self.worker_id} will retry task {task.id} (attempt {task.attempts + 1})")
+            logger.info(f"Task {task.id} will be retried (attempt {task.attempts}/{self.max_retries}, type: {error_type})")
 
-        # Check circuit breaker
-        if self.consecutive_failures >= self.circuit_breaker_threshold:
-            logger.error(f"Worker {self.worker_id} circuit breaker triggered after {self.consecutive_failures} failures")
-            await self._shutdown_worker("Circuit breaker triggered")
+        # ⚡ CIRCUIT BREAKER: Check if we've hit threshold of consecutive failures
+        if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR'] and self.consecutive_failures >= self.circuit_breaker_threshold:
+            logger.warning(
+                f"⚠️  Circuit breaker threshold reached ({self.consecutive_failures} consecutive server errors). "
+                f"Performing server health check..."
+            )
+            
+            server_is_healthy = await self._check_server_health()
+            
+            if not server_is_healthy:
+                # Server is down - trigger circuit breaker
+                logger.error(
+                    f"❌ Circuit breaker TRIGGERED: Server {self.server_url} is unreachable after "
+                    f"{self.consecutive_failures} consecutive failures"
+                )
+                await self._shutdown_worker(f"Circuit breaker triggered: server unreachable after {self.consecutive_failures} errors")
+            else:
+                # False alarm - server is fine, just bad papers
+                logger.info(
+                    f"✅ Circuit breaker check: Server {self.server_url} is healthy despite "
+                    f"{self.consecutive_failures} consecutive failures. Resetting counter and continuing."
+                )
+                self.consecutive_failures = 0  # Reset and keep going
+
+    async def _check_server_health(self) -> bool:
+        """Perform a health check on the Ollama server.
+        
+        Returns:
+            bool: True if server is healthy and reachable, False if down
+        """
+        try:
+            import httpx
+            logger.debug(f"Health checking server: {self.server_url}")
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Try to hit the Ollama tags endpoint (lightweight check)
+                response = await client.get(f"{self.server_url}/api/tags")
+                
+                if response.status_code == 200:
+                    logger.debug(f"Server {self.server_url} health check PASSED (status 200)")
+                    return True
+                else:
+                    logger.warning(f"Server {self.server_url} returned status {response.status_code}")
+                    return False
+                    
+        except Exception as e:
+            logger.warning(f"Server {self.server_url} health check FAILED: {e}")
+            return False
 
     async def _send_heartbeat(self):
         """Send heartbeat to indicate worker is alive."""
@@ -244,21 +372,92 @@ class JudgeWorker:
         except Exception as e:
             logger.warning(f"Worker {self.worker_id} failed to send heartbeat: {e}")
 
+    async def _log_task_error(self, task, error_message: str, error_type: str):
+        """Log detailed task error information to error_logs table."""
+        try:
+            from theseus_insight.db.pool import get_connection_pool
+            pool = await get_connection_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO error_logs (job_id, task_id, server_url, worker_id, error_type, severity, description, context)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """, 
+                str(self.job_id) if self.job_id else None,
+                task.id,
+                self.server_url,
+                self.worker_id,
+                f'TASK_{error_type}',
+                'HIGH' if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR'] else 'MEDIUM',
+                f"Task {task.id} failed: {error_message}",
+                json.dumps({
+                    'paper_id': task.paper_id,
+                    'profile_id': task.profile_id,
+                    'task_attempts': task.attempts,
+                    'max_retries': self.max_retries,
+                    'error_classification': error_type,
+                    'consecutive_failures': self.consecutive_failures,
+                    'tasks_processed': self.tasks_processed,
+                    'will_retry': task.attempts < self.max_retries
+                })
+                )
+        except Exception as e:
+            logger.warning(f"Failed to log task error to error_logs: {e}")
+
     async def _shutdown_worker(self, reason: str = "Normal shutdown"):
         """Shutdown this worker."""
         logger.info(f"Worker {self.worker_id} shutting down: {reason}")
         self.running = False
 
-        # Mark as inactive (run in thread pool)
+        # Mark as failed with reason if it's an error, otherwise inactive
         try:
-            await asyncio.to_thread(
-                WorkerHeartbeatsRepository.mark_worker_inactive,
-                worker_id=self.worker_id,
-                server_url=self.server_url,
-                job_id=self.job_id
-            )
+            if "error" in reason.lower() or "failed" in reason.lower() or "circuit breaker" in reason.lower():
+                await asyncio.to_thread(
+                    WorkerHeartbeatsRepository.mark_worker_failed,
+                    worker_id=self.worker_id,
+                    server_url=self.server_url,
+                    job_id=self.job_id,
+                    failure_reason=reason
+                )
+                logger.error(f"Worker {self.worker_id} marked as failed: {reason}")
+                
+                # Log the failure to error_logs table for detailed tracking
+                await self._log_worker_failure(reason)
+            else:
+                await asyncio.to_thread(
+                    WorkerHeartbeatsRepository.mark_worker_inactive,
+                    worker_id=self.worker_id,
+                    server_url=self.server_url,
+                    job_id=self.job_id
+                )
         except Exception as e:
-            logger.warning(f"Worker {self.worker_id} failed to mark inactive: {e}")
+            logger.warning(f"Worker {self.worker_id} failed to update status: {e}")
+
+    async def _log_worker_failure(self, reason: str):
+        """Log worker failure to error_logs table for detailed tracking."""
+        try:
+            from theseus_insight.db.pool import get_connection_pool
+            pool = await get_connection_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO error_logs (job_id, server_url, worker_id, error_type, severity, description, context)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """, 
+                str(self.job_id) if self.job_id else None,
+                self.server_url,
+                self.worker_id,
+                'WORKER_FAILURE',
+                'HIGH',
+                f"Worker terminated: {reason}",
+                json.dumps({
+                    'tasks_processed': self.tasks_processed,
+                    'consecutive_failures': self.consecutive_failures,
+                    'shutdown_reason': reason,
+                    'worker_runtime_seconds': (asyncio.get_event_loop().time() - getattr(self, '_start_time', 0))
+                })
+                )
+            logger.info(f"Worker {self.worker_id} failure logged to error_logs table")
+        except Exception as e:
+            logger.warning(f"Failed to log worker failure to error_logs: {e}")
 
     async def _cleanup(self):
         """Clean up worker resources."""

@@ -286,6 +286,43 @@ async def _restore_scheduled_tasks(suspend_scheduled_tasks: bool, checkpoint_man
     except Exception as e:
         print(f"Error restoring scheduled tasks: {e}")
 
+async def _launch_single_worker(job_id: UUID, server_url: str, request_timeout_sec: int, max_retries: int):
+    """Launch a single worker process for a specific server."""
+    import subprocess
+    import sys
+    import os
+    
+    print(f"🚀 Launching single worker for job {job_id} on {server_url}")
+    
+    # Get the current conda environment
+    conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'base')
+    
+    try:
+        # Build the command to run the worker
+        cmd = [
+            'conda', 'run', '-n', conda_env, 'python', 'theseus_judge_worker.py',
+            '--job-id', str(job_id),
+            '--server-url', server_url,
+            '--timeout', str(request_timeout_sec),
+            '--max-retries', str(max_retries)
+        ]
+        
+        # Launch the process in the background
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=os.getcwd(),
+            start_new_session=True  # Detach from parent process
+        )
+        
+        print(f"✅ Single worker launched for {server_url} (PID: {process.pid})")
+        return process.pid
+        
+    except Exception as e:
+        print(f"❌ Failed to launch single worker for {server_url}: {e}")
+        raise
+
 async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeout_sec: Optional[int], max_retries: Optional[int]):
     """Launch worker processes for each selected server."""
     import subprocess
@@ -965,7 +1002,7 @@ async def get_job_metrics(job_id: UUID) -> Dict[str, Any]:
                 heartbeat_repo = WorkerHeartbeatsRepository()
 
                 queue_progress = queue_repo.get_job_progress(job_id)
-                active_workers = heartbeat_repo.get_active_workers(job_id)
+                all_workers = heartbeat_repo.get_all_workers(job_id, include_failed=True)
 
                 if queue_progress:
                     # Override main progress with queue metrics for multi-server jobs
@@ -983,16 +1020,20 @@ async def get_job_metrics(job_id: UUID) -> Dict[str, Any]:
                         "total_tasks": queue_progress['total_tasks']
                     }
 
-                if active_workers:
+                if all_workers:
                     metrics["worker_metrics"] = []
-                    for worker in active_workers:
-                        metrics["worker_metrics"].append({
+                    for worker in all_workers:
+                        worker_data = {
                             "worker_id": worker.worker_id,
                             "server_url": worker.server_url,
                             "status": worker.status,
                             "tasks_processed": worker.tasks_processed,
-                            "last_heartbeat": worker.last_heartbeat.isoformat() if worker.last_heartbeat else None
-                        })
+                            "last_heartbeat": worker.last_heartbeat.isoformat() if worker.last_heartbeat else None,
+                            "failure_reason": worker.failure_reason,
+                            "failure_count": worker.failure_count,
+                            "last_failure_at": worker.last_failure_at.isoformat() if worker.last_failure_at else None
+                        }
+                        metrics["worker_metrics"].append(worker_data)
 
             return metrics
 
@@ -1133,9 +1174,14 @@ async def _signal_workers_cancel(job_id: UUID):
                 job_id
             )
             
-            # Clear worker heartbeats for this job
+            # Mark worker heartbeats as inactive instead of deleting (preserve failure history)
             await conn.execute(
-                "DELETE FROM worker_heartbeats WHERE job_id = $1",
+                """
+                UPDATE worker_heartbeats 
+                SET status = 'inactive', 
+                    last_heartbeat = NOW()
+                WHERE job_id = $1 AND status != 'failed'
+                """,
                 job_id
             )
             
@@ -1254,8 +1300,17 @@ async def cleanup_orphaned_processes():
                 """
             )
             
-            # Clear all worker heartbeats
-            await conn.execute("DELETE FROM worker_heartbeats")
+            # Mark all worker heartbeats as inactive instead of deleting (preserve failure history)
+            await conn.execute(
+                """
+                UPDATE worker_heartbeats 
+                SET status = CASE 
+                    WHEN status = 'failed' THEN 'failed'
+                    ELSE 'inactive'
+                END,
+                last_heartbeat = NOW()
+                """
+            )
             
         print("✅ Database state cleaned up")
         
@@ -1276,6 +1331,81 @@ async def cleanup_orphaned_processes_endpoint() -> Dict[str, Any]:
     except Exception as e:
         print(f"Error cleaning up orphaned processes: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned processes: {str(e)}")
+
+@router.post("/restart-failed-workers/{job_id}")
+async def restart_failed_workers(job_id: UUID) -> Dict[str, Any]:
+    """Restart all failed workers for a specific job."""
+    try:
+        from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
+        
+        # Get all failed workers for this job
+        failed_workers = WorkerHeartbeatsRepository.get_all_workers(job_id, include_failed=True)
+        failed_workers = [w for w in failed_workers if w.status == 'failed']
+        
+        if not failed_workers:
+            return {
+                "message": "No failed workers found for this job",
+                "job_id": str(job_id),
+                "restarted_workers": []
+            }
+        
+        # Check if the job is still active
+        pool = await get_connection_pool()
+        async with pool.acquire() as conn:
+            job_row = await conn.fetchrow(
+                "SELECT status FROM processing_jobs WHERE id = $1",
+                job_id
+            )
+            
+            if not job_row or job_row['status'] not in ['running', 'pending']:
+                return {
+                    "message": "Cannot restart workers for inactive job",
+                    "job_id": str(job_id),
+                    "job_status": job_row['status'] if job_row else 'not_found',
+                    "restarted_workers": []
+                }
+        
+        restarted_workers = []
+        for worker in failed_workers:
+            try:
+                # Reset worker status to pending for retry
+                success = WorkerHeartbeatsRepository.retry_failed_worker(
+                    worker.worker_id, 
+                    worker.server_url, 
+                    job_id
+                )
+                
+                if success:
+                    # Launch new worker process
+                    await _launch_single_worker(
+                        job_id=job_id,
+                        server_url=worker.server_url,
+                        request_timeout_sec=30,
+                        max_retries=3
+                    )
+                    
+                    restarted_workers.append({
+                        "worker_id": worker.worker_id,
+                        "server_url": worker.server_url,
+                        "previous_failure_reason": worker.failure_reason,
+                        "failure_count": worker.failure_count
+                    })
+                    
+                    logger.info(f"Restarted failed worker {worker.worker_id} for job {job_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to restart worker {worker.worker_id}: {e}")
+        
+        return {
+            "message": f"Restarted {len(restarted_workers)} failed workers",
+            "job_id": str(job_id),
+            "total_failed_workers": len(failed_workers),
+            "restarted_workers": restarted_workers
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to restart failed workers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to restart workers: {str(e)}")
 
 async def _restore_scheduled_tasks_on_cancel(job_id: UUID, pool):
     """Restore suspended tasks when job is canceled."""
@@ -1590,6 +1720,198 @@ async def get_job_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get job history: {str(e)}"
+        )
+
+@router.get("/worker-failures", response_model=Dict[str, Any])
+async def get_worker_failures(
+    limit: int = Query(50, description="Maximum number of failures to return"),
+    job_id: Optional[UUID] = Query(None, description="Filter by job ID"),
+    server_url: Optional[str] = Query(None, description="Filter by server URL")
+) -> Dict[str, Any]:
+    """Get recent worker failures and error logs for debugging."""
+    try:
+        pool = await get_connection_pool()
+        async with pool.acquire() as conn:
+            # Build query conditions
+            conditions = ["error_type = 'WORKER_FAILURE'"]
+            params = []
+            param_count = 0
+            
+            if job_id:
+                param_count += 1
+                conditions.append(f"job_id = ${param_count}")
+                params.append(str(job_id))
+            
+            if server_url:
+                param_count += 1
+                conditions.append(f"server_url = ${param_count}")
+                params.append(server_url)
+            
+            where_clause = " AND ".join(conditions)
+            param_count += 1
+            
+            # Get error logs
+            error_logs = await conn.fetch(f"""
+                SELECT job_id, server_url, worker_id, severity, description, 
+                       context::text as context, created_at
+                FROM error_logs
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ${param_count}
+            """, *params, limit)
+            
+            # Get failed workers from heartbeats
+            failed_workers = await conn.fetch("""
+                SELECT worker_id, server_url, job_id, failure_reason, failure_count, 
+                       last_failure_at, last_heartbeat, tasks_processed
+                FROM worker_heartbeats
+                WHERE status = 'failed'
+                ORDER BY last_failure_at DESC
+                LIMIT $1
+            """, limit)
+            
+            return {
+                "error_logs": [dict(row) for row in error_logs],
+                "failed_workers": [dict(row) for row in failed_workers],
+                "summary": {
+                    "total_error_logs": len(error_logs),
+                    "total_failed_workers": len(failed_workers),
+                    "filters_applied": {
+                        "job_id": str(job_id) if job_id else None,
+                        "server_url": server_url
+                    }
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"Failed to get worker failures: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get worker failures: {str(e)}")
+
+@router.get("/error-statistics", response_model=Dict[str, Any])
+async def get_error_statistics(
+    job_id: Optional[UUID] = Query(None, description="Filter by job ID"),
+    hours: int = Query(24, description="Hours to look back for statistics")
+) -> Dict[str, Any]:
+    """Get error statistics and patterns for debugging."""
+    try:
+        pool = await get_connection_pool()
+        async with pool.acquire() as conn:
+            # Build time filter
+            time_filter = f"created_at >= NOW() - INTERVAL '{hours} hours'"
+            job_filter = ""
+            params = []
+            
+            if job_id:
+                job_filter = " AND job_id = $1"
+                params.append(str(job_id))
+            
+            # Get error type distribution
+            error_types = await conn.fetch(f"""
+                SELECT error_type, severity, COUNT(*) as count,
+                       MIN(created_at) as first_seen,
+                       MAX(created_at) as last_seen
+                FROM error_logs
+                WHERE {time_filter}{job_filter}
+                GROUP BY error_type, severity
+                ORDER BY count DESC
+            """, *params)
+            
+            # Get server-specific error rates
+            server_errors = await conn.fetch(f"""
+                SELECT server_url, error_type, COUNT(*) as count
+                FROM error_logs
+                WHERE {time_filter}{job_filter}
+                GROUP BY server_url, error_type
+                ORDER BY server_url, count DESC
+            """, *params)
+            
+            # Get recent error samples
+            recent_errors = await conn.fetch(f"""
+                SELECT error_type, severity, description, context, created_at, server_url, worker_id
+                FROM error_logs
+                WHERE {time_filter}{job_filter}
+                ORDER BY created_at DESC
+                LIMIT 20
+            """, *params)
+            
+            # Calculate error rate trends (hourly)
+            error_trends = await conn.fetch(f"""
+                SELECT DATE_TRUNC('hour', created_at) as hour,
+                       error_type,
+                       COUNT(*) as count
+                FROM error_logs
+                WHERE {time_filter}{job_filter}
+                GROUP BY DATE_TRUNC('hour', created_at), error_type
+                ORDER BY hour DESC, count DESC
+            """, *params)
+            
+            return {
+                "time_range": f"Last {hours} hours",
+                "job_id": str(job_id) if job_id else "All jobs",
+                "error_type_distribution": [dict(row) for row in error_types],
+                "server_error_rates": [dict(row) for row in server_errors],
+                "recent_errors": [dict(row) for row in recent_errors],
+                "hourly_trends": [dict(row) for row in error_trends],
+                "summary": {
+                    "total_errors": sum(row['count'] for row in error_types),
+                    "unique_error_types": len(set(row['error_type'] for row in error_types)),
+                    "affected_servers": len(set(row['server_url'] for row in server_errors if row['server_url'])),
+                    "time_range_hours": hours
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"Failed to get error statistics: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get error statistics: {str(e)}")
+
+@router.post("/worker/{worker_id}/retry", response_model=Dict[str, Any])
+async def retry_failed_worker(
+    worker_id: str,
+    server_url: str = Query(..., description="Server URL of the worker"),
+    job_id: UUID = Query(..., description="Job ID")
+) -> Dict[str, Any]:
+    """Retry a failed worker by restarting it."""
+    try:
+        from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
+        from ...data_access.judge_task_queue import JudgeTaskQueueRepository
+        
+        heartbeat_repo = WorkerHeartbeatsRepository()
+        queue_repo = JudgeTaskQueueRepository()
+        
+        # Check if worker exists and is failed
+        worker = heartbeat_repo.get_worker_status(worker_id, server_url, job_id)
+        if not worker:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        
+        if worker.status != 'failed':
+            raise HTTPException(status_code=400, detail=f"Worker is not in failed state (current: {worker.status})")
+        
+        # Requeue any tasks that were assigned to this worker
+        requeued_tasks = queue_repo.requeue_failed_worker_tasks(worker_id, server_url, job_id)
+        
+        # Reset worker status to pending for retry
+        success = heartbeat_repo.retry_failed_worker(worker_id, server_url, job_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to reset worker status")
+        
+        # Launch new worker process
+        await _launch_single_worker(job_id, server_url, 30, 3)  # Default timeout and retries
+        
+        return {
+            "message": f"Worker {worker_id} retry initiated",
+            "worker_id": worker_id,
+            "server_url": server_url,
+            "requeued_tasks": requeued_tasks,
+            "status": "retry_initiated"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retry worker: {str(e)}"
         )
 
 @router.delete("/clear-queue", response_model=Dict[str, Any])

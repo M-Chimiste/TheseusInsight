@@ -1,6 +1,7 @@
--- Migration 008: Add Multi-Ollama Server Support for Bulk Judge Operations
+-- Migration 008: Add Multi-Ollama Server Support with Enhanced Worker Tracking
 -- This migration adds support for multiple Ollama servers and a durable task queue
--- for distributed LLM judge processing across multiple servers
+-- for distributed LLM judge processing across multiple servers.
+-- Includes comprehensive worker failure tracking and retry functionality.
 
 -- Drop existing tables to start fresh (as requested for dev environment)
 DROP TABLE IF EXISTS worker_heartbeats CASCADE;
@@ -39,7 +40,7 @@ CREATE TABLE judge_task_queue (
     UNIQUE(job_id, paper_id, profile_id)
 );
 
--- Create worker heartbeats table for monitoring
+-- Create worker heartbeats table for monitoring with failure tracking
 CREATE TABLE worker_heartbeats (
     id SERIAL PRIMARY KEY,
     worker_id VARCHAR(100) NOT NULL,
@@ -50,6 +51,10 @@ CREATE TABLE worker_heartbeats (
     tasks_processed INTEGER DEFAULT 0,
     current_task_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    failure_reason TEXT,
+    failure_count INTEGER DEFAULT 0,
+    last_failure_at TIMESTAMP WITH TIME ZONE,
     UNIQUE(worker_id, server_url, job_id)
 );
 
@@ -98,6 +103,12 @@ BEGIN
                    WHERE table_name = 'worker_heartbeats' AND column_name = 'last_heartbeat') THEN
             CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_heartbeat ON worker_heartbeats(last_heartbeat);
         END IF;
+        -- Failure tracking indexes
+        CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_status_failure 
+            ON worker_heartbeats(status, last_failure_at) 
+            WHERE status = 'failed';
+        CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_job_status 
+            ON worker_heartbeats(job_id, status);
     END IF;
 END $$;
 
@@ -160,12 +171,16 @@ END $$;
 -- Add comments for documentation
 COMMENT ON TABLE ollama_servers IS 'Configuration for multiple Ollama servers used in bulk judge operations';
 COMMENT ON TABLE judge_task_queue IS 'Durable task queue for distributed bulk judge processing';
-COMMENT ON TABLE worker_heartbeats IS 'Heartbeat monitoring for worker processes';
+COMMENT ON TABLE worker_heartbeats IS 'Heartbeat monitoring for worker processes with failure tracking';
 
 COMMENT ON COLUMN judge_task_queue.status IS 'Task status: pending, leased, in_progress, completed, failed, canceled';
 COMMENT ON COLUMN judge_task_queue.assigned_server_url IS 'URL of the Ollama server assigned to process this task';
 COMMENT ON COLUMN judge_task_queue.leased_until IS 'Timestamp until which the task is leased to a worker';
 COMMENT ON COLUMN judge_task_queue.leased_by_worker IS 'Identifier of the worker that leased this task';
+
+COMMENT ON COLUMN worker_heartbeats.failure_reason IS 'Detailed reason why the worker failed';
+COMMENT ON COLUMN worker_heartbeats.failure_count IS 'Number of times this worker has failed';
+COMMENT ON COLUMN worker_heartbeats.last_failure_at IS 'Timestamp of the most recent failure';
 
 -- Create a view for monitoring active tasks
 CREATE OR REPLACE VIEW active_judge_tasks AS
@@ -182,6 +197,18 @@ JOIN processing_jobs pj ON jt.job_id = pj.id
 LEFT JOIN ollama_servers os ON jt.assigned_server_url = os.url
 WHERE jt.status IN ('leased', 'in_progress')
 ORDER BY jt.created_at DESC;
+
+-- Update existing failed workers to have a generic failure reason (for upgrades)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'worker_heartbeats') THEN
+        UPDATE worker_heartbeats 
+        SET failure_reason = 'Legacy failure - reason not tracked',
+            failure_count = 1,
+            last_failure_at = last_heartbeat
+        WHERE status = 'failed' AND failure_reason IS NULL;
+    END IF;
+END $$;
 
 -- Grant necessary permissions (adjust as needed for your setup)
 -- GRANT SELECT, INSERT, UPDATE, DELETE ON ollama_servers TO theseus_user;

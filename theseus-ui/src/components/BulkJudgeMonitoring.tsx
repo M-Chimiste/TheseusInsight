@@ -87,6 +87,14 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
     },
   });
 
+  const retryWorkerMutation = useMutation({
+    mutationFn: (worker: any) => 
+      bulkOperationsApi.retryWorker(worker.worker_id, worker.server_url, jobId).then((res: any) => res.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bulkJudgeMetrics', jobId] });
+    },
+  });
+
   // WebSocket connection for real-time updates
   useEffect(() => {
     const connectWebSocket = () => {
@@ -202,6 +210,11 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
       case 'canceled': return <StopIcon />;
       default: return <TimelineIcon />;
     }
+  };
+
+  // Handle worker retry
+  const handleRetryWorker = (worker: any) => {
+    retryWorkerMutation.mutate(worker);
   };
 
   if (isLoading) {
@@ -357,70 +370,98 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
       {jobMetrics.queue_metrics && (
         <Grid container spacing={3} sx={{ mb: 3 }}>
           <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <QueueIcon color="primary" />
                   <Typography variant="h6">Queue Status</Typography>
                 </Box>
-                <Grid container spacing={2}>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" color="textSecondary">Pending</Typography>
-                    <Typography variant="h4" color="warning.main">
-                      {jobMetrics.queue_metrics.pending_tasks}
-                    </Typography>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <Grid container spacing={2} sx={{ width: '100%' }}>
+                    <Grid size={{ xs: 6 }}>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="warning.main">
+                          {jobMetrics.queue_metrics.pending_tasks}
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          Pending
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="info.main">
+                          {jobMetrics.queue_metrics.in_progress_tasks}
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          In Progress
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="success.main">
+                          {jobMetrics.queue_metrics.completed_tasks}
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          Completed
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="error.main">
+                          {jobMetrics.queue_metrics.failed_tasks}
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          Failed
+                        </Typography>
+                      </Box>
+                    </Grid>
                   </Grid>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" color="textSecondary">In Progress</Typography>
-                    <Typography variant="h4" color="info.main">
-                      {jobMetrics.queue_metrics.in_progress_tasks}
-                    </Typography>
-                  </Grid>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" color="textSecondary">Completed</Typography>
-                    <Typography variant="h4" color="success.main">
-                      {jobMetrics.queue_metrics.completed_tasks}
-                    </Typography>
-                  </Grid>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" color="textSecondary">Failed</Typography>
-                    <Typography variant="h4" color="error.main">
-                      {jobMetrics.queue_metrics.failed_tasks}
-                    </Typography>
-                  </Grid>
-                </Grid>
+                </Box>
               </CardContent>
             </Card>
           </Grid>
 
           <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent>
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <SpeedIcon color="primary" />
                   <Typography variant="h6">Performance</Typography>
                 </Box>
-                <Grid container spacing={2}>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" color="textSecondary">Throughput</Typography>
-                    <Typography variant="h4">
-                      {jobMetrics.worker_metrics ?
-                        `${(jobMetrics.worker_metrics.reduce((sum: number, w: any) => sum + w.tasks_processed, 0) /
-                          Math.max(1, (Date.now() - new Date(jobMetrics.timestamps.started_at || '').getTime()) / 60000)).toFixed(1)} tasks/min` :
-                        'N/A'
-                      }
-                    </Typography>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <Grid container spacing={2} sx={{ width: '100%' }}>
+                    <Grid size={{ xs: 6 }}>
+                      <Box textAlign="center">
+                        <Typography variant="h4">
+                          {jobMetrics.worker_metrics ?
+                            `${(jobMetrics.worker_metrics.reduce((sum: number, w: any) => sum + w.tasks_processed, 0) /
+                              Math.max(1, (Date.now() - new Date(jobMetrics.timestamps.started_at || '').getTime()) / 60000)).toFixed(1)} tasks/min` :
+                            '0.0 tasks/min'
+                          }
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          Throughput
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="primary.main">
+                          {jobMetrics.worker_metrics ?
+                            jobMetrics.worker_metrics.filter((w: any) => w.status === 'active').length :
+                            0
+                          }
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          Active Workers
+                        </Typography>
+                      </Box>
+                    </Grid>
                   </Grid>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" color="textSecondary">Active Workers</Typography>
-                    <Typography variant="h4" color="primary.main">
-                      {jobMetrics.worker_metrics ?
-                        jobMetrics.worker_metrics.filter((w: any) => w.status === 'active').length :
-                        0
-                      }
-                    </Typography>
-                  </Grid>
-                </Grid>
+                </Box>
               </CardContent>
             </Card>
           </Grid>
@@ -444,6 +485,8 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
                     <TableCell>Status</TableCell>
                     <TableCell>Tasks Processed</TableCell>
                     <TableCell>Last Heartbeat</TableCell>
+                    <TableCell>Failure Info</TableCell>
+                    <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -454,7 +497,11 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
                       <TableCell>
                         <Chip
                           label={worker.status}
-                          color={worker.status === 'active' ? 'success' : 'default'}
+                          color={
+                            worker.status === 'active' ? 'success' :
+                            worker.status === 'failed' ? 'error' :
+                            worker.status === 'inactive' ? 'default' : 'warning'
+                          }
                           size="small"
                         />
                       </TableCell>
@@ -464,6 +511,36 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
                           new Date(worker.last_heartbeat).toLocaleTimeString() :
                           'Never'
                         }
+                      </TableCell>
+                      <TableCell>
+                        {worker.status === 'failed' ? (
+                          <Box>
+                            <Typography variant="body2" color="error" sx={{ fontWeight: 'bold' }}>
+                              {worker.failure_reason || 'Unknown error'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Failures: {worker.failure_count || 0}
+                              {worker.last_failure_at && (
+                                <> • Last: {new Date(worker.last_failure_at).toLocaleTimeString()}</>
+                              )}
+                            </Typography>
+                          </Box>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">-</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {worker.status === 'failed' && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => handleRetryWorker(worker)}
+                            startIcon={<PlayIcon />}
+                          >
+                            Retry
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

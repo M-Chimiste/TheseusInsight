@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 import asyncio
+import logging
 
 from ...data_processing.checkpoint_manager import CheckpointManager
 from ...utils.harvest_and_judge import harvest_and_judge
@@ -19,6 +20,9 @@ from ...db import get_connection_pool
 from ...data_access.ollama_servers import OllamaServersRepository
 from ...data_processing.queue_producer import JudgeQueueProducer
 from ...scheduler import scheduler
+
+# Initialize logger for the module
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bulk-operations", tags=["bulk-operations"])
 
@@ -181,8 +185,6 @@ async def run_multi_server_bulk_judge_task(
 ):
     """Run multi-server bulk judge operation using queue-based processing."""
     print(f"🎯 Background task started: run_multi_server_bulk_judge_task for job {job_id}")
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info(f"🎯 Background task started: run_multi_server_bulk_judge_task for job {job_id}")
     
     # Force flush to ensure logs are written
@@ -300,7 +302,7 @@ async def _launch_single_worker(job_id: UUID, server_url: str, request_timeout_s
     try:
         # Build the command to run the worker
         cmd = [
-            'conda', 'run', '-n', conda_env, 'python', 'theseus_judge_worker.py',
+            'conda', 'run', '-n', conda_env, 'python', '-m', 'theseus_insight.workers.judge_worker',
             '--job-id', str(job_id),
             '--server-url', server_url,
             '--timeout', str(request_timeout_sec),
@@ -354,7 +356,7 @@ async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeo
 
                 # Launch worker in background
                 cmd = [
-                    sys.executable, "theseus_judge_worker.py",
+                    sys.executable, "-m", "theseus_insight.workers.judge_worker",
                     "--job-id", str(job_id),
                     "--server-url", server.url,
                     "--timeout", str(request_timeout_sec),
@@ -1116,14 +1118,14 @@ async def _signal_workers_cancel(job_id: UUID):
 
         # Find and terminate worker processes
         try:
-            # Get all theseus_judge_worker processes for this job
+            # Get all judge_worker processes for this job
             result = subprocess.run([
                 "ps", "aux"
             ], capture_output=True, text=True, check=True)
             
             processes_to_kill = []
             for line in result.stdout.split('\n'):
-                if 'theseus_judge_worker.py' in line and str(job_id) in line:
+                if 'theseus_insight.workers.judge_worker' in line and str(job_id) in line:
                     # Extract PID (second column)
                     parts = line.split()
                     if len(parts) > 1:
@@ -1229,14 +1231,14 @@ async def cleanup_orphaned_processes():
     try:
         print("🧹 Checking for orphaned worker processes...")
         
-        # Get all theseus_judge_worker processes
+        # Get all judge_worker processes
         result = subprocess.run([
             "ps", "aux"
         ], capture_output=True, text=True, check=True)
         
         orphaned_processes = []
         for line in result.stdout.split('\n'):
-            if 'theseus_judge_worker.py' in line:
+            if 'theseus_insight.workers.judge_worker' in line:
                 # Extract PID (second column)
                 parts = line.split()
                 if len(parts) > 1:

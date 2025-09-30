@@ -6,12 +6,8 @@ import sys
 from pathlib import Path
 from uuid import UUID
 
-# Add the project root to Python path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
-
-from theseus_insight.data_access.worker_heartbeats import WorkerHeartbeatsRepository
-from theseus_insight.data_access.judge_task_queue import JudgeTaskQueueRepository
+from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
+from ..data_access.judge_task_queue import JudgeTaskQueueRepository
 
 class MinimalWorker:
     def __init__(self, server_url: str, job_id: UUID):
@@ -77,3 +73,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

@@ -6,8 +6,8 @@ This script launches worker processes that handle judge tasks from the durable q
 Each worker process handles one Ollama server and processes tasks concurrently.
 
 Usage:
-    python theseus_judge_worker.py --server-url http://localhost:11434 --job-id <uuid>
-    python theseus_judge_worker.py --all-enabled  # Process all enabled servers
+    python -m theseus_insight.workers.judge_worker --server-url http://localhost:11434 --job-id <uuid>
+    python -m theseus_insight.workers.judge_worker --all-enabled  # Process all enabled servers
 """
 
 import argparse
@@ -20,18 +20,15 @@ from typing import Optional, List
 from uuid import UUID
 from pathlib import Path
 
-# Add the project root to Python path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
-
-from theseus_insight.utils.environment import EnvironmentDetector
-from theseus_insight.data_access.ollama_servers import OllamaServersRepository
-from theseus_insight.data_access.judge_task_queue import JudgeTaskQueueRepository
-from theseus_insight.data_access.worker_heartbeats import WorkerHeartbeatsRepository
-from theseus_insight.inference.llm import OllamaInference
-from theseus_insight.data_access.profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
-from theseus_insight.data_access.papers import PaperRepository
-from theseus_insight.prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
+from ..utils.environment import EnvironmentDetector
+from ..data_access.ollama_servers import OllamaServersRepository
+from ..data_access.judge_task_queue import JudgeTaskQueueRepository
+from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
+from ..inference.llm import OllamaInference
+from ..data_access.profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
+from ..data_access.papers import PaperRepository
+from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
+from ..prompt.data_models import ResearchInterestsPromptData
 
 # Configure logging
 logging.basicConfig(
@@ -184,24 +181,40 @@ class JudgeWorker:
             await self._handle_task_error(task, str(e), error_type)
 
     async def _score_paper(self, paper: dict, research_interests: str) -> dict:
-        """Score a paper using LLM judge."""
+        """Score a paper using LLM judge with structured output for reliable JSON parsing."""
         messages = [
             {"role": "user", "content": research_prompt(research_interests, paper['abstract'])}
         ]
 
+        # Use structured output schema to force Ollama to output valid JSON
+        # This dramatically reduces JSON parsing failures
         response = self.ollama_client.invoke(
             messages=messages,
-            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT
+            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+            schema=ResearchInterestsPromptData  # Forces valid JSON output!
         )
 
-        # Parse the response (simplified parsing)
+        # Parse the response - should always be valid JSON now
         import json_repair
         response_json = json_repair.loads(response)
 
+        # Validate response structure
+        if not isinstance(response_json, dict):
+            raise ValueError(f"Invalid response format: expected dict, got {type(response_json)}")
+
+        required_keys = ['score', 'related', 'rationale']
+        missing_keys = [key for key in required_keys if key not in response_json]
+        if missing_keys:
+            raise ValueError(f"Missing required keys in response: {missing_keys}")
+
+        # Validate and clamp score to valid range (1-10)
+        score_val = int(response_json['score'])
+        score_val = max(1, min(10, score_val))  # Clamp to valid range
+
         return {
-            'score': int(response_json.get('score', 5)),
-            'related': bool(response_json.get('related', False)),
-            'rationale': str(response_json.get('rationale', ''))
+            'score': score_val,
+            'related': bool(response_json['related']),
+            'rationale': str(response_json['rationale'])
         }
 
     def _classify_error(self, error: Exception) -> str:
@@ -375,7 +388,7 @@ class JudgeWorker:
     async def _log_task_error(self, task, error_message: str, error_type: str):
         """Log detailed task error information to error_logs table."""
         try:
-            from theseus_insight.db.pool import get_connection_pool
+            from ..db.pool import get_connection_pool
             pool = await get_connection_pool()
             async with pool.acquire() as conn:
                 await conn.execute("""
@@ -435,7 +448,7 @@ class JudgeWorker:
     async def _log_worker_failure(self, reason: str):
         """Log worker failure to error_logs table for detailed tracking."""
         try:
-            from theseus_insight.db.pool import get_connection_pool
+            from ..db.pool import get_connection_pool
             pool = await get_connection_pool()
             async with pool.acquire() as conn:
                 await conn.execute("""
@@ -538,3 +551,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

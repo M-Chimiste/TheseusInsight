@@ -110,16 +110,13 @@ class JudgeWorker:
                 # Periodically clean up expired leases (prevents queue deadlock)
                 now = asyncio.get_event_loop().time()
                 if (now - last_lease_cleanup) >= lease_cleanup_interval:
-                    expired_count = await asyncio.to_thread(
-                        JudgeTaskQueueRepository.requeue_expired_leases
-                    )
+                    expired_count = JudgeTaskQueueRepository.requeue_expired_leases()
                     if expired_count > 0:
                         logger.info(f"Worker {self.worker_id} requeued {expired_count} expired leases")
                     last_lease_cleanup = now
 
-                # Try to lease a task (run in thread pool to avoid blocking)
-                task = await asyncio.to_thread(
-                    JudgeTaskQueueRepository.lease_next_task,
+                # Try to lease a task (synchronous - DB calls are fast)
+                task = JudgeTaskQueueRepository.lease_next_task(
                     server_url=self.server_url,
                     worker_id=self.worker_id
                 )
@@ -138,9 +135,8 @@ class JudgeWorker:
     async def _process_task(self, task):
         """Process a single judge task."""
         try:
-            # Mark task as in progress (run in thread pool)
-            success = await asyncio.to_thread(
-                JudgeTaskQueueRepository.mark_task_in_progress,
+            # Mark task as in progress (synchronous - DB calls are fast)
+            success = JudgeTaskQueueRepository.mark_task_in_progress(
                 task.id,
                 self.worker_id
             )
@@ -148,29 +144,28 @@ class JudgeWorker:
                 logger.warning(f"Failed to mark task {task.id} as in progress")
                 return
 
-            # Get paper and profile data (run in thread pool)
-            paper = await asyncio.to_thread(PaperRepository.get_by_id, task.paper_id)
+            # Get paper and profile data (synchronous)
+            paper = PaperRepository.get_by_id(task.paper_id)
             if not paper:
                 raise ValueError(f"Paper {task.paper_id} not found")
 
-            profile = await asyncio.to_thread(ProfileRepository.get_by_id, task.profile_id)
+            profile = ProfileRepository.get_by_id(task.profile_id)
             if not profile:
                 raise ValueError(f"Profile {task.profile_id} not found")
 
-            # Get research interests (run in thread pool)
-            research_interests = await asyncio.to_thread(
-                ProfileInterestsRepository.get_interests_text_by_profile,
+            # Get research interests (synchronous)
+            research_interests = ProfileInterestsRepository.get_interests_text_by_profile(
                 task.profile_id
             )
             if not research_interests:
                 raise ValueError(f"No research interests found for profile {task.profile_id}")
 
-            # Perform LLM judge scoring
+            # Perform LLM judge scoring (wrapped in thread to allow heartbeats)
+            # This is the only blocking call that needs threading since GPU inference is slow
             score_data = await self._score_paper(paper, research_interests)
 
-            # Save the score (run in thread pool)
-            await asyncio.to_thread(
-                ProfileScoreRepository.create_or_update_score,
+            # Save the score (synchronous)
+            ProfileScoreRepository.create_or_update_score(
                 paper_id=task.paper_id,
                 profile_id=task.profile_id,
                 score=score_data['score'],
@@ -179,8 +174,8 @@ class JudgeWorker:
                 judge_model=self.ollama_client.model_name
             )
 
-            # Mark task as completed (run in thread pool)
-            await asyncio.to_thread(JudgeTaskQueueRepository.mark_task_completed, task.id)
+            # Mark task as completed (synchronous)
+            JudgeTaskQueueRepository.mark_task_completed(task.id)
 
             self.tasks_processed += 1
             self.consecutive_failures = 0  # Reset on successful completion
@@ -200,7 +195,9 @@ class JudgeWorker:
 
         # Use structured output schema to force Ollama to output valid JSON
         # This dramatically reduces JSON parsing failures
-        response = self.ollama_client.invoke(
+        # Wrap in asyncio.to_thread to prevent blocking the event loop
+        response = await asyncio.to_thread(
+            self.ollama_client.invoke,
             messages=messages,
             system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
             schema=ResearchInterestsPromptData  # Forces valid JSON output!
@@ -297,8 +294,7 @@ class JudgeWorker:
                         f"✅ Server {self.server_url} is healthy - this paper is the problem. "
                         f"Marking task {task.id} as permanently failed and continuing."
                     )
-                    await asyncio.to_thread(
-                        JudgeTaskQueueRepository.mark_task_failed,
+                    JudgeTaskQueueRepository.mark_task_failed(
                         task.id,
                         f"[PAPER_ISSUE] Failed {self.max_retries} times but server is healthy: {error_message}",
                         increment_attempts=False
@@ -315,8 +311,7 @@ class JudgeWorker:
                 logger.warning(
                     f"Task {task.id} permanently failed due to {error_type} after {task.attempts} attempts - continuing with next task"
                 )
-                await asyncio.to_thread(
-                    JudgeTaskQueueRepository.mark_task_failed,
+                JudgeTaskQueueRepository.mark_task_failed(
                     task.id,
                     f"[{error_type}] {error_message}",
                     increment_attempts=False
@@ -325,8 +320,7 @@ class JudgeWorker:
                 return  # Continue to next task
         else:
             # Still have retries left - mark failed for requeue
-            await asyncio.to_thread(
-                JudgeTaskQueueRepository.mark_task_failed,
+            JudgeTaskQueueRepository.mark_task_failed(
                 task.id,
                 f"[{error_type}] {error_message}"
             )
@@ -384,9 +378,8 @@ class JudgeWorker:
     async def _send_heartbeat(self):
         """Send heartbeat to indicate worker is alive."""
         try:
-            # Run synchronous database call in thread pool to avoid blocking
-            await asyncio.to_thread(
-                WorkerHeartbeatsRepository.upsert_heartbeat,
+            # Synchronous DB call - fast and doesn't need threading
+            WorkerHeartbeatsRepository.upsert_heartbeat(
                 worker_id=self.worker_id,
                 server_url=self.server_url,
                 job_id=self.job_id,
@@ -436,8 +429,7 @@ class JudgeWorker:
         # Mark as failed with reason if it's an error, otherwise inactive
         try:
             if "error" in reason.lower() or "failed" in reason.lower() or "circuit breaker" in reason.lower():
-                await asyncio.to_thread(
-                    WorkerHeartbeatsRepository.mark_worker_failed,
+                WorkerHeartbeatsRepository.mark_worker_failed(
                     worker_id=self.worker_id,
                     server_url=self.server_url,
                     job_id=self.job_id,
@@ -448,8 +440,7 @@ class JudgeWorker:
                 # Log the failure to error_logs table for detailed tracking
                 await self._log_worker_failure(reason)
             else:
-                await asyncio.to_thread(
-                    WorkerHeartbeatsRepository.mark_worker_inactive,
+                WorkerHeartbeatsRepository.mark_worker_inactive(
                     worker_id=self.worker_id,
                     server_url=self.server_url,
                     job_id=self.job_id

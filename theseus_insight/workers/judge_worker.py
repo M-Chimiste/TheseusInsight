@@ -16,9 +16,14 @@ import json
 import logging
 import signal
 import sys
+import os
 from typing import Optional, List
 from uuid import UUID
 from pathlib import Path
+
+# CRITICAL: Enable DB connection pooling for worker processes
+# This must be set BEFORE importing any DB modules
+os.environ['DB_USE_POOL'] = 'true'
 
 from ..utils.environment import EnvironmentDetector
 from ..data_access.ollama_servers import OllamaServersRepository
@@ -80,17 +85,6 @@ class JudgeWorker:
         self.running = True
         self._start_time = asyncio.get_event_loop().time()  # Track start time for failure logging
 
-        # Set custom thread pool - now we only need a few threads per worker
-        # Main task processing uses 1 thread, heartbeats/cleanup use another
-        import concurrent.futures
-        loop = asyncio.get_running_loop()
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=3,  # Minimal: 1 for task, 1 for heartbeat, 1 spare
-            thread_name_prefix=f"worker_{self.worker_id}_"
-        )
-        loop.set_default_executor(executor)
-        logger.info(f"Worker {self.worker_id} initialized thread pool with 3 workers")
-
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -149,8 +143,7 @@ class JudgeWorker:
     async def _process_task(self, task):
         """Process a single judge task."""
         try:
-            # Process entire task in a single thread to avoid connection pool issues
-            # This ensures each task gets its own DB connection that's properly cleaned up
+            # Use asyncio.to_thread with larger thread pool
             result = await asyncio.to_thread(self._process_task_sync, task)
             
             if result is None:
@@ -179,30 +172,43 @@ class JudgeWorker:
             tuple: (score_data, error_message) or None if task failed to mark as in_progress
         """
         try:
+            logger.info(f"[{self.worker_id[:16]}] START task {task.id}")
+            
             # Mark task as in progress
+            logger.info(f"[{self.worker_id[:16]}] DB: mark_in_progress...")
             success = JudgeTaskQueueRepository.mark_task_in_progress(task.id, self.worker_id)
             if not success:
                 logger.warning(f"Failed to mark task {task.id} as in progress")
                 return None
+            logger.info(f"[{self.worker_id[:16]}] DB: mark_in_progress DONE")
 
             # Get paper and profile data
+            logger.info(f"[{self.worker_id[:16]}] DB: get_paper...")
             paper = PaperRepository.get_by_id(task.paper_id)
             if not paper:
                 return None, f"Paper {task.paper_id} not found"
+            logger.info(f"[{self.worker_id[:16]}] DB: get_paper DONE")
 
+            logger.info(f"[{self.worker_id[:16]}] DB: get_profile...")
             profile = ProfileRepository.get_by_id(task.profile_id)
             if not profile:
                 return None, f"Profile {task.profile_id} not found"
+            logger.info(f"[{self.worker_id[:16]}] DB: get_profile DONE")
 
             # Get research interests
+            logger.info(f"[{self.worker_id[:16]}] DB: get_interests...")
             research_interests = ProfileInterestsRepository.get_interests_text_by_profile(task.profile_id)
             if not research_interests:
                 return None, f"No research interests found for profile {task.profile_id}"
+            logger.info(f"[{self.worker_id[:16]}] DB: get_interests DONE")
 
             # Perform LLM judge scoring (synchronous - GPU inference)
+            logger.info(f"[{self.worker_id[:16]}] OLLAMA: scoring...")
             score_data = self._score_paper_sync(paper, research_interests)
+            logger.info(f"[{self.worker_id[:16]}] OLLAMA: scoring DONE (score={score_data['score']})")
 
             # Save the score
+            logger.info(f"[{self.worker_id[:16]}] DB: save_score...")
             ProfileScoreRepository.create_or_update_score(
                 paper_id=task.paper_id,
                 profile_id=task.profile_id,
@@ -211,13 +217,17 @@ class JudgeWorker:
                 rationale=score_data['rationale'],
                 judge_model=self.ollama_client.model_name
             )
+            logger.info(f"[{self.worker_id[:16]}] DB: save_score DONE")
 
             # Mark task as completed
+            logger.info(f"[{self.worker_id[:16]}] DB: mark_completed...")
             JudgeTaskQueueRepository.mark_task_completed(task.id)
+            logger.info(f"[{self.worker_id[:16]}] COMPLETE task {task.id}")
             
             return score_data, None
             
         except Exception as e:
+            logger.error(f"[{self.worker_id[:16]}] ERROR: {e}", exc_info=True)
             return None, str(e)
 
     def _score_paper_sync(self, paper: dict, research_interests: str) -> dict:

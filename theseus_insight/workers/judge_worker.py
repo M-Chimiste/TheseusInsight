@@ -99,11 +99,23 @@ class JudgeWorker:
     async def _worker_loop(self):
         """Main worker processing loop."""
         logger.info(f"Worker {self.worker_id} entering processing loop")
+        last_lease_cleanup = asyncio.get_event_loop().time()
+        lease_cleanup_interval = 60  # Check for expired leases every 60 seconds
 
         while self.running:
             try:
                 # Send heartbeat
                 await self._send_heartbeat()
+
+                # Periodically clean up expired leases (prevents queue deadlock)
+                now = asyncio.get_event_loop().time()
+                if (now - last_lease_cleanup) >= lease_cleanup_interval:
+                    expired_count = await asyncio.to_thread(
+                        JudgeTaskQueueRepository.requeue_expired_leases
+                    )
+                    if expired_count > 0:
+                        logger.info(f"Worker {self.worker_id} requeued {expired_count} expired leases")
+                    last_lease_cleanup = now
 
                 # Try to lease a task (run in thread pool to avoid blocking)
                 task = await asyncio.to_thread(

@@ -80,6 +80,17 @@ class JudgeWorker:
         self.running = True
         self._start_time = asyncio.get_event_loop().time()  # Track start time for failure logging
 
+        # Set custom thread pool - now we only need a few threads per worker
+        # Main task processing uses 1 thread, heartbeats/cleanup use another
+        import concurrent.futures
+        loop = asyncio.get_running_loop()
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=3,  # Minimal: 1 for task, 1 for heartbeat, 1 spare
+            thread_name_prefix=f"worker_{self.worker_id}_"
+        )
+        loop.set_default_executor(executor)
+        logger.info(f"Worker {self.worker_id} initialized thread pool with 3 workers")
+
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -110,13 +121,16 @@ class JudgeWorker:
                 # Periodically clean up expired leases (prevents queue deadlock)
                 now = asyncio.get_event_loop().time()
                 if (now - last_lease_cleanup) >= lease_cleanup_interval:
-                    expired_count = JudgeTaskQueueRepository.requeue_expired_leases()
+                    expired_count = await asyncio.to_thread(
+                        JudgeTaskQueueRepository.requeue_expired_leases
+                    )
                     if expired_count > 0:
                         logger.info(f"Worker {self.worker_id} requeued {expired_count} expired leases")
                     last_lease_cleanup = now
 
-                # Try to lease a task (synchronous - DB calls are fast)
-                task = JudgeTaskQueueRepository.lease_next_task(
+                # Try to lease a task (in thread to avoid blocking event loop)
+                task = await asyncio.to_thread(
+                    JudgeTaskQueueRepository.lease_next_task,
                     server_url=self.server_url,
                     worker_id=self.worker_id
                 )
@@ -135,36 +149,60 @@ class JudgeWorker:
     async def _process_task(self, task):
         """Process a single judge task."""
         try:
-            # Mark task as in progress (synchronous - DB calls are fast)
-            success = JudgeTaskQueueRepository.mark_task_in_progress(
-                task.id,
-                self.worker_id
-            )
+            # Process entire task in a single thread to avoid connection pool issues
+            # This ensures each task gets its own DB connection that's properly cleaned up
+            result = await asyncio.to_thread(self._process_task_sync, task)
+            
+            if result is None:
+                return
+                
+            score_data, error = result
+            if error:
+                raise Exception(error)
+                
+            self.tasks_processed += 1
+            self.consecutive_failures = 0
+            logger.info(f"Worker {self.worker_id} completed task {task.id} with score {score_data['score']} (total processed: {self.tasks_processed})")
+
+        except Exception as e:
+            # Classify the error to determine if it should trigger circuit breaker
+            error_type = self._classify_error(e)
+            await self._handle_task_error(task, str(e), error_type)
+    
+    def _process_task_sync(self, task):
+        """Process a task synchronously in a dedicated thread.
+        
+        This method runs entirely in a single thread, ensuring DB connections
+        are acquired and released properly without connection pool issues.
+        
+        Returns:
+            tuple: (score_data, error_message) or None if task failed to mark as in_progress
+        """
+        try:
+            # Mark task as in progress
+            success = JudgeTaskQueueRepository.mark_task_in_progress(task.id, self.worker_id)
             if not success:
                 logger.warning(f"Failed to mark task {task.id} as in progress")
-                return
+                return None
 
-            # Get paper and profile data (synchronous)
+            # Get paper and profile data
             paper = PaperRepository.get_by_id(task.paper_id)
             if not paper:
-                raise ValueError(f"Paper {task.paper_id} not found")
+                return None, f"Paper {task.paper_id} not found"
 
             profile = ProfileRepository.get_by_id(task.profile_id)
             if not profile:
-                raise ValueError(f"Profile {task.profile_id} not found")
+                return None, f"Profile {task.profile_id} not found"
 
-            # Get research interests (synchronous)
-            research_interests = ProfileInterestsRepository.get_interests_text_by_profile(
-                task.profile_id
-            )
+            # Get research interests
+            research_interests = ProfileInterestsRepository.get_interests_text_by_profile(task.profile_id)
             if not research_interests:
-                raise ValueError(f"No research interests found for profile {task.profile_id}")
+                return None, f"No research interests found for profile {task.profile_id}"
 
-            # Perform LLM judge scoring (wrapped in thread to allow heartbeats)
-            # This is the only blocking call that needs threading since GPU inference is slow
-            score_data = await self._score_paper(paper, research_interests)
+            # Perform LLM judge scoring (synchronous - GPU inference)
+            score_data = self._score_paper_sync(paper, research_interests)
 
-            # Save the score (synchronous)
+            # Save the score
             ProfileScoreRepository.create_or_update_score(
                 paper_id=task.paper_id,
                 profile_id=task.profile_id,
@@ -174,18 +212,51 @@ class JudgeWorker:
                 judge_model=self.ollama_client.model_name
             )
 
-            # Mark task as completed (synchronous)
+            # Mark task as completed
             JudgeTaskQueueRepository.mark_task_completed(task.id)
-
-            self.tasks_processed += 1
-            self.consecutive_failures = 0  # Reset on successful completion
-
-            logger.info(f"Worker {self.worker_id} completed task {task.id} with score {score_data['score']} (total processed: {self.tasks_processed})")
-
+            
+            return score_data, None
+            
         except Exception as e:
-            # Classify the error to determine if it should trigger circuit breaker
-            error_type = self._classify_error(e)
-            await self._handle_task_error(task, str(e), error_type)
+            return None, str(e)
+
+    def _score_paper_sync(self, paper: dict, research_interests: str) -> dict:
+        """Synchronous version of _score_paper for use in worker threads."""
+        messages = [
+            {"role": "user", "content": research_prompt(research_interests, paper['abstract'])}
+        ]
+
+        # Use structured output schema to force Ollama to output valid JSON
+        response = self.ollama_client.invoke(
+            messages=messages,
+            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+            schema=ResearchInterestsPromptData
+        )
+
+        # Parse the response
+        import json_repair
+        response_json = json_repair.loads(response)
+
+        # Validate response structure
+        if not isinstance(response_json, dict):
+            raise ValueError(f"Invalid response format: expected dict, got {type(response_json)}")
+
+        required_keys = ['score', 'related', 'rationale']
+        missing_keys = [key for key in required_keys if key not in response_json]
+        if missing_keys:
+            raise ValueError(f"Missing required keys in response: {missing_keys}")
+
+        # Validate and clamp score to valid range (1-10)
+        score = response_json.get('score', 5)
+        if not isinstance(score, (int, float)):
+            score = 5
+        score = max(1, min(10, int(score)))
+
+        return {
+            'score': score,
+            'related': bool(response_json.get('related', False)),
+            'rationale': str(response_json.get('rationale', ''))
+        }
 
     async def _score_paper(self, paper: dict, research_interests: str) -> dict:
         """Score a paper using LLM judge with structured output for reliable JSON parsing."""
@@ -294,7 +365,8 @@ class JudgeWorker:
                         f"✅ Server {self.server_url} is healthy - this paper is the problem. "
                         f"Marking task {task.id} as permanently failed and continuing."
                     )
-                    JudgeTaskQueueRepository.mark_task_failed(
+                    await asyncio.to_thread(
+                        JudgeTaskQueueRepository.mark_task_failed,
                         task.id,
                         f"[PAPER_ISSUE] Failed {self.max_retries} times but server is healthy: {error_message}",
                         increment_attempts=False
@@ -311,7 +383,8 @@ class JudgeWorker:
                 logger.warning(
                     f"Task {task.id} permanently failed due to {error_type} after {task.attempts} attempts - continuing with next task"
                 )
-                JudgeTaskQueueRepository.mark_task_failed(
+                await asyncio.to_thread(
+                    JudgeTaskQueueRepository.mark_task_failed,
                     task.id,
                     f"[{error_type}] {error_message}",
                     increment_attempts=False
@@ -320,7 +393,8 @@ class JudgeWorker:
                 return  # Continue to next task
         else:
             # Still have retries left - mark failed for requeue
-            JudgeTaskQueueRepository.mark_task_failed(
+            await asyncio.to_thread(
+                JudgeTaskQueueRepository.mark_task_failed,
                 task.id,
                 f"[{error_type}] {error_message}"
             )
@@ -378,8 +452,9 @@ class JudgeWorker:
     async def _send_heartbeat(self):
         """Send heartbeat to indicate worker is alive."""
         try:
-            # Synchronous DB call - fast and doesn't need threading
-            WorkerHeartbeatsRepository.upsert_heartbeat(
+            # DB call in thread to avoid blocking event loop
+            await asyncio.to_thread(
+                WorkerHeartbeatsRepository.upsert_heartbeat,
                 worker_id=self.worker_id,
                 server_url=self.server_url,
                 job_id=self.job_id,
@@ -429,7 +504,8 @@ class JudgeWorker:
         # Mark as failed with reason if it's an error, otherwise inactive
         try:
             if "error" in reason.lower() or "failed" in reason.lower() or "circuit breaker" in reason.lower():
-                WorkerHeartbeatsRepository.mark_worker_failed(
+                await asyncio.to_thread(
+                    WorkerHeartbeatsRepository.mark_worker_failed,
                     worker_id=self.worker_id,
                     server_url=self.server_url,
                     job_id=self.job_id,
@@ -440,7 +516,8 @@ class JudgeWorker:
                 # Log the failure to error_logs table for detailed tracking
                 await self._log_worker_failure(reason)
             else:
-                WorkerHeartbeatsRepository.mark_worker_inactive(
+                await asyncio.to_thread(
+                    WorkerHeartbeatsRepository.mark_worker_inactive,
                     worker_id=self.worker_id,
                     server_url=self.server_url,
                     job_id=self.job_id

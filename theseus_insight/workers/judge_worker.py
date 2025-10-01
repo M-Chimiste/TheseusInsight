@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Theseus Judge Worker - Multi-process worker for distributed LLM judge processing.
+Theseus Judge Worker - Simple synchronous worker with single persistent connection.
 
-This script launches worker processes that handle judge tasks from the durable queue.
-Each worker process handles one Ollama server and processes tasks concurrently.
+This worker processes judge tasks synchronously using one database connection
+for the entire worker lifetime to avoid connection pool issues.
 
 Usage:
     python -m theseus_insight.workers.judge_worker --server-url http://localhost:11434 --job-id <uuid>
@@ -11,40 +11,43 @@ Usage:
 """
 
 import argparse
-import asyncio
 import json
 import logging
 import signal
 import sys
 import os
+import time
+import psycopg
+import threading
 from typing import Optional, List
 from uuid import UUID
-from pathlib import Path
-
-# CRITICAL: Enable DB connection pooling for worker processes
-# This must be set BEFORE importing any DB modules
-os.environ['DB_USE_POOL'] = 'true'
-
-from ..utils.environment import EnvironmentDetector
-from ..data_access.ollama_servers import OllamaServersRepository
-from ..data_access.judge_task_queue import JudgeTaskQueueRepository
-from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
-from ..inference.llm import OllamaInference
-from ..data_access.profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
-from ..data_access.papers import PaperRepository
-from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
-from ..prompt.data_models import ResearchInterestsPromptData
+from datetime import datetime, timedelta
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Set up both console and file logging for worker diagnostics
+log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
+# Create logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+
+# File handler - separate log file per worker (will be set in __init__)
+# This will be added per-worker instance
+logger.addHandler(console_handler)
+
+# Get database URL
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
 
 
 class JudgeWorker:
-    """Worker process for processing judge tasks from the queue."""
+    """Worker with single persistent database connection."""
 
     def __init__(
         self,
@@ -52,556 +55,539 @@ class JudgeWorker:
         job_id: Optional[UUID] = None,
         worker_id: Optional[str] = None,
         max_retries: int = 3,
-        timeout: int = 30,
-        heartbeat_interval: int = 30
+        timeout: int = 30
     ):
         self.server_url = server_url
         self.job_id = job_id
         self.worker_id = worker_id or f"worker_{server_url.replace('://', '_').replace('/', '_')}"
         self.max_retries = max_retries
         self.timeout = timeout
-        self.heartbeat_interval = heartbeat_interval
         self.running = False
         self.tasks_processed = 0
         self.consecutive_failures = 0
-        self.circuit_breaker_threshold = 5
-        self._start_time = None  # Will be set when worker starts
-
-        # Initialize Ollama client with timeout for bulk processing
+        self.last_health_check = 0
+        self.server_healthy = True
+        
+        # Create single persistent connection with autocommit to avoid transaction state conflicts
+        # When using cursor context managers with a persistent connection, autocommit=True
+        # prevents psycopg3 internal deadlocks on commit()
+        self.conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        
+        # Cache for profile research interests to avoid repeated DB queries
+        self.interests_cache = {}
+        self.profile_cache = {}
+        
+        # Initialize Ollama client once
+        from ..inference.llm import OllamaInference
         self.ollama_client = OllamaInference(
-            model_name="phi4-mini:3.8b-q8_0",  # Default model, should be configurable
+            model_name="phi4-mini:3.8b-q8_0",
             max_new_tokens=512,
             temperature=0.1,
             num_ctx=4096,
-            url=server_url,  # Pass server URL directly to constructor
-            request_timeout=timeout  # Set timeout during initialization
+            url=server_url,
+            request_timeout=timeout
         )
-
+        
+        # Add file handler for this specific worker
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'logs')
+        log_file = os.path.join(log_dir, f'judge_worker_{self.worker_id}.log')
+        file_handler = logging.FileHandler(log_file, mode='a')
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
         logger.info(f"Initialized worker {self.worker_id} for server {server_url}")
+        logger.info(f"Logging to {log_file}")
 
-    async def start(self):
+    def start(self):
         """Start the worker process."""
         logger.info(f"Starting worker {self.worker_id} for job {self.job_id}")
         self.running = True
-        self._start_time = asyncio.get_event_loop().time()  # Track start time for failure logging
-
-        # Set up signal handlers for graceful shutdown
+        
+        # Set up signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
-
+        
+        last_heartbeat = time.time()
+        last_lease_cleanup = time.time()
+        heartbeat_interval = 30  # seconds
+        lease_cleanup_interval = 60  # seconds
+        
         try:
-            await self._worker_loop()
-        except Exception as e:
-            logger.error(f"Worker {self.worker_id} failed: {e}")
+            while self.running:
+                try:
+                    # Send heartbeat periodically
+                    now = time.time()
+                    if (now - last_heartbeat) >= heartbeat_interval:
+                        logger.debug("Sending heartbeat...")
+                        self._send_heartbeat()
+                        logger.debug("Heartbeat sent")
+                        last_heartbeat = now
+                    
+                    # Clean up expired leases periodically
+                    if (now - last_lease_cleanup) >= lease_cleanup_interval:
+                        logger.debug("Running lease cleanup...")
+                        expired_count = self._requeue_expired_leases()
+                        logger.debug(f"Lease cleanup completed ({expired_count} requeued)")
+                        if expired_count > 0:
+                            logger.info(f"Requeued {expired_count} expired leases")
+                        last_lease_cleanup = now
+                    
+                    # Check Ollama server health every 60 seconds (informational only)
+                    if now - self.last_health_check > 60:
+                        logger.debug("Checking Ollama health...")
+                        self._check_ollama_health()
+                        logger.debug("Health check completed")
+                        self.last_health_check = now
+                    
+                    # Note: We don't skip processing based on health check alone
+                    # Let actual task failures determine if server is down
+                    
+                    # Try to lease a task
+                    logger.debug(f"Attempting to lease task for {self.server_url}")
+                    task = self._lease_next_task()
+                    
+                    if task:
+                        logger.info(f"Leased task {task['id']} (paper {task['paper_id']}, profile {task['profile_id']})")
+                        self._process_task(task)
+                        
+                        if self.tasks_processed % 10 == 0:
+                            logger.info(f"Worker {self.worker_id}: {self.tasks_processed} tasks completed")
+                        
+                        # Log recovery if we had consecutive failures
+                        if self.consecutive_failures >= 3:
+                            logger.info(f"Worker recovered after {self.consecutive_failures} consecutive failures")
+                        
+                        # Reset consecutive failures on success
+                        self.consecutive_failures = 0
+                    else:
+                        # No tasks available
+                        logger.debug(f"No tasks available for {self.server_url}, sleeping 5s")
+                        time.sleep(5)
+                        
+                except KeyboardInterrupt:
+                    logger.info("Received keyboard interrupt")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in main loop: {e}", exc_info=True)
+                    self.consecutive_failures += 1
+                    
+                    # With autocommit mode, no need to rollback
+                    
+                    # If too many failures, exit
+                    if self.consecutive_failures >= 10:
+                        logger.error("Too many consecutive failures, shutting down")
+                        break
+                    
+                    time.sleep(10)
         finally:
-            await self._cleanup()
+            self._cleanup()
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals."""
         logger.info(f"Worker {self.worker_id} received signal {signum}, shutting down...")
         self.running = False
-
-    async def _worker_loop(self):
-        """Main worker processing loop."""
-        logger.info(f"Worker {self.worker_id} entering processing loop")
-        last_lease_cleanup = asyncio.get_event_loop().time()
-        lease_cleanup_interval = 60  # Check for expired leases every 60 seconds
-
-        while self.running:
-            try:
-                # Send heartbeat
-                await self._send_heartbeat()
-
-                # Periodically clean up expired leases (prevents queue deadlock)
-                now = asyncio.get_event_loop().time()
-                if (now - last_lease_cleanup) >= lease_cleanup_interval:
-                    expired_count = await asyncio.to_thread(
-                        JudgeTaskQueueRepository.requeue_expired_leases
-                    )
-                    if expired_count > 0:
-                        logger.info(f"Worker {self.worker_id} requeued {expired_count} expired leases")
-                    last_lease_cleanup = now
-
-                # Try to lease a task (in thread to avoid blocking event loop)
-                task = await asyncio.to_thread(
-                    JudgeTaskQueueRepository.lease_next_task,
-                    server_url=self.server_url,
-                    worker_id=self.worker_id
-                )
-
-                if task:
-                    logger.info(f"Worker {self.worker_id} leased task {task.id} (paper {task.paper_id}, profile {task.profile_id})")
-                    await self._process_task(task)
-                else:
-                    # No tasks available, wait before checking again
-                    await asyncio.sleep(5)
-
-            except Exception as e:
-                logger.error(f"Worker {self.worker_id} error in main loop: {e}")
-                await asyncio.sleep(10)  # Back off on errors
-
-    async def _process_task(self, task):
-        """Process a single judge task."""
-        try:
-            # Use asyncio.to_thread with larger thread pool
-            result = await asyncio.to_thread(self._process_task_sync, task)
-            
-            if result is None:
-                return
-                
-            score_data, error = result
-            if error:
-                raise Exception(error)
-                
-            self.tasks_processed += 1
-            self.consecutive_failures = 0
-            logger.info(f"Worker {self.worker_id} completed task {task.id} with score {score_data['score']} (total processed: {self.tasks_processed})")
-
-        except Exception as e:
-            # Classify the error to determine if it should trigger circuit breaker
-            error_type = self._classify_error(e)
-            await self._handle_task_error(task, str(e), error_type)
     
-    def _process_task_sync(self, task):
-        """Process a task synchronously in a dedicated thread.
-        
-        This method runs entirely in a single thread, ensuring DB connections
-        are acquired and released properly without connection pool issues.
-        
-        Returns:
-            tuple: (score_data, error_message) or None if task failed to mark as in_progress
-        """
+    def _check_ollama_health(self):
+        """Check if the Ollama server is responding."""
+        import requests
         try:
-            logger.info(f"[{self.worker_id[:16]}] START task {task.id}")
+            # Try to get the version endpoint with a short timeout
+            # Use a session to avoid connection pool exhaustion
+            with requests.Session() as session:
+                response = session.get(f"{self.server_url}/api/version", timeout=5)
+                if response.status_code == 200:
+                    if not self.server_healthy:
+                        logger.info(f"Ollama server {self.server_url} is now healthy")
+                    self.server_healthy = True
+                else:
+                    if self.server_healthy:
+                        logger.warning(f"Ollama server {self.server_url} returned status {response.status_code}")
+                    self.server_healthy = False
+        except Exception as e:
+            # Log but don't immediately mark as unhealthy - could be transient
+            logger.warning(f"Ollama server health check failed (will retry): {e}")
+            # Don't set server_healthy = False here - let actual task failures determine that
+
+    def _lease_next_task(self):
+        """Lease the next available task."""
+        task = None
+        try:
+            leased_until = datetime.now() + timedelta(minutes=5)
+            
+            # Use cursor context manager to execute queries
+            with self.conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                # First check if there are ANY pending tasks for this server
+                cur.execute("""
+                    SELECT COUNT(*) as count FROM judge_task_queue
+                    WHERE status = 'pending'
+                    AND (assigned_server_url IS NULL OR assigned_server_url = %s)
+                """, (self.server_url,))
+                count_result = cur.fetchone()
+                pending_count = count_result['count'] if count_result else 0
+                
+                if pending_count == 0:
+                    logger.debug(f"No pending tasks for {self.server_url}")
+                    # Don't commit/rollback here - do it outside the with block
+                    return None
+                
+                logger.debug(f"Found {pending_count} pending tasks for {self.server_url}, attempting lease")
+                
+                # Now try to lease one
+                cur.execute("""
+                    UPDATE judge_task_queue
+                    SET status = 'leased',
+                        assigned_server_url = %s,
+                        leased_until = %s,
+                        leased_by_worker = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = (
+                        SELECT id FROM judge_task_queue
+                        WHERE status = 'pending'
+                        AND (assigned_server_url IS NULL OR assigned_server_url = %s)
+                        ORDER BY created_at ASC
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    RETURNING id, job_id, paper_id, profile_id, attempts
+                """, (self.server_url, leased_until, self.worker_id, self.server_url))
+                
+                task = cur.fetchone()
+            
+            # With autocommit mode, transaction commits automatically
+            if task:
+                logger.debug(f"Successfully leased task {task['id']}")
+            else:
+                logger.warning(f"Failed to lease task (likely locked by another worker)")
+            
+            return task
+            
+        except Exception as e:
+            logger.error(f"Error leasing task: {e}", exc_info=True)
+            return None
+
+    def _requeue_expired_leases(self):
+        """Requeue tasks with expired leases or stuck in_progress."""
+        try:
+            # Execute queries inside cursor context
+            with self.conn.cursor() as cur:
+                # Requeue expired leases
+                cur.execute("""
+                    UPDATE judge_task_queue
+                    SET status = 'pending',
+                        assigned_server_url = NULL,
+                        leased_until = NULL,
+                        leased_by_worker = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE status = 'leased'
+                      AND leased_until < CURRENT_TIMESTAMP
+                """)
+                count = cur.rowcount
+                
+                # Also requeue tasks stuck in_progress for more than 2 minutes
+                # (normal processing should complete within timeout + buffer)
+                cur.execute("""
+                    UPDATE judge_task_queue
+                    SET status = 'pending',
+                        assigned_server_url = NULL,
+                        leased_until = NULL,
+                        leased_by_worker = NULL,
+                        last_error = 'Timed out - stuck in progress',
+                        attempts = attempts + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE status = 'in_progress'
+                      AND updated_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes'
+                """)
+                stuck_count = cur.rowcount
+            
+            # With autocommit mode, transaction commits automatically
+            if stuck_count > 0:
+                logger.warning(f"Requeued {stuck_count} tasks stuck in_progress")
+            
+            return count + stuck_count
+        except Exception as e:
+            logger.error(f"Error requeuing expired leases: {e}")
+            return 0
+
+    def _process_task(self, task):
+        """Process a single task."""
+        cur = None
+        try:
+            # Create a fresh cursor for this task
+            cur = self.conn.cursor(row_factory=psycopg.rows.dict_row)
             
             # Mark task as in progress
-            logger.info(f"[{self.worker_id[:16]}] DB: mark_in_progress...")
-            success = JudgeTaskQueueRepository.mark_task_in_progress(task.id, self.worker_id)
-            if not success:
-                logger.warning(f"Failed to mark task {task.id} as in progress")
-                return None
-            logger.info(f"[{self.worker_id[:16]}] DB: mark_in_progress DONE")
-
-            # Get paper and profile data
-            logger.info(f"[{self.worker_id[:16]}] DB: get_paper...")
-            paper = PaperRepository.get_by_id(task.paper_id)
-            if not paper:
-                return None, f"Paper {task.paper_id} not found"
-            logger.info(f"[{self.worker_id[:16]}] DB: get_paper DONE")
-
-            logger.info(f"[{self.worker_id[:16]}] DB: get_profile...")
-            profile = ProfileRepository.get_by_id(task.profile_id)
-            if not profile:
-                return None, f"Profile {task.profile_id} not found"
-            logger.info(f"[{self.worker_id[:16]}] DB: get_profile DONE")
-
-            # Get research interests
-            logger.info(f"[{self.worker_id[:16]}] DB: get_interests...")
-            research_interests = ProfileInterestsRepository.get_interests_text_by_profile(task.profile_id)
-            if not research_interests:
-                return None, f"No research interests found for profile {task.profile_id}"
-            logger.info(f"[{self.worker_id[:16]}] DB: get_interests DONE")
-
-            # Perform LLM judge scoring (synchronous - GPU inference)
-            logger.info(f"[{self.worker_id[:16]}] OLLAMA: scoring...")
-            score_data = self._score_paper_sync(paper, research_interests)
-            logger.info(f"[{self.worker_id[:16]}] OLLAMA: scoring DONE (score={score_data['score']})")
-
-            # Save the score
-            logger.info(f"[{self.worker_id[:16]}] DB: save_score...")
-            ProfileScoreRepository.create_or_update_score(
-                paper_id=task.paper_id,
-                profile_id=task.profile_id,
-                score=score_data['score'],
-                related=score_data['related'],
-                rationale=score_data['rationale'],
-                judge_model=self.ollama_client.model_name
-            )
-            logger.info(f"[{self.worker_id[:16]}] DB: save_score DONE")
-
-            # Mark task as completed
-            logger.info(f"[{self.worker_id[:16]}] DB: mark_completed...")
-            JudgeTaskQueueRepository.mark_task_completed(task.id)
-            logger.info(f"[{self.worker_id[:16]}] COMPLETE task {task.id}")
+            cur.execute("""
+                UPDATE judge_task_queue
+                SET status = 'in_progress',
+                    leased_by_worker = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND status = 'leased'
+            """, (self.worker_id, task['id']))
             
-            return score_data, None
+            if cur.rowcount == 0:
+                logger.warning(f"Failed to mark task {task['id']} as in progress")
+                cur.close()
+                return
+            
+            # Get paper
+            cur.execute("SELECT * FROM papers WHERE id = %s", (task['paper_id'],))
+            paper = cur.fetchone()
+            if not paper:
+                raise ValueError(f"Paper {task['paper_id']} not found")
+            
+            # Get profile (with caching)
+            profile_id = task['profile_id']
+            if profile_id in self.profile_cache:
+                profile = self.profile_cache[profile_id]
+            else:
+                cur.execute("SELECT * FROM research_profiles WHERE id = %s", (profile_id,))
+                profile = cur.fetchone()
+                if not profile:
+                    raise ValueError(f"Profile {profile_id} not found")
+                self.profile_cache[profile_id] = profile
+            
+            # Get research interests (with caching)
+            if profile_id in self.interests_cache:
+                research_interests = self.interests_cache[profile_id]
+            else:
+                cur.execute(
+                    "SELECT interest_text FROM profile_research_interests WHERE profile_id = %s",
+                    (profile_id,)
+                )
+                interests_rows = cur.fetchall()
+                if not interests_rows:
+                    raise ValueError(f"No interests for profile {profile_id}")
+                research_interests = " ".join([row['interest_text'] for row in interests_rows])
+                self.interests_cache[profile_id] = research_interests
+            
+            # Close cursor to free resources
+            # With autocommit mode, transaction already committed
+            cur.close()
+            cur = None
+            
+            # Perform LLM scoring (this happens outside any transaction)
+            logger.info(f"Scoring paper for profile {profile['name']}")
+            try:
+                score_data = self._score_paper(paper, research_interests)
+            except Exception as e:
+                # If LLM fails, mark the task as failed and continue
+                logger.error(f"LLM scoring failed: {e}")
+                raise Exception(f"LLM inference failed: {e}")
+            
+            # Create a new cursor for saving results
+            cur = self.conn.cursor(row_factory=psycopg.rows.dict_row)
+            
+            # Save the score
+            cur.execute("""
+                INSERT INTO paper_profile_scores (paper_id, profile_id, score, related, rationale, judge_model)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (paper_id, profile_id)
+                DO UPDATE SET
+                    score = EXCLUDED.score,
+                    related = EXCLUDED.related,
+                    rationale = EXCLUDED.rationale,
+                    judge_model = EXCLUDED.judge_model,
+                    date_scored = CURRENT_TIMESTAMP
+            """, (
+                task['paper_id'],
+                task['profile_id'],
+                score_data['score'],
+                score_data['related'],
+                score_data['rationale'],
+                self.ollama_client.model_name
+            ))
+            
+            # Mark task as completed
+            cur.execute("""
+                UPDATE judge_task_queue
+                SET status = 'completed',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (task['id'],))
+            
+            # Close cursor to free resources
+            # With autocommit mode, transaction already committed
+            cur.close()
+            cur = None
+            
+            self.tasks_processed += 1
+            logger.info(f"Completed task with score {score_data['score']} (total: {self.tasks_processed})")
             
         except Exception as e:
-            logger.error(f"[{self.worker_id[:16]}] ERROR: {e}", exc_info=True)
-            return None, str(e)
+            logger.error(f"Task {task['id']} failed: {e}")
+            
+            # Increment consecutive failures for circuit breaker
+            self.consecutive_failures += 1
+            
+            # Mark task as failed using a fresh cursor
+            try:
+                if cur:
+                    cur.close()
+                with self.conn.cursor() as err_cur:
+                    err_cur.execute("""
+                        UPDATE judge_task_queue
+                        SET status = 'failed',
+                            last_error = %s,
+                            attempts = attempts + 1,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (str(e), task['id']))
+                    # With autocommit mode, already committed
+            except:
+                pass
+        finally:
+            # Ensure cursor is closed
+            if cur:
+                try:
+                    cur.close()
+                except:
+                    pass
 
-    def _score_paper_sync(self, paper: dict, research_interests: str) -> dict:
-        """Synchronous version of _score_paper for use in worker threads."""
+    def _score_paper(self, paper: dict, research_interests: str) -> dict:
+        """Score a paper using the LLM with timeout enforcement."""
+        from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
+        from ..prompt.data_models import ResearchInterestsPromptData
+        
         messages = [
             {"role": "user", "content": research_prompt(research_interests, paper['abstract'])}
         ]
-
-        # Use structured output schema to force Ollama to output valid JSON
-        response = self.ollama_client.invoke(
-            messages=messages,
-            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-            schema=ResearchInterestsPromptData
-        )
-
-        # Parse the response
+        
+        # Use a timeout wrapper to prevent hanging
+        result = [None]
+        exception = [None]
+        
+        def _invoke_with_timeout():
+            try:
+                result[0] = self.ollama_client.invoke(
+                    messages=messages,
+                    system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                    schema=ResearchInterestsPromptData
+                )
+            except Exception as e:
+                exception[0] = e
+        
+        thread = threading.Thread(target=_invoke_with_timeout, daemon=True)
+        thread.start()
+        thread.join(timeout=self.timeout + 5)  # Timeout + 5 second buffer
+        
+        if thread.is_alive():
+            # Thread is still running - LLM call hung
+            raise TimeoutError(f"LLM inference exceeded {self.timeout + 5}s timeout")
+        
+        if exception[0]:
+            raise exception[0]
+        
+        if result[0] is None:
+            raise RuntimeError("LLM inference failed without exception")
+        
+        response = result[0]
+        
         import json_repair
         response_json = json_repair.loads(response)
-
-        # Validate response structure
-        if not isinstance(response_json, dict):
-            raise ValueError(f"Invalid response format: expected dict, got {type(response_json)}")
-
-        required_keys = ['score', 'related', 'rationale']
-        missing_keys = [key for key in required_keys if key not in response_json]
-        if missing_keys:
-            raise ValueError(f"Missing required keys in response: {missing_keys}")
-
-        # Validate and clamp score to valid range (1-10)
+        
         score = response_json.get('score', 5)
         if not isinstance(score, (int, float)):
             score = 5
         score = max(1, min(10, int(score)))
-
+        
         return {
             'score': score,
             'related': bool(response_json.get('related', False)),
             'rationale': str(response_json.get('rationale', ''))
         }
 
-    async def _score_paper(self, paper: dict, research_interests: str) -> dict:
-        """Score a paper using LLM judge with structured output for reliable JSON parsing."""
-        messages = [
-            {"role": "user", "content": research_prompt(research_interests, paper['abstract'])}
-        ]
-
-        # Use structured output schema to force Ollama to output valid JSON
-        # This dramatically reduces JSON parsing failures
-        # Wrap in asyncio.to_thread to prevent blocking the event loop
-        response = await asyncio.to_thread(
-            self.ollama_client.invoke,
-            messages=messages,
-            system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-            schema=ResearchInterestsPromptData  # Forces valid JSON output!
-        )
-
-        # Parse the response - should always be valid JSON now
-        import json_repair
-        response_json = json_repair.loads(response)
-
-        # Validate response structure
-        if not isinstance(response_json, dict):
-            raise ValueError(f"Invalid response format: expected dict, got {type(response_json)}")
-
-        required_keys = ['score', 'related', 'rationale']
-        missing_keys = [key for key in required_keys if key not in response_json]
-        if missing_keys:
-            raise ValueError(f"Missing required keys in response: {missing_keys}")
-
-        # Validate and clamp score to valid range (1-10)
-        score_val = int(response_json['score'])
-        score_val = max(1, min(10, score_val))  # Clamp to valid range
-
-        return {
-            'score': score_val,
-            'related': bool(response_json['related']),
-            'rationale': str(response_json['rationale'])
-        }
-
-    def _classify_error(self, error: Exception) -> str:
-        """Classify error type to determine appropriate handling."""
-        error_str = str(error).lower()
-        error_type = type(error).__name__
-        
-        # Server connectivity issues - should trigger circuit breaker
-        if any(keyword in error_str for keyword in [
-            'connection refused', 'connection timeout', 'connection error',
-            'network unreachable', 'host unreachable', 'timeout',
-            'connection reset', 'connection aborted', 'server unavailable',
-            'service unavailable', 'bad gateway', 'gateway timeout'
-        ]):
-            return 'SERVER_CONNECTIVITY'
-        
-        # HTTP/API errors that indicate server issues
-        if any(keyword in error_str for keyword in [
-            '500 internal server error', '502 bad gateway', '503 service unavailable',
-            '504 gateway timeout', 'ollama server error'
-        ]):
-            return 'SERVER_ERROR'
-        
-        # Data/validation errors - should not trigger circuit breaker
-        if any(keyword in error_str for keyword in [
-            'not found', 'no research interests', 'paper', 'profile',
-            'invalid data', 'missing data', 'validation error'
-        ]) or error_type in ['ValueError', 'KeyError']:
-            return 'DATA_ERROR'
-        
-        # LLM/inference errors - should not trigger circuit breaker
-        if any(keyword in error_str for keyword in [
-            'json', 'parsing', 'invalid response', 'model error',
-            'inference error', 'generation failed', 'token limit'
-        ]):
-            return 'INFERENCE_ERROR'
-        
-        # Default to inference error for unknown errors (safer approach)
-        return 'INFERENCE_ERROR'
-
-    async def _handle_task_error(self, task, error_message: str, error_type: str = 'INFERENCE_ERROR'):
-        """Handle task processing errors with intelligent error classification and server health verification."""
-        task.attempts += 1
-        
-        # Track consecutive server failures
-        if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR']:
-            self.consecutive_failures += 1
-            logger.error(f"Worker {self.worker_id} server error on task {task.id} (attempt {task.attempts}): {error_message}")
-        else:
-            self.consecutive_failures = 0
-            logger.warning(f"Worker {self.worker_id} task error on task {task.id} (attempt {task.attempts}, type: {error_type}): {error_message}")
-
-        # Log detailed error information
-        await self._log_task_error(task, error_message, error_type)
-
-        # After 3rd retry - need to decide if this is a server or paper problem
-        if task.attempts >= self.max_retries:
-            logger.warning(f"Task {task.id} exhausted {self.max_retries} retries")
-            
-            # For SERVER errors: verify server health before deciding action
-            if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR']:
-                logger.info(f"Performing server health check for {self.server_url}...")
-                server_is_healthy = await self._check_server_health()
-                
-                if server_is_healthy:
-                    # Server is fine, this paper is just problematic
-                    logger.warning(
-                        f"✅ Server {self.server_url} is healthy - this paper is the problem. "
-                        f"Marking task {task.id} as permanently failed and continuing."
-                    )
-                    await asyncio.to_thread(
-                        JudgeTaskQueueRepository.mark_task_failed,
-                        task.id,
-                        f"[PAPER_ISSUE] Failed {self.max_retries} times but server is healthy: {error_message}",
-                        increment_attempts=False
-                    )
-                    self.consecutive_failures = 0  # Reset since server is fine
-                    return  # Continue to next task
-                else:
-                    # Server is actually down
-                    logger.error(f"❌ Server {self.server_url} health check FAILED - shutting down worker")
-                    await self._shutdown_worker(f"Server unreachable after {task.attempts} attempts on task {task.id}")
-                    return
-            else:
-                # Non-server errors (LLM inference, data issues): mark failed and continue
-                logger.warning(
-                    f"Task {task.id} permanently failed due to {error_type} after {task.attempts} attempts - continuing with next task"
-                )
-                await asyncio.to_thread(
-                    JudgeTaskQueueRepository.mark_task_failed,
-                    task.id,
-                    f"[{error_type}] {error_message}",
-                    increment_attempts=False
-                )
-                self.consecutive_failures = 0
-                return  # Continue to next task
-        else:
-            # Still have retries left - mark failed for requeue
-            await asyncio.to_thread(
-                JudgeTaskQueueRepository.mark_task_failed,
-                task.id,
-                f"[{error_type}] {error_message}"
-            )
-            logger.info(f"Task {task.id} will be retried (attempt {task.attempts}/{self.max_retries}, type: {error_type})")
-
-        # ⚡ CIRCUIT BREAKER: Check if we've hit threshold of consecutive failures
-        if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR'] and self.consecutive_failures >= self.circuit_breaker_threshold:
-            logger.warning(
-                f"⚠️  Circuit breaker threshold reached ({self.consecutive_failures} consecutive server errors). "
-                f"Performing server health check..."
-            )
-            
-            server_is_healthy = await self._check_server_health()
-            
-            if not server_is_healthy:
-                # Server is down - trigger circuit breaker
-                logger.error(
-                    f"❌ Circuit breaker TRIGGERED: Server {self.server_url} is unreachable after "
-                    f"{self.consecutive_failures} consecutive failures"
-                )
-                await self._shutdown_worker(f"Circuit breaker triggered: server unreachable after {self.consecutive_failures} errors")
-            else:
-                # False alarm - server is fine, just bad papers
-                logger.info(
-                    f"✅ Circuit breaker check: Server {self.server_url} is healthy despite "
-                    f"{self.consecutive_failures} consecutive failures. Resetting counter and continuing."
-                )
-                self.consecutive_failures = 0  # Reset and keep going
-
-    async def _check_server_health(self) -> bool:
-        """Perform a health check on the Ollama server.
-        
-        Returns:
-            bool: True if server is healthy and reachable, False if down
-        """
+    def _send_heartbeat(self):
+        """Send worker heartbeat."""
         try:
-            import httpx
-            logger.debug(f"Health checking server: {self.server_url}")
-            
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                # Try to hit the Ollama tags endpoint (lightweight check)
-                response = await client.get(f"{self.server_url}/api/tags")
-                
-                if response.status_code == 200:
-                    logger.debug(f"Server {self.server_url} health check PASSED (status 200)")
-                    return True
-                else:
-                    logger.warning(f"Server {self.server_url} returned status {response.status_code}")
-                    return False
-                    
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO worker_heartbeats (worker_id, server_url, job_id, status, tasks_processed, last_heartbeat)
+                    VALUES (%s, %s, %s, 'active', %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (worker_id, server_url, job_id)
+                    DO UPDATE SET
+                        status = 'active',
+                        tasks_processed = EXCLUDED.tasks_processed,
+                        last_heartbeat = CURRENT_TIMESTAMP
+                """, (
+                    self.worker_id,
+                    self.server_url,
+                    str(self.job_id) if self.job_id else None,
+                    self.tasks_processed
+                ))
+            # With autocommit mode, transaction commits automatically
         except Exception as e:
-            logger.warning(f"Server {self.server_url} health check FAILED: {e}")
-            return False
+            logger.warning(f"Failed to send heartbeat: {e}")
 
-    async def _send_heartbeat(self):
-        """Send heartbeat to indicate worker is alive."""
+    def _cleanup(self):
+        """Clean up on shutdown."""
+        logger.info(f"Worker {self.worker_id} shutting down (processed {self.tasks_processed} tasks)")
+        
+        # Mark worker as inactive
         try:
-            # DB call in thread to avoid blocking event loop
-            await asyncio.to_thread(
-                WorkerHeartbeatsRepository.upsert_heartbeat,
-                worker_id=self.worker_id,
-                server_url=self.server_url,
-                job_id=self.job_id,
-                status='active',
-                tasks_processed=self.tasks_processed
-            )
-            logger.debug(f"Worker {self.worker_id} sent heartbeat successfully")
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE worker_heartbeats
+                    SET status = 'inactive',
+                        last_heartbeat = CURRENT_TIMESTAMP
+                    WHERE worker_id = %s
+                      AND server_url = %s
+                      AND (job_id = %s OR (%s IS NULL AND job_id IS NULL))
+                """, (
+                    self.worker_id,
+                    self.server_url,
+                    str(self.job_id) if self.job_id else None,
+                    str(self.job_id) if self.job_id else None
+                ))
+            # With autocommit mode, transaction commits automatically
         except Exception as e:
-            logger.warning(f"Worker {self.worker_id} failed to send heartbeat: {e}")
-
-    async def _log_task_error(self, task, error_message: str, error_type: str):
-        """Log detailed task error information to error_logs table."""
+            logger.warning(f"Failed to mark worker as inactive: {e}")
+        
+        # Close Ollama client connections
         try:
-            from ..db.pool import get_connection_pool
-            pool = await get_connection_pool()
-            async with pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO error_logs (job_id, task_id, server_url, worker_id, error_type, severity, description, context)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """, 
-                str(self.job_id) if self.job_id else None,
-                task.id,
-                self.server_url,
-                self.worker_id,
-                f'TASK_{error_type}',
-                'HIGH' if error_type in ['SERVER_CONNECTIVITY', 'SERVER_ERROR'] else 'MEDIUM',
-                f"Task {task.id} failed: {error_message}",
-                json.dumps({
-                    'paper_id': task.paper_id,
-                    'profile_id': task.profile_id,
-                    'task_attempts': task.attempts,
-                    'max_retries': self.max_retries,
-                    'error_classification': error_type,
-                    'consecutive_failures': self.consecutive_failures,
-                    'tasks_processed': self.tasks_processed,
-                    'will_retry': task.attempts < self.max_retries
-                })
-                )
-        except Exception as e:
-            logger.warning(f"Failed to log task error to error_logs: {e}")
-
-    async def _shutdown_worker(self, reason: str = "Normal shutdown"):
-        """Shutdown this worker."""
-        logger.info(f"Worker {self.worker_id} shutting down: {reason}")
-        self.running = False
-
-        # Mark as failed with reason if it's an error, otherwise inactive
-        try:
-            if "error" in reason.lower() or "failed" in reason.lower() or "circuit breaker" in reason.lower():
-                await asyncio.to_thread(
-                    WorkerHeartbeatsRepository.mark_worker_failed,
-                    worker_id=self.worker_id,
-                    server_url=self.server_url,
-                    job_id=self.job_id,
-                    failure_reason=reason
-                )
-                logger.error(f"Worker {self.worker_id} marked as failed: {reason}")
-                
-                # Log the failure to error_logs table for detailed tracking
-                await self._log_worker_failure(reason)
-            else:
-                await asyncio.to_thread(
-                    WorkerHeartbeatsRepository.mark_worker_inactive,
-                    worker_id=self.worker_id,
-                    server_url=self.server_url,
-                    job_id=self.job_id
-                )
-        except Exception as e:
-            logger.warning(f"Worker {self.worker_id} failed to update status: {e}")
-
-    async def _log_worker_failure(self, reason: str):
-        """Log worker failure to error_logs table for detailed tracking."""
-        try:
-            from ..db.pool import get_connection_pool
-            pool = await get_connection_pool()
-            async with pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO error_logs (job_id, server_url, worker_id, error_type, severity, description, context)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """, 
-                str(self.job_id) if self.job_id else None,
-                self.server_url,
-                self.worker_id,
-                'WORKER_FAILURE',
-                'HIGH',
-                f"Worker terminated: {reason}",
-                json.dumps({
-                    'tasks_processed': self.tasks_processed,
-                    'consecutive_failures': self.consecutive_failures,
-                    'shutdown_reason': reason,
-                    'worker_runtime_seconds': (asyncio.get_event_loop().time() - getattr(self, '_start_time', 0))
-                })
-                )
-            logger.info(f"Worker {self.worker_id} failure logged to error_logs table")
-        except Exception as e:
-            logger.warning(f"Failed to log worker failure to error_logs: {e}")
-
-    async def _cleanup(self):
-        """Clean up worker resources."""
-        logger.info(f"Worker {self.worker_id} cleaning up")
-
-        # Mark any leased tasks as failed if we're shutting down
-        try:
-            # This would need to be implemented in the repository
+            if hasattr(self.ollama_client, 'close'):
+                self.ollama_client.close()
+        except:
             pass
-        except Exception as e:
-            logger.warning(f"Worker {self.worker_id} cleanup failed: {e}")
+        
+        # Close database connection
+        try:
+            self.conn.close()
+        except:
+            pass
 
 
-async def main():
+def run_worker(server_url: str, job_id: Optional[UUID], max_retries: int, timeout: int):
+    """Run a single worker for a server."""
+    worker = JudgeWorker(
+        server_url=server_url,
+        job_id=job_id,
+        max_retries=max_retries,
+        timeout=timeout
+    )
+    
+    try:
+        worker.start()
+    except Exception as e:
+        logger.error(f"Worker for {server_url} failed: {e}", exc_info=True)
+
+
+def main():
     """Main entry point for the worker launcher."""
     parser = argparse.ArgumentParser(description='Theseus Judge Worker')
     parser.add_argument('--server-url', help='Ollama server URL to process')
     parser.add_argument('--job-id', help='Specific job ID to process')
     parser.add_argument('--all-enabled', action='store_true', help='Process all enabled servers')
     parser.add_argument('--max-retries', type=int, default=3, help='Max retries per task')
-    parser.add_argument('--timeout', type=int, default=30, help='Request timeout in seconds for bulk processing')
-    parser.add_argument('--heartbeat-interval', type=int, default=30, help='Heartbeat interval in seconds')
+    parser.add_argument('--timeout', type=int, default=30, help='Request timeout in seconds')
 
     args = parser.parse_args()
 
-    # Validate environment
-    env_info = EnvironmentDetector.validate_environment()
-
-    if not env_info['valid']:
-        logger.error("Environment validation failed:")
-        for issue in env_info['issues']:
-            logger.error(f"  - {issue}")
-        sys.exit(1)
-
-    logger.info(f"Environment validated. Hash: {env_info['environment_hash']}")
-
-    # Determine which servers to process
-    servers_to_process = []
-
+    # For --all-enabled, we need to get the list of servers
+    # Import here to avoid early module loading
     if args.all_enabled:
-        # Get all enabled servers
+        from ..data_access.ollama_servers import OllamaServersRepository
         servers = OllamaServersRepository.get_enabled()
         servers_to_process = [(server.url, args.job_id) for server in servers]
         logger.info(f"Processing all {len(servers_to_process)} enabled servers")
@@ -612,33 +598,37 @@ async def main():
         logger.error("Must specify either --server-url or --all-enabled")
         sys.exit(1)
 
-    # Create and start workers
-    workers = []
-    for server_url, job_id in servers_to_process:
+    # For multiple servers, fork processes
+    if len(servers_to_process) > 1:
+        import multiprocessing
+        processes = []
+        
+        for server_url, job_id in servers_to_process:
+            job_uuid = UUID(job_id) if job_id else None
+            p = multiprocessing.Process(
+                target=run_worker,
+                args=(server_url, job_uuid, args.max_retries, args.timeout)
+            )
+            p.start()
+            processes.append(p)
+            logger.info(f"Started worker process for {server_url}")
+        
+        # Wait for all processes
+        try:
+            for p in processes:
+                p.join()
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt, terminating workers...")
+            for p in processes:
+                p.terminate()
+            for p in processes:
+                p.join(timeout=5)
+    else:
+        # Single server - run directly
+        server_url, job_id = servers_to_process[0]
         job_uuid = UUID(job_id) if job_id else None
-        worker = JudgeWorker(
-            server_url=server_url,
-            job_id=job_uuid,
-            max_retries=args.max_retries,
-            timeout=args.timeout,
-            heartbeat_interval=args.heartbeat_interval
-        )
-        workers.append(worker)
-
-    # Start all workers concurrently
-    logger.info(f"Starting {len(workers)} worker(s)")
-    tasks = [worker.start() for worker in workers]
-
-    try:
-        await asyncio.gather(*tasks)
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, shutting down workers...")
-    except Exception as e:
-        logger.error(f"Worker launcher failed: {e}")
-    finally:
-        logger.info("Worker launcher shutting down")
+        run_worker(server_url, job_uuid, args.max_retries, args.timeout)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    main()

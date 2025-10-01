@@ -24,9 +24,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Pool configuration from environment
-POOL_MIN_SIZE = int(os.getenv("DB_POOL_MIN_SIZE", "5"))
-POOL_MAX_SIZE = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
-POOL_TIMEOUT = float(os.getenv("DB_POOL_TIMEOUT", "30.0"))
+# Increased defaults for multi-worker scenarios
+POOL_MIN_SIZE = int(os.getenv("DB_POOL_MIN_SIZE", "10"))
+POOL_MAX_SIZE = int(os.getenv("DB_POOL_MAX_SIZE", "50"))
+POOL_TIMEOUT = float(os.getenv("DB_POOL_TIMEOUT", "60.0"))
 POOL_MAX_LIFETIME = float(os.getenv("DB_POOL_MAX_LIFETIME", "3600.0"))  # 1 hour
 
 # Enable pool statistics

@@ -250,26 +250,54 @@ class JudgeTaskQueueRepository:
             return cursor.rowcount > 0
 
     @staticmethod
-    def mark_task_failed(task_id: int, error_message: str, increment_attempts: bool = True) -> bool:
-        """Mark a task as failed with error message."""
+    def mark_task_failed(task_id: int, error_message: str, increment_attempts: bool = True, requeue_if_retryable: bool = True, max_retries: int = 3) -> bool:
+        """Mark a task as failed with error message.
+        
+        Args:
+            task_id: The task ID
+            error_message: Error message to record
+            increment_attempts: Whether to increment the attempts counter
+            requeue_if_retryable: If True and task has retries left, set status to 'pending' instead of 'failed'
+            max_retries: Maximum number of retries allowed
+        """
         with get_cursor() as cursor:
-            if increment_attempts:
+            # First get the current attempts count
+            cursor.execute("SELECT attempts FROM judge_task_queue WHERE id = %s", (task_id,))
+            result = cursor.fetchone()
+            if not result:
+                return False
+                
+            current_attempts = result['attempts']
+            new_attempts = current_attempts + 1 if increment_attempts else current_attempts
+            
+            # Determine the new status based on retry logic
+            if requeue_if_retryable and new_attempts < max_retries:
+                # Task has retries left - mark as pending for re-processing
+                new_status = 'pending'
+                # Clear the assignment so any worker can pick it up
                 cursor.execute("""
                     UPDATE judge_task_queue
-                    SET status = 'failed',
+                    SET status = %s,
                         last_error = %s,
-                        attempts = attempts + 1,
+                        attempts = %s,
+                        assigned_server_url = NULL,
+                        leased_until = NULL,
+                        leased_by_worker = NULL,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
-                """, (error_message, task_id))
+                """, (new_status, error_message, new_attempts, task_id))
             else:
+                # Task has exhausted retries - mark as permanently failed
+                new_status = 'failed'
                 cursor.execute("""
                     UPDATE judge_task_queue
-                    SET status = 'failed',
+                    SET status = %s,
                         last_error = %s,
+                        attempts = %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
-                """, (error_message, task_id))
+                """, (new_status, error_message, new_attempts, task_id))
+                
             return cursor.rowcount > 0
 
     @staticmethod

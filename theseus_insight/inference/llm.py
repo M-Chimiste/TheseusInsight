@@ -75,6 +75,16 @@ class OllamaInference(InferenceModel):
         self.num_ctx = num_ctx
         self.request_timeout = request_timeout  # Timeout in seconds, None = no timeout
         super().__init__(model_name, max_new_tokens, temperature)
+    
+    def close(self):
+        """Close the underlying HTTP client to release connections."""
+        if hasattr(self, 'client') and self.client:
+            if hasattr(self.client, '_client'):
+                self.client._client.close()
+    
+    def __del__(self):
+        """Ensure connections are closed when object is garbage collected."""
+        self.close()
 
     def _get_provider(self) -> str:
         return "ollama"

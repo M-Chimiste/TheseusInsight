@@ -40,6 +40,7 @@ class UnifiedArxivHarvester:
         verbose: bool = False,
         kaggle_dataset_path: Optional[str] = None,
         auto_cleanup: bool = True,
+        force_kaggle: Optional[bool] = None,
     ):
         """Initialize the unified harvester.
 
@@ -72,7 +73,12 @@ class UnifiedArxivHarvester:
         )
 
         self._debug_mode = os.getenv("DEBUG", "").lower() == "true"
-        self._force_kaggle = os.getenv("FORCE_KAGGLE", "").lower() == "true"
+        # Allow explicit override via parameter; fallback to environment
+        self._force_kaggle = (
+            bool(force_kaggle)
+            if force_kaggle is not None
+            else os.getenv("FORCE_KAGGLE", "").lower() == "true"
+        )
         self._auto_download = os.getenv("AUTO_DOWNLOAD", "true").lower() == "true"  # Default to true
         self._auto_cleanup = auto_cleanup
         self._temp_dir = None

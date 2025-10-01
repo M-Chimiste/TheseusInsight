@@ -21,6 +21,8 @@ from ...data_access.ollama_servers import OllamaServersRepository
 from ...data_processing.queue_producer import JudgeQueueProducer
 from ...scheduler import scheduler
 from ...data_access.papers import PaperRepository
+from ...data_processing.arxiv import ArxivDataProcessor
+from ...data_model.papers import Paper as PaperModel
 from ...inference.llm import SentenceTransformerInference
 
 # Initialize logger for the module
@@ -113,11 +115,15 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
         return 0
 
     # Fetch papers in range
+    logger.info(f"🔍 Preflight: fetching papers in range {date_from}..{date_to}")
     papers = PaperRepository.get_papers_in_date_range(start_date=date_from, end_date=date_to)
     if not papers:
+        logger.info("Preflight: no papers found in date range")
         return 0
 
+    logger.info(f"Preflight: fetched {len(papers)} papers")
     papers = _filter_valid_abstracts(papers)
+    logger.info(f"Preflight: {len(papers)} papers have non-empty abstracts")
     if not papers:
         return 0
 
@@ -128,15 +134,18 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
             to_embed.append((p['id'], p.get('abstract') or p.get('summary') or ""))
 
     if not to_embed:
+        logger.info("Preflight: all papers already have embeddings; skipping embedding stage")
         return 0
 
     # Compute embeddings in batches
+    logger.info(f"🧠 Preflight: embedding {len(to_embed)} papers in batches")
     model = SentenceTransformerInference()
     batch_size = 128
     updates: List[Tuple[int, List[float]]] = []
     for i in range(0, len(to_embed), batch_size):
         batch = to_embed[i:i+batch_size]
         texts = [t[1] for t in batch]
+        logger.info(f"🧪 Embedding batch {i//batch_size + 1}/{(len(to_embed)+batch_size-1)//batch_size} (papers {i+1}-{i+len(batch)})")
         embs = model.invoke(
             text=texts,
             batch_size=batch_size,
@@ -155,7 +164,71 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
 
     if updates:
         PaperRepository.bulk_update_embeddings(updates)
+        logger.info(f"✅ Preflight: updated embeddings for {len(updates)} papers")
     return len(updates)
+
+
+def _download_arxiv_for_range(date_from: Optional[str], date_to: Optional[str]) -> Dict[str, int]:
+    """Download papers from arXiv for the given range and insert into DB.
+    Returns stats dict {total, imported, skipped, errors} from bulk_insert.
+    """
+    if not date_from and not date_to:
+        logger.info("Preflight: no date range provided; skipping arXiv download")
+        return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+    logger.info(f"📡 Preflight: downloading arXiv papers for range {date_from}..{date_to}")
+    try:
+        # Force Kaggle via explicit flag to avoid persistent env state
+        proc = ArxivDataProcessor(start_date=date_from, end_date=date_to, category=None, subcategories=None, force_kaggle=True)
+        df = proc.download_and_process_data()
+    except Exception as e:
+        logger.warning(f"Preflight: arXiv download failed: {e}")
+        return {"total": 0, "imported": 0, "skipped": 0, "errors": 1}
+
+    if df is None or df.empty:
+        logger.info("Preflight: arXiv download returned no new records")
+        return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+    # Convert to PaperModel list
+    papers: List[PaperModel] = []
+    from datetime import date as _date
+    today = _date.today().strftime('%Y-%m-%d')
+    for _, row in df.iterrows():
+        title = row.get('title') or ''
+        abstract = row.get('abstract') or ''
+        pdf_url = row.get('pdf_url') or row.get('url') or ''
+        created = row.get('date')
+        # Ensure date string
+        if hasattr(created, 'strftime'):
+            created_str = created.strftime('%Y-%m-%d')
+        else:
+            created_str = str(created) if created else today
+        try:
+            papers.append(PaperModel(
+                title=title,
+                abstract=abstract,
+                date=created_str,
+                date_run=today,
+                score=None,
+                rationale=None,
+                related=False,
+                cosine_similarity=0.0,
+                url=pdf_url,
+                embedding_model="pending",
+                embedding=None
+            ))
+        except Exception:
+            # Skip malformed rows
+            continue
+
+    if not papers:
+        logger.info("Preflight: no valid papers to insert after download")
+        return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+    logger.info(f"💾 Preflight: inserting up to {len(papers)} downloaded papers into DB (skipping duplicates)")
+    stats = PaperRepository.bulk_insert(papers, skip_duplicates=True)
+    logger.info(f"✅ Preflight: arXiv insert stats: {stats}")
+    return stats
 
 # Background task functions
 async def run_harvest_judge_task(
@@ -700,6 +773,14 @@ async def _start_bulk_judge_operation(
     if request.use_multi_server:
         # Preflight: ensure downloads/embeddings done before spinning up workers
         # For now, we ensure embeddings for all papers in range. Download step can be integrated if needed.
+        # First, try to download new papers from arXiv for this range and insert them
+        try:
+            dl_stats = _download_arxiv_for_range(request.start_date, request.end_date)
+            logger.info(f"Preflight download stats: {dl_stats}")
+        except Exception as pre_dle:
+            logger.warning(f"Preflight arXiv download failed or partial: {pre_dle}")
+
+        # Then, ensure embeddings for all papers in range
         try:
             pre_embedded = _ensure_embeddings_for_range(request.start_date, request.end_date)
             logger.info(f"Preflight embeddings ensured for {pre_embedded} papers")

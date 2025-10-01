@@ -72,6 +72,14 @@ class JudgeWorker:
         # When using cursor context managers with a persistent connection, autocommit=True
         # prevents psycopg3 internal deadlocks on commit()
         self.conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        # Enforce sane timeouts to prevent indefinite waits on DB operations
+        try:
+            with self.conn.cursor() as _cur:
+                _cur.execute("SET statement_timeout = '10s'")
+                _cur.execute("SET lock_timeout = '3s'")
+                _cur.execute("SET idle_in_transaction_session_timeout = '10s'")
+        except Exception as _e:
+            logger.warning(f"Failed to apply DB session timeouts: {_e}")
         
         # Cache for profile research interests to avoid repeated DB queries
         self.interests_cache = {}
@@ -96,6 +104,12 @@ class JudgeWorker:
         file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
+        self.log_file = log_file
+        
+        # Watchdog to dump stack traces if we stall
+        self.last_progress_ts = time.time()
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._watchdog_thread.start()
         
         logger.info(f"Initialized worker {self.worker_id} for server {server_url}")
         logger.info(f"Logging to {log_file}")
@@ -117,6 +131,9 @@ class JudgeWorker:
         try:
             while self.running:
                 try:
+                    # Mark progress for watchdog
+                    self.last_progress_ts = time.time()
+                    logger.debug("Loop tick start")
                     # Send heartbeat periodically
                     now = time.time()
                     if (now - last_heartbeat) >= heartbeat_interval:
@@ -189,6 +206,36 @@ class JudgeWorker:
         logger.info(f"Worker {self.worker_id} received signal {signum}, shutting down...")
         self.running = False
     
+    def _watchdog_loop(self):
+        """Watch for stalls and dump stack traces to the log."""
+        import traceback, sys
+        stall_threshold = 45  # seconds without progress
+        while True:
+            try:
+                time.sleep(15)
+                if not self.running:
+                    return
+                idle = time.time() - getattr(self, 'last_progress_ts', time.time())
+                if idle > stall_threshold:
+                    logger.error(f"Watchdog: worker stalled for {int(idle)}s. Dumping stack traces...")
+                    for thread_id, frame in sys._current_frames().items():
+                        stack = ''.join(traceback.format_stack(frame))
+                        logger.error(f"Thread {thread_id} stack:\n{stack}")
+                    # Also write a marker to the log file
+                    try:
+                        with open(self.log_file, 'a') as f:
+                            f.write(f"\n==== Watchdog dump at {time.strftime('%Y-%m-%d %H:%M:%S')} (idle {int(idle)}s) ====\n")
+                            for thread_id, frame in sys._current_frames().items():
+                                f.write(f"\n--- Thread {thread_id} ---\n")
+                                f.write(''.join(traceback.format_stack(frame)))
+                    except Exception:
+                        pass
+                    # Reset timer to avoid spamming
+                    self.last_progress_ts = time.time()
+            except Exception:
+                # Watchdog should never crash the worker
+                pass
+    
     def _check_ollama_health(self):
         """Check if the Ollama server is responding."""
         import requests
@@ -253,14 +300,16 @@ class JudgeWorker:
                     RETURNING id, job_id, paper_id, profile_id, attempts
                 """, (self.server_url, leased_until, self.worker_id, self.server_url))
                 
-                task = cur.fetchone()
+                row = cur.fetchone()
+                task = dict(row) if row else None
+                
+                # Log while still inside cursor context to avoid accessing closed cursor data
+                if task:
+                    logger.debug(f"Successfully leased task {task['id']}")
+                else:
+                    logger.warning(f"Failed to lease task (likely locked by another worker)")
             
-            # With autocommit mode, transaction commits automatically
-            if task:
-                logger.debug(f"Successfully leased task {task['id']}")
-            else:
-                logger.warning(f"Failed to lease task (likely locked by another worker)")
-            
+            # Return task (row data is safe to use after cursor closes in psycopg3)
             return task
             
         except Exception as e:
@@ -333,7 +382,8 @@ class JudgeWorker:
             
             # Get paper
             cur.execute("SELECT * FROM papers WHERE id = %s", (task['paper_id'],))
-            paper = cur.fetchone()
+            paper_row = cur.fetchone()
+            paper = dict(paper_row) if paper_row else None
             if not paper:
                 raise ValueError(f"Paper {task['paper_id']} not found")
             
@@ -343,7 +393,8 @@ class JudgeWorker:
                 profile = self.profile_cache[profile_id]
             else:
                 cur.execute("SELECT * FROM research_profiles WHERE id = %s", (profile_id,))
-                profile = cur.fetchone()
+                profile_row = cur.fetchone()
+                profile = dict(profile_row) if profile_row else None
                 if not profile:
                     raise ValueError(f"Profile {profile_id} not found")
                 self.profile_cache[profile_id] = profile

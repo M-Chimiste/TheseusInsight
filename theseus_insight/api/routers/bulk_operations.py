@@ -309,11 +309,11 @@ async def _launch_single_worker(job_id: UUID, server_url: str, request_timeout_s
             '--max-retries', str(max_retries)
         ]
         
-        # Launch the process in the background
+        # Launch the process in the background; send output to DEVNULL to avoid pipe backpressure
         process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             cwd=os.getcwd(),
             start_new_session=True  # Detach from parent process
         )
@@ -372,11 +372,10 @@ async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeo
                 try:
                     process = subprocess.Popen(
                         cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                         cwd=os.getcwd(),
-                        env=os.environ.copy(),
-                        text=True  # Use text mode for easier output handling
+                        env=os.environ.copy()
                     )
 
                     print(f"✅ Launched worker process for server {server.name} (PID: {process.pid})")

@@ -111,7 +111,8 @@ class JudgeQueueProducer:
 
         for i in range(0, len(paper_profile_combinations), batch_size):
             batch = paper_profile_combinations[i:i + batch_size]
-            batch_enqueued = self.task_queue_repo.enqueue_tasks(job_id, batch, server_urls)
+            # Do not pre-assign servers; enable dynamic pooling across workers
+            batch_enqueued = self.task_queue_repo.enqueue_tasks(job_id, batch, server_urls=None)
 
             if batch_enqueued > 0:
                 total_enqueued += batch_enqueued

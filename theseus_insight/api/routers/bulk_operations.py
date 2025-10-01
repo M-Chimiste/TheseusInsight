@@ -5,7 +5,7 @@ Provides endpoints for triggering and managing bulk processing operations.
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 import asyncio
@@ -20,6 +20,8 @@ from ...db import get_connection_pool
 from ...data_access.ollama_servers import OllamaServersRepository
 from ...data_processing.queue_producer import JudgeQueueProducer
 from ...scheduler import scheduler
+from ...data_access.papers import PaperRepository
+from ...inference.llm import SentenceTransformerInference
 
 # Initialize logger for the module
 logger = logging.getLogger(__name__)
@@ -90,6 +92,70 @@ class JobStatusResponse(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     last_checkpoint_at: Optional[datetime]
+# -------------------------------
+# Preflight preparation helpers
+# -------------------------------
+
+def _filter_valid_abstracts(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    filtered = []
+    for p in papers:
+        abstract = p.get('abstract') or p.get('summary') or ""
+        if isinstance(abstract, str) and abstract.strip():
+            filtered.append(p)
+    return filtered
+
+def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str]) -> int:
+    """Ensure all papers in the date range have embeddings before judging.
+    Returns number of embeddings computed.
+    """
+    if not date_from and not date_to:
+        # Nothing to prepare if no range provided
+        return 0
+
+    # Fetch papers in range
+    papers = PaperRepository.get_papers_in_date_range(start_date=date_from, end_date=date_to)
+    if not papers:
+        return 0
+
+    papers = _filter_valid_abstracts(papers)
+    if not papers:
+        return 0
+
+    # Identify those without embeddings
+    to_embed: List[Tuple[int, str]] = []
+    for p in papers:
+        if p.get('embedding') is None:
+            to_embed.append((p['id'], p.get('abstract') or p.get('summary') or ""))
+
+    if not to_embed:
+        return 0
+
+    # Compute embeddings in batches
+    model = SentenceTransformerInference()
+    batch_size = 128
+    updates: List[Tuple[int, List[float]]] = []
+    for i in range(0, len(to_embed), batch_size):
+        batch = to_embed[i:i+batch_size]
+        texts = [t[1] for t in batch]
+        embs = model.invoke(
+            text=texts,
+            batch_size=batch_size,
+            show_progress_bar=False,
+            to_list=True,
+            convert_to_numpy=True
+        )
+        # embs is a list of arrays/lists
+        for (paper_id, _), emb in zip(batch, embs):
+            # Ensure plain list[float]
+            try:
+                vector = emb.tolist() if hasattr(emb, 'tolist') else list(emb)
+            except Exception:
+                vector = emb
+            updates.append((paper_id, vector))
+
+    if updates:
+        PaperRepository.bulk_update_embeddings(updates)
+    return len(updates)
 
 # Background task functions
 async def run_harvest_judge_task(
@@ -632,21 +698,25 @@ async def _start_bulk_judge_operation(
 
     # Start appropriate background task
     if request.use_multi_server:
-        # First enqueue tasks synchronously
+        # Preflight: ensure downloads/embeddings done before spinning up workers
+        # For now, we ensure embeddings for all papers in range. Download step can be integrated if needed.
+        try:
+            pre_embedded = _ensure_embeddings_for_range(request.start_date, request.end_date)
+            logger.info(f"Preflight embeddings ensured for {pre_embedded} papers")
+        except Exception as pre_e:
+            logger.warning(f"Preflight embedding stage failed or partial: {pre_e}")
+
+        # Enqueue tasks synchronously (dynamic pool; no server pre-assignment)
         queue_producer = JudgeQueueProducer()
         profile_ids_int = [int(pid) for pid in request.profile_ids] if request.profile_ids else None
-        
-        # Get server URLs for task distribution
-        server_urls = [s.url for s in selected_servers] if selected_servers else None
-        
         result = queue_producer.enqueue_bulk_judge_job(
             job_id=created_job_id,
             profile_ids=profile_ids_int,
             date_from=request.start_date,
             date_to=request.end_date,
             overwrite_existing=request.overwrite_existing,
-            create_processing_job=False,  # Job already created
-            server_urls=server_urls  # Pass server URLs for round-robin distribution
+            create_processing_job=False,
+            server_urls=None  # dynamic pooling
         )
         
         print(f"📊 Queue producer result: {result}")

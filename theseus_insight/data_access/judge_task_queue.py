@@ -113,7 +113,9 @@ class JudgeTaskQueueRepository:
 
     @staticmethod
     def lease_next_task(server_url: str, worker_id: str, lease_duration_minutes: int = 5) -> Optional[JudgeTask]:
-        """Lease the next available task using SKIP LOCKED for concurrency safety."""
+        """Lease the next available task using SKIP LOCKED for concurrency safety.
+        Dynamic pooling: do not restrict to assigned_server_url; any pending task is eligible.
+        """
         leased_until = datetime.now() + timedelta(minutes=lease_duration_minutes)
 
         with get_cursor() as cursor:
@@ -128,7 +130,6 @@ class JudgeTaskQueueRepository:
                 WHERE id = (
                     SELECT id FROM judge_task_queue
                     WHERE status = 'pending'
-                    AND (assigned_server_url IS NULL OR assigned_server_url = %s)
                     ORDER BY created_at ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -136,7 +137,7 @@ class JudgeTaskQueueRepository:
                 RETURNING id, job_id, paper_id, profile_id, status, attempts,
                           last_error, assigned_server_url, leased_until,
                           leased_by_worker, created_at, updated_at
-            """, (server_url, leased_until, worker_id, server_url))
+            """, (server_url, leased_until, worker_id))
 
             row = cursor.fetchone()
             return JudgeTask.from_dict(dict(row)) if row else None

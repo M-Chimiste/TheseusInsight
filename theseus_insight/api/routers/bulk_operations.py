@@ -152,24 +152,42 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
     return len(updates)
 
 
-def _download_arxiv_for_range(date_from: Optional[str], date_to: Optional[str]) -> Dict[str, int]:
+def _download_arxiv_for_range(
+    date_from: Optional[str], 
+    date_to: Optional[str],
+    overwrite_existing: bool = False
+) -> Dict[str, int]:
     """Download papers from arXiv for the given range and insert into DB.
-    Returns stats dict {total, imported, skipped, errors} from bulk_insert.
+    
+    Args:
+        date_from: Start date for the range
+        date_to: End date for the range
+        overwrite_existing: If True, download regardless of existing data.
+                          If False, skip download if papers exist.
+    
+    Returns:
+        Stats dict {total, imported, skipped, errors} from bulk_insert.
     """
     if not date_from and not date_to:
         logger.info("Preflight: no date range provided; skipping arXiv download")
         return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
 
-    # Use existing repository-level check (synchronous) to decide whether to skip download
+    # Check for existing papers and decide whether to skip download
     try:
         counts = PaperRepository.count_embeddings_status_in_date_range(start_date=date_from, end_date=date_to)
         paper_count = counts.get('total', 0)
         embedded_count = counts.get('embedded', 0)
-        if paper_count > 0:
+        
+        # Only skip download if we have existing data AND overwrite is not requested
+        if paper_count > 0 and not overwrite_existing:
             logger.info(
-                f"📦 Preflight: existing papers {paper_count} (embedded {embedded_count}) in range {date_from}..{date_to}; skipping download"
+                f"📦 Preflight: existing papers {paper_count} (embedded {embedded_count}) in range {date_from}..{date_to}; skipping download (overwrite_existing=False)"
             )
             return {"total": paper_count, "imported": 0, "skipped": paper_count, "errors": 0}
+        elif paper_count > 0 and overwrite_existing:
+            logger.info(
+                f"🔄 Preflight: existing papers {paper_count} found, but overwrite_existing=True; proceeding with download"
+            )
     except Exception as e:
         logger.warning(f"Preflight: existing-data check failed; will attempt download: {e}")
 
@@ -789,10 +807,14 @@ async def _start_bulk_judge_operation(
     # Start appropriate background task
     if request.use_multi_server:
         # Preflight: ensure downloads/embeddings done before spinning up workers
-        # For now, we ensure embeddings for all papers in range. Download step can be integrated if needed.
-        # First, try to download new papers from arXiv for this range and insert them
+        # Download new papers from arXiv for this range and insert them
+        # Skip download only if overwrite_existing is False and papers exist
         try:
-            dl_stats = _download_arxiv_for_range(request.start_date, request.end_date)
+            dl_stats = _download_arxiv_for_range(
+                request.start_date, 
+                request.end_date,
+                overwrite_existing=request.overwrite_existing
+            )
             logger.info(f"Preflight download stats: {dl_stats}")
         except Exception as pre_dle:
             logger.warning(f"Preflight arXiv download failed or partial: {pre_dle}")
@@ -1391,111 +1413,23 @@ async def _cleanup_failed_job(job_id: UUID):
         import traceback
         traceback.print_exc()
 
-async def cleanup_orphaned_processes():
-    """Clean up any orphaned worker processes on startup."""
-    import subprocess
-    
-    try:
-        print("🧹 Checking for orphaned worker processes...")
-        
-        # Get all judge_worker processes
-        result = subprocess.run([
-            "ps", "aux"
-        ], capture_output=True, text=True, check=True)
-        
-        orphaned_processes = []
-        for line in result.stdout.split('\n'):
-            if 'theseus_insight.workers.judge_worker' in line:
-                # Extract PID (second column)
-                parts = line.split()
-                if len(parts) > 1:
-                    try:
-                        pid = int(parts[1])
-                        orphaned_processes.append(pid)
-                    except ValueError:
-                        continue
-        
-        if orphaned_processes:
-            print(f"🛑 Found {len(orphaned_processes)} orphaned worker processes, terminating...")
-            
-            # Terminate processes gracefully first
-            for pid in orphaned_processes:
-                try:
-                    subprocess.run(["kill", "-TERM", str(pid)], check=False)
-                except Exception as e:
-                    print(f"Warning: Could not terminate process {pid}: {e}")
-            
-            # Wait a moment, then force kill any remaining processes
-            import asyncio
-            await asyncio.sleep(2)
-            
-            for pid in orphaned_processes:
-                try:
-                    # Check if process still exists
-                    subprocess.run(["kill", "-0", str(pid)], check=True, capture_output=True)
-                    # If we get here, process still exists, force kill it
-                    subprocess.run(["kill", "-KILL", str(pid)], check=False)
-                except subprocess.CalledProcessError:
-                    # Process already terminated
-                    pass
-                except Exception as e:
-                    print(f"Warning: Could not force kill process {pid}: {e}")
-            
-            print("✅ Orphaned processes cleaned up")
-        else:
-            print("✅ No orphaned processes found")
-            
-        # Also clean up database state
-        pool = await get_connection_pool()
-        async with pool.acquire() as conn:
-            # Mark any running jobs as failed
-            await conn.execute(
-                """
-                UPDATE processing_jobs 
-                SET status = 'failed', 
-                    error_message = 'Job terminated on server restart',
-                    completed_at = NOW()
-                WHERE status IN ('running', 'pending') 
-                AND job_type = 'bulk_judge'
-                """
-            )
-            
-            # Clear task queue of leased/in-progress items
-            await conn.execute(
-                """
-                UPDATE judge_task_queue 
-                SET status = 'failed', updated_at = NOW()
-                WHERE status IN ('leased', 'in_progress')
-                """
-            )
-            
-            # Mark all worker heartbeats as inactive instead of deleting (preserve failure history)
-            await conn.execute(
-                """
-                UPDATE worker_heartbeats 
-                SET status = CASE 
-                    WHEN status = 'failed' THEN 'failed'
-                    ELSE 'inactive'
-                END,
-                last_heartbeat = NOW()
-                """
-            )
-            
-        print("✅ Database state cleaned up")
-        
-    except Exception as e:
-        print(f"Error cleaning up orphaned processes: {e}")
-        import traceback
-        traceback.print_exc()
+# Note: cleanup_orphaned_processes() has been moved to startup_cleanup.py
+# for better organization and separation of concerns
 
 @router.post("/cleanup-orphaned-processes")
 async def cleanup_orphaned_processes_endpoint() -> Dict[str, Any]:
-    """Manually trigger cleanup of orphaned worker processes and database state."""
+    """
+    Manually trigger cleanup of orphaned worker processes and stuck jobs.
+    
+    This endpoint allows manual triggering of the startup cleanup logic.
+    Useful for clearing stuck jobs without restarting the API.
+    """
     try:
-        await cleanup_orphaned_processes()
+        from ...startup_cleanup import cleanup_stuck_jobs_and_processes
+        await cleanup_stuck_jobs_and_processes()
         return {
             "success": True,
-            "message": "Orphaned processes and database state cleaned up successfully"
+            "message": "Orphaned processes and stuck jobs cleaned up successfully"
         }
     except Exception as e:
         print(f"Error cleaning up orphaned processes: {e}")

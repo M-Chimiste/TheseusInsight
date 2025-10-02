@@ -184,13 +184,12 @@ async def lifespan(app_instance: FastAPI):
             # Continue startup even if cleanup fails
         
         # Clean up any orphaned worker processes from previous runs
-        print("INFO:     Cleaning up orphaned worker processes...")
+        print("INFO:     Running startup cleanup (stuck jobs and orphaned processes)...")
         try:
-            from .api.routers.bulk_operations import cleanup_orphaned_processes
-            await cleanup_orphaned_processes()
-            print("INFO:     Orphaned process cleanup completed.")
+            from .startup_cleanup import cleanup_stuck_jobs_and_processes
+            await cleanup_stuck_jobs_and_processes()
         except Exception as e:
-            print(f"Warning: Orphaned process cleanup failed: {e}")
+            print(f"Warning: Startup cleanup failed: {e}")
         
         # Start scheduler for nightly jobs
         print("INFO:     Starting scheduler for nightly jobs...")
@@ -207,12 +206,11 @@ async def lifespan(app_instance: FastAPI):
     # Shutdown logic
     print("INFO:     Shutting down Theseus Insight API...")
     try:
-        # Clean up any running worker processes
+        # Clean up any running worker processes on shutdown
         print("INFO:     Cleaning up worker processes...")
         try:
-            from .api.routers.bulk_operations import cleanup_orphaned_processes
-            await cleanup_orphaned_processes()
-            print("INFO:     Worker processes cleaned up.")
+            from .startup_cleanup import cleanup_stuck_jobs_and_processes
+            await cleanup_stuck_jobs_and_processes()
         except Exception as e:
             print(f"Warning: Worker process cleanup failed: {e}")
         

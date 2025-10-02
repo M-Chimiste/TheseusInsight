@@ -112,41 +112,26 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
     Returns number of embeddings computed.
     """
     if not date_from and not date_to:
-        # Nothing to prepare if no range provided
         return 0
 
-    # Fetch papers in range
-    logger.info(f"🔍 Preflight: fetching papers in range {date_from}..{date_to}")
-    papers = PaperRepository.get_papers_in_date_range(start_date=date_from, end_date=date_to)
-    if not papers:
-        logger.info("Preflight: no papers found in date range")
-        return 0
-
-    logger.info(f"Preflight: fetched {len(papers)} papers")
-    papers = _filter_valid_abstracts(papers)
-    logger.info(f"Preflight: {len(papers)} papers have non-empty abstracts")
-    if not papers:
-        return 0
-
-    # Identify those without embeddings
-    to_embed: List[Tuple[int, str]] = []
-    for p in papers:
-        if p.get('embedding') is None:
-            to_embed.append((p['id'], p.get('abstract') or p.get('summary') or ""))
-
-    if not to_embed:
+    # Only fetch papers missing embeddings to avoid unnecessary work
+    logger.info(f"🔍 Preflight: fetching papers missing embeddings in range {date_from}..{date_to}")
+    missing = PaperRepository.get_papers_missing_embeddings_in_date_range(start_date=date_from, end_date=date_to)
+    if not missing:
         logger.info("Preflight: all papers already have embeddings; skipping embedding stage")
         return 0
 
+    logger.info(f"Preflight: {len(missing)} papers missing embeddings after filtering for non-empty title/abstract")
+
     # Compute embeddings in batches
-    logger.info(f"🧠 Preflight: embedding {len(to_embed)} papers in batches")
+    logger.info(f"🧠 Preflight: embedding {len(missing)} papers in batches")
     model = SentenceTransformerInference()
     batch_size = 128
     updates: List[Tuple[int, List[float]]] = []
-    for i in range(0, len(to_embed), batch_size):
-        batch = to_embed[i:i+batch_size]
-        texts = [t[1] for t in batch]
-        logger.info(f"🧪 Embedding batch {i//batch_size + 1}/{(len(to_embed)+batch_size-1)//batch_size} (papers {i+1}-{i+len(batch)})")
+    for i in range(0, len(missing), batch_size):
+        batch = missing[i:i+batch_size]
+        texts = [p['abstract'] for p in batch]
+        logger.info(f"🧪 Embedding batch {i//batch_size + 1}/{(len(missing)+batch_size-1)//batch_size} (papers {i+1}-{i+len(batch)})")
         embs = model.invoke(
             text=texts,
             batch_size=batch_size,
@@ -154,14 +139,12 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
             to_list=True,
             convert_to_numpy=True
         )
-        # embs is a list of arrays/lists
-        for (paper_id, _), emb in zip(batch, embs):
-            # Ensure plain list[float]
+        for p, emb in zip(batch, embs):
             try:
                 vector = emb.tolist() if hasattr(emb, 'tolist') else list(emb)
             except Exception:
                 vector = emb
-            updates.append((paper_id, vector))
+            updates.append((p['id'], vector))
 
     if updates:
         PaperRepository.bulk_update_embeddings(updates)
@@ -176,6 +159,19 @@ def _download_arxiv_for_range(date_from: Optional[str], date_to: Optional[str]) 
     if not date_from and not date_to:
         logger.info("Preflight: no date range provided; skipping arXiv download")
         return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+    # Use existing repository-level check (synchronous) to decide whether to skip download
+    try:
+        counts = PaperRepository.count_embeddings_status_in_date_range(start_date=date_from, end_date=date_to)
+        paper_count = counts.get('total', 0)
+        embedded_count = counts.get('embedded', 0)
+        if paper_count > 0:
+            logger.info(
+                f"📦 Preflight: existing papers {paper_count} (embedded {embedded_count}) in range {date_from}..{date_to}; skipping download"
+            )
+            return {"total": paper_count, "imported": 0, "skipped": paper_count, "errors": 0}
+    except Exception as e:
+        logger.warning(f"Preflight: existing-data check failed; will attempt download: {e}")
 
     logger.info(f"📡 Preflight: downloading arXiv papers for range {date_from}..{date_to}")
     try:

@@ -991,3 +991,62 @@ class PaperRepository:
                 
             cur.execute(query, params)
             return [row['id'] for row in cur.fetchall()] 
+
+    @staticmethod
+    def count_embeddings_status_in_date_range(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Return counts of total papers and count with non-null embeddings in the date range."""
+        conditions: List[str] = []
+        params: List[Any] = []
+        if start_date:
+            conditions.append("date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("date <= %s")
+            params.append(end_date)
+
+        where_sql = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with get_cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS total, COUNT(embedding) AS embedded FROM papers{where_sql}",
+                params,
+            )
+            row = cur.fetchone()
+            total = int(row['total']) if row and 'total' in row else 0
+            embedded = int(row['embedded']) if row and 'embedded' in row else 0
+            return {"total": total, "embedded": embedded}
+
+    @staticmethod
+    def get_papers_missing_embeddings_in_date_range(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return papers within a date range that are missing embeddings.
+
+        Only returns fields needed for embedding preflight to minimize payload.
+        Filters to non-empty title and abstract to avoid embedding useless rows.
+        """
+        with get_cursor() as cur:
+            query = (
+                "SELECT id, title, abstract FROM papers WHERE embedding IS NULL"
+            )
+            params: List[Any] = []
+            if start_date:
+                query += " AND date >= %s"
+                params.append(start_date)
+            if end_date:
+                query += " AND date <= %s"
+                params.append(end_date)
+            # Require non-empty title and abstract
+            query += " AND LENGTH(TRIM(COALESCE(title, ''))) > 0 AND LENGTH(TRIM(COALESCE(abstract, ''))) > 0"
+            query += " ORDER BY date DESC"
+
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            return [
+                {"id": row["id"], "title": row["title"], "abstract": row["abstract"]}
+                for row in rows
+            ]

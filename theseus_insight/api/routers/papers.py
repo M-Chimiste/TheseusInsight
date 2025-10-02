@@ -1024,7 +1024,6 @@ async def check_existing_bulk_data(start_date: str, end_date: str):
     - How many are missing embeddings
     """
     try:
-        from ...data_access.papers import PaperRepository
         from datetime import datetime
         
         # Validate dates
@@ -1034,14 +1033,11 @@ async def check_existing_bulk_data(start_date: str, end_date: str):
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
         
-        # Query papers in date range
-        papers = PaperRepository.get_papers_in_date_range(start_date, end_date)
-        
-        # Count papers with and without embeddings
-        total_papers = len(papers)
-        # Check if papers have embeddings by looking for non-null embedding_model
-        embedded_count = sum(1 for p in papers if p.get('embedding_model') is not None)
-        missing_embeddings = total_papers - embedded_count
+        # Fast, accurate counts directly from DB (embedding vector presence)
+        counts = PaperRepository.count_embeddings_status_in_date_range(start_date, end_date)
+        total_papers = counts.get('total', 0)
+        embedded_count = counts.get('embedded', 0)
+        missing_embeddings = max(0, total_papers - embedded_count)
         
         return {
             "paper_count": total_papers,

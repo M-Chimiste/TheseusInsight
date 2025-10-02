@@ -729,18 +729,17 @@ class ProfileScoreRepository:
             cur.execute(
                 """
                 INSERT INTO paper_profile_scores 
-                (paper_id, profile_id, score, rationale, related, similarity_score)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                (paper_id, profile_id, score, rationale, related, date_scored)
+                VALUES (%s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (paper_id, profile_id) 
                 DO UPDATE SET 
                     score = COALESCE(EXCLUDED.score, paper_profile_scores.score),
                     rationale = COALESCE(EXCLUDED.rationale, paper_profile_scores.rationale),
                     related = COALESCE(EXCLUDED.related, paper_profile_scores.related),
-                    similarity_score = COALESCE(EXCLUDED.similarity_score, paper_profile_scores.similarity_score),
-                    updated_at = %s
+                    date_scored = NOW()
                 RETURNING *
                 """,
-                (paper_id, profile_id, score, rationale, related, similarity_score, datetime.now())
+                (paper_id, profile_id, score, rationale, related)
             )
             return cur.fetchone()
 

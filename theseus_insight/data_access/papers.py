@@ -473,6 +473,42 @@ class PaperRepository:
             )
 
     @staticmethod
+    def update_fields(paper_id: int, *, score: Optional[float] = None, related: Optional[bool] = None) -> Dict[str, Any]:
+        """Update mutable scalar fields on a paper row.
+
+        Only fields explicitly provided will be updated. Returns the updated row.
+
+        Args:
+            paper_id: Target paper id
+            score: New score value (0-10) if provided
+            related: New related flag if provided
+        """
+        set_clauses: List[str] = []
+        params: List[Any] = []
+
+        if score is not None:
+            set_clauses.append("score = %s")
+            params.append(float(score))
+        if related is not None:
+            set_clauses.append("related = %s")
+            params.append(bool(related))
+
+        if not set_clauses:
+            # Nothing to update; return current row
+            with get_cursor() as cur:
+                cur.execute("SELECT * FROM papers WHERE id = %s", (paper_id,))
+                row = cur.fetchone()
+                return row
+
+        query = f"UPDATE papers SET {', '.join(set_clauses)} WHERE id = %s RETURNING *"
+        params.append(paper_id)
+
+        with get_cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return row
+
+    @staticmethod
     def bulk_update_embeddings(updates: List[Tuple[int, List[float]]]):
         """
         Bulk update embeddings for multiple papers.

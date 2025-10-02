@@ -1028,6 +1028,14 @@ export const papersApi = {
         return response.data;
     },
 
+    updatePaper: async (
+        paperId: number,
+        update: { score?: number; related?: boolean; profile_ids?: number[] }
+    ): Promise<PaperApiResponse> => {
+        const response: AxiosResponse<PaperApiResponse> = await api.put<PaperApiResponse>(`/papers/${paperId}`, update);
+        return response.data;
+    },
+
     findSimilarPapers: async (
         paperId: number,
         limit: number = 10,

@@ -8,11 +8,13 @@ from ..models import (
     SimilaritySearchRequest, SimilaritySearchResponse,
     SimilarPapersRequest, SimilarPapersResponse,
     HybridSearchRequest, HybridSearchResponse,
-    ProfileAwareIngestRequest, ProfileAwareIngestResponse
+    ProfileAwareIngestRequest, ProfileAwareIngestResponse,
+    PaperUpdateRequest
 )
 from ...data_access import (
     PaperRepository, SettingsRepository
 )
+from ...data_access.profiles import ProfileScoreRepository
 
 def _convert_paper_timestamps(paper_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
@@ -304,6 +306,133 @@ async def get_papers(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/{paper_id}", response_model=PaperApiResponse)
+async def update_paper(paper_id: int, request: PaperUpdateRequest):
+    """
+    Update a paper's score and/or related flag.
+
+    Business rule: if related is set to False, force the score to the minimum allowed (0.0) unless an explicit score is also provided (the explicit value must still be within [0,10]).
+    """
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"update_paper called: paper_id={paper_id}, score={request.score}, related={request.related}, profile_ids={request.profile_ids}")
+        # Ensure paper exists
+        existing = PaperRepository.get_by_id(paper_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Paper not found")
+
+        new_score = request.score
+        new_related = request.related
+
+        # Auto-adjust score when marking not relevant (unless caller provided a score)
+        if new_related is False and new_score is None:
+            new_score = 0.0
+
+        profile_ids = request.profile_ids or []
+
+        if profile_ids:
+            # Update per-profile scores/related flags
+            last_pps = None
+            for pid in profile_ids:
+                # Determine valid integer score for profile table (1-10) or None
+                pps_score = None
+                if new_score is not None:
+                    try:
+                        # Clamp to 1..10 as table constraint enforces this range
+                        int_score = int(round(float(new_score)))
+                        if int_score < 1:
+                            int_score = 1
+                        if int_score > 10:
+                            int_score = 10
+                        pps_score = int_score
+                    except Exception:
+                        pps_score = None
+                # If explicitly set to not related and no score provided, use minimum valid score 1
+                if new_related is False and pps_score is None:
+                    pps_score = 1
+
+                logger.info(f"Updating profile score: paper_id={paper_id}, profile_id={pid}, score={pps_score}, related={new_related}")
+                last_pps = ProfileScoreRepository.create_or_update(
+                    paper_id=paper_id,
+                    profile_id=pid,
+                    score=pps_score,
+                    related=new_related,
+                )
+
+            # Refresh base paper row for response metadata
+            updated_base = PaperRepository.get_by_id(paper_id)
+            converted = _convert_paper_timestamps(updated_base)
+
+            # If we have a pps row, reflect it in response
+            profile_score_val = None
+            profile_related_val = None
+            if last_pps:
+                profile_score_val = last_pps.get('score')
+                profile_related_val = last_pps.get('related')
+
+            score_val = converted.get('score') or 0.0
+            date_val = converted.get('date') or ''
+            date_run_val = converted.get('date_run') or ''
+            title_val = converted.get('title') or ''
+            abstract_val = converted.get('abstract') or ''
+            url_val = converted.get('url') or ''
+            cosine_val = converted.get('cosine_similarity') or 0.0
+            embedding_model_val = converted.get('embedding_model') or ''
+
+            resp = PaperApiResponse(
+                id=converted['id'],
+                title=title_val,
+                abstract=abstract_val,
+                score=float(score_val),
+                date=date_val,
+                url=url_val,
+                date_run=date_run_val,
+                rationale=converted.get('rationale') or '',
+                related=bool(profile_related_val if profile_related_val is not None else converted.get('related')),
+                cosine_similarity=float(cosine_val),
+                embedding_model=embedding_model_val,
+                keywords=converted.get('keywords')
+            )
+            if profile_score_val is not None:
+                resp.profile_score = float(profile_score_val)
+            return resp
+        else:
+            # Update base paper fields
+            updated = PaperRepository.update_fields(paper_id, score=new_score, related=new_related)
+
+            # Prepare API response (normalize timestamps and required fields)
+            converted = _convert_paper_timestamps(updated)
+            score_val = converted.get('score') or 0.0
+            date_val = converted.get('date') or ''
+            date_run_val = converted.get('date_run') or ''
+            title_val = converted.get('title') or ''
+            abstract_val = converted.get('abstract') or ''
+            url_val = converted.get('url') or ''
+            cosine_val = converted.get('cosine_similarity') or 0.0
+            embedding_model_val = converted.get('embedding_model') or ''
+
+            return PaperApiResponse(
+                id=converted['id'],
+                title=title_val,
+                abstract=abstract_val,
+                score=float(score_val),
+                date=date_val,
+                url=url_val,
+                date_run=date_run_val,
+                rationale=converted.get('rationale') or '',
+                related=bool(converted.get('related')),
+                cosine_similarity=float(cosine_val),
+                embedding_model=embedding_model_val,
+                keywords=converted.get('keywords')
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logging.getLogger(__name__).error(f"Error in update_paper: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Update failed: {type(e).__name__}: {str(e)}")
 
 @router.post("/similarity-search", response_model=SimilaritySearchResponse)
 async def semantic_similarity_search(request: SimilaritySearchRequest):

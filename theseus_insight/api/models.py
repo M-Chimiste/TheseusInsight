@@ -311,6 +311,12 @@ class SimilaritySearchResponse(BaseModel):
     results: List[PaperApiResponse]
     total_results: int
 
+class PaperUpdateRequest(BaseModel):
+    """Request payload for updating a paper's editable fields."""
+    score: Optional[float] = Field(default=None, ge=0.0, le=10.0, description="New score (0-10)")
+    related: Optional[bool] = Field(default=None, description="Whether the paper is considered relevant")
+    profile_ids: Optional[List[int]] = Field(default=None, description="If provided, update profile-specific score/related for these profiles instead of base paper")
+
 class SimilaritySearchRequest(BaseModel):
     query_text: str = Field(..., description="Text to search for semantically similar papers")
     limit: Optional[int] = Field(10, description="Maximum number of results to return")

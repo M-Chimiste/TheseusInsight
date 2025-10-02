@@ -679,19 +679,39 @@ async def _start_bulk_judge_operation(
     # Check for job conflicts before starting
     conflict_data = await _check_job_conflicts()
     if conflict_data["has_conflicts"]:
-        # Allow bulk judge jobs to run alongside other bulk judge jobs (multi-server support)
-        # But prevent resource-intensive jobs from running alongside other resource-intensive jobs
-        resource_intensive_conflicts = [
+        # Smart conflict detection:
+        # - Allow multi-server bulk judge jobs to run concurrently (different Ollama servers)
+        # - Block if single-server bulk judge is running (same resources)
+        # - Block if other resource-intensive jobs are running (newsletters, mindmaps, podcasts)
+        
+        # Check for non-bulk-judge resource-intensive jobs
+        non_bulk_judge_conflicts = [
             job for job in conflict_data["conflicts"]
-            if job["job_type"] in ['harvest_judge', 'bulk_judge', 'newsletter_generation', 'mindmap_generation', 'podcast_generation']
+            if job["job_type"] in ['harvest_judge', 'newsletter_generation', 'mindmap_generation', 'podcast_generation']
         ]
-
-        if len(resource_intensive_conflicts) > 1:
-            conflict_details = "; ".join([f"{job['job_type']} ({job['description']})" for job in resource_intensive_conflicts])
+        
+        # Check for single-server bulk judge jobs
+        single_server_bulk_judge = [
+            job for job in conflict_data["conflicts"]
+            if job["job_type"] == 'bulk_judge' and not job.get("multi_server", False)
+        ]
+        
+        # Block if there are any non-bulk-judge resource-intensive jobs
+        if non_bulk_judge_conflicts:
+            conflict_details = "; ".join([f"{job['job_type']} ({job['description']})" for job in non_bulk_judge_conflicts])
             raise HTTPException(
                 status_code=409,
-                detail=f"Resource conflict detected with running jobs: {conflict_details}. " +
+                detail=f"Resource conflict with running jobs: {conflict_details}. " +
                        f"Recommendation: {conflict_data['recommendations'][0] if conflict_data['recommendations'] else 'Wait for jobs to complete or cancel them.'}"
+            )
+        
+        # Block if there's a single-server bulk judge running and we're NOT using multi-server mode
+        if single_server_bulk_judge and not request.use_multi_server:
+            conflict_details = "; ".join([f"{job['job_type']} ({job['description']})" for job in single_server_bulk_judge])
+            raise HTTPException(
+                status_code=409,
+                detail=f"A single-server bulk judge job is running: {conflict_details}. " +
+                       f"Either wait for it to complete, or enable multi-server mode to process in parallel."
             )
 
     # Validate multi-server configuration if enabled

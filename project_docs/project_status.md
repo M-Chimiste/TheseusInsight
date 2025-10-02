@@ -405,6 +405,68 @@ POST   /api/settings/ollama-servers/test-url   # Test any URL
 
 ---
 
+---
+
+## Database Migration System Enhancement (October 2025)
+**Date**: October 2, 2025  
+**Status**: ✅ Completed
+
+### What was implemented:
+- ✅ Made migration 007 idempotent (fixes "type already exists" error)
+- ✅ Added migration 008 to Python migration runner
+- ✅ Updated all docker-compose files with migration 008
+- ✅ Enhanced critical tables verification
+- ✅ Created manual migration marking script
+
+#### Issues Fixed:
+1. **Migration 007 Non-Idempotent**: The `scheduled_task_type` and `schedule_frequency` types were not idempotent
+   - **Solution**: Wrapped CREATE TYPE statements in DO blocks with exception handling
+   - Made all CREATE TABLE and CREATE INDEX statements use IF NOT EXISTS
+   - Fixed INSERT statements to check for existing records before inserting
+   - Made triggers use DROP IF EXISTS before CREATE
+
+2. **Missing Migration 008**: Migration 008 was in bash script but not in Python `migrations.py`
+   - **Solution**: Added migration 008 to the migrations list in `theseus_insight/db/migrations.py`
+   - Updated `docker-compose.yml` to mount migration 008
+   - Updated `docker-compose.db-external.yml` to mount migration 008
+   - Updated `docker-compose.external-storage.yml` to mount migration 008
+
+3. **Critical Tables Verification**: New tables from migration 008 weren't being verified
+   - **Solution**: Added `ollama_servers`, `judge_task_queue`, and `worker_heartbeats` to critical tables list
+
+#### Files Modified:
+- `scripts/007_add_scheduled_tasks.sql` - Made fully idempotent
+- `theseus_insight/db/migrations.py` - Added migration 008 and enhanced verification
+- `docker-compose.yml` - Added migration 008 mount
+- `docker-compose.db-external.yml` - Added migration 008 mount
+- `docker-compose.external-storage.yml` - Added migration 008 mount
+- `scripts/mark_migration_applied.sql` - NEW: Manual migration marking utility
+
+#### How to Apply to Existing Database:
+1. **If migration 007 was partially applied** (types exist but not tracked):
+   ```bash
+   psql -U theseus -d theseusdb -f scripts/mark_migration_applied.sql
+   ```
+
+2. **Restart the API** - The updated migration 007 is now idempotent and will complete successfully:
+   ```bash
+   # The API will automatically apply pending migrations on startup
+   python run_theseus_insight.py
+   ```
+
+3. **Verify migrations**:
+   ```bash
+   psql -U theseus -d theseusdb -c "SELECT version, name, applied_at FROM schema_migrations ORDER BY version;"
+   ```
+
+#### Migration System Improvements:
+- **Idempotency**: All migrations can now be run multiple times safely
+- **Error Handling**: Better handling of "already exists" errors
+- **Completeness**: All 9 migrations (000-008) are now tracked and verified
+- **Docker Support**: All docker-compose configurations updated
+
+---
+
 ## Debugging Log
 
 ### Implementation Notes:

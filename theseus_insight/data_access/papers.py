@@ -99,6 +99,10 @@ class PaperRepository:
 
         emb_literal = to_pgvector(getattr(paper, "embedding", None))
 
+        # Hard filter: require non-empty title and abstract
+        if not (getattr(paper, 'title', None) and str(paper.title).strip() and getattr(paper, 'abstract', None) and str(paper.abstract).strip()):
+            return False
+
         with get_cursor() as cur:
             cur.execute(
                 sql.SQL(
@@ -110,8 +114,8 @@ class PaperRepository:
                     """
                 ),
                 (
-                    paper.title,
-                    paper.abstract,
+                    paper.title.strip(),
+                    paper.abstract.strip(),
                     paper.date,
                     paper.date_run,
                     float(paper.score) if paper.score is not None else None,
@@ -164,12 +168,16 @@ class PaperRepository:
                     if (paper.url in existing_urls or paper.title in existing_titles):
                         stats["skipped"] += 1
                         continue
+                # Hard filter: require non-empty title and abstract
+                if not (getattr(paper, 'title', None) and str(paper.title).strip() and getattr(paper, 'abstract', None) and str(paper.abstract).strip()):
+                    stats["skipped"] += 1
+                    continue
                 
                 try:
                     emb_literal = to_pgvector(getattr(paper, "embedding", None))
                     batch_data.append((
-                        paper.title,
-                        paper.abstract,
+                        paper.title.strip(),
+                        paper.abstract.strip(),
                         paper.date,
                         paper.date_run,
                         float(paper.score) if paper.score is not None else None,

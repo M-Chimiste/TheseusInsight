@@ -101,8 +101,9 @@ class JobStatusResponse(BaseModel):
 def _filter_valid_abstracts(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     filtered = []
     for p in papers:
-        abstract = p.get('abstract') or p.get('summary') or ""
-        if isinstance(abstract, str) and abstract.strip():
+        title = (p.get('title') or '').strip()
+        abstract = (p.get('abstract') or p.get('summary') or '').strip()
+        if title and abstract:
             filtered.append(p)
     return filtered
 

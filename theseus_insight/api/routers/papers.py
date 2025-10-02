@@ -263,20 +263,34 @@ async def get_papers(
 
             # Determine 'related' value, handling None
             related_val = converted_p.get('profile_related') if is_profile_query else converted_p.get('related')
-            final_related = related_val if related_val is not None else False
+            final_related = bool(related_val) if related_val is not None else False
+
+            # Safeguard required fields to avoid 500s on nulls
+            score_val = converted_p.get('score')
+            if score_val is None:
+                score_val = converted_p.get('profile_score') or 0.0
+            date_val = converted_p.get('date') or ''
+            date_run_val = converted_p.get('date_run') or ''
+            title_val = converted_p.get('title') or ''
+            abstract_val = converted_p.get('abstract') or ''
+            url_val = converted_p.get('url') or ''
+            cosine_val = converted_p.get('cosine_similarity')
+            if cosine_val is None:
+                cosine_val = 0.0
+            embedding_model_val = converted_p.get('embedding_model') or ''
 
             papers.append(PaperApiResponse(
                 id=converted_p['id'], 
-                title=converted_p['title'], 
-                abstract=converted_p['abstract'],
-                score=converted_p['score'], 
-                date=converted_p['date'], 
-                url=converted_p['url'],
-                date_run=converted_p['date_run'], 
-                rationale=converted_p.get('profile_rationale') or converted_p.get('rationale', ''),
+                title=title_val, 
+                abstract=abstract_val,
+                score=float(score_val), 
+                date=date_val, 
+                url=url_val,
+                date_run=date_run_val, 
+                rationale=converted_p.get('profile_rationale') or converted_p.get('rationale', '') or '',
                 related=final_related,
-                cosine_similarity=converted_p['cosine_similarity'],
-                embedding_model=converted_p['embedding_model'],
+                cosine_similarity=float(cosine_val),
+                embedding_model=embedding_model_val,
                 keywords=converted_p.get('keywords'),
                 profile_score=converted_p.get('profile_score')
             ))

@@ -1242,8 +1242,15 @@ Theseus Insight Team
                 if self.verbose:
                     print("YAKE not available, skipping keyword extraction")
             
+            # Collect all papers and their embeddings for bulk update
+            updates = []
+            new_papers = []
+            
             for _, row in tqdm(data_df.iterrows(), total=len(data_df), 
-                              desc="Storing papers", disable=not self.verbose):
+                              desc="Preparing embeddings", disable=not self.verbose):
+                # Check if paper already exists
+                existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                
                 # Convert numpy array to list if needed for embedding
                 embedding = row['abstract_embedding']
                 if hasattr(embedding, 'tolist'):
@@ -1251,51 +1258,43 @@ Theseus Insight Team
                 elif not isinstance(embedding, list):
                     embedding = list(embedding)
                 
-                # For embedding-only pipeline, provide placeholder values for required fields
-                # These will be updated when papers are scored for specific profiles
-                paper = Paper(
-                    title=row['title'],
-                    abstract=row['abstract'],
-                    url=row['pdf_url'],
-                    date_run='1970-01-01',  # Placeholder date - will be updated when scored
-                    date=row['date'].strftime('%Y-%m-%d'),
-                    score=0.0,  # Placeholder score - will be updated when scored
-                    related=False,  # Placeholder - will be updated when scored
-                    rationale='Not yet scored',  # Placeholder - will be updated when scored
-                    cosine_similarity=row['cosine_similarity'],
-                    embedding_model=self.embedding_model_name,
-                    embedding=embedding
-                )
-                
-                # Try to insert paper, tracking duplicates
-                was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
-                if was_inserted:
-                    saved_count += 1
-                    
-                    # Extract and cache keywords if YAKE is available
-                    if extractor:
-                        try:
-                            text_kw = f"{row['title']} {row['abstract']}"
-                            kw_scores = extractor.extract_keywords(text_kw)
-                            keywords = [w for w, _ in kw_scores]
-                            
-                            # Retrieve inserted paper ID via URL lookup
-                            inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
-                            if inserted_paper and keywords:
-                                PaperRepository.update_keywords(inserted_paper['id'], keywords)
-                        except Exception as e:
-                            if self.verbose:
-                                print(f"Warning: Failed to extract keywords for {row['title']}: {e}")
-                else:
+                if existing_paper:
+                    # Update existing paper's embedding
+                    updates.append((existing_paper['id'], embedding))
                     duplicate_count += 1
-                    duplicate_urls.append(row['pdf_url'])
-                    if self.verbose and duplicate_count <= 10:  # Only show first 10 duplicates
-                        print(f"Skipped duplicate paper: {row['title']}")
+                else:
+                    # For new papers, create and insert
+                    paper = Paper(
+                        title=row['title'],
+                        abstract=row['abstract'],
+                        url=row['pdf_url'],
+                        date_run='1970-01-01',  # Placeholder date - will be updated when scored
+                        date=row['date'].strftime('%Y-%m-%d'),
+                        score=0.0,  # Placeholder score - will be updated when scored
+                        related=False,  # Placeholder - will be updated when scored
+                        rationale='Not yet scored',  # Placeholder - will be updated when scored
+                        cosine_similarity=row['cosine_similarity'],
+                        embedding_model=self.embedding_model_name,
+                        embedding=embedding
+                    )
+                    new_papers.append(paper)
+            
+            # Bulk insert new papers
+            if new_papers:
+                if self.verbose:
+                    print(f"\n💾 Inserting {len(new_papers)} new papers...")
+                stats = PaperRepository.bulk_insert(new_papers, skip_duplicates=True)
+                saved_count += stats.get('imported', 0)
+            
+            # Bulk update embeddings for existing papers
+            if updates:
+                if self.verbose:
+                    print(f"\n💾 Updating embeddings for {len(updates)} existing papers...")
+                PaperRepository.bulk_update_embeddings(updates, embedding_model=self.embedding_model_name)
+                # Note: These are updates, not new insertions
             
             if self.verbose:
-                print(f"✅ Storage complete: {saved_count} new papers saved, {duplicate_count} duplicates skipped")
-                if duplicate_count > 10:
-                    print(f"... and {duplicate_count - 10} more duplicates skipped")
+                print(f"✅ Storage complete: {saved_count} new papers saved, {len(updates)} papers updated with embeddings")
                 
             return {
                 'saved_count': saved_count,
@@ -2535,8 +2534,13 @@ Theseus Insight Team
                     existing_paper = PaperRepository.get_by_url(row["pdf_url"])
                     if existing_paper:
                         new_mask.append(False)
-                        # Check if paper already has embedding
-                        already_embedded_mask.append(existing_paper.get('embedding_model') is not None)
+                        # Check if paper already has embedding (must have both embedding and valid model name)
+                        has_embedding = (
+                            existing_paper.get('embedding') is not None and 
+                            existing_paper.get('embedding_model') is not None and
+                            existing_paper.get('embedding_model') not in ['pending', '']
+                        )
+                        already_embedded_mask.append(has_embedding)
                     else:
                         new_mask.append(True)
                         already_embedded_mask.append(False)

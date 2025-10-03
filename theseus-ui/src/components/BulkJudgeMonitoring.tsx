@@ -356,10 +356,31 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
                 Estimated Completion
               </Typography>
               <Typography variant="body1">
-                {jobMetrics.progress.percent > 0 ?
-                  `${Math.ceil((100 - jobMetrics.progress.percent) / jobMetrics.progress.percent)} min` :
-                  'Calculating...'
-                }
+                {(() => {
+                  // Calculate remaining tasks
+                  const remaining = jobMetrics.queue_metrics ? 
+                    (jobMetrics.queue_metrics.pending_tasks + jobMetrics.queue_metrics.in_progress_tasks) : 
+                    (jobMetrics.progress.total - jobMetrics.progress.current);
+                  
+                  // Calculate throughput (tasks/min)
+                  const elapsedMinutes = (Date.now() - new Date(jobMetrics.timestamps.started_at || '').getTime()) / 60000;
+                  const throughput = jobMetrics.progress.current / Math.max(1, elapsedMinutes);
+                  
+                  // Estimate remaining time
+                  if (throughput > 0 && remaining > 0) {
+                    const remainingMinutes = remaining / throughput;
+                    const hours = Math.floor(remainingMinutes / 60);
+                    const minutes = Math.ceil(remainingMinutes % 60);
+                    
+                    if (hours > 0) {
+                      return `${hours}h ${minutes}m`;
+                    } else {
+                      return `${minutes} min`;
+                    }
+                  }
+                  
+                  return 'Calculating...';
+                })()}
               </Typography>
             </Grid>
           </Grid>
@@ -436,11 +457,17 @@ const BulkJudgeMonitoring: React.FC<BulkJudgeMonitoringProps> = ({
                     <Grid size={{ xs: 6 }}>
                       <Box textAlign="center">
                         <Typography variant="h4">
-                          {jobMetrics.worker_metrics ?
-                            `${(jobMetrics.worker_metrics.reduce((sum: number, w: any) => sum + w.tasks_processed, 0) /
-                              Math.max(1, (Date.now() - new Date(jobMetrics.timestamps.started_at || '').getTime()) / 60000)).toFixed(1)} tasks/min` :
-                            '0.0 tasks/min'
-                          }
+                          {(() => {
+                            // Use completed tasks from queue metrics if available, otherwise use progress
+                            const completedTasks = jobMetrics.queue_metrics ? 
+                              jobMetrics.queue_metrics.completed_tasks : 
+                              jobMetrics.progress.current;
+                            
+                            const elapsedMinutes = (Date.now() - new Date(jobMetrics.timestamps.started_at || '').getTime()) / 60000;
+                            const throughput = completedTasks / Math.max(1, elapsedMinutes);
+                            
+                            return `${throughput.toFixed(1)} tasks/min`;
+                          })()}
                         </Typography>
                         <Typography variant="body2" color="textSecondary">
                           Throughput

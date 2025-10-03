@@ -509,39 +509,54 @@ class PaperRepository:
             return row
 
     @staticmethod
-    def bulk_update_embeddings(updates: List[Tuple[int, List[float]]]):
+    def bulk_update_embeddings(updates: List[Tuple[int, List[float]]], embedding_model: str = "Alibaba-NLP/gte-large-en-v1.5"):
         """
         Bulk update embeddings for multiple papers.
         
         Args:
             updates: List of tuples (paper_id, embedding)
+            embedding_model: Name of the embedding model used
         """
         if not updates:
             return
         
-        with get_cursor() as cur:
-            # Build arrays for bulk update
-            paper_ids = []
-            embedding_strs = []
+        # Process in batches to avoid memory allocation errors
+        # With 768-dim embeddings, 5000 papers = ~30MB of data per batch
+        batch_size = 5000
+        total_updated = 0
+        
+        for i in range(0, len(updates), batch_size):
+            batch = updates[i:i + batch_size]
             
-            for paper_id, embedding in updates:
-                paper_ids.append(paper_id)
-                # Convert embedding to PostgreSQL vector format
-                emb_literal = to_pgvector(embedding)
-                embedding_strs.append(emb_literal)
-            
-            # Use UNNEST to perform bulk update
-            query = """
-                UPDATE papers 
-                SET embedding = data.embedding::vector
-                FROM (
-                    SELECT unnest(%s::int[]) as id,
-                           unnest(%s::text[]::vector[]) as embedding
-                ) as data
-                WHERE papers.id = data.id
-            """
-            
-            cur.execute(query, (paper_ids, embedding_strs))
+            with get_cursor() as cur:
+                # Build arrays for bulk update
+                paper_ids = []
+                embedding_strs = []
+                
+                for paper_id, embedding in batch:
+                    paper_ids.append(paper_id)
+                    # Convert embedding to PostgreSQL vector format
+                    emb_literal = to_pgvector(embedding)
+                    embedding_strs.append(emb_literal)
+                
+                # Use UNNEST to perform bulk update - now also updating embedding_model
+                query = """
+                    UPDATE papers 
+                    SET embedding = data.embedding::vector,
+                        embedding_model = %s
+                    FROM (
+                        SELECT unnest(%s::int[]) as id,
+                               unnest(%s::text[]::vector[]) as embedding
+                    ) as data
+                    WHERE papers.id = data.id
+                """
+                
+                cur.execute(query, (embedding_model, paper_ids, embedding_strs))
+                total_updated += len(batch)
+                
+                # Print progress for large updates
+                if len(updates) > batch_size and (i + batch_size) % (batch_size * 5) == 0:
+                    print(f"  Updated {total_updated}/{len(updates)} papers...")
 
     # ---------------------------------------------------------------------
     # Convenience wrappers for router compatibility
@@ -1031,7 +1046,8 @@ class PaperRepository:
         """
         with get_cursor() as cur:
             query = (
-                "SELECT id, title, abstract FROM papers WHERE embedding IS NULL"
+                "SELECT id, title, abstract FROM papers WHERE "
+                "(embedding IS NULL OR embedding_model IS NULL OR embedding_model IN ('pending', ''))"
             )
             params: List[Any] = []
             if start_date:

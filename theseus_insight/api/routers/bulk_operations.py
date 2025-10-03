@@ -126,6 +126,7 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
     # Compute embeddings in batches
     logger.info(f"🧠 Preflight: embedding {len(missing)} papers in batches")
     model = SentenceTransformerInference()
+    model_name = model.model_name  # Get the actual model name being used
     batch_size = 128
     updates: List[Tuple[int, List[float]]] = []
     for i in range(0, len(missing), batch_size):
@@ -147,8 +148,8 @@ def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str
             updates.append((p['id'], vector))
 
     if updates:
-        PaperRepository.bulk_update_embeddings(updates)
-        logger.info(f"✅ Preflight: updated embeddings for {len(updates)} papers")
+        PaperRepository.bulk_update_embeddings(updates, embedding_model=model_name)
+        logger.info(f"✅ Preflight: updated embeddings for {len(updates)} papers using model {model_name}")
     return len(updates)
 
 

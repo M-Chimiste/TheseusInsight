@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 import json
 
 from psycopg import sql
@@ -99,6 +99,10 @@ class PaperRepository:
 
         emb_literal = to_pgvector(getattr(paper, "embedding", None))
 
+        # Hard filter: require non-empty title and abstract
+        if not (getattr(paper, 'title', None) and str(paper.title).strip() and getattr(paper, 'abstract', None) and str(paper.abstract).strip()):
+            return False
+
         with get_cursor() as cur:
             cur.execute(
                 sql.SQL(
@@ -110,8 +114,8 @@ class PaperRepository:
                     """
                 ),
                 (
-                    paper.title,
-                    paper.abstract,
+                    paper.title.strip(),
+                    paper.abstract.strip(),
                     paper.date,
                     paper.date_run,
                     float(paper.score) if paper.score is not None else None,
@@ -164,12 +168,16 @@ class PaperRepository:
                     if (paper.url in existing_urls or paper.title in existing_titles):
                         stats["skipped"] += 1
                         continue
+                # Hard filter: require non-empty title and abstract
+                if not (getattr(paper, 'title', None) and str(paper.title).strip() and getattr(paper, 'abstract', None) and str(paper.abstract).strip()):
+                    stats["skipped"] += 1
+                    continue
                 
                 try:
                     emb_literal = to_pgvector(getattr(paper, "embedding", None))
                     batch_data.append((
-                        paper.title,
-                        paper.abstract,
+                        paper.title.strip(),
+                        paper.abstract.strip(),
                         paper.date,
                         paper.date_run,
                         float(paper.score) if paper.score is not None else None,
@@ -465,39 +473,90 @@ class PaperRepository:
             )
 
     @staticmethod
-    def bulk_update_embeddings(updates: List[Tuple[int, List[float]]]):
+    def update_fields(paper_id: int, *, score: Optional[float] = None, related: Optional[bool] = None) -> Dict[str, Any]:
+        """Update mutable scalar fields on a paper row.
+
+        Only fields explicitly provided will be updated. Returns the updated row.
+
+        Args:
+            paper_id: Target paper id
+            score: New score value (0-10) if provided
+            related: New related flag if provided
+        """
+        set_clauses: List[str] = []
+        params: List[Any] = []
+
+        if score is not None:
+            set_clauses.append("score = %s")
+            params.append(float(score))
+        if related is not None:
+            set_clauses.append("related = %s")
+            params.append(bool(related))
+
+        if not set_clauses:
+            # Nothing to update; return current row
+            with get_cursor() as cur:
+                cur.execute("SELECT * FROM papers WHERE id = %s", (paper_id,))
+                row = cur.fetchone()
+                return row
+
+        query = f"UPDATE papers SET {', '.join(set_clauses)} WHERE id = %s RETURNING *"
+        params.append(paper_id)
+
+        with get_cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return row
+
+    @staticmethod
+    def bulk_update_embeddings(updates: List[Tuple[int, List[float]]], embedding_model: str = "Alibaba-NLP/gte-large-en-v1.5"):
         """
         Bulk update embeddings for multiple papers.
         
         Args:
             updates: List of tuples (paper_id, embedding)
+            embedding_model: Name of the embedding model used
         """
         if not updates:
             return
         
-        with get_cursor() as cur:
-            # Build arrays for bulk update
-            paper_ids = []
-            embedding_strs = []
+        # Process in batches to avoid memory allocation errors
+        # With 768-dim embeddings, 5000 papers = ~30MB of data per batch
+        batch_size = 5000
+        total_updated = 0
+        
+        for i in range(0, len(updates), batch_size):
+            batch = updates[i:i + batch_size]
             
-            for paper_id, embedding in updates:
-                paper_ids.append(paper_id)
-                # Convert embedding to PostgreSQL vector format
-                emb_literal = to_pgvector(embedding)
-                embedding_strs.append(emb_literal)
-            
-            # Use UNNEST to perform bulk update
-            query = """
-                UPDATE papers 
-                SET embedding = data.embedding::vector
-                FROM (
-                    SELECT unnest(%s::int[]) as id,
-                           unnest(%s::text[]::vector[]) as embedding
-                ) as data
-                WHERE papers.id = data.id
-            """
-            
-            cur.execute(query, (paper_ids, embedding_strs))
+            with get_cursor() as cur:
+                # Build arrays for bulk update
+                paper_ids = []
+                embedding_strs = []
+                
+                for paper_id, embedding in batch:
+                    paper_ids.append(paper_id)
+                    # Convert embedding to PostgreSQL vector format
+                    emb_literal = to_pgvector(embedding)
+                    embedding_strs.append(emb_literal)
+                
+                # Use UNNEST to perform bulk update - now also updating embedding_model
+                query = """
+                    UPDATE papers 
+                    SET embedding = data.embedding::vector,
+                        embedding_model = %s
+                    FROM (
+                        SELECT unnest(%s::int[]) as id,
+                               unnest(%s::text[]::vector[]) as embedding
+                    ) as data
+                    WHERE papers.id = data.id
+                """
+                
+                cur.execute(query, (embedding_model, paper_ids, embedding_strs))
+                total_updated += len(batch)
+                
+                # Print progress for large updates
+                if len(updates) > batch_size and (i + batch_size) % (batch_size * 5) == 0:
+                    print(f"  Updated {total_updated}/{len(updates)} papers...")
 
     # ---------------------------------------------------------------------
     # Convenience wrappers for router compatibility
@@ -868,14 +927,18 @@ class PaperRepository:
     def get_papers_in_date_range(start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get papers within a date range.
-        
+
         Args:
             start_date: Start date in YYYY-MM-DD format (inclusive)
             end_date: End date in YYYY-MM-DD format (inclusive)
-            
+
         Returns:
             List of paper dictionaries
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"PaperRepository.get_papers_in_date_range called with start_date={start_date}, end_date={end_date}")
+
         with get_cursor() as cur:
             query = """
                 SELECT id, title, abstract, date, url, score, related, rationale, 
@@ -897,7 +960,9 @@ class PaperRepository:
             
             cur.execute(query, params)
             rows = cur.fetchall()
-            
+            logger.info(f"Query executed with params: {params}")
+            logger.info(f"Query returned {len(rows)} rows")
+
             return [
                 {
                     'id': row['id'],
@@ -941,3 +1006,63 @@ class PaperRepository:
                 
             cur.execute(query, params)
             return [row['id'] for row in cur.fetchall()] 
+
+    @staticmethod
+    def count_embeddings_status_in_date_range(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Return counts of total papers and count with non-null embeddings in the date range."""
+        conditions: List[str] = []
+        params: List[Any] = []
+        if start_date:
+            conditions.append("date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("date <= %s")
+            params.append(end_date)
+
+        where_sql = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with get_cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS total, COUNT(embedding) AS embedded FROM papers{where_sql}",
+                params,
+            )
+            row = cur.fetchone()
+            total = int(row['total']) if row and 'total' in row else 0
+            embedded = int(row['embedded']) if row and 'embedded' in row else 0
+            return {"total": total, "embedded": embedded}
+
+    @staticmethod
+    def get_papers_missing_embeddings_in_date_range(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return papers within a date range that are missing embeddings.
+
+        Only returns fields needed for embedding preflight to minimize payload.
+        Filters to non-empty title and abstract to avoid embedding useless rows.
+        """
+        with get_cursor() as cur:
+            query = (
+                "SELECT id, title, abstract FROM papers WHERE "
+                "(embedding IS NULL OR embedding_model IS NULL OR embedding_model IN ('pending', ''))"
+            )
+            params: List[Any] = []
+            if start_date:
+                query += " AND date >= %s"
+                params.append(start_date)
+            if end_date:
+                query += " AND date <= %s"
+                params.append(end_date)
+            # Require non-empty title and abstract
+            query += " AND LENGTH(TRIM(COALESCE(title, ''))) > 0 AND LENGTH(TRIM(COALESCE(abstract, ''))) > 0"
+            query += " ORDER BY date DESC"
+
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            return [
+                {"id": row["id"], "title": row["title"], "abstract": row["abstract"]}
+                for row in rows
+            ]

@@ -78,7 +78,9 @@ const DAYS_OF_WEEK = [
 export const ScheduledTasksSettings: React.FC<ScheduledTasksSettingsProps> = ({ onStatusChange }) => {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<ScheduledTask | null>(null);
   const [formData, setFormData] = useState<Partial<ScheduledTaskCreate>>({
     name: '',
     task_type: 'newsletter',
@@ -208,6 +210,24 @@ export const ScheduledTasksSettings: React.FC<ScheduledTasksSettingsProps> = ({ 
     }
   };
 
+  const handleDeleteClick = (task: ScheduledTask) => {
+    setTaskToDelete(task);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (taskToDelete) {
+      deleteTaskMutation.mutate(taskToDelete.id);
+    }
+    setDeleteDialogOpen(false);
+    setTaskToDelete(null);
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setTaskToDelete(null);
+  };
+
   const formatNextRun = (nextRunAt?: string) => {
     if (!nextRunAt) return 'Not scheduled';
     const date = new Date(nextRunAt);
@@ -328,11 +348,7 @@ export const ScheduledTasksSettings: React.FC<ScheduledTasksSettingsProps> = ({ 
                       <Tooltip title="Delete">
                         <IconButton
                           size="small"
-                          onClick={() => {
-                            if (window.confirm(`Delete scheduled task "${task.name}"?`)) {
-                              deleteTaskMutation.mutate(task.id);
-                            }
-                          }}
+                          onClick={() => handleDeleteClick(task)}
                         >
                           <DeleteIcon />
                         </IconButton>
@@ -526,6 +542,36 @@ export const ScheduledTasksSettings: React.FC<ScheduledTasksSettingsProps> = ({ 
               disabled={createTaskMutation.isPending || updateTaskMutation.isPending}
             >
               {editingTask ? 'Update' : 'Create'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
+          <DialogTitle>Delete Scheduled Task</DialogTitle>
+          <DialogContent>
+            <Typography>
+              Are you sure you want to delete the scheduled task "{taskToDelete?.name}"?
+              This action cannot be undone.
+            </Typography>
+            {taskToDelete && (
+              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                Task Type: {taskToDelete.task_type}
+              </Typography>
+            )}
+            <Typography variant="body2" color="warning.main" sx={{ mt: 2 }}>
+              Warning: This will permanently delete the scheduled task and stop any future executions.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleDeleteCancel}>Cancel</Button>
+            <Button
+              onClick={handleDeleteConfirm}
+              color="error"
+              variant="contained"
+              disabled={deleteTaskMutation.isPending}
+            >
+              {deleteTaskMutation.isPending ? <CircularProgress size={20} /> : 'Delete Task'}
             </Button>
           </DialogActions>
         </Dialog>

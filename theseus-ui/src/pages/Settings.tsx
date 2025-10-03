@@ -49,6 +49,7 @@ import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { ScheduledTasksSettings } from '../components/ScheduledTasksSettings';
+import OllamaServersSettings from '../components/OllamaServersSettings';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -75,6 +76,7 @@ const MODEL_TABS = [
   { key: 'podcast_model', label: 'Podcast Model', tooltip: 'Used for podcast generation.' },
   { key: 'tts_model', label: 'TTS Model', tooltip: 'Text-to-speech for podcast.' },
   { key: 'mind_map_config', label: 'Mind-Map Explorer', tooltip: 'Configuration for mind-map visualization and paper relationship exploration.' },
+  { key: 'ollama_servers', label: 'Ollama Servers', tooltip: 'Configure multiple Ollama servers for distributed bulk processing.' },
 ];
 
 // Research Agent Configuration Tabs
@@ -1608,25 +1610,34 @@ const Settings: React.FC = () => {
                   <Typography variant="h6" gutterBottom component="div">
                     {tabDef.label} Settings
                   </Typography>
-                  {orchestrationConfig && orchestrationConfig[tabDef.key] ?
+
+                  {/* Special handling for Ollama servers */}
+                  {tabDef.key === 'ollama_servers' ? (
+                    <OllamaServersSettings />
+                  ) : orchestrationConfig && orchestrationConfig[tabDef.key] ? (
                     renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
-                    : <Typography>Loading configuration for {tabDef.label}...</Typography>
-                  }
-                  <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
-                    <Button
-                      variant="contained"
-                      onClick={() => {
-                        if (!orchestrationConfig) return;
-                        
-                        // Create a mutable copy of the config to be sent
-                        const configToUpdate = JSON.parse(JSON.stringify(orchestrationConfig));
-                        updateOrchestrationMutation.mutate(configToUpdate);
-                      }}
-                      disabled={updateOrchestrationMutation.isPending}
-                    >
-                      Save {tabDef.label} Settings
-                    </Button>
-                  </Box>
+                  ) : (
+                    <Typography>Loading configuration for {tabDef.label}...</Typography>
+                  )}
+
+                  {/* Only show save button for non-Ollama servers tabs */}
+                  {tabDef.key !== 'ollama_servers' && (
+                    <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+                      <Button
+                        variant="contained"
+                        onClick={() => {
+                          if (!orchestrationConfig) return;
+
+                          // Create a mutable copy of the config to be sent
+                          const configToUpdate = JSON.parse(JSON.stringify(orchestrationConfig));
+                          updateOrchestrationMutation.mutate(configToUpdate);
+                        }}
+                        disabled={updateOrchestrationMutation.isPending}
+                      >
+                        Save {tabDef.label} Settings
+                      </Button>
+                    </Box>
+                  )}
                 </CardContent>
               </Card>
             </TabPanel>

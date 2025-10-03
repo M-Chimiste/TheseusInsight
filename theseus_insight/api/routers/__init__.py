@@ -15,6 +15,7 @@ from .jobs import router as jobs_router
 from .bulk_operations import router as bulk_operations_router
 from .websockets import router as websockets_router, manager as websocket_manager
 from .scheduled_tasks import router as scheduled_tasks_router
+from .ollama_servers import router as ollama_servers_router
 
 # List of all routers for easy importing in main.py
 all_routers = [
@@ -34,12 +35,13 @@ all_routers = [
     jobs_router,
     bulk_operations_router,
     websockets_router,
-    scheduled_tasks_router
+    scheduled_tasks_router,
+    ollama_servers_router
 ]
 
 __all__ = [
     "papers_router",
-    "settings_router", 
+    "settings_router",
     "model_providers_router",
     "runs_and_tasks_router",
     "logs_router",
@@ -56,5 +58,6 @@ __all__ = [
     "websockets_router",
     "websocket_manager",
     "scheduled_tasks_router",
+    "ollama_servers_router",
     "all_routers"
 ] 

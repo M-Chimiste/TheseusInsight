@@ -48,6 +48,7 @@ class MigrationRunner:
             (5, "005_optimize_indexes.sql", "Optimize indexes for performance"),
             (6, "006_add_processing_checkpoints.sql", "Add checkpoint system for resumable processing"),
             (7, "007_add_scheduled_tasks.sql", "Add scheduled tasks configuration"),
+            (8, "008_add_multi_ollama_support.sql", "Add multi-Ollama server support for bulk judge operations"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:
@@ -140,7 +141,10 @@ class MigrationRunner:
             "settings",
             "model_providers",
             "scheduled_tasks",
-            "scheduled_task_runs"
+            "scheduled_task_runs",
+            "ollama_servers",
+            "judge_task_queue",
+            "worker_heartbeats"
         ]
         
         missing_tables = []

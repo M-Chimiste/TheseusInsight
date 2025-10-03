@@ -88,6 +88,7 @@ migration_files=(
     "005_optimize_indexes.sql"
     "006_add_processing_checkpoints.sql"
     "007_add_scheduled_tasks.sql"
+    "008_add_multi_ollama_support.sql"
 )
 
 migration_descriptions=(
@@ -99,6 +100,7 @@ migration_descriptions=(
     "Optimize indexes for performance"
     "Add checkpoint system for resumable processing"
     "Add scheduled task system"
+    "Add multi-Ollama server support for bulk judge operations"
 )
 
 # Check and apply migrations

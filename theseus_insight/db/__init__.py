@@ -120,11 +120,28 @@ async def get_connection_pool() -> asyncpg.Pool:
     """
     global _async_pool
     if _async_pool is None:
-        _async_pool = await asyncpg.create_pool(DATABASE_URL)
-        logger.info("Initialized async connection pool")
+        # Configure pool with proper limits for multi-worker scenarios
+        # Default max_size=10 is too low for multiple workers
+        _async_pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=10,      # Minimum connections to maintain
+            max_size=50,      # Maximum connections (increased for multi-worker)
+            max_queries=50000, # Max queries per connection before recycling
+            max_inactive_connection_lifetime=300.0,  # Close idle connections after 5 min
+            command_timeout=60.0,  # Command timeout
+        )
+        logger.info(f"Initialized async connection pool (min=10, max=50)")
     return _async_pool
+
+async def close_connection_pool():
+    """Close the async connection pool."""
+    global _async_pool
+    if _async_pool:
+        await _async_pool.close()
+        _async_pool = None
+        logger.info("Closed async connection pool")
 
 # Export migrations module
 from .migrations import check_and_apply_migrations, MigrationRunner
 
-__all__ = ['get_cursor', 'get_connection', 'DATABASE_URL', 'check_and_apply_migrations', 'MigrationRunner', 'get_pool_stats', 'get_connection_pool'] 
+__all__ = ['get_cursor', 'get_connection', 'DATABASE_URL', 'check_and_apply_migrations', 'MigrationRunner', 'get_pool_stats', 'get_connection_pool', 'close_connection_pool'] 

@@ -305,8 +305,11 @@ class OptimizedEmbeddingPipeline:
                 embedding_list = result['embedding'].tolist() if hasattr(result['embedding'], 'tolist') else list(result['embedding'])
                 updates.append((result['paper_id'], embedding_list))
             
+            # Get model name from the embedding model
+            model_name = getattr(self.embedding_model, 'model_name', 'Alibaba-NLP/gte-large-en-v1.5')
+            
             # Use a more efficient bulk update
-            PaperRepository.bulk_update_embeddings(updates)
+            PaperRepository.bulk_update_embeddings(updates, embedding_model=model_name)
             
         except AttributeError:
             # If bulk_update_embeddings doesn't exist, fall back to individual updates

@@ -27,7 +27,9 @@ class ArxivDataProcessor:
                 category: str | None = "cs",
                 subcategories: list[str] | None = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
                 num_days: int|None = 7,
-                max_results: int|None = None
+                max_results: int|None = None,
+                *,
+                force_kaggle: bool | None = None
                 ):
         
         if not start_date:
@@ -50,6 +52,7 @@ class ArxivDataProcessor:
         self.subcategories = subcategories
         self.num_days = num_days
         self.max_results = max_results
+        self.force_kaggle = force_kaggle
 
         
     def download_and_process_data(self, start_date=None, end_date=None):
@@ -96,10 +99,10 @@ class ArxivDataProcessor:
         else:
             print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
-        # Check if we're in bulk mode (FORCE_KAGGLE is set)
-        force_kaggle = os.getenv('FORCE_KAGGLE', '').lower() == 'true'
-        auto_cleanup = not force_kaggle
-        print(f"[DEBUG] FORCE_KAGGLE={force_kaggle}, auto_cleanup={auto_cleanup}")
+        # Determine force_kaggle: prefer explicit flag; fallback to env
+        force_kaggle_flag = (self.force_kaggle is True) or (os.getenv('FORCE_KAGGLE', '').lower() == 'true')
+        auto_cleanup = not force_kaggle_flag
+        print(f"[DEBUG] FORCE_KAGGLE={force_kaggle_flag}, auto_cleanup={auto_cleanup}")
         if not auto_cleanup:
             print("📌 Bulk mode: Kaggle dataset will be preserved for reuse")
         
@@ -110,7 +113,8 @@ class ArxivDataProcessor:
             date_until=end_date,
             max_results=self.max_results,
             verbose=True,
-            auto_cleanup=auto_cleanup  # Don't cleanup in bulk mode
+            auto_cleanup=auto_cleanup,  # Don't cleanup in bulk mode
+            force_kaggle=force_kaggle_flag
         ) as harvester:
             records = harvester.harvest()
             data_df = harvester.to_dataframe()

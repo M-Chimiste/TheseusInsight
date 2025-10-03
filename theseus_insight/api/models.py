@@ -191,12 +191,6 @@ class EmailRecipients(BaseModel):
 class ResearchInterests(BaseModel):
     interests: str = Field(..., example="Large language models, reinforcement learning, and generative AI.")
 
-# Ensure this is at the end or handled correctly if models refer to each other.
-# This is a placeholder for now, actual model definitions will be used from above.
-# Model.update_forward_refs()
-# ModelConfig.update_forward_refs()
-# OrchestrationConfig.update_forward_refs()
-# NewsletterConfig.update_forward_refs()
 
 # --- Podcast Generation Specific Models --- #
 
@@ -316,6 +310,12 @@ class SimilaritySearchResponse(BaseModel):
     query_text: str
     results: List[PaperApiResponse]
     total_results: int
+
+class PaperUpdateRequest(BaseModel):
+    """Request payload for updating a paper's editable fields."""
+    score: Optional[float] = Field(default=None, ge=0.0, le=10.0, description="New score (0-10)")
+    related: Optional[bool] = Field(default=None, description="Whether the paper is considered relevant")
+    profile_ids: Optional[List[int]] = Field(default=None, description="If provided, update profile-specific score/related for these profiles instead of base paper")
 
 class SimilaritySearchRequest(BaseModel):
     query_text: str = Field(..., description="Text to search for semantically similar papers")
@@ -990,6 +990,9 @@ class ProfileAwareIngestRequest(BaseModel):
     arxiv_categories: Optional[List[str]] = None
     batch_size: int = 10
     send_error_notifications: bool = False
+    # Multi-server configuration (only used when LLM-as-Judge uses Ollama)
+    use_multi_server: bool = False
+    server_ids: Optional[List[int]] = None
 
 class ProfileAwareIngestResponse(BaseModel):
     """Response model for profile-aware paper ingestion."""
@@ -999,7 +1002,6 @@ class ProfileAwareIngestResponse(BaseModel):
     estimated_papers: int
     status: str
 
-
 # Job monitoring models
 class JobStatus(BaseModel):
     """Enum-like class for job statuses."""
@@ -1008,7 +1010,6 @@ class JobStatus(BaseModel):
     COMPLETED: str = "completed"
     FAILED: str = "failed"
     CANCELLED: str = "cancelled"
-
 
 class JobResponse(BaseModel):
     """Response model for job details."""
@@ -1028,14 +1029,12 @@ class JobResponse(BaseModel):
     created_at: datetime = Field(..., description="Job creation time")
     updated_at: datetime = Field(..., description="Last update time")
 
-
 class JobListResponse(BaseModel):
     """Response model for paginated job list."""
     jobs: List[JobResponse] = Field(..., description="List of jobs")
     total: int = Field(..., description="Total number of jobs")
     limit: int = Field(..., description="Page size")
     offset: int = Field(..., description="Page offset")
-
 
 class JobStatisticsResponse(BaseModel):
     """Response model for job statistics."""

@@ -135,6 +135,310 @@ export const settingsApi = {
   },
 };
 
+// Ollama Servers API
+export interface OllamaServer {
+  id: number;
+  name: string;
+  url: string;
+  enabled: boolean;
+  notes?: string;
+  last_tested_at?: string;
+  last_test_latency_ms?: number;
+  last_test_ok?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface OllamaServerCreate {
+  name: string;
+  url: string;
+  notes?: string;
+}
+
+export interface OllamaServerUpdate {
+  name: string;
+  url: string;
+  enabled: boolean;
+  notes?: string;
+}
+
+export interface ServerTestResult {
+  success: boolean;
+  latency_ms?: number;
+  error?: string;
+  version?: string;
+  models_available?: string[];
+}
+
+export interface GlobalDefaults {
+  request_timeout_sec: number;
+  max_retries: number;
+  circuit_breaker_threshold: number;
+}
+
+export interface JobMetrics {
+  job_id: string;
+  job_type: string;
+  status: string;
+  progress: {
+    current: number;
+    total: number;
+    percent: number;
+  };
+  timestamps: {
+    started_at?: string;
+    completed_at?: string;
+    last_checkpoint_at?: string;
+  };
+  error_message?: string;
+  queue_metrics?: {
+    pending_tasks: number;
+    in_progress_tasks: number;
+    completed_tasks: number;
+    failed_tasks: number;
+    total_tasks: number;
+  };
+  worker_metrics?: Array<{
+    worker_id: string;
+    server_url: string;
+    status: string;
+    tasks_processed: number;
+    last_heartbeat?: string;
+  }>;
+}
+
+export interface ActiveJob {
+  job_id: string;
+  job_type: string;
+  status: string;
+  progress: {
+    current: number;
+    total: number;
+    percent: number;
+  };
+  started_at?: string;
+  last_checkpoint_at?: string;
+  multi_server?: boolean;
+  servers?: Array<{
+    id: number;
+    name: string;
+    url: string;
+  }>;
+  profile_count?: number | string;
+}
+
+export const ollamaServersApi = {
+  getAllServers: () => api.get('/settings/ollama-servers/'),
+  getServer: (id: number) => api.get(`/settings/ollama-servers/${id}`),
+  createServer: (server: OllamaServerCreate) => api.post('/settings/ollama-servers/', server),
+  updateServer: (id: number, server: OllamaServerUpdate) => api.put(`/settings/ollama-servers/${id}`, server),
+  deleteServer: (id: number) => api.delete(`/settings/ollama-servers/${id}`),
+  testServer: (id: number) => api.post(`/settings/ollama-servers/${id}/test`),
+  toggleServer: (id: number) => api.post(`/settings/ollama-servers/${id}/toggle`),
+  getHealthOverview: () => api.get('/settings/ollama-servers/health/overview'),
+  getGlobalDefaults: () => api.get('/settings/ollama-servers/defaults'),
+  updateGlobalDefaults: (defaults: GlobalDefaults) => api.put('/settings/ollama-servers/defaults', defaults),
+  testUrl: (url: string) => api.post('/settings/ollama-servers/test-url', { url }),
+};
+
+export interface ServerMetrics {
+  id: number;
+  name: string;
+  url: string;
+  enabled: boolean;
+  status: string;
+  latency_ms?: number;
+  last_tested?: string;
+}
+
+export interface ServerMetricsSummary {
+  total: number;
+  enabled: number;
+  healthy: number;
+  unhealthy: number;
+}
+
+export interface QueueStats {
+  pending_tasks: number;
+  in_progress_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  total_tasks: number;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  warnings: string[];
+  errors: string[];
+  recommendations: string[];
+  estimated_duration?: {
+    minutes: number;
+    hours: number;
+    formatted: string;
+  };
+  estimated_tasks?: number;
+}
+
+export interface ConflictCheck {
+  has_conflicts: boolean;
+  bulk_judge_running: boolean;
+  conflicts: Array<{
+    job_id: string;
+    job_type: string;
+    started_at?: string;
+    description: string;
+  }>;
+  recommendations: string[];
+}
+
+// Bulk Operations API
+export const bulkOperationsApi = {
+  // Server CRUD operations
+  getAllServers: (): Promise<AxiosResponse<OllamaServer[]>> => {
+    return api.get('/settings/ollama-servers/');
+  },
+
+  getEnabledServers: (): Promise<AxiosResponse<OllamaServer[]>> => {
+    return api.get('/settings/ollama-servers/?enabled_only=true');
+  },
+
+  createServer: (server: OllamaServerCreate): Promise<AxiosResponse<OllamaServer>> => {
+    return api.post('/settings/ollama-servers/', server);
+  },
+
+  updateServer: (serverId: number, server: OllamaServerUpdate): Promise<AxiosResponse<OllamaServer>> => {
+    return api.put(`/settings/ollama-servers/${serverId}`, server);
+  },
+
+  deleteServer: (serverId: number): Promise<AxiosResponse<{ message: string }>> => {
+    return api.delete(`/settings/ollama-servers/${serverId}`);
+  },
+
+  // Server testing
+  testServer: (serverId: number): Promise<AxiosResponse<ServerTestResult>> => {
+    return api.post(`/settings/ollama-servers/${serverId}/test`);
+  },
+
+  testServerUrl: (url: string, timeoutSeconds: number = 10): Promise<AxiosResponse<ServerTestResult>> => {
+    return api.post('/settings/ollama-servers/test-url', { url, timeout_seconds: timeoutSeconds });
+  },
+
+  // Server management
+  toggleServer: (serverId: number): Promise<AxiosResponse<{ message: string; enabled: boolean }>> => {
+    return api.post(`/settings/ollama-servers/${serverId}/toggle`);
+  },
+
+  getHealthOverview: (): Promise<AxiosResponse<{
+    servers: Array<{
+      id: number;
+      name: string;
+      url: string;
+      enabled: boolean;
+      status: string;
+      last_tested?: string;
+      latency_ms?: number;
+    }>;
+    summary: any;
+  }>> => {
+    return api.get('/settings/ollama-servers/health/overview');
+  },
+
+  // Global defaults
+  getGlobalDefaults: (): Promise<AxiosResponse<GlobalDefaults>> => {
+    return api.get('/settings/ollama-servers/defaults');
+  },
+
+  updateGlobalDefaults: (defaults: GlobalDefaults): Promise<AxiosResponse<GlobalDefaults>> => {
+    return api.put('/settings/ollama-servers/defaults', defaults);
+  },
+
+  // Job control endpoints
+  pauseJob: (jobId: string): Promise<AxiosResponse<{ success: boolean; job_id: string; status: string; message: string }>> => {
+    return api.post(`/bulk-operations/job/${jobId}/pause`);
+  },
+
+  resumeJob: (jobId: string): Promise<AxiosResponse<{ success: boolean; job_id: string; status: string; message: string }>> => {
+    return api.post(`/bulk-operations/job/${jobId}/resume`);
+  },
+
+  cancelJob: (jobId: string): Promise<AxiosResponse<{ success: boolean; job_id: string; status: string; message: string }>> => {
+    return api.post(`/bulk-operations/job/${jobId}/cancel`);
+  },
+
+  getJobMetrics: (jobId: string): Promise<AxiosResponse<JobMetrics>> => {
+    return api.get(`/bulk-operations/job/${jobId}/metrics`);
+  },
+
+  getActiveJobs: (): Promise<AxiosResponse<{ active_jobs: ActiveJob[]; count: number }>> => {
+    return api.get('/bulk-operations/active-jobs');
+  },
+
+  getServerMetrics: (): Promise<AxiosResponse<{ servers: ServerMetrics[]; summary: ServerMetricsSummary }>> => {
+    return api.get('/bulk-operations/server-metrics');
+  },
+
+  getQueueStatus: (): Promise<AxiosResponse<{ queue_stats: QueueStats; active_jobs: ActiveJob[]; timestamp: string }>> => {
+    return api.get('/bulk-operations/queue-status');
+  },
+
+  checkJobConflicts: (): Promise<AxiosResponse<ConflictCheck>> => {
+    return api.post('/bulk-operations/conflict-check');
+  },
+
+  validateBulkJudgeJob: (request: unknown): Promise<AxiosResponse<ValidationResult>> => {
+    return api.post('/bulk-operations/bulk-judge/validate', request);
+  },
+
+  // Job History and Queue Management
+  getJobHistory: (params?: { limit?: number; job_type?: string }): Promise<AxiosResponse<{
+    jobs: Array<{
+      job_id: string;
+      job_type: string;
+      status: string;
+      configuration?: any;
+      state?: any;
+      started_at?: string;
+      completed_at?: string;
+      created_at?: string;
+      duration_seconds?: number;
+      error_message?: string;
+    }>;
+    summary: {
+      total_jobs: number;
+      completed_jobs: number;
+      failed_jobs: number;
+      canceled_jobs: number;
+      avg_duration_seconds?: number;
+    };
+    limit: number;
+    job_type_filter?: string;
+  }>> => {
+    return api.get('/bulk-operations/job-history', { params });
+  },
+
+  clearQueue: (params?: { job_id?: string; status_filter?: string }): Promise<AxiosResponse<{
+    success: boolean;
+    cleared_tasks: number;
+    job_id?: string;
+    status_filter?: string;
+    message: string;
+  }>> => {
+    return api.delete('/bulk-operations/clear-queue', { params });
+  },
+
+  retryWorker: (workerId: string, serverUrl: string, jobId: string): Promise<AxiosResponse<{
+    message: string;
+    worker_id: string;
+    server_url: string;
+    requeued_tasks: number;
+    status: string;
+  }>> => {
+    return api.post(`/bulk-operations/worker/${workerId}/retry`, {}, {
+      params: { server_url: serverUrl, job_id: jobId }
+    });
+  },
+};
+
 // Newsletter API
 export const newsletterApi = {
   runNewsletter: (config: any, introMusicFile?: File) => {
@@ -243,6 +547,9 @@ export interface ProfileAwareIngestRequest {
   arxiv_categories?: string[];
   batch_size?: number;
   send_error_notifications?: boolean;
+  // Multi-server configuration (only used when LLM-as-Judge is configured for Ollama)
+  use_multi_server?: boolean;
+  server_ids?: number[];
 }
 
 export interface ProfileAwareIngestResponse {
@@ -328,13 +635,15 @@ export const profileApi = {
   runBulkJudge: (request: BulkJudgeRunRequest) => api.post<BulkJudgeRunResponse>('/profiles/bulk/judge-run', request),
   generateBulkNewsletters: (params: any) => api.post('/profiles/bulk/newsletter', params),
   getBulkTrends: (params: any) => api.get('/profiles/bulk/trends', { params }),
-  
+
   // Profile-Aware Ingestion
   runProfileAwareIngest: (request: ProfileAwareIngestRequest) => api.post<ProfileAwareIngestResponse>('/papers/profile-aware-ingest', request),
-  
+
   // Bulk Embedding
   runBulkEmbed: (request: BulkEmbedRequest) => api.post('/papers/bulk-embed', request),
   checkExistingBulkData: (params: { start_date: string; end_date: string }) => api.get('/papers/check-existing-bulk-data', { params }),
+
+
 };
 
 // Runs API
@@ -716,6 +1025,14 @@ export const papersApi = {
         const response: AxiosResponse<PaginatedPapersResponse> = await api.get<PaginatedPapersResponse>('/papers', {
             params
         });
+        return response.data;
+    },
+
+    updatePaper: async (
+        paperId: number,
+        update: { score?: number; related?: boolean; profile_ids?: number[] }
+    ): Promise<PaperApiResponse> => {
+        const response: AxiosResponse<PaperApiResponse> = await api.put<PaperApiResponse>(`/papers/${paperId}`, update);
         return response.data;
     },
 

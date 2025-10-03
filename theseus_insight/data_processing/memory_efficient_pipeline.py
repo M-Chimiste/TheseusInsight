@@ -397,7 +397,7 @@ class EfficientBulkProcessor:
             return
         
         try:
-            # Use bulk update
+            # Use bulk update with default model name (this pipeline doesn't track which model was used)
             PaperRepository.bulk_update_embeddings(self.embedding_buffer)
             
             self.stats['embeddings_processed'] += len(self.embedding_buffer)

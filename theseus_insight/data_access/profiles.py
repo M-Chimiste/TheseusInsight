@@ -239,17 +239,17 @@ class ProfileRepository:
             rows = cur.fetchall()
             return [
                 {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'color': row[3],
-                    'tags': row[4],
-                    'email_recipients': row[5],
-                    'arxiv_filters': row[6],
-                    'is_active': row[7],
-                    'is_default': row[8],
-                    'created_at': row[9],
-                    'updated_at': row[10]
+                    'id': row['id'],
+                    'name': row['name'],
+                    'description': row['description'],
+                    'color': row['color'],
+                    'tags': row['tags'],
+                    'email_recipients': row['email_recipients'],
+                    'arxiv_filters': row['arxiv_filters'],
+                    'is_active': row['is_active'],
+                    'is_default': row['is_default'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
                 }
                 for row in rows
             ]
@@ -356,17 +356,17 @@ class ProfileRepository:
             rows = cur.fetchall()
             return [
                 {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'color': row[3],
-                    'tags': row[4],
-                    'email_recipients': row[5],
-                    'arxiv_filters': row[6],
-                    'is_active': row[7],
-                    'is_default': row[8],
-                    'created_at': row[9],
-                    'updated_at': row[10]
+                    'id': row['id'],
+                    'name': row['name'],
+                    'description': row['description'],
+                    'color': row['color'],
+                    'tags': row['tags'],
+                    'email_recipients': row['email_recipients'],
+                    'arxiv_filters': row['arxiv_filters'],
+                    'is_active': row['is_active'],
+                    'is_default': row['is_default'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
                 }
                 for row in rows
             ]
@@ -729,18 +729,17 @@ class ProfileScoreRepository:
             cur.execute(
                 """
                 INSERT INTO paper_profile_scores 
-                (paper_id, profile_id, score, rationale, related, similarity_score)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                (paper_id, profile_id, score, rationale, related, date_scored)
+                VALUES (%s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (paper_id, profile_id) 
                 DO UPDATE SET 
                     score = COALESCE(EXCLUDED.score, paper_profile_scores.score),
                     rationale = COALESCE(EXCLUDED.rationale, paper_profile_scores.rationale),
                     related = COALESCE(EXCLUDED.related, paper_profile_scores.related),
-                    similarity_score = COALESCE(EXCLUDED.similarity_score, paper_profile_scores.similarity_score),
-                    updated_at = %s
+                    date_scored = NOW()
                 RETURNING *
                 """,
-                (paper_id, profile_id, score, rationale, related, similarity_score, datetime.now())
+                (paper_id, profile_id, score, rationale, related)
             )
             return cur.fetchone()
 

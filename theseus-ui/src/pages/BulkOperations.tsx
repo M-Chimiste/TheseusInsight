@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -34,6 +34,7 @@ import {
   type ProfileAwareIngestRequest,
   type BulkEmbedRequest,
 } from '../services/api';
+import { ollamaServersApi, type OllamaServer } from '../services/api';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import ProfileSelector from '../components/ProfileSelector';
 import { useLayout } from '../contexts/LayoutContext';
@@ -69,6 +70,10 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
   const [cosineThresholdIngest, setCosineThresholdIngest] = useState<number>(0.7);
   const [batchSizeIngest, setBatchSizeIngest] = useState<number>(100);
   const [checkExistingData, setCheckExistingData] = useState<boolean>(true);
+
+  // Multi-Server Configuration State
+  const [useMultiServer, setUseMultiServer] = useState<boolean>(false);
+  const [selectedServers, setSelectedServers] = useState<number[]>([]);
   
   // Bulk Embedding Only State
   const [embedStartDate, setEmbedStartDate] = useState<Date | null>(null);
@@ -96,6 +101,44 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
     },
     enabled: checkExistingData && !!ingestStartDate && !!ingestEndDate,
   });
+
+  // Query to fetch available Ollama servers
+  const ollamaServersQuery = useQuery({
+    queryKey: ['ollamaServers'],
+    queryFn: () => ollamaServersApi.getAllServers().then((res: any) => res.data),
+    enabled: activeTab === 0, // Always fetch on full ingestion tab to check if multi-server should be available
+  });
+
+  // Auto-update selected servers when new servers become available
+  // This ensures that when new servers are added to the configuration,
+  // they are automatically included in the selection (unless user has deselected them)
+  useEffect(() => {
+    if (useMultiServer && ollamaServersQuery.data) {
+      const allServers = ollamaServersQuery.data;
+      const allServerIds = allServers.map((server: OllamaServer) => server.id);
+      const newServers = allServerIds.filter((id: number) => !selectedServers.includes(id));
+
+      // Only add new servers, don't remove user-selected ones
+      // This preserves user's manual deselection of specific servers
+      if (newServers.length > 0) {
+        setSelectedServers(prev => [...prev, ...newServers]);
+      }
+
+      // Clean up any selected servers that no longer exist
+      const validServerIds = allServerIds;
+      const invalidSelections = selectedServers.filter(id => !validServerIds.includes(id));
+      if (invalidSelections.length > 0) {
+        setSelectedServers(prev => prev.filter(id => validServerIds.includes(id)));
+      }
+    }
+  }, [ollamaServersQuery.data, useMultiServer]);
+
+  // Check if we should show multi-server option (only when LLM-as-Judge uses Ollama)
+  const shouldShowMultiServer = () => {
+    // For now, we'll show the option if there are Ollama servers configured
+    // In the future, this could check the research agent configuration
+    return ollamaServersQuery.data && ollamaServersQuery.data.length > 0;
+  };
 
   // Mutations
   const fullIngestMutation = useMutation({
@@ -139,6 +182,9 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
       batch_size: batchSizeIngest,
       score_all_profiles: false,
       overwrite_existing: !checkExistingData,
+      // Multi-server configuration (only included if enabled)
+      use_multi_server: useMultiServer,
+      server_ids: useMultiServer && selectedServers.length > 0 ? selectedServers : undefined,
     };
     fullIngestMutation.mutate(request);
   };
@@ -236,6 +282,74 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                     label="Select Profiles for Full Ingestion"
                   />
                 </Grid>
+
+                {/* Multi-Server Configuration */}
+                {shouldShowMultiServer() && (
+                  <Grid size={{ xs: 12 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={useMultiServer}
+                          onChange={(e) => {
+                            setUseMultiServer(e.target.checked);
+                            if (e.target.checked) {
+                              // Auto-select all available servers when enabling multi-server mode
+                              // This provides the most convenient default behavior
+                              const allServers = ollamaServersQuery.data || [];
+                              const allServerIds = allServers.map((server: OllamaServer) => server.id);
+                              setSelectedServers(allServerIds);
+                            } else {
+                              // Clear selection when disabling multi-server mode
+                              setSelectedServers([]);
+                            }
+                          }}
+                        />
+                      }
+                      label="Use multiple Ollama servers for distributed processing"
+                    />
+
+                    {useMultiServer && (
+                      <Box sx={{ mt: 2, ml: 4 }}>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Select Ollama Servers
+                        </Typography>
+                        <Autocomplete
+                          multiple
+                          options={ollamaServersQuery.data || []}
+                          getOptionLabel={(option: OllamaServer) => `${option.name} (${option.url})`}
+                          value={ollamaServersQuery.data?.filter((server: OllamaServer) =>
+                            selectedServers.includes(server.id)
+                          ) || []}
+                          onChange={(_, newValue) => {
+                            setSelectedServers(newValue.map((server: OllamaServer) => server.id));
+                          }}
+                          loading={ollamaServersQuery.isLoading}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Select Servers"
+                              placeholder="Choose Ollama servers for processing"
+                              helperText={
+                                `${selectedServers.length} server(s) selected (all servers are selected by default, remove any you don't want to use)`
+                              }
+                            />
+                          )}
+                          renderTags={(value, getTagProps) =>
+                            value.map((option: OllamaServer, index) => (
+                              <Chip
+                                variant="outlined"
+                                label={option.name}
+                                size="small"
+                                {...getTagProps({ index })}
+                                key={option.id}
+                              />
+                            ))
+                          }
+                        />
+                      </Box>
+                    )}
+                  </Grid>
+                )}
 
                 <Grid size={{ xs: 12, md: 6 }}>
                   <DatePicker

@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   Box,
+  Container,
+  Typography,
   Card,
   CardContent,
-  Typography,
+  CardHeader,
   Button,
+  Chip,
   Table,
   TableBody,
   TableCell,
@@ -12,505 +15,968 @@ import {
   TableHead,
   TableRow,
   Paper,
-  LinearProgress,
   Alert,
-  AlertTitle,
-  Chip,
-  Select,
-  MenuItem,
+  CircularProgress,
+  Tabs,
+  Tab,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  LinearProgress,
+  Grid,
   FormControl,
   InputLabel,
+  Select,
+  MenuItem,
   IconButton,
-  CircularProgress,
   Tooltip,
-  Grid,
 } from '@mui/material';
 import {
-  Play,
-  Pause,
-  RefreshCw,
-  AlertCircle,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Activity,
-} from 'lucide-react';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from 'recharts';
+  PlayArrow as PlayIcon,
+  Pause as PauseIcon,
+  Stop as StopIcon,
+  Timeline as TimelineIcon,
+  Refresh as RefreshIcon,
+  Queue as QueueIcon,
+  Memory as MemoryIcon,
+  CheckCircle as SuccessIcon,
+  Error as ErrorIcon,
+  History as HistoryIcon,
+  Clear as ClearIcon,
+  FilterList as FilterIcon,
+  DeleteSweep as ClearQueueIcon,
+} from '@mui/icons-material';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import { bulkOperationsApi, type ActiveJob } from '../services/api';
+import BulkJudgeMonitoring from '../components/BulkJudgeMonitoring';
 
-interface Job {
-  id: string;
-  job_type: string;
-  status: string;
-  progress_current: number;
-  progress_total: number | null;
-  progress_percent: number;
-  error_message: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  last_checkpoint_at: string | null;
-  created_at: string;
-}
 
-interface JobStatistics {
-  job_type: string;
-  total_jobs: number;
-  completed_jobs: number;
-  failed_jobs: number;
-  running_jobs: number;
-  avg_runtime_minutes: number;
-  success_rate: number;
-}
 
 const JobMonitoring: React.FC = () => {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [activeJobs, setActiveJobs] = useState<Job[]>([]);
-  const [statistics, setStatistics] = useState<JobStatistics[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [selectedJobType, setSelectedJobType] = useState<string>('all');
-  const [refreshInterval, setRefreshInterval] = useState<number>(5000);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
 
-  // Fetch job data
-  const fetchJobs = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (selectedStatus !== 'all') params.append('status', selectedStatus);
-      if (selectedJobType !== 'all') params.append('job_type', selectedJobType);
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobToCancel, setJobToCancel] = useState<ActiveJob | null>(null);
 
-      const response = await fetch(`/api/jobs?${params}`);
-      if (!response.ok) throw new Error('Failed to fetch jobs');
-      const data = await response.json();
-      setJobs(data.jobs);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch jobs');
-    }
-  };
+  // Job history state
+  const [jobHistoryLimit, setJobHistoryLimit] = useState(50);
+  const [jobTypeFilter, setJobTypeFilter] = useState<string>('');
 
-  // Fetch active jobs
-  const fetchActiveJobs = async () => {
-    try {
-      const response = await fetch('/api/jobs/active');
-      if (!response.ok) throw new Error('Failed to fetch active jobs');
-      const data = await response.json();
-      setActiveJobs(data);
-    } catch (err) {
-      console.error('Failed to fetch active jobs:', err);
-    }
-  };
+  // Queue management state
+  const [clearQueueDialog, setClearQueueDialog] = useState(false);
 
-  // Fetch statistics
-  const fetchStatistics = async () => {
-    try {
-      const response = await fetch('/api/jobs/statistics');
-      if (!response.ok) throw new Error('Failed to fetch statistics');
-      const data = await response.json();
-      setStatistics(data.statistics);
-    } catch (err) {
-      console.error('Failed to fetch statistics:', err);
-    }
-  };
-
-  // Initial data load
+  // Get job ID from URL params
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      await Promise.all([fetchJobs(), fetchActiveJobs(), fetchStatistics()]);
-      setLoading(false);
-    };
-    loadData();
-  }, [selectedStatus, selectedJobType]);
-
-  // Auto-refresh for active jobs
-  useEffect(() => {
-    if (refreshInterval > 0) {
-      const interval = setInterval(() => {
-        fetchActiveJobs();
-        if (activeJobs.length > 0) {
-          fetchJobs();
-        }
-      }, refreshInterval);
-      return () => clearInterval(interval);
+    const jobId = searchParams.get('jobId');
+    if (jobId) {
+      setSelectedJobId(jobId);
+      setSelectedTab(3); // Switch to monitoring tab (now tab 3)
     }
-  }, [refreshInterval, activeJobs.length]);
+  }, [searchParams]);
 
-  // Helper functions
+  // Query for active jobs
+  const { data: activeJobsData, isLoading: jobsLoading, refetch: refetchJobs } = useQuery({
+    queryKey: ['activeJobs'],
+    queryFn: () => bulkOperationsApi.getActiveJobs().then((res: any) => res.data),
+    refetchInterval: 10000, // Refresh every 10 seconds
+  });
+
+  // Query for server metrics
+  const { data: serverMetrics, isLoading: serverLoading } = useQuery({
+    queryKey: ['serverMetrics'],
+    queryFn: () => bulkOperationsApi.getServerMetrics().then((res: any) => res.data),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  // Query for queue status
+  const { data: queueStatus, isLoading: queueLoading } = useQuery({
+    queryKey: ['queueStatus'],
+    queryFn: () => bulkOperationsApi.getQueueStatus().then((res: any) => res.data),
+    refetchInterval: 5000, // Refresh every 5 seconds
+  });
+
+  // Query for job history
+  const { data: jobHistoryData, isLoading: historyLoading, refetch: refetchHistory } = useQuery({
+    queryKey: ['jobHistory', jobHistoryLimit, jobTypeFilter],
+    queryFn: () => bulkOperationsApi.getJobHistory({
+      limit: jobHistoryLimit,
+      job_type: jobTypeFilter || undefined
+    }).then((res: any) => res.data),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  // Mutations for job control
+  const pauseMutation = useMutation({
+    mutationFn: (jobId: string) => bulkOperationsApi.pauseJob(jobId).then((res: any) => res.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['activeJobs'] });
+    },
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: (jobId: string) => bulkOperationsApi.resumeJob(jobId).then((res: any) => res.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['activeJobs'] });
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (jobId: string) => bulkOperationsApi.cancelJob(jobId).then((res: any) => res.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['activeJobs'] });
+      setJobToCancel(null);
+    },
+  });
+
+  // Mutation for clearing queue
+  const clearQueueMutation = useMutation({
+    mutationFn: (params: { job_id?: string; status_filter?: string }) =>
+      bulkOperationsApi.clearQueue(params).then((res: any) => res.data),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['queueStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['activeJobs'] });
+      setClearQueueDialog(false);
+      // Could show success notification here
+      console.log('Queue cleared successfully:', data);
+    },
+    onError: (error) => {
+      console.error('Failed to clear queue:', error);
+      // Could show error notification here
+    },
+  });
+
+  // Handlers
+  const handleJobSelect = (job: ActiveJob) => {
+    setSelectedJobId(job.job_id);
+    setSelectedTab(1);
+    setSearchParams({ jobId: job.job_id });
+  };
+
+  const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
+    setSelectedTab(newValue);
+    if (newValue === 0) {
+      setSelectedJobId(null);
+      setSearchParams({});
+    }
+  };
+
+  const handleClearQueue = () => {
+    // Clear all tasks without any filters
+    clearQueueMutation.mutate({});
+  };
+
+  const handleJobHistoryFilter = () => {
+    refetchHistory();
+  };
+
+  const handleJobComplete = () => {
+    refetchJobs();
+    // Could show a success notification here
+  };
+
+  const handleJobError = (error: string) => {
+    console.error('Job error:', error);
+    // Could show an error notification here
+  };
+
+  // Format duration
+  const formatDuration = (startTime?: string) => {
+    if (!startTime) return 'Not started';
+
+    const start = new Date(startTime);
+    const now = new Date();
+
+    const durationMs = now.getTime() - start.getTime();
+    const hours = Math.floor(durationMs / (1000 * 60 * 60));
+    const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((durationMs % (1000 * 60)) / 1000);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    } else {
+      return `${seconds}s`;
+    }
+  };
+
+  // Get status color
+  const getStatusColor = (status: string): 'success' | 'warning' | 'info' | 'error' | 'default' => {
+    switch (status) {
+      case 'running': return 'success';
+      case 'pending': return 'warning';
+      case 'paused': return 'info';
+      case 'completed': return 'success';
+      case 'failed': return 'error';
+      case 'canceled': return 'default';
+      default: return 'default';
+    }
+  };
+
+  // Get status icon
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'running':
-        return <Activity size={16} color="#2196f3" />;
-      case 'completed':
-        return <CheckCircle size={16} color="#4caf50" />;
-      case 'failed':
-        return <XCircle size={16} color="#f44336" />;
-      case 'cancelled':
-        return <AlertCircle size={16} color="#ff9800" />;
-      default:
-        return <Clock size={16} color="#757575" />;
+      case 'running': return <PlayIcon fontSize="small" />;
+      case 'pending': return <TimelineIcon fontSize="small" />;
+      case 'paused': return <PauseIcon fontSize="small" />;
+      case 'completed': return <SuccessIcon fontSize="small" />;
+      case 'failed': return <ErrorIcon fontSize="small" />;
+      case 'canceled': return <StopIcon fontSize="small" />;
+      default: return <TimelineIcon fontSize="small" />;
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running':
-        return 'primary';
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'cancelled':
-        return 'warning';
-      default:
-        return 'default';
-    }
-  };
-
-  const formatDuration = (started: string | null, completed: string | null) => {
-    if (!started) return '-';
-    const start = new Date(started);
-    const end = completed ? new Date(completed) : new Date();
-    const diff = end.getTime() - start.getTime();
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-
-    if (days > 0) return `${days}d ${hours % 24}h`;
-    if (hours > 0) return `${hours}h ${minutes % 60}m`;
-    return `${minutes}m`;
-  };
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleString();
-  };
-
-  // Cancel job
-  const cancelJob = async (jobId: string) => {
-    try {
-      const response = await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
-      if (!response.ok) throw new Error('Failed to cancel job');
-      await fetchJobs();
-      await fetchActiveJobs();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to cancel job');
-    }
-  };
-
-  // Resume job
-  const resumeJob = async (jobId: string) => {
-    try {
-      const response = await fetch(`/api/jobs/${jobId}/resume`, { method: 'POST' });
-      if (!response.ok) throw new Error('Failed to resume job');
-      await fetchJobs();
-      await fetchActiveJobs();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume job');
-    }
-  };
-
-  // Chart data
-  const pieData = statistics.map((stat) => ({
-    name: stat.job_type,
-    value: stat.total_jobs,
-    completed: stat.completed_jobs,
-    failed: stat.failed_jobs,
-  }));
-
-  const barData = statistics.map((stat) => ({
-    job_type: stat.job_type,
-    success_rate: stat.success_rate,
-    avg_runtime: stat.avg_runtime_minutes,
-  }));
-
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
+  const activeJobs = activeJobsData?.active_jobs || [];
+  const bulkJudgeJobs = activeJobs.filter((job: ActiveJob) => job.job_type === 'bulk_judge');
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          Job Monitoring Dashboard
-        </Typography>
-        <Box display="flex" gap={2}>
-          <FormControl size="small" sx={{ minWidth: 150 }}>
-            <InputLabel>Refresh Rate</InputLabel>
-            <Select
-              value={refreshInterval}
-              label="Refresh Rate"
-              onChange={(e) => setRefreshInterval(Number(e.target.value))}
-            >
-              <MenuItem value={0}>No auto-refresh</MenuItem>
-              <MenuItem value={2000}>2 seconds</MenuItem>
-              <MenuItem value={5000}>5 seconds</MenuItem>
-              <MenuItem value={10000}>10 seconds</MenuItem>
-              <MenuItem value={30000}>30 seconds</MenuItem>
-            </Select>
-          </FormControl>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshCw size={16} />}
-            onClick={() => fetchJobs()}
-          >
-            Refresh
-          </Button>
-        </Box>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Typography variant="h4" fontWeight={600} gutterBottom>
+        Job Monitoring Dashboard
+      </Typography>
+      <Typography variant="body1" color="text.secondary" gutterBottom>
+        Monitor active jobs, view job history, and manage the processing queue.
+      </Typography>
+
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs value={selectedTab} onChange={handleTabChange} aria-label="Job monitoring tabs">
+          <Tab icon={<TimelineIcon />} label="Active Jobs" />
+          <Tab icon={<HistoryIcon />} label="Job History" />
+          <Tab icon={<QueueIcon />} label="Queue Management" />
+          <Tab
+            icon={<TimelineIcon />}
+            label={selectedJobId ? `Monitor Job ${selectedJobId.slice(0, 8)}...` : "Monitor Job"}
+            disabled={!selectedJobId}
+          />
+        </Tabs>
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          <AlertTitle>Error</AlertTitle>
-          {error}
-        </Alert>
-      )}
+      {/* Active Jobs Tab */}
+      {selectedTab === 0 && (
+        <Grid container spacing={3}>
+          {/* Summary Cards */}
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="success.main" fontWeight={600}>
+                    {bulkJudgeJobs.filter((job: ActiveJob) => job.status === 'running').length}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Running Jobs
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="warning.main" fontWeight={600}>
+                    {bulkJudgeJobs.filter((job: ActiveJob) => job.status === 'pending').length}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Pending Jobs
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="info.main" fontWeight={600}>
+                    {bulkJudgeJobs.filter((job: ActiveJob) => job.status === 'paused').length}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Paused Jobs
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="text.primary" fontWeight={600}>
+                    {bulkJudgeJobs.length}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Total Active
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
 
-      {/* Active Jobs */}
-      {activeJobs.length > 0 && (
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Active Jobs
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Currently running or pending jobs
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {activeJobs.map((job) => (
-                <Paper key={job.id} sx={{ p: 2 }} variant="outlined">
-                  <Box display="flex" justifyContent="space-between" alignItems="start" mb={1}>
-                    <Box>
-                      <Box display="flex" alignItems="center" gap={1}>
-                        {getStatusIcon(job.status)}
-                        <Typography variant="subtitle1">{job.job_type}</Typography>
-                        <Chip
-                          label={job.status}
-                          size="small"
-                          color={getStatusColor(job.status) as any}
-                        />
-                      </Box>
-                      <Typography variant="caption" color="text.secondary">
-                        Started: {formatDate(job.started_at)}
-                      </Typography>
-                    </Box>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<Pause size={14} />}
-                      onClick={() => cancelJob(job.id)}
-                    >
-                      Cancel
-                    </Button>
-                  </Box>
-                  <Box>
-                    <Box display="flex" justifyContent="space-between" mb={0.5}>
-                      <Typography variant="body2">Progress</Typography>
-                      <Typography variant="body2">
-                        {job.progress_current} / {job.progress_total || '?'}
-                      </Typography>
-                    </Box>
-                    <LinearProgress
-                      variant="determinate"
-                      value={job.progress_percent}
-                      sx={{ height: 8, borderRadius: 1 }}
-                    />
-                    <Typography variant="caption" color="text.secondary" align="right" display="block">
-                      {job.progress_percent.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </Paper>
-              ))}
-            </Box>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Statistics */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Job Distribution
-              </Typography>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={(entry) => `${entry.name}: ${entry.value}`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
+          {/* Active Jobs Table */}
+          <Grid size={{ xs: 12 }}>
+            <Card>
+              <CardHeader
+                title="Active Jobs"
+                action={
+                  <Button
+                    variant="outlined"
+                    startIcon={<RefreshIcon />}
+                    onClick={() => refetchJobs()}
+                    disabled={jobsLoading}
+                    size="small"
                   >
-                    {pieData.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </Grid>
+                    Refresh
+                  </Button>
+                }
+              />
+              <CardContent>
+                {jobsLoading ? (
+                  <Box display="flex" justifyContent="center" p={3}>
+                    <CircularProgress />
+                  </Box>
+                ) : bulkJudgeJobs.length === 0 ? (
+                  <Alert severity="info">
+                    No active bulk judge jobs found. Start a new job from the Bulk Operations page.
+                  </Alert>
+                ) : (
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Job ID</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Progress</TableCell>
+                          <TableCell>Duration</TableCell>
+                          <TableCell>Mode</TableCell>
+                          <TableCell>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {bulkJudgeJobs.map((job: ActiveJob) => (
+                          <TableRow key={job.job_id}>
+                            <TableCell>
+                              <Typography variant="body2" fontFamily="monospace">
+                                {job.job_id.slice(0, 12)}...
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                icon={getStatusIcon(job.status)}
+                                label={job.status}
+                                color={getStatusColor(job.status)}
+                                size="small"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Box>
+                                <Typography variant="body2">
+                                  {job.progress.current} / {job.progress.total}
+                                </Typography>
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={job.progress.percent}
+                                  sx={{ width: 100, mt: 0.5 }}
+                                />
+                              </Box>
+                            </TableCell>
+                            <TableCell>
+                              {formatDuration(job.started_at)}
+                            </TableCell>
+                            <TableCell>
+                              {job.multi_server ? (
+                                <Chip label={`${job.servers?.length || 0} servers`} color="primary" size="small" />
+                              ) : (
+                                <Chip label="Single server" color="default" size="small" />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Box display="flex" gap={1}>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  onClick={() => handleJobSelect(job)}
+                                >
+                                  Monitor
+                                </Button>
+                                {['running', 'pending'].includes(job.status) && (
+                                  <Button
+                                    variant="outlined"
+                                    size="small"
+                                    startIcon={<PauseIcon />}
+                                    onClick={() => pauseMutation.mutate(job.job_id)}
+                                    disabled={pauseMutation.isPending}
+                                  >
+                                    Pause
+                                  </Button>
+                                )}
+                                {job.status === 'paused' && (
+                                  <Button
+                                    variant="outlined"
+                                    size="small"
+                                    startIcon={<PlayIcon />}
+                                    onClick={() => resumeMutation.mutate(job.job_id)}
+                                    disabled={resumeMutation.isPending}
+                                  >
+                                    Resume
+                                  </Button>
+                                )}
+                                {['running', 'pending', 'paused'].includes(job.status) && (
+                                  <Button
+                                    variant="outlined"
+                                    size="small"
+                                    color="error"
+                                    startIcon={<StopIcon />}
+                                    onClick={() => setJobToCancel(job)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                )}
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
 
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Performance Metrics
-              </Typography>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={barData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="job_type" />
-                  <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
-                  <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
-                  <RechartsTooltip />
-                  <Bar yAxisId="left" dataKey="success_rate" fill="#8884d8" name="Success Rate (%)" />
-                  <Bar yAxisId="right" dataKey="avg_runtime" fill="#82ca9d" name="Avg Runtime (min)" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+          {/* Server Health Overview */}
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <Box display="flex" alignItems="center" gap={1} mb={2}>
+                  <MemoryIcon color="primary" />
+                  <Typography variant="h6">Server Health</Typography>
+                </Box>
 
-      {/* Job History */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Job History
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Recent and historical job runs
-          </Typography>
-
-          <Box display="flex" gap={2} mb={2}>
-            <FormControl size="small" sx={{ minWidth: 150 }}>
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={selectedStatus}
-                label="Status"
-                onChange={(e) => setSelectedStatus(e.target.value)}
-              >
-                <MenuItem value="all">All Statuses</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="running">Running</MenuItem>
-                <MenuItem value="completed">Completed</MenuItem>
-                <MenuItem value="failed">Failed</MenuItem>
-                <MenuItem value="cancelled">Cancelled</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 200 }}>
-              <InputLabel>Job Type</InputLabel>
-              <Select
-                value={selectedJobType}
-                label="Job Type"
-                onChange={(e) => setSelectedJobType(e.target.value)}
-              >
-                <MenuItem value="all">All Job Types</MenuItem>
-                <MenuItem value="harvest_judge">Harvest & Judge</MenuItem>
-                <MenuItem value="bulk_judge">Bulk Judge</MenuItem>
-                <MenuItem value="embedding_backfill">Embedding Backfill</MenuItem>
-                <MenuItem value="newsletter_generation">Newsletter Generation</MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
-
-          <TableContainer component={Paper} variant="outlined">
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Status</TableCell>
-                  <TableCell>Job Type</TableCell>
-                  <TableCell>Progress</TableCell>
-                  <TableCell>Duration</TableCell>
-                  <TableCell>Started</TableCell>
-                  <TableCell>Completed</TableCell>
-                  <TableCell>Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {jobs.map((job) => (
-                  <TableRow key={job.id}>
-                    <TableCell>
-                      <Box display="flex" alignItems="center" gap={1}>
-                        {getStatusIcon(job.status)}
-                        <Chip
-                          label={job.status}
-                          size="small"
-                          color={getStatusColor(job.status) as any}
-                        />
-                      </Box>
-                    </TableCell>
-                    <TableCell>{job.job_type}</TableCell>
-                    <TableCell>
-                      {job.progress_total ? (
-                        <Box display="flex" alignItems="center" gap={1}>
-                          <LinearProgress
-                            variant="determinate"
-                            value={job.progress_percent}
-                            sx={{ width: 80, height: 6 }}
-                          />
-                          <Typography variant="caption" color="text.secondary">
-                            {job.progress_percent.toFixed(0)}%
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  {serverLoading ? (
+                    <Box display="flex" justifyContent="center" width="100%" p={2}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  ) : serverMetrics ? (
+                    <Grid container spacing={2} sx={{ width: '100%' }}>
+                      <Grid size={{ xs: 4 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="success.main">
+                            {serverMetrics.summary.healthy}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Healthy
                           </Typography>
                         </Box>
-                      ) : (
-                        '-'
-                      )}
-                    </TableCell>
-                    <TableCell>{formatDuration(job.started_at, job.completed_at)}</TableCell>
-                    <TableCell>{formatDate(job.started_at)}</TableCell>
-                    <TableCell>{formatDate(job.completed_at)}</TableCell>
-                    <TableCell>
-                      {(job.status === 'failed' || job.status === 'cancelled') && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          startIcon={<Play size={14} />}
-                          onClick={() => resumeJob(job.id)}
-                        >
-                          Resume
-                        </Button>
-                      )}
-                      {job.error_message && (
-                        <Tooltip title={job.error_message}>
-                          <IconButton size="small">
-                            <AlertCircle size={16} color="#f44336" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </CardContent>
-      </Card>
-    </Box>
+                      </Grid>
+                      <Grid size={{ xs: 4 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="error.main">
+                            {serverMetrics.summary.unhealthy}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Unhealthy
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 4 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="textSecondary">
+                            {serverMetrics.summary.total}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Total
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  ) : (
+                    <Box display="flex" justifyContent="center" width="100%">
+                      <Typography color="textSecondary">No server data available</Typography>
+                    </Box>
+                  )}
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Queue Status */}
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <Box display="flex" alignItems="center" gap={1} mb={2}>
+                  <QueueIcon color="primary" />
+                  <Typography variant="h6">Queue Status</Typography>
+                </Box>
+
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                  {queueLoading ? (
+                    <Box display="flex" justifyContent="center" width="100%" p={2}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  ) : queueStatus ? (
+                    <Grid container spacing={2} sx={{ width: '100%' }}>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="warning.main">
+                            {queueStatus.queue_stats.pending_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Pending
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="info.main">
+                            {queueStatus.queue_stats.in_progress_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            In Progress
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="success.main">
+                            {queueStatus.queue_stats.completed_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Completed
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Box textAlign="center">
+                          <Typography variant="h4" color="error.main">
+                            {queueStatus.queue_stats.failed_tasks || 0}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            Failed
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  ) : (
+                    <Box display="flex" justifyContent="center" width="100%">
+                      <Typography color="textSecondary">No queue data available</Typography>
+                    </Box>
+                  )}
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
+
+      {/* Job History Tab */}
+      {selectedTab === 1 && (
+        <Grid container spacing={3}>
+          {/* Filters */}
+          <Grid size={{ xs: 12 }}>
+            <Card>
+              <CardContent>
+                <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
+                  <FormControl size="small" sx={{ minWidth: 120 }}>
+                    <InputLabel>Job Type</InputLabel>
+                    <Select
+                      value={jobTypeFilter}
+                      label="Job Type"
+                      onChange={(e) => setJobTypeFilter(e.target.value)}
+                    >
+                      <MenuItem value="">All Types</MenuItem>
+                      <MenuItem value="bulk_judge">Bulk Judge</MenuItem>
+                      <MenuItem value="harvest_judge">Harvest Judge</MenuItem>
+                      <MenuItem value="profile_aware_ingest">Profile Aware</MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  <FormControl size="small" sx={{ minWidth: 120 }}>
+                    <InputLabel>Limit</InputLabel>
+                    <Select
+                      value={jobHistoryLimit}
+                      label="Limit"
+                      onChange={(e) => setJobHistoryLimit(Number(e.target.value))}
+                    >
+                      <MenuItem value={25}>25</MenuItem>
+                      <MenuItem value={50}>50</MenuItem>
+                      <MenuItem value={100}>100</MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  <Button
+                    variant="outlined"
+                    startIcon={<RefreshIcon />}
+                    onClick={handleJobHistoryFilter}
+                    disabled={historyLoading}
+                    size="small"
+                  >
+                    Refresh
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Summary Statistics */}
+          {jobHistoryData?.summary && (
+            <Grid size={{ xs: 12 }}>
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Card>
+                    <CardContent>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="success.main" fontWeight={600}>
+                          {jobHistoryData.summary.completed_jobs || 0}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Completed
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Card>
+                    <CardContent>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="error.main" fontWeight={600}>
+                          {jobHistoryData.summary.failed_jobs || 0}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Failed
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Card>
+                    <CardContent>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="text.secondary" fontWeight={600}>
+                          {jobHistoryData.summary.canceled_jobs || 0}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Canceled
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid size={{ xs: 6, md: 3 }}>
+                  <Card>
+                    <CardContent>
+                      <Box textAlign="center">
+                        <Typography variant="h4" color="info.main" fontWeight={600}>
+                          {jobHistoryData.summary.total_jobs || 0}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+            </Grid>
+          )}
+
+          {/* Job History Table */}
+          <Grid size={{ xs: 12 }}>
+            <Card>
+              <CardHeader title="Job History" />
+              <CardContent>
+                {historyLoading ? (
+                  <Box display="flex" justifyContent="center" p={3}>
+                    <CircularProgress />
+                  </Box>
+                ) : !jobHistoryData?.jobs?.length ? (
+                  <Alert severity="info">
+                    No completed jobs found matching the current filters.
+                  </Alert>
+                ) : (
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Job ID</TableCell>
+                          <TableCell>Type</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Started</TableCell>
+                          <TableCell>Duration</TableCell>
+                          <TableCell>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {jobHistoryData.jobs.map((job: any) => (
+                          <TableRow key={job.job_id}>
+                            <TableCell>
+                              <Typography variant="body2" fontFamily="monospace">
+                                {job.job_id.slice(0, 12)}...
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label={job.job_type.replace('_', ' ')}
+                                size="small"
+                                variant="outlined"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                icon={getStatusIcon(job.status)}
+                                label={job.status}
+                                color={getStatusColor(job.status)}
+                                size="small"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2">
+                                {job.started_at ? new Date(job.started_at).toLocaleString() : 'N/A'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2">
+                                {job.duration_seconds ?
+                                  `${Math.floor(job.duration_seconds / 60)}m ${job.duration_seconds % 60}s` :
+                                  'N/A'
+                                }
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Tooltip title="View Details">
+                                <IconButton size="small">
+                                  <TimelineIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
+
+      {/* Queue Management Tab */}
+      {selectedTab === 2 && (
+        <Grid container spacing={3}>
+          {/* Queue Statistics */}
+          <Grid size={{ xs: 12, md: 4 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="warning.main" fontWeight={600}>
+                    {queueStatus?.queue_stats.pending_tasks || 0}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Pending Tasks
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="info.main" fontWeight={600}>
+                    {queueStatus?.queue_stats.in_progress_tasks || 0}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    In Progress
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <Card>
+              <CardContent>
+                <Box textAlign="center">
+                  <Typography variant="h4" color="success.main" fontWeight={600}>
+                    {queueStatus?.queue_stats.completed_tasks || 0}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Completed Today
+                  </Typography>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Queue Management Actions */}
+          <Grid size={{ xs: 12 }}>
+            <Card>
+              <CardHeader
+                title="Queue Management"
+                action={
+                  <Button
+                    variant="outlined"
+                    startIcon={<RefreshIcon />}
+                    onClick={() => queryClient.invalidateQueries({ queryKey: ['queueStatus'] })}
+                    disabled={queueLoading}
+                    size="small"
+                  >
+                    Refresh
+                  </Button>
+                }
+              />
+              <CardContent>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      startIcon={<ClearQueueIcon />}
+                      onClick={() => setClearQueueDialog(true)}
+                      fullWidth
+                    >
+                      Clear Queue
+                    </Button>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<FilterIcon />}
+                      onClick={() => queryClient.invalidateQueries({ queryKey: ['queueStatus'] })}
+                      fullWidth
+                    >
+                      Filter by Status
+                    </Button>
+                  </Grid>
+                </Grid>
+
+                {/* Active Jobs in Queue */}
+                {queueStatus?.active_jobs?.length > 0 && (
+                  <Box mt={3}>
+                    <Typography variant="h6" gutterBottom>
+                      Active Jobs in Queue
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Job ID</TableCell>
+                            <TableCell>Tasks</TableCell>
+                            <TableCell>Progress</TableCell>
+                            <TableCell>Actions</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {queueStatus.active_jobs.map((job: any) => (
+                            <TableRow key={job.job_id}>
+                              <TableCell>
+                                <Typography variant="body2" fontFamily="monospace">
+                                  {job.job_id.slice(0, 12)}...
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">
+                                  {job.total_tasks} total
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">
+                                  {job.pending_tasks} pending, {job.in_progress_tasks} active
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => setClearQueueDialog(true)}
+                                  startIcon={<ClearIcon />}
+                                >
+                                  Clear All
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
+
+      {/* Job Monitoring Tab */}
+      {selectedTab === 3 && selectedJobId && (
+        <BulkJudgeMonitoring
+          jobId={selectedJobId}
+          onJobComplete={handleJobComplete}
+          onJobError={handleJobError}
+        />
+      )}
+
+      {/* Clear Queue Dialog */}
+      <Dialog open={clearQueueDialog} onClose={() => setClearQueueDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Clear Queue</DialogTitle>
+        <DialogContent>
+          <Typography gutterBottom>
+            This will completely clear all tasks from the processing queue. This action cannot be undone.
+          </Typography>
+
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              This will permanently remove ALL tasks from the queue, regardless of their status or job. Make sure you want to proceed.
+            </Typography>
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setClearQueueDialog(false)}>Cancel</Button>
+          <Button
+            onClick={handleClearQueue}
+            color="error"
+            variant="contained"
+            disabled={clearQueueMutation.isPending}
+            startIcon={clearQueueMutation.isPending ? <CircularProgress size={16} /> : <ClearQueueIcon />}
+          >
+            {clearQueueMutation.isPending ? 'Clearing...' : 'Clear All Tasks'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Cancel Job Dialog */}
+      <Dialog open={!!jobToCancel} onClose={() => setJobToCancel(null)}>
+        <DialogTitle>Cancel Bulk Judge Job</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to cancel the job {jobToCancel?.job_id.slice(0, 12)}...?
+            This action cannot be undone.
+          </Typography>
+          {jobToCancel && (
+            <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+              Current progress: {jobToCancel.progress.current} of {jobToCancel.progress.total} tasks completed.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setJobToCancel(null)}>Keep Running</Button>
+          <Button
+            onClick={() => jobToCancel && cancelMutation.mutate(jobToCancel.job_id)}
+            color="error"
+            variant="contained"
+            disabled={cancelMutation.isPending}
+          >
+            {cancelMutation.isPending ? <CircularProgress size={20} /> : 'Cancel Job'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Container>
   );
 };
 

@@ -558,6 +558,16 @@ const Papers: React.FC = () => {
     setAppliedFilters(newFilters);
   };
 
+  // Update handler to sync edits into the list
+  const handlePaperUpdated = useCallback((updated: PaperApiResponse) => {
+    setAllPapers(prev => prev.map(p => p.id === updated.id ? { 
+      ...p, 
+      score: updated.score, 
+      related: updated.related,
+      profile_score: (updated as any).profile_score !== undefined ? (updated as any).profile_score : p.profile_score
+    } : p));
+  }, []);
+
   const handleApplyFilters = () => {
     setAppliedFilters({ ...filters });
     setShowFilters(false);
@@ -1113,6 +1123,8 @@ const Papers: React.FC = () => {
                       onOpenMindMap={handleOpenMindMap}
                       onTopicClick={handleTopicClick}
                       hasProfilesSelected={selectedProfileIds.length > 0}
+                      onPaperUpdated={handlePaperUpdated}
+                      selectedProfileIds={selectedProfileIds}
                     />
                   </Grid>
                 ))}
@@ -1127,6 +1139,8 @@ const Papers: React.FC = () => {
                     onOpenMindMap={handleOpenMindMap}
                     onTopicClick={handleTopicClick}
                     hasProfilesSelected={selectedProfileIds.length > 0}
+                    onPaperUpdated={handlePaperUpdated}
+                    selectedProfileIds={selectedProfileIds}
                   />
                 ))}
               </Box>

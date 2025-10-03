@@ -8,11 +8,13 @@ from ..models import (
     SimilaritySearchRequest, SimilaritySearchResponse,
     SimilarPapersRequest, SimilarPapersResponse,
     HybridSearchRequest, HybridSearchResponse,
-    ProfileAwareIngestRequest, ProfileAwareIngestResponse
+    ProfileAwareIngestRequest, ProfileAwareIngestResponse,
+    PaperUpdateRequest
 )
 from ...data_access import (
     PaperRepository, SettingsRepository
 )
+from ...data_access.profiles import ProfileScoreRepository
 
 def _convert_paper_timestamps(paper_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
@@ -263,20 +265,34 @@ async def get_papers(
 
             # Determine 'related' value, handling None
             related_val = converted_p.get('profile_related') if is_profile_query else converted_p.get('related')
-            final_related = related_val if related_val is not None else False
+            final_related = bool(related_val) if related_val is not None else False
+
+            # Safeguard required fields to avoid 500s on nulls
+            score_val = converted_p.get('score')
+            if score_val is None:
+                score_val = converted_p.get('profile_score') or 0.0
+            date_val = converted_p.get('date') or ''
+            date_run_val = converted_p.get('date_run') or ''
+            title_val = converted_p.get('title') or ''
+            abstract_val = converted_p.get('abstract') or ''
+            url_val = converted_p.get('url') or ''
+            cosine_val = converted_p.get('cosine_similarity')
+            if cosine_val is None:
+                cosine_val = 0.0
+            embedding_model_val = converted_p.get('embedding_model') or ''
 
             papers.append(PaperApiResponse(
                 id=converted_p['id'], 
-                title=converted_p['title'], 
-                abstract=converted_p['abstract'],
-                score=converted_p['score'], 
-                date=converted_p['date'], 
-                url=converted_p['url'],
-                date_run=converted_p['date_run'], 
-                rationale=converted_p.get('profile_rationale') or converted_p.get('rationale', ''),
+                title=title_val, 
+                abstract=abstract_val,
+                score=float(score_val), 
+                date=date_val, 
+                url=url_val,
+                date_run=date_run_val, 
+                rationale=converted_p.get('profile_rationale') or converted_p.get('rationale', '') or '',
                 related=final_related,
-                cosine_similarity=converted_p['cosine_similarity'],
-                embedding_model=converted_p['embedding_model'],
+                cosine_similarity=float(cosine_val),
+                embedding_model=embedding_model_val,
                 keywords=converted_p.get('keywords'),
                 profile_score=converted_p.get('profile_score')
             ))
@@ -290,6 +306,133 @@ async def get_papers(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/{paper_id}", response_model=PaperApiResponse)
+async def update_paper(paper_id: int, request: PaperUpdateRequest):
+    """
+    Update a paper's score and/or related flag.
+
+    Business rule: if related is set to False, force the score to the minimum allowed (0.0) unless an explicit score is also provided (the explicit value must still be within [0,10]).
+    """
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"update_paper called: paper_id={paper_id}, score={request.score}, related={request.related}, profile_ids={request.profile_ids}")
+        # Ensure paper exists
+        existing = PaperRepository.get_by_id(paper_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Paper not found")
+
+        new_score = request.score
+        new_related = request.related
+
+        # Auto-adjust score when marking not relevant (unless caller provided a score)
+        if new_related is False and new_score is None:
+            new_score = 0.0
+
+        profile_ids = request.profile_ids or []
+
+        if profile_ids:
+            # Update per-profile scores/related flags
+            last_pps = None
+            for pid in profile_ids:
+                # Determine valid integer score for profile table (1-10) or None
+                pps_score = None
+                if new_score is not None:
+                    try:
+                        # Clamp to 1..10 as table constraint enforces this range
+                        int_score = int(round(float(new_score)))
+                        if int_score < 1:
+                            int_score = 1
+                        if int_score > 10:
+                            int_score = 10
+                        pps_score = int_score
+                    except Exception:
+                        pps_score = None
+                # If explicitly set to not related and no score provided, use minimum valid score 1
+                if new_related is False and pps_score is None:
+                    pps_score = 1
+
+                logger.info(f"Updating profile score: paper_id={paper_id}, profile_id={pid}, score={pps_score}, related={new_related}")
+                last_pps = ProfileScoreRepository.create_or_update(
+                    paper_id=paper_id,
+                    profile_id=pid,
+                    score=pps_score,
+                    related=new_related,
+                )
+
+            # Refresh base paper row for response metadata
+            updated_base = PaperRepository.get_by_id(paper_id)
+            converted = _convert_paper_timestamps(updated_base)
+
+            # If we have a pps row, reflect it in response
+            profile_score_val = None
+            profile_related_val = None
+            if last_pps:
+                profile_score_val = last_pps.get('score')
+                profile_related_val = last_pps.get('related')
+
+            score_val = converted.get('score') or 0.0
+            date_val = converted.get('date') or ''
+            date_run_val = converted.get('date_run') or ''
+            title_val = converted.get('title') or ''
+            abstract_val = converted.get('abstract') or ''
+            url_val = converted.get('url') or ''
+            cosine_val = converted.get('cosine_similarity') or 0.0
+            embedding_model_val = converted.get('embedding_model') or ''
+
+            resp = PaperApiResponse(
+                id=converted['id'],
+                title=title_val,
+                abstract=abstract_val,
+                score=float(score_val),
+                date=date_val,
+                url=url_val,
+                date_run=date_run_val,
+                rationale=converted.get('rationale') or '',
+                related=bool(profile_related_val if profile_related_val is not None else converted.get('related')),
+                cosine_similarity=float(cosine_val),
+                embedding_model=embedding_model_val,
+                keywords=converted.get('keywords')
+            )
+            if profile_score_val is not None:
+                resp.profile_score = float(profile_score_val)
+            return resp
+        else:
+            # Update base paper fields
+            updated = PaperRepository.update_fields(paper_id, score=new_score, related=new_related)
+
+            # Prepare API response (normalize timestamps and required fields)
+            converted = _convert_paper_timestamps(updated)
+            score_val = converted.get('score') or 0.0
+            date_val = converted.get('date') or ''
+            date_run_val = converted.get('date_run') or ''
+            title_val = converted.get('title') or ''
+            abstract_val = converted.get('abstract') or ''
+            url_val = converted.get('url') or ''
+            cosine_val = converted.get('cosine_similarity') or 0.0
+            embedding_model_val = converted.get('embedding_model') or ''
+
+            return PaperApiResponse(
+                id=converted['id'],
+                title=title_val,
+                abstract=abstract_val,
+                score=float(score_val),
+                date=date_val,
+                url=url_val,
+                date_run=date_run_val,
+                rationale=converted.get('rationale') or '',
+                related=bool(converted.get('related')),
+                cosine_similarity=float(cosine_val),
+                embedding_model=embedding_model_val,
+                keywords=converted.get('keywords')
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logging.getLogger(__name__).error(f"Error in update_paper: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Update failed: {type(e).__name__}: {str(e)}")
 
 @router.post("/similarity-search", response_model=SimilaritySearchResponse)
 async def semantic_similarity_search(request: SimilaritySearchRequest):
@@ -654,8 +797,12 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
     """
     try:
         import uuid
+        import logging
         from ..tasks import task_manager
         from ...data_access.profiles import ProfileRepository
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"📝 Starting profile-aware ingestion request: use_multi_server={request.use_multi_server}, profile_ids={request.profile_ids}, server_ids={request.server_ids}")
         
         # Validate profiles exist if specified
         if request.profile_ids:
@@ -692,56 +839,107 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
             "cosine_threshold": request.cosine_threshold,
             "arxiv_categories": request.arxiv_categories,
             "batch_size": request.batch_size,
-            "send_error_notifications": request.send_error_notifications
+            "send_error_notifications": request.send_error_notifications,
+            # Multi-server configuration
+            "use_multi_server": request.use_multi_server,
+            "server_ids": request.server_ids
         }
-        
-        # Create task in database
-        await task_manager.create_task(task_id, "profile_aware_ingest", config)
-        
-        # Enqueue task for processing
-        await task_manager.enqueue_task(task_manager.run_profile_aware_ingest_task, task_id)
-        
-        # Estimate target profiles and papers
-        target_profiles = []
-        if request.profile_ids:
-            target_profiles.extend([ProfileRepository.get_by_id(pid) for pid in request.profile_ids])
-        if request.profile_tags:
-            target_profiles.extend(ProfileRepository.get_by_tags(request.profile_tags))
-        if request.score_all_profiles and not target_profiles:
-            target_profiles = ProfileRepository.get_all_active()
-        
-        # Filter active profiles and remove duplicates
-        active_profiles = [p for p in target_profiles if p and p['is_active']]
-        unique_profiles = []
-        seen_ids = set()
-        for p in active_profiles:
-            if p['id'] not in seen_ids:
-                unique_profiles.append(p)
-                seen_ids.add(p['id'])
-        
-        # Estimate papers (rough calculation based on typical ArXiv daily volume)
-        from datetime import datetime, timedelta
-        if request.start_date and request.end_date:
-            start = datetime.strptime(request.start_date, '%Y-%m-%d')
-            end = datetime.strptime(request.end_date, '%Y-%m-%d')
-            days = (end - start).days + 1
+
+        # Handle multi-server requests differently
+        logger.info("🔀 Checking multi-server routing logic")
+        if request.use_multi_server:
+            logger.info("🚀 Multi-server request detected, routing to bulk operations")
+            # Route to bulk operations API for multi-server processing
+            from .bulk_operations import _start_bulk_judge_operation
+            from fastapi import BackgroundTasks
+
+            # Convert to BulkJudgeRequest format
+            logger.info("🔄 Converting ProfileAwareIngestRequest to BulkJudgeRequest")
+            from .bulk_operations import BulkJudgeRequest
+            bulk_request = BulkJudgeRequest(
+                profile_ids=[str(pid) for pid in request.profile_ids] if request.profile_ids else None,
+                all_profiles=request.score_all_profiles,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                limit=None,  # No limit for full ingestion
+                use_multi_server=True,
+                server_ids=request.server_ids,
+                request_timeout_sec=None,  # Use defaults
+                max_retries=None,  # Use defaults
+                suspend_scheduled_tasks=True,  # Suspend during bulk processing
+                overwrite_existing=request.overwrite_existing,
+                batch_size=request.batch_size
+            )
+            logger.info(f"✅ BulkJudgeRequest created: profile_ids={bulk_request.profile_ids}, server_ids={bulk_request.server_ids}")
+
+            # Create background tasks dependency
+            background_tasks = BackgroundTasks()
+
+            # Call bulk judge core operation
+            logger.info("⚡ Calling _start_bulk_judge_operation...")
+            bulk_response = await _start_bulk_judge_operation(bulk_request, background_tasks)
+            logger.info(f"✅ Bulk judge operation completed: job_id={bulk_response.job_id}")
+
+            # Return response in expected format
+            logger.info("📤 Returning successful response")
+            return ProfileAwareIngestResponse(
+                task_id=str(bulk_response.job_id),  # Convert UUID to string
+                message="Multi-server profile-aware ingestion started successfully",
+                profile_count=len(request.profile_ids) if request.profile_ids else 0,
+                estimated_papers=0,  # Will be calculated by bulk judge
+                status="running"
+            )
         else:
-            days = 7  # Default to 7 days if not specified
-        
-        # Rough estimate: 200-300 papers per day from ArXiv
-        estimated_papers = days * 250
-        
-        return ProfileAwareIngestResponse(
-            task_id=task_id,
-            message=f"Profile-aware ingestion task started successfully. Processing {len(unique_profiles)} profiles.",
-            profile_count=len(unique_profiles),
-            estimated_papers=estimated_papers,
-            status="started"
-        )
+            # Use regular single-server processing
+            logger.info("🔄 Single-server request detected, using regular task manager")
+            # Create task in database
+            await task_manager.create_task(task_id, "profile_aware_ingest", config)
+
+            # Enqueue task for processing
+            await task_manager.enqueue_task(task_manager.run_profile_aware_ingest_task, task_id)
+
+            # Estimate target profiles and papers for single-server response
+            target_profiles = []
+            if request.profile_ids:
+                target_profiles.extend([ProfileRepository.get_by_id(pid) for pid in request.profile_ids])
+            if request.profile_tags:
+                target_profiles.extend(ProfileRepository.get_by_tags(request.profile_tags))
+            if request.score_all_profiles and not target_profiles:
+                target_profiles = ProfileRepository.get_all_active()
+
+            # Filter active profiles and remove duplicates
+            active_profiles = [p for p in target_profiles if p and p['is_active']]
+            unique_profiles = []
+            seen_ids = set()
+            for p in active_profiles:
+                if p['id'] not in seen_ids:
+                    unique_profiles.append(p)
+                    seen_ids.add(p['id'])
+
+            # Estimate papers (rough calculation based on typical ArXiv daily volume)
+            from datetime import datetime, timedelta
+            if request.start_date and request.end_date:
+                start = datetime.strptime(request.start_date, '%Y-%m-%d')
+                end = datetime.strptime(request.end_date, '%Y-%m-%d')
+                days = (end - start).days + 1
+            else:
+                days = 7  # Default to 7 days if not specified
+
+            # Rough estimate: 200-300 papers per day from ArXiv
+            estimated_papers = days * 250
+
+            return ProfileAwareIngestResponse(
+                task_id=task_id,
+                message=f"Profile-aware ingestion task started successfully. Processing {len(unique_profiles)} profiles.",
+                profile_count=len(unique_profiles),
+                estimated_papers=estimated_papers,
+                status="running"
+            )
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"❌ Error in profile-aware ingestion: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start profile-aware ingestion: {str(e)}")
 
 @router.post("/bulk-embed")
@@ -826,7 +1024,6 @@ async def check_existing_bulk_data(start_date: str, end_date: str):
     - How many are missing embeddings
     """
     try:
-        from ...data_access.papers import PaperRepository
         from datetime import datetime
         
         # Validate dates
@@ -836,14 +1033,11 @@ async def check_existing_bulk_data(start_date: str, end_date: str):
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
         
-        # Query papers in date range
-        papers = PaperRepository.get_papers_in_date_range(start_date, end_date)
-        
-        # Count papers with and without embeddings
-        total_papers = len(papers)
-        # Check if papers have embeddings by looking for non-null embedding_model
-        embedded_count = sum(1 for p in papers if p.get('embedding_model') is not None)
-        missing_embeddings = total_papers - embedded_count
+        # Fast, accurate counts directly from DB (embedding vector presence)
+        counts = PaperRepository.count_embeddings_status_in_date_range(start_date, end_date)
+        total_papers = counts.get('total', 0)
+        embedded_count = counts.get('embedded', 0)
+        missing_embeddings = max(0, total_papers - embedded_count)
         
         return {
             "paper_count": total_papers,

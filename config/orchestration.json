@@ -24,26 +24,26 @@
     "trust_remote_code": null
   },
   "newsletter_sections_model": {
-    "model_name": "hf.co/bartowski/google_gemma-3-27b-it-qat-GGUF:Q4_K_M",
+    "model_name": "hf.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M",
     "model_type": "ollama",
-    "max_new_tokens": 8192,
-    "temperature": 0.1,
-    "num_ctx": 131072,
+    "max_new_tokens": 4096,
+    "temperature": 0.2,
+    "num_ctx": 128000,
     "trust_remote_code": null
   },
   "newsletter_intro_model": {
-    "model_name": "gemini-2.0-flash",
+    "model_name": "gemini-2.5-pro",
     "model_type": "gemini",
-    "max_new_tokens": null,
-    "temperature": 0.1,
-    "num_ctx": null,
+    "max_new_tokens": 4096,
+    "temperature": 0.2,
+    "num_ctx": 128000,
     "trust_remote_code": null
   },
   "podcast_model": {
-    "model_name": "gemini-2.0-flash",
+    "model_name": "gemini-2.5-flash",
     "model_type": "gemini",
-    "max_new_tokens": 8192,
-    "temperature": 0.1,
+    "max_new_tokens": 4096,
+    "temperature": 0.2,
     "num_ctx": 131072,
     "trust_remote_code": null
   },
@@ -57,36 +57,36 @@
   },
   "research_agent_model_config": {
     "boss_model": {
-      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_name": "hf.co/unsloth/Qwen3-30B-A3B-Thinking-2507-GGUF:Q4_K_M",
       "model_type": "ollama",
       "max_new_tokens": 4096,
       "temperature": 0.2,
-      "num_ctx": 120000,
+      "num_ctx": 128000,
       "trust_remote_code": null
     },
     "worker_models": {
       "summary": {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "max_new_tokens": 2048,
         "temperature": 0.1,
-        "num_ctx": 120000,
+        "num_ctx": null,
         "trust_remote_code": null
       },
       "analysis": {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "max_new_tokens": 2048,
         "temperature": 0.1,
-        "num_ctx": 120000,
+        "num_ctx": null,
         "trust_remote_code": null
       },
       "search": {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "max_new_tokens": 1024,
         "temperature": 0.1,
-        "num_ctx": 120000,
+        "num_ctx": null,
         "trust_remote_code": null
       }
     },
@@ -97,35 +97,35 @@
     "initial_rerank_top_k": 40,
     "max_research_loops": 3,
     "query_planner_model": {
-      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_name": "phi4-mini:3.8b-q8_0",
       "model_type": "ollama",
       "max_new_tokens": 4096,
       "temperature": 0.2,
-      "num_ctx": 120000,
+      "num_ctx": 128000,
       "trust_remote_code": null
     },
     "evidence_selector_model": {
       "model_name": "phi4-mini:3.8b-q8_0",
       "model_type": "ollama",
       "max_new_tokens": 4096,
-      "temperature": 0.1,
-      "num_ctx": 120000,
+      "temperature": 0.2,
+      "num_ctx": 128000,
       "trust_remote_code": null
     },
     "compression_model": {
       "model_name": "phi4-mini:3.8b-q8_0",
       "model_type": "ollama",
       "max_new_tokens": 4096,
-      "temperature": 0.1,
-      "num_ctx": 120000,
+      "temperature": 0.2,
+      "num_ctx": 128000,
       "trust_remote_code": null
     },
     "answer_generator_model": {
-      "model_name": "hf.co/bartowski/microsoft_Phi-4-reasoning-plus-GGUF:Q6_K_L",
+      "model_name": "gpt-oss:20b",
       "model_type": "ollama",
       "max_new_tokens": 4096,
       "temperature": 0.2,
-      "num_ctx": 120000,
+      "num_ctx": 128000,
       "trust_remote_code": null
     },
     "arxiv_rate_limit": 3.0
@@ -135,11 +135,11 @@
     "similarity_threshold": 0.3,
     "layout_algorithm": "force",
     "summarization_model": {
-      "model_name": "gpt-4",
-      "model_type": "openai",
-      "max_new_tokens": 1024,
-      "temperature": 0.3,
-      "num_ctx": null,
+      "model_name": "phi4-mini:3.8b-q8_0",
+      "model_type": "ollama",
+      "max_new_tokens": 4096,
+      "temperature": 0.2,
+      "num_ctx": 128000,
       "trust_remote_code": null
     },
     "expansion_order": 1,

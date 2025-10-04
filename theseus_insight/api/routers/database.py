@@ -49,7 +49,7 @@ async def export_database(background_tasks: BackgroundTasks):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Get database URL from environment
-        DB_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
+        DB_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
         
         # Create a temporary directory for the export files
         with tempfile.TemporaryDirectory() as temp_dir:

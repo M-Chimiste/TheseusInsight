@@ -12,7 +12,7 @@ class EnvironmentDetector:
     @staticmethod
     def get_database_url() -> str:
         """Get the database URL from environment."""
-        return os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseus")
+        return os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
 
     @staticmethod
     def get_working_directory() -> Path:

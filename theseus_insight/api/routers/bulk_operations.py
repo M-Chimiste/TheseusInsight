@@ -602,7 +602,7 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
 
                 # Check if job is complete
                 if progress['completed_tasks'] >= progress['total_tasks']:
-                    # Check for failed tasks
+                    # Mark job as complete and terminate workers
                     if progress['failed_tasks'] > 0:
                         # Mark job as completed with failures
                         await checkpoint_manager.complete_job(
@@ -613,28 +613,37 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
                         # Mark job as fully successful
                         await checkpoint_manager.complete_job(
                             job_id,
-                            f"Successfully completed {progress['total_count']} tasks"
+                            f"Successfully completed {progress['total_tasks']} tasks"
                         )
+                    
+                    # Terminate all worker processes for this job
+                    logger.info(f"Job {job_id} complete - terminating worker processes")
+                    await _signal_workers_cancel(job_id)
                     break
 
-            # Check for active workers
+            # Check for active workers - fallback completion detection
             active_workers = heartbeat_repo.get_active_workers(job_id)
             if not active_workers and progress and progress['pending_tasks'] == 0 and progress['in_progress_tasks'] == 0:
-                # No active workers and no pending/in-progress tasks
+                # No active workers and no pending/in-progress tasks - mark as complete
+                logger.info(f"Job {job_id} detected complete via worker shutdown (no active workers, no pending tasks)")
                 if progress['failed_tasks'] > 0:
-                    await checkpoint_manager.fail_job(
+                    await checkpoint_manager.complete_job(
                         job_id,
-                        f"Job completed with {progress['failed_tasks']} failed tasks"
+                        f"Completed with {progress['failed_tasks']} failed tasks out of {progress['total_tasks']} total tasks"
                     )
                 else:
                     await checkpoint_manager.complete_job(
                         job_id,
-                        "Job completed successfully"
+                        f"Successfully completed {progress['completed_tasks']} tasks"
                     )
+                
+                # Ensure all worker processes are terminated
+                logger.info(f"Terminating any remaining worker processes for job {job_id}")
+                await _signal_workers_cancel(job_id)
                 break
 
-            # Wait before next check
-            await asyncio.sleep(10)
+            # Wait before next check (5 seconds for faster completion detection)
+            await asyncio.sleep(5)
 
     except Exception as e:
         await checkpoint_manager.fail_job(job_id, f"Monitoring failed: {str(e)}")

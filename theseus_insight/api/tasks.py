@@ -498,7 +498,7 @@ class TaskManager:
                     if k not in ["emailRecipients", "researchInterests", "profile_id", "profile_ids", "profile_tag", "profile_tags", "use_profile_recipients"]
                 },
                 generate_podcast=False,  # We handle podcast generation separately for now
-                data_path=os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus"),
+                data_path=os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"),
                 generate_email=True,
                 receiver_address_override=email_recipients,
                 verbose=True
@@ -779,7 +779,7 @@ class TaskManager:
             os.makedirs(export_dir, exist_ok=True)
 
             # Get database URL from environment
-            db_url = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
+            db_url = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
             
             # Parse timestamp if provided
             parsed_timestamp = None
@@ -889,7 +889,7 @@ class TaskManager:
             )
             
             # Initialize importer
-            db_url = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/theseus")
+            db_url = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
             print(f"DEBUG: Initializing DatabaseImporter with db_url: {db_url}")
             importer = DatabaseImporter(db_url)
             

@@ -65,6 +65,7 @@ class JudgeWorker:
         self.running = False
         self.tasks_processed = 0
         self.consecutive_failures = 0
+        self.consecutive_empty_checks = 0  # Track empty queue checks
         self.last_health_check = 0
         self.server_healthy = True
         
@@ -176,11 +177,19 @@ class JudgeWorker:
                         if self.consecutive_failures >= 3:
                             logger.info(f"Worker recovered after {self.consecutive_failures} consecutive failures")
                         
-                        # Reset consecutive failures on success
+                        # Reset consecutive failures and empty checks on success
                         self.consecutive_failures = 0
+                        self.consecutive_empty_checks = 0
                     else:
-                        # No tasks available
-                        logger.debug(f"No tasks available for {self.server_url}, sleeping 5s")
+                        # No tasks available - increment counter
+                        self.consecutive_empty_checks += 1
+                        logger.debug(f"No tasks available for {self.server_url} (check {self.consecutive_empty_checks}/6)")
+                        
+                        # Exit gracefully if queue has been empty for too long
+                        if self.consecutive_empty_checks >= 6:
+                            logger.info(f"Worker {self.worker_id}: No tasks found after {self.consecutive_empty_checks} checks. All work appears done - exiting gracefully.")
+                            break
+                        
                         time.sleep(5)
                         
                 except KeyboardInterrupt:

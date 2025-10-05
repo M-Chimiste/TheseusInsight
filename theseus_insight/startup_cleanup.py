@@ -96,16 +96,68 @@ async def _cleanup_stuck_jobs_in_database():
     """
     Clean up stuck jobs in the database on startup.
     
-    Marks all running/pending resource-intensive jobs as failed since they
-    were interrupted by a server restart or crash.
+    1. Auto-completes jobs that are 100% done but stuck in "running" status
+    2. Marks interrupted jobs as failed since they were terminated by restart/crash
     """
     try:
         print("🧹 Cleaning up stuck jobs in database...")
         
         pool = await get_connection_pool()
         async with pool.acquire() as conn:
-            # Mark any running/pending resource-intensive jobs as failed
-            # This includes bulk_judge, harvest_judge, newsletters, mindmaps, podcasts
+            # First, auto-complete multi-server bulk judge jobs that are 100% done
+            # Check judge_task_queue to see if all tasks are completed
+            completed_jobs = await conn.fetch(
+                """
+                WITH job_progress AS (
+                    SELECT 
+                        job_id,
+                        COUNT(*) as total_tasks,
+                        COUNT(*) FILTER (WHERE status = 'completed') as completed_tasks,
+                        COUNT(*) FILTER (WHERE status IN ('pending', 'leased', 'in_progress')) as active_tasks
+                    FROM judge_task_queue
+                    GROUP BY job_id
+                )
+                SELECT 
+                    pj.id,
+                    jp.total_tasks,
+                    jp.completed_tasks,
+                    pj.job_type
+                FROM processing_jobs pj
+                INNER JOIN job_progress jp ON pj.id = jp.job_id
+                WHERE pj.status = 'running'
+                AND pj.job_type = 'bulk_judge'
+                AND jp.completed_tasks >= jp.total_tasks
+                AND jp.total_tasks > 0
+                AND jp.active_tasks = 0
+                """
+            )
+            
+            if completed_jobs:
+                print(f"🎉 Found {len(completed_jobs)} completed jobs stuck in 'running' status")
+                for job in completed_jobs:
+                    await conn.execute(
+                        """
+                        UPDATE processing_jobs 
+                        SET status = 'completed',
+                            error_message = NULL,
+                            completed_at = NOW()
+                        WHERE id = $1
+                        """,
+                        job['id']
+                    )
+                    print(f"✅ Auto-completed job {job['id']}: {job['completed_tasks']}/{job['total_tasks']} tasks")
+                
+                # Terminate worker processes for these completed jobs
+                from .api.routers.bulk_operations import _signal_workers_cancel
+                for job in completed_jobs:
+                    try:
+                        await _signal_workers_cancel(job['id'])
+                        print(f"🛑 Terminated workers for completed job {job['id']}")
+                    except Exception as e:
+                        print(f"⚠️  Could not terminate workers for job {job['id']}: {e}")
+            
+            # Mark any OTHER running/pending resource-intensive jobs as failed
+            # (These are jobs that were truly interrupted by restart)
             result = await conn.execute(
                 """
                 UPDATE processing_jobs 
@@ -121,9 +173,7 @@ async def _cleanup_stuck_jobs_in_database():
             # Extract number of rows updated
             jobs_cleaned = result.split()[-1] if result else "0"
             if jobs_cleaned != "0":
-                print(f"🧹 Marked {jobs_cleaned} stuck jobs as failed")
-            else:
-                print("✅ No stuck jobs found")
+                print(f"🧹 Marked {jobs_cleaned} interrupted jobs as failed")
             
             # Clear task queue of leased/in-progress items
             await conn.execute(

@@ -584,13 +584,19 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
     from ...data_access.judge_task_queue import JudgeTaskQueueRepository
     from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
 
+    logger.info(f"🎯 Monitor started for job {job_id}")
+
     try:
         queue_repo = JudgeTaskQueueRepository()
         heartbeat_repo = WorkerHeartbeatsRepository()
 
+        iteration = 0
         while True:
+            iteration += 1
             # Get job progress
             progress = queue_repo.get_job_progress(job_id)
+            
+            logger.debug(f"Monitor iteration {iteration} for job {job_id}: progress={progress}")
 
             if progress:
                 # Update job progress
@@ -601,8 +607,16 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
                 )
 
                 # Check if job is complete
-                if progress['completed_tasks'] >= progress['total_tasks']:
+                completed = progress.get('completed_tasks', 0)
+                total = progress.get('total_tasks', 0)
+                pending = progress.get('pending_tasks', 0)
+                in_prog = progress.get('in_progress_tasks', 0)
+                
+                logger.info(f"📊 Job {job_id} progress: {completed}/{total} completed, {pending} pending, {in_prog} in-progress")
+                
+                if completed >= total and total > 0:
                     # Mark job as complete and terminate workers
+                    logger.info(f"✅ Job {job_id} COMPLETE: {completed}/{total} tasks finished")
                     if progress['failed_tasks'] > 0:
                         # Mark job as completed with failures
                         await checkpoint_manager.complete_job(
@@ -617,15 +631,18 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
                         )
                     
                     # Terminate all worker processes for this job
-                    logger.info(f"Job {job_id} complete - terminating worker processes")
+                    logger.info(f"🛑 Terminating worker processes for completed job {job_id}")
                     await _signal_workers_cancel(job_id)
+                    logger.info(f"🎉 Job {job_id} monitoring complete - exiting monitor loop")
                     break
 
             # Check for active workers - fallback completion detection
             active_workers = heartbeat_repo.get_active_workers(job_id)
+            logger.debug(f"Active workers for job {job_id}: {len(active_workers) if active_workers else 0}")
+            
             if not active_workers and progress and progress['pending_tasks'] == 0 and progress['in_progress_tasks'] == 0:
                 # No active workers and no pending/in-progress tasks - mark as complete
-                logger.info(f"Job {job_id} detected complete via worker shutdown (no active workers, no pending tasks)")
+                logger.info(f"✅ Job {job_id} detected complete via worker shutdown (no active workers, no pending tasks)")
                 if progress['failed_tasks'] > 0:
                     await checkpoint_manager.complete_job(
                         job_id,
@@ -638,15 +655,20 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
                     )
                 
                 # Ensure all worker processes are terminated
-                logger.info(f"Terminating any remaining worker processes for job {job_id}")
+                logger.info(f"🛑 Terminating any remaining worker processes for job {job_id}")
                 await _signal_workers_cancel(job_id)
+                logger.info(f"🎉 Job {job_id} monitoring complete - exiting monitor loop")
                 break
 
             # Wait before next check (5 seconds for faster completion detection)
             await asyncio.sleep(5)
 
     except Exception as e:
-        await checkpoint_manager.fail_job(job_id, f"Monitoring failed: {str(e)}")
+        logger.error(f"❌ Monitor for job {job_id} crashed: {e}", exc_info=True)
+        try:
+            await checkpoint_manager.fail_job(job_id, f"Monitoring failed: {str(e)}")
+        except Exception as fail_error:
+            logger.error(f"Failed to mark job as failed: {fail_error}")
         raise
 
 # API endpoints
@@ -1097,34 +1119,158 @@ async def pause_job(job_id: UUID) -> Dict[str, Any]:
         )
 
 @router.post("/job/{job_id}/resume", response_model=Dict[str, Any])
-async def resume_job(job_id: UUID) -> Dict[str, Any]:
+async def resume_job(
+    job_id: UUID,
+    background_tasks: BackgroundTasks
+) -> Dict[str, Any]:
     """Resume a paused bulk judge job."""
     pool = await get_connection_pool()
     checkpoint_manager = CheckpointManager(pool)
 
     try:
-        # Update job status to running
+        # Get job configuration
         async with pool.acquire() as conn:
+            job_row = await conn.fetchrow(
+                "SELECT configuration FROM processing_jobs WHERE id = $1",
+                job_id
+            )
+            
+            if not job_row:
+                raise HTTPException(status_code=404, detail="Job not found")
+            
+            configuration = job_row['configuration']
+            
+            # Update job status to running
             await conn.execute(
                 "UPDATE processing_jobs SET status = 'running' WHERE id = $1",
                 job_id
             )
 
-        # For multi-server jobs, signal workers to resume
+        # For multi-server jobs, restart workers and monitoring
         if await _is_multi_server_job(job_id, pool):
-            await _signal_workers_resume(job_id)
+            logger.info(f"🔄 Resuming multi-server job {job_id}")
+            
+            from ...data_access.ollama_servers import OllamaServersRepository
+            server_repo = OllamaServersRepository()
+            
+            # Get selected servers from configuration, or use all enabled servers as fallback
+            selected_servers = []
+            if configuration and isinstance(configuration, dict):
+                server_configs = configuration.get('selected_servers', [])
+                
+                if server_configs:
+                    # Reconstruct server objects from saved configuration
+                    for server_cfg in server_configs:
+                        # Create a simple object with the needed attributes
+                        class ServerObj:
+                            def __init__(self, id, name, url):
+                                self.id = id
+                                self.name = name
+                                self.url = url
+                        
+                        selected_servers.append(ServerObj(
+                            server_cfg['id'],
+                            server_cfg['name'],
+                            server_cfg['url']
+                        ))
+                    logger.info(f"📋 Using {len(selected_servers)} servers from job configuration")
+            
+            # Fallback: use all currently enabled servers if no servers in config
+            if not selected_servers:
+                logger.warning(f"No servers found in job configuration, using all enabled servers as fallback")
+                selected_servers = server_repo.get_enabled()
+                
+                if not selected_servers:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No enabled Ollama servers found. Please enable servers in Settings before resuming."
+                    )
+                
+                logger.info(f"📋 Using {len(selected_servers)} enabled servers as fallback")
+            
+            # Relaunch worker processes
+            request_timeout = configuration.get('request_timeout_sec', 300) if configuration and isinstance(configuration, dict) else 300
+            max_retries = configuration.get('max_retries', 3) if configuration and isinstance(configuration, dict) else 3
+            
+            logger.info(f"🚀 Relaunching {len(selected_servers)} workers for job {job_id}")
+            await _launch_worker_processes(job_id, selected_servers, request_timeout, max_retries)
+            
+            # Restart monitoring task in background
+            logger.info(f"👁️ Restarting monitoring for job {job_id}")
+            background_tasks.add_task(
+                _monitor_multi_server_job,
+                job_id,
+                checkpoint_manager
+            )
+            
+            return {
+                "success": True,
+                "job_id": str(job_id),
+                "status": "running",
+                "message": f"Job resumed with {len(selected_servers)} workers and monitoring restarted"
+            }
+        else:
+            # Single-server jobs don't support pause/resume yet
+            return {
+                "success": True,
+                "job_id": str(job_id),
+                "status": "running",
+                "message": "Job status updated to running (single-server jobs cannot be fully resumed)"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resume job {job_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resume job: {str(e)}"
+        )
+
+@router.post("/job/{job_id}/force-complete", response_model=Dict[str, Any])
+async def force_complete_job(job_id: UUID) -> Dict[str, Any]:
+    """Force a stuck job to complete status and terminate workers."""
+    from ...data_access.judge_task_queue import JudgeTaskQueueRepository
+    
+    pool = await get_connection_pool()
+    checkpoint_manager = CheckpointManager(pool)
+
+    try:
+        # Get current queue status
+        queue_repo = JudgeTaskQueueRepository()
+        progress = queue_repo.get_job_progress(job_id)
+        
+        if not progress:
+            raise HTTPException(status_code=404, detail="Job progress not found")
+        
+        # Mark job as completed
+        await checkpoint_manager.complete_job(
+            job_id,
+            f"Force completed: {progress['completed_tasks']}/{progress['total_tasks']} tasks, "
+            f"{progress['failed_tasks']} failed"
+        )
+        
+        # Terminate all worker processes
+        if await _is_multi_server_job(job_id, pool):
+            await _signal_workers_cancel(job_id)
+        
+        # Restore suspended tasks
+        await _restore_scheduled_tasks_on_cancel(job_id, pool)
 
         return {
             "success": True,
             "job_id": str(job_id),
-            "status": "running",
-            "message": "Job resumed successfully"
+            "status": "completed",
+            "message": f"Job force completed: {progress['completed_tasks']}/{progress['total_tasks']} tasks",
+            "progress": progress
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to resume job: {str(e)}"
+            detail=f"Failed to force complete job: {str(e)}"
         )
 
 @router.post("/job/{job_id}/cancel", response_model=Dict[str, Any])

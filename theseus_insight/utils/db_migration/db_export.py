@@ -1341,6 +1341,12 @@ class DatabaseExporter:
         include_papers: bool = True,
         include_fulltext: bool = True,
         include_topics: bool = False,
+        include_newsletters: bool = False,
+        include_podcasts: bool = False,
+        include_lit_reviews: bool = False,
+        include_research_runs: bool = False,
+        include_mindmap_reports: bool = False,
+        include_model_catalog: bool = False,
         progress_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
@@ -1352,6 +1358,12 @@ class DatabaseExporter:
             include_papers: Include papers scored by this profile
             include_fulltext: Include paper fulltext content
             include_topics: Include topic relationships
+            include_newsletters: Include newsletters
+            include_podcasts: Include podcasts
+            include_lit_reviews: Include literature reviews
+            include_research_runs: Include research runs
+            include_mindmap_reports: Include mindmap reports
+            include_model_catalog: Include model catalog
             progress_callback: Optional progress callback
 
         Returns:
@@ -1693,6 +1705,159 @@ class DatabaseExporter:
 
                         result["files"]["topics"] = str(topics_file)
                         result["tables_included"].append("topics")
+
+        # Export optional global tables
+        if include_newsletters:
+            newsletters_data = []
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, title, content, date_run, created_at
+                    FROM newsletters
+                    ORDER BY date_run DESC
+                """)
+                for row in cursor.fetchall():
+                    newsletters_data.append({
+                        'id': row['id'],
+                        'title': row['title'],
+                        'content': row['content'],
+                        'date_run': row['date_run'].isoformat() if row['date_run'] else None,
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                    })
+
+            if newsletters_data:
+                newsletters_file = self.output_dir / "newsletters.json"
+                with open(newsletters_file, 'w', encoding='utf-8') as f:
+                    json.dump(newsletters_data, f, indent=2, ensure_ascii=False)
+                result["files"]["newsletters"] = str(newsletters_file)
+                result["tables_included"].append("newsletters")
+
+        if include_podcasts:
+            podcasts_data = []
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, title, script, audio_path, date_run, created_at
+                    FROM podcasts
+                    ORDER BY date_run DESC
+                """)
+                for row in cursor.fetchall():
+                    podcasts_data.append({
+                        'id': row['id'],
+                        'title': row['title'],
+                        'script': row['script'],
+                        'audio_path': row['audio_path'],
+                        'date_run': row['date_run'].isoformat() if row['date_run'] else None,
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                    })
+
+            if podcasts_data:
+                podcasts_file = self.output_dir / "podcasts.json"
+                with open(podcasts_file, 'w', encoding='utf-8') as f:
+                    json.dump(podcasts_data, f, indent=2, ensure_ascii=False)
+                result["files"]["podcasts"] = str(podcasts_file)
+                result["tables_included"].append("podcasts")
+
+        if include_lit_reviews:
+            lit_reviews_data = []
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, title, content, date_run, created_at
+                    FROM lit_reviews
+                    ORDER BY date_run DESC
+                """)
+                for row in cursor.fetchall():
+                    lit_reviews_data.append({
+                        'id': row['id'],
+                        'title': row['title'],
+                        'content': row['content'],
+                        'date_run': row['date_run'].isoformat() if row['date_run'] else None,
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                    })
+
+            if lit_reviews_data:
+                lit_reviews_file = self.output_dir / "literature_reviews.json"
+                with open(lit_reviews_file, 'w', encoding='utf-8') as f:
+                    json.dump(lit_reviews_data, f, indent=2, ensure_ascii=False)
+                result["files"]["literature_reviews"] = str(lit_reviews_file)
+                result["tables_included"].append("literature_reviews")
+
+        if include_research_runs:
+            research_runs_data = []
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, query, status, results, created_at, updated_at, config
+                    FROM research_runs
+                    ORDER BY created_at DESC
+                """)
+                for row in cursor.fetchall():
+                    research_runs_data.append({
+                        'id': row['id'],
+                        'query': row['query'],
+                        'status': row['status'],
+                        'results': row['results'],
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                        'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None,
+                        'config': row['config']
+                    })
+
+            if research_runs_data:
+                research_runs_file = self.output_dir / "research_runs.json"
+                with open(research_runs_file, 'w', encoding='utf-8') as f:
+                    json.dump(research_runs_data, f, indent=2, ensure_ascii=False)
+                result["files"]["research_runs"] = str(research_runs_file)
+                result["tables_included"].append("research_runs")
+
+        if include_mindmap_reports:
+            mindmap_reports_data = []
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, title, content, date_run, created_at
+                    FROM mindmap_reports
+                    ORDER BY date_run DESC
+                """)
+                for row in cursor.fetchall():
+                    mindmap_reports_data.append({
+                        'id': row['id'],
+                        'title': row['title'],
+                        'content': row['content'],
+                        'date_run': row['date_run'].isoformat() if row['date_run'] else None,
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                    })
+
+            if mindmap_reports_data:
+                mindmap_reports_file = self.output_dir / "mindmap_reports.json"
+                with open(mindmap_reports_file, 'w', encoding='utf-8') as f:
+                    json.dump(mindmap_reports_data, f, indent=2, ensure_ascii=False)
+                result["files"]["mindmap_reports"] = str(mindmap_reports_file)
+                result["tables_included"].append("mindmap_reports")
+
+        if include_model_catalog:
+            model_catalog_data = []
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, name, provider, model_id, context_window, pricing, capabilities, metadata, created_at, updated_at
+                    FROM model_catalog
+                    ORDER BY provider, name
+                """)
+                for row in cursor.fetchall():
+                    model_catalog_data.append({
+                        'id': row['id'],
+                        'name': row['name'],
+                        'provider': row['provider'],
+                        'model_id': row['model_id'],
+                        'context_window': row['context_window'],
+                        'pricing': row['pricing'],
+                        'capabilities': row['capabilities'],
+                        'metadata': row['metadata'],
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                        'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                    })
+
+            if model_catalog_data:
+                model_catalog_file = self.output_dir / "model_catalog.json"
+                with open(model_catalog_file, 'w', encoding='utf-8') as f:
+                    json.dump(model_catalog_data, f, indent=2, ensure_ascii=False)
+                result["files"]["model_catalog"] = str(model_catalog_file)
+                result["tables_included"].append("model_catalog")
 
         # Create v6.0 metadata
         metadata = {

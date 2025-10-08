@@ -272,7 +272,13 @@ const Settings: React.FC = () => {
   const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
   const [profileExportOptions, setProfileExportOptions] = useState({
     include_fulltext: true,
-    include_topics: false
+    include_topics: false,
+    include_newsletters: false,
+    include_podcasts: false,
+    include_lit_reviews: false,
+    include_research_runs: false,
+    include_mindmap_reports: false,
+    include_model_catalog: false
   });
 
   // Research Agent Configuration State
@@ -322,7 +328,7 @@ const Settings: React.FC = () => {
   const { data: researchProfiles } = useQuery({
     queryKey: ['researchProfilesForExport'],
     queryFn: async () => {
-      const response = await fetch('/api/research-profiles');
+      const response = await fetch('/api/profiles');
       if (!response.ok) throw new Error('Failed to fetch profiles');
       return response.json();
     }
@@ -394,6 +400,12 @@ const Settings: React.FC = () => {
         options.profile_id = selectedProfileId;
         options.include_fulltext = profileExportOptions.include_fulltext;
         options.include_topics = profileExportOptions.include_topics;
+        options.include_newsletters = profileExportOptions.include_newsletters;
+        options.include_podcasts = profileExportOptions.include_podcasts;
+        options.include_lit_reviews = profileExportOptions.include_lit_reviews;
+        options.include_research_runs = profileExportOptions.include_research_runs;
+        options.include_mindmap_reports = profileExportOptions.include_mindmap_reports;
+        options.include_model_catalog = profileExportOptions.include_model_catalog;
         options.streaming = exportOptions.streaming;
       } else if (exportMode === 'incremental') {
         options.incremental = true;
@@ -2327,7 +2339,7 @@ const Settings: React.FC = () => {
                       label="Select Research Profile"
                       onChange={(e) => setSelectedProfileId(e.target.value as number)}
                     >
-                      {researchProfiles?.profiles?.map((profile: any) => (
+                      {researchProfiles?.map((profile: any) => (
                         <MenuItem key={profile.id} value={profile.id}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <Box
@@ -2381,6 +2393,126 @@ const Settings: React.FC = () => {
                           <Typography variant="body2">Include Topic Relationships</Typography>
                           <Typography variant="caption" color="text.secondary">
                             Export topic classifications and relationships
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_newsletters}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_newsletters: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Newsletters</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export all newsletters
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_podcasts}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_podcasts: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Podcasts</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export all podcast episodes
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_lit_reviews}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_lit_reviews: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Literature Reviews</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export all literature reviews
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_research_runs}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_research_runs: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Research Runs</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export research agent runs
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_mindmap_reports}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_mindmap_reports: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Mindmap Reports</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export mindmap reports
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_model_catalog}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_model_catalog: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Model Catalog</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export model catalog configuration
                           </Typography>
                         </Box>
                       }
@@ -2589,7 +2721,7 @@ const Settings: React.FC = () => {
                             label="Target Profile"
                             onChange={(e) => setImportMergeToProfileId(e.target.value as number)}
                           >
-                            {researchProfiles?.profiles?.map((profile: any) => (
+                            {researchProfiles?.map((profile: any) => (
                               <MenuItem key={profile.id} value={profile.id}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                   <Box

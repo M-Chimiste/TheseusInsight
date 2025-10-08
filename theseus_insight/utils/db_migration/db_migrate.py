@@ -42,6 +42,12 @@ class DatabaseMigrator:
         profile_name: str = None,
         include_fulltext: bool = True,
         include_topics: bool = False,
+        include_newsletters: bool = False,
+        include_podcasts: bool = False,
+        include_lit_reviews: bool = False,
+        include_research_runs: bool = False,
+        include_mindmap_reports: bool = False,
+        include_model_catalog: bool = False,
         streaming: bool = False
     ) -> Dict[str, Any]:
         """
@@ -75,7 +81,13 @@ class DatabaseMigrator:
                     profile_name=profile_name,
                     include_papers=True,
                     include_fulltext=include_fulltext,
-                    include_topics=include_topics
+                    include_topics=include_topics,
+                    include_newsletters=include_newsletters,
+                    include_podcasts=include_podcasts,
+                    include_lit_reviews=include_lit_reviews,
+                    include_research_runs=include_research_runs,
+                    include_mindmap_reports=include_mindmap_reports,
+                    include_model_catalog=include_model_catalog
                 )
 
                 # Create archive from the exported files
@@ -355,6 +367,12 @@ def main():
     export_parser.add_argument("--profile-name", help="Export specific profile by name (profile-scoped export)")
     export_parser.add_argument("--include-fulltext", action="store_true", default=True, help="Include paper fulltext (profile-scoped export)")
     export_parser.add_argument("--include-topics", action="store_true", help="Include topic relationships (profile-scoped export)")
+    export_parser.add_argument("--include-newsletters", action="store_true", help="Include newsletters (profile-scoped export)")
+    export_parser.add_argument("--include-podcasts", action="store_true", help="Include podcasts (profile-scoped export)")
+    export_parser.add_argument("--include-lit-reviews", action="store_true", help="Include literature reviews (profile-scoped export)")
+    export_parser.add_argument("--include-research-runs", action="store_true", help="Include research runs (profile-scoped export)")
+    export_parser.add_argument("--include-mindmap-reports", action="store_true", help="Include mindmap reports (profile-scoped export)")
+    export_parser.add_argument("--include-model-catalog", action="store_true", help="Include model catalog (profile-scoped export)")
     export_parser.add_argument("--streaming", action="store_true", help="Use streaming mode for large datasets")
     
     # Import command
@@ -403,6 +421,12 @@ def main():
                 profile_name=args.profile_name if hasattr(args, 'profile_name') else None,
                 include_fulltext=args.include_fulltext if hasattr(args, 'include_fulltext') else True,
                 include_topics=args.include_topics if hasattr(args, 'include_topics') else False,
+                include_newsletters=args.include_newsletters if hasattr(args, 'include_newsletters') else False,
+                include_podcasts=args.include_podcasts if hasattr(args, 'include_podcasts') else False,
+                include_lit_reviews=args.include_lit_reviews if hasattr(args, 'include_lit_reviews') else False,
+                include_research_runs=args.include_research_runs if hasattr(args, 'include_research_runs') else False,
+                include_mindmap_reports=args.include_mindmap_reports if hasattr(args, 'include_mindmap_reports') else False,
+                include_model_catalog=args.include_model_catalog if hasattr(args, 'include_model_catalog') else False,
                 streaming=args.streaming if hasattr(args, 'streaming') else False
             )
             print(f"\nExport completed successfully!")

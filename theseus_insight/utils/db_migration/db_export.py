@@ -66,7 +66,7 @@ class DatabaseExporter:
         self.max_workers = max_workers
         self.incremental = incremental
         self.since_timestamp = since_timestamp
-        self.export_version = "5.2"  # Updated version with incremental support
+        self.export_version = "6.0"  # Updated version with profile-scoped export support
         
     def _stream_table_data(self, table_name: str, query: str, params: tuple = None) -> Iterator[tuple[List[Dict], int]]:
         """
@@ -1320,19 +1320,413 @@ class DatabaseExporter:
     def export_tables_parallel(self, tables: List[str], progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """
         Export tables in parallel for improved performance.
-        
+
         Args:
             tables: List of tables to export
             progress_callback: Optional progress callback
-            
+
         Returns:
             Export results
         """
         if not self.parallel:
             raise RuntimeError("Parallel processing is not enabled")
-            
+
         parallel_exporter = ParallelExporter(self, self.max_workers)
         return parallel_exporter.export_tables_parallel(tables, progress_callback)
+
+    def export_profile_scoped(
+        self,
+        profile_id: int = None,
+        profile_name: str = None,
+        include_papers: bool = True,
+        include_fulltext: bool = True,
+        include_topics: bool = False,
+        progress_callback: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Export a single profile with all related data.
+
+        Args:
+            profile_id: Profile ID to export (mutually exclusive with profile_name)
+            profile_name: Profile name to export (mutually exclusive with profile_id)
+            include_papers: Include papers scored by this profile
+            include_fulltext: Include paper fulltext content
+            include_topics: Include topic relationships
+            progress_callback: Optional progress callback
+
+        Returns:
+            Export results with profile mapping metadata
+        """
+        if not profile_id and not profile_name:
+            raise ValueError("Either profile_id or profile_name must be provided")
+
+        if profile_id and profile_name:
+            raise ValueError("Provide either profile_id or profile_name, not both")
+
+        print(f"Starting profile-scoped export for profile: {profile_id or profile_name}")
+
+        # Get profile data
+        with get_cursor() as cursor:
+            if profile_id:
+                cursor.execute("""
+                    SELECT id, name, description, color, tags, email_recipients,
+                           arxiv_filters, is_active, is_default, created_at, updated_at
+                    FROM research_profiles WHERE id = %s
+                """, (profile_id,))
+            else:
+                cursor.execute("""
+                    SELECT id, name, description, color, tags, email_recipients,
+                           arxiv_filters, is_active, is_default, created_at, updated_at
+                    FROM research_profiles WHERE name = %s
+                """, (profile_name,))
+
+            profile_row = cursor.fetchone()
+            if not profile_row:
+                raise ValueError(f"Profile not found: {profile_id or profile_name}")
+
+            # Use the actual profile ID from the database
+            actual_profile_id = profile_row['id']
+
+            # Parse JSON fields
+            def safe_json_parse(json_data):
+                if json_data:
+                    try:
+                        return json.loads(json_data) if isinstance(json_data, str) else json_data
+                    except:
+                        return json_data
+                return None
+
+            profile_data = {
+                'id': profile_row['id'],
+                'name': profile_row['name'],
+                'description': profile_row['description'],
+                'color': profile_row['color'],
+                'tags': safe_json_parse(profile_row['tags']) or [],
+                'email_recipients': safe_json_parse(profile_row['email_recipients']) or [],
+                'arxiv_filters': safe_json_parse(profile_row['arxiv_filters']) or {},
+                'is_active': bool(profile_row['is_active']) if profile_row['is_active'] is not None else True,
+                'is_default': bool(profile_row['is_default']) if profile_row['is_default'] is not None else False,
+                'created_at': profile_row['created_at'].isoformat() if profile_row['created_at'] else None,
+                'updated_at': profile_row['updated_at'].isoformat() if profile_row['updated_at'] else None
+            }
+
+        # Save profile data
+        output_file = self.output_dir / "research_profiles.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump([profile_data], f, indent=2, ensure_ascii=False)
+
+        result = {
+            "files": {
+                "research_profiles": str(output_file)
+            },
+            "profile_mapping": {
+                "source_profile_id": actual_profile_id,
+                "source_profile_name": profile_data['name'],
+                "source_profile_color": profile_data['color']
+            },
+            "tables_included": ["research_profiles"]
+        }
+
+        # Export profile research interests
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, profile_id, interest_text, embedding, embedding_model, created_at, updated_at
+                FROM profile_research_interests WHERE profile_id = %s
+            """, (actual_profile_id,))
+            interests_rows = cursor.fetchall()
+
+            interests = []
+            for row in interests_rows:
+                # Handle embedding conversion
+                embedding = None
+                if row['embedding']:
+                    try:
+                        if isinstance(row['embedding'], str):
+                            embedding = json.loads(row['embedding'])
+                        elif hasattr(row['embedding'], 'tolist'):
+                            embedding = row['embedding'].tolist()
+                        elif isinstance(row['embedding'], (list, tuple)):
+                            embedding = list(row['embedding'])
+                    except Exception as e:
+                        logger.warning(f"Could not convert embedding for profile interest {row['id']}: {e}")
+                        embedding = None
+
+                interests.append({
+                    'id': row['id'],
+                    'profile_id': row['profile_id'],
+                    'interest_text': row['interest_text'],
+                    'embedding': embedding,
+                    'embedding_model': row['embedding_model'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                })
+
+        interests_file = self.output_dir / "profile_research_interests.json"
+        with open(interests_file, 'w', encoding='utf-8') as f:
+            json.dump(interests, f, indent=2, ensure_ascii=False)
+
+        result["files"]["profile_research_interests"] = str(interests_file)
+        result["tables_included"].append("profile_research_interests")
+
+        # Get paper IDs scored by this profile
+        if include_papers:
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT paper_id FROM paper_profile_scores WHERE profile_id = %s
+                """, (actual_profile_id,))
+                paper_ids = [row['paper_id'] for row in cursor.fetchall()]
+
+            result["profile_mapping"]["papers_exported"] = len(paper_ids)
+            result["profile_mapping"]["export_includes_all_papers"] = False
+            result["profile_mapping"]["paper_selection_criteria"] = "all papers scored by this profile"
+
+            if paper_ids:
+                # Export papers scored by this profile using streaming
+                paper_ids_str = ','.join(str(pid) for pid in paper_ids)
+
+                # Build papers query
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'papers' AND table_schema = 'public'
+                    """)
+                    existing_columns = {row['column_name'] for row in cursor.fetchall()}
+
+                columns = ['id', 'title', 'abstract', 'date', 'date_run', 'score', 'rationale',
+                          'related', 'cosine_similarity', 'url', 'embedding_model', 'embedding']
+
+                if 'text' in existing_columns:
+                    columns.append('text')
+                if 'summary' in existing_columns:
+                    columns.append('summary')
+                if 'keywords_json' in existing_columns:
+                    columns.append('keywords_json')
+                if 'fulltext_extraction_status' in existing_columns:
+                    columns.append('fulltext_extraction_status')
+                if 'downloaded_pdf_path' in existing_columns:
+                    columns.append('downloaded_pdf_path')
+
+                column_str = ', '.join(columns)
+                query = f"SELECT {column_str} FROM papers WHERE id IN ({paper_ids_str}) ORDER BY id DESC"
+
+                # Use streaming export for papers
+                if self.streaming:
+                    papers_stats = self.export_table_streaming(
+                        "papers",
+                        query,
+                        "papers.json",
+                        progress_callback=progress_callback
+                    )
+                    result["files"]["papers"] = str(self.output_dir / "papers.json")
+                else:
+                    # Non-streaming fallback
+                    with get_cursor() as cursor:
+                        cursor.execute(query)
+                        rows = cursor.fetchall()
+
+                        papers = []
+                        for row in rows:
+                            # Convert special types
+                            converted_row = self._convert_special_types(row)
+                            papers.append(converted_row)
+
+                    papers_file = self.output_dir / "papers.json"
+                    with open(papers_file, 'w', encoding='utf-8') as f:
+                        json.dump(papers, f, indent=2, ensure_ascii=False)
+
+                    result["files"]["papers"] = str(papers_file)
+
+                result["tables_included"].append("papers")
+
+                # Export paper_profile_scores for this profile
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT id, paper_id, profile_id, score, related, rationale,
+                               date_scored, judge_model
+                        FROM paper_profile_scores
+                        WHERE profile_id = %s AND paper_id IN ({})
+                    """.format(paper_ids_str), (actual_profile_id,))
+                    scores_rows = cursor.fetchall()
+
+                    scores = []
+                    for row in scores_rows:
+                        scores.append({
+                            'id': row['id'],
+                            'paper_id': row['paper_id'],
+                            'profile_id': row['profile_id'],
+                            'score': row['score'],
+                            'related': bool(row['related']) if row['related'] is not None else None,
+                            'rationale': row['rationale'],
+                            'date_scored': row['date_scored'].isoformat() if row['date_scored'] else None,
+                            'judge_model': row['judge_model']
+                        })
+
+                scores_file = self.output_dir / "paper_profile_scores.json"
+                with open(scores_file, 'w', encoding='utf-8') as f:
+                    json.dump(scores, f, indent=2, ensure_ascii=False)
+
+                result["files"]["paper_profile_scores"] = str(scores_file)
+                result["tables_included"].append("paper_profile_scores")
+
+                # Export paper fulltext if requested
+                if include_fulltext and paper_ids:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT id, paper_id, content, embedding, embedding_model, created_at, extraction_method, metadata
+                            FROM paper_fulltext
+                            WHERE paper_id IN ({})
+                        """.format(paper_ids_str))
+                        fulltext_rows = cursor.fetchall()
+
+                        fulltext_data = []
+                        for row in fulltext_rows:
+                            # Handle embedding conversion
+                            embedding = None
+                            if row['embedding']:
+                                try:
+                                    if isinstance(row['embedding'], str):
+                                        embedding = json.loads(row['embedding'])
+                                    elif hasattr(row['embedding'], 'tolist'):
+                                        embedding = row['embedding'].tolist()
+                                    elif isinstance(row['embedding'], (list, tuple)):
+                                        embedding = list(row['embedding'])
+                                except Exception as e:
+                                    logger.warning(f"Could not convert embedding for paper_id {row['paper_id']}: {e}")
+                                    embedding = None
+
+                            # Handle metadata JSON
+                            metadata = None
+                            if row['metadata']:
+                                try:
+                                    metadata = json.loads(row['metadata']) if isinstance(row['metadata'], str) else row['metadata']
+                                except:
+                                    metadata = row['metadata']
+
+                            fulltext_data.append({
+                                'id': row['id'],
+                                'paper_id': row['paper_id'],
+                                'content': row['content'],
+                                'embedding': embedding,
+                                'embedding_model': row['embedding_model'],
+                                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                                'extraction_method': row['extraction_method'],
+                                'metadata': metadata
+                            })
+
+                    fulltext_file = self.output_dir / "paper_fulltext.json"
+                    with open(fulltext_file, 'w', encoding='utf-8') as f:
+                        json.dump(fulltext_data, f, indent=2, ensure_ascii=False)
+
+                    result["files"]["paper_fulltext"] = str(fulltext_file)
+                    result["tables_included"].append("paper_fulltext")
+
+                # Export topics if requested
+                if include_topics and paper_ids:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT id, paper_id, topic_id, relevance_score, created_at
+                            FROM paper_topics
+                            WHERE paper_id IN ({})
+                        """.format(paper_ids_str))
+                        paper_topics_rows = cursor.fetchall()
+
+                        paper_topics = []
+                        for row in paper_topics_rows:
+                            paper_topics.append({
+                                'id': row['id'],
+                                'paper_id': row['paper_id'],
+                                'topic_id': row['topic_id'],
+                                'relevance_score': row['relevance_score'],
+                                'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                            })
+
+                    paper_topics_file = self.output_dir / "paper_topics.json"
+                    with open(paper_topics_file, 'w', encoding='utf-8') as f:
+                        json.dump(paper_topics, f, indent=2, ensure_ascii=False)
+
+                    result["files"]["paper_topics"] = str(paper_topics_file)
+                    result["tables_included"].append("paper_topics")
+
+                    # Also export the topics themselves
+                    topic_ids = list(set(pt['topic_id'] for pt in paper_topics))
+                    if topic_ids:
+                        topic_ids_str = ','.join(str(tid) for tid in topic_ids)
+
+                        with get_cursor() as cursor:
+                            cursor.execute("""
+                                SELECT id, label, keywords, centroid_embedding, embedding_model, created_at, updated_at
+                                FROM topics
+                                WHERE id IN ({})
+                            """.format(topic_ids_str))
+                            topics_rows = cursor.fetchall()
+
+                            topics = []
+                            for row in topics_rows:
+                                # Handle embedding conversion
+                                embedding = None
+                                if row['centroid_embedding']:
+                                    try:
+                                        if isinstance(row['centroid_embedding'], str):
+                                            embedding = json.loads(row['centroid_embedding'])
+                                        elif hasattr(row['centroid_embedding'], 'tolist'):
+                                            embedding = row['centroid_embedding'].tolist()
+                                        elif isinstance(row['centroid_embedding'], (list, tuple)):
+                                            embedding = list(row['centroid_embedding'])
+                                    except Exception as e:
+                                        logger.warning(f"Could not convert embedding for topic {row['id']}: {e}")
+                                        embedding = None
+
+                                topics.append({
+                                    'id': row['id'],
+                                    'label': row['label'],
+                                    'keywords': list(row['keywords']) if row['keywords'] else [],
+                                    'centroid_embedding': embedding,
+                                    'embedding_model': row['embedding_model'],
+                                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                                })
+
+                        topics_file = self.output_dir / "topics.json"
+                        with open(topics_file, 'w', encoding='utf-8') as f:
+                            json.dump(topics, f, indent=2, ensure_ascii=False)
+
+                        result["files"]["topics"] = str(topics_file)
+                        result["tables_included"].append("topics")
+
+        # Create v6.0 metadata
+        metadata = {
+            "export_version": "6.0",
+            "export_type": "profile_scoped",
+            "export_timestamp": datetime.datetime.now().isoformat(),
+            "source_database": {
+                "schema_version": "5.2"
+            },
+            "profile_mapping": result["profile_mapping"],
+            "tables_included": result["tables_included"],
+            "table_statistics": {
+                table: 1 if table == "research_profiles" else len(json.load(open(result["files"][table])))
+                for table in result["tables_included"]
+                if table in result["files"]
+            },
+            "import_hints": {
+                "profile_mapping_required": True,
+                "suggested_mapping_strategy": "auto",
+                "duplicate_handling": "skip_by_url"
+            },
+            "backward_compatible": True
+        }
+
+        metadata_file = self.output_dir / "metadata.json"
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2)
+
+        result["files"]["metadata"] = str(metadata_file)
+        result["export_type"] = "profile_scoped"
+        result["output_directory"] = str(self.output_dir)
+
+        print(f"Profile-scoped export completed: {len(result['tables_included'])} tables exported")
+        return result
     
     def export_all(
         self,

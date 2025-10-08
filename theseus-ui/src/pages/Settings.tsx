@@ -251,9 +251,14 @@ const Settings: React.FC = () => {
 
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
+
+  // Profile mapping options for import
+  const [importMappingStrategy, setImportMappingStrategy] = useState<'auto' | 'create_new' | 'merge_to' | 'match_by_name'>('auto');
+  const [importMergeToProfileId, setImportMergeToProfileId] = useState<number | null>(null);
+  const [importNewProfileName, setImportNewProfileName] = useState<string>('');
   
   // Incremental export state
-  const [exportMode, setExportMode] = useState<'full' | 'incremental'>('full');
+  const [exportMode, setExportMode] = useState<'full' | 'incremental' | 'profile'>('full');
   const [incrementalSince, setIncrementalSince] = useState<string>('');
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [exportOptions, setExportOptions] = useState({
@@ -261,6 +266,13 @@ const Settings: React.FC = () => {
     parallel: false,
     batch_size: 1000,
     max_workers: 4
+  });
+
+  // Profile-scoped export state
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
+  const [profileExportOptions, setProfileExportOptions] = useState({
+    include_fulltext: true,
+    include_topics: false
   });
 
   // Research Agent Configuration State
@@ -304,6 +316,16 @@ const Settings: React.FC = () => {
       page: 1,
       page_size: 100  // Maximum allowed by backend validation
     }).then(res => res.data),
+  });
+
+  // Query for research profiles (for profile-scoped export)
+  const { data: researchProfiles } = useQuery({
+    queryKey: ['researchProfilesForExport'],
+    queryFn: async () => {
+      const response = await fetch('/api/research-profiles');
+      if (!response.ok) throw new Error('Failed to fetch profiles');
+      return response.json();
+    }
   });
   
   const updateOrchestrationMutation = useMutation({
@@ -363,8 +385,17 @@ const Settings: React.FC = () => {
   const exportDatabaseMutation = useMutation({
     mutationFn: () => {
       const options: any = {};
-      
-      if (exportMode === 'incremental') {
+
+      if (exportMode === 'profile') {
+        // Profile-scoped export
+        if (!selectedProfileId) {
+          throw new Error('Please select a profile for profile-scoped export');
+        }
+        options.profile_id = selectedProfileId;
+        options.include_fulltext = profileExportOptions.include_fulltext;
+        options.include_topics = profileExportOptions.include_topics;
+        options.streaming = exportOptions.streaming;
+      } else if (exportMode === 'incremental') {
         options.incremental = true;
         if (incrementalSince) {
           // Convert date to ISO format with timezone
@@ -374,14 +405,19 @@ const Settings: React.FC = () => {
         if (selectedTables.length > 0) {
           options.tables = selectedTables;
         }
+        // Add performance options for incremental
+        options.streaming = exportOptions.streaming;
+        options.parallel = exportOptions.parallel;
+        options.batch_size = exportOptions.batch_size;
+        options.max_workers = exportOptions.max_workers;
+      } else {
+        // Full export - add performance options
+        options.streaming = exportOptions.streaming;
+        options.parallel = exportOptions.parallel;
+        options.batch_size = exportOptions.batch_size;
+        options.max_workers = exportOptions.max_workers;
       }
-      
-      // Add performance options
-      options.streaming = exportOptions.streaming;
-      options.parallel = exportOptions.parallel;
-      options.batch_size = exportOptions.batch_size;
-      options.max_workers = exportOptions.max_workers;
-      
+
       return settingsApi.startExportDatabase(options);
     },
     onMutate: () => {
@@ -458,8 +494,29 @@ const Settings: React.FC = () => {
   });
 
   const importDatabaseMutation = useMutation({
-    mutationFn: ({ file, mode }: { file: File; mode: 'merge' | 'overwrite' }) => 
-      settingsApi.importDatabase(file, mode),
+    mutationFn: ({ file, mode, mappingStrategy, mergeToProfileId, newProfileName }: {
+      file: File;
+      mode: 'merge' | 'overwrite';
+      mappingStrategy?: string;
+      mergeToProfileId?: number | null;
+      newProfileName?: string;
+    }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('mode', mode);
+
+      if (mappingStrategy) {
+        formData.append('mapping_strategy', mappingStrategy);
+      }
+      if (mergeToProfileId) {
+        formData.append('merge_to_profile_id', mergeToProfileId.toString());
+      }
+      if (newProfileName) {
+        formData.append('new_profile_name', newProfileName);
+      }
+
+      return settingsApi.importDatabase(file, mode);
+    },
     onMutate: () => {
       // Clear any previous errors
       setImportError(null);
@@ -789,7 +846,13 @@ const Settings: React.FC = () => {
 
   const handleDatabaseImport = () => {
     if (selectedImportFile) {
-      importDatabaseMutation.mutate({ file: selectedImportFile, mode: importMode });
+      importDatabaseMutation.mutate({
+        file: selectedImportFile,
+        mode: importMode,
+        mappingStrategy: importMappingStrategy,
+        mergeToProfileId: importMergeToProfileId,
+        newProfileName: importNewProfileName
+      });
     }
   };
 
@@ -2181,29 +2244,39 @@ const Settings: React.FC = () => {
               </Typography>
               
               {/* Export Mode Selection */}
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={exportMode === 'incremental'}
-                    onChange={(e) => setExportMode(e.target.checked ? 'incremental' : 'full')}
-                    color="primary"
-                  />
-                }
-                label={
-                  <Box>
-                    <Typography variant="body2" fontWeight={500}>
-                      Incremental Export
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {exportMode === 'full' 
-                        ? 'Full export - includes all data in the database'
-                        : 'Incremental export - only export changes since a specific date'
-                      }
-                    </Typography>
-                  </Box>
-                }
-                sx={{ mb: 2, display: 'block' }}
-              />
+              <FormControl fullWidth sx={{ mb: 2 }}>
+                <InputLabel>Export Mode</InputLabel>
+                <Select
+                  value={exportMode}
+                  label="Export Mode"
+                  onChange={(e) => setExportMode(e.target.value as 'full' | 'incremental' | 'profile')}
+                >
+                  <MenuItem value="full">
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>Full Export</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Export all data in the database
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="incremental">
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>Incremental Export</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Export only changes since a specific date
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="profile">
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>Profile-Scoped Export</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Export a specific research profile with its papers
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                </Select>
+              </FormControl>
               
               {/* Incremental Options */}
               {exportMode === 'incremental' && (
@@ -2217,7 +2290,7 @@ const Settings: React.FC = () => {
                     helperText="Leave empty to auto-detect from last export"
                     sx={{ mb: 2, width: '100%', maxWidth: 300 }}
                   />
-                  
+
                   <FormControl sx={{ mb: 2, width: '100%', maxWidth: 400 }}>
                     <InputLabel>Tables to export (optional)</InputLabel>
                     <Select
@@ -2226,7 +2299,7 @@ const Settings: React.FC = () => {
                       onChange={(e) => setSelectedTables(e.target.value as string[])}
                       renderValue={(selected) => selected.join(', ')}
                     >
-                      {['papers', 'research_runs', 'mindmap_reports', 'research_agent_state', 
+                      {['papers', 'research_runs', 'mindmap_reports', 'research_agent_state',
                         'paper_fulltext', 'topics', 'research_profiles', 'podcasts', 'newsletters'].map((table) => (
                         <MenuItem key={table} value={table}>
                           {table}
@@ -2234,6 +2307,92 @@ const Settings: React.FC = () => {
                       ))}
                     </Select>
                   </FormControl>
+                </Box>
+              )}
+
+              {/* Profile-Scoped Export Options */}
+              {exportMode === 'profile' && (
+                <Box sx={{ mb: 2, pl: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                  <Typography variant="body2" fontWeight={500} gutterBottom>
+                    Profile-Scoped Export Settings
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                    Export a single research profile with all its related data (papers, scores, interests)
+                  </Typography>
+
+                  <FormControl fullWidth sx={{ mb: 2 }}>
+                    <InputLabel>Select Research Profile</InputLabel>
+                    <Select
+                      value={selectedProfileId || ''}
+                      label="Select Research Profile"
+                      onChange={(e) => setSelectedProfileId(e.target.value as number)}
+                    >
+                      {researchProfiles?.profiles?.map((profile: any) => (
+                        <MenuItem key={profile.id} value={profile.id}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box
+                              sx={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: '50%',
+                                bgcolor: profile.color || '#888'
+                              }}
+                            />
+                            <Typography>{profile.name}</Typography>
+                          </Box>
+                        </MenuItem>
+                      )) || []}
+                    </Select>
+                  </FormControl>
+
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_fulltext}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_fulltext: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Full-text Content</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export full-text content for papers (if available)
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_topics}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_topics: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Topic Relationships</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export topic classifications and relationships
+                          </Typography>
+                        </Box>
+                      }
+                    />
+                  </Box>
+
+                  {selectedProfileId && (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                      This will export only the selected profile and papers scored by that profile.
+                      Use this to share or migrate specific research areas.
+                    </Alert>
+                  )}
                 </Box>
               )}
               
@@ -2367,7 +2526,102 @@ const Settings: React.FC = () => {
                   <strong>Merge Mode:</strong> New records will be added to your database. Existing records will be preserved. Any conflicts will be skipped.
                 </Alert>
               )}
-              
+
+              {/* Profile Mapping Options for Merge Mode */}
+              {importMode === 'merge' && (
+                <Accordion sx={{ mb: 2 }}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography variant="body2">Profile Mapping Options (for profile-scoped imports)</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Configure how imported profiles should be mapped to existing profiles
+                      </Typography>
+
+                      <FormControl fullWidth>
+                        <InputLabel>Mapping Strategy</InputLabel>
+                        <Select
+                          value={importMappingStrategy}
+                          label="Mapping Strategy"
+                          onChange={(e) => setImportMappingStrategy(e.target.value as any)}
+                        >
+                          <MenuItem value="auto">
+                            <Box>
+                              <Typography variant="body2">Auto (Recommended)</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Match by name, create if not exists
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="create_new">
+                            <Box>
+                              <Typography variant="body2">Create New Profile</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Always create a new profile
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="merge_to">
+                            <Box>
+                              <Typography variant="body2">Merge To Existing</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Merge into a specific profile
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="match_by_name">
+                            <Box>
+                              <Typography variant="body2">Match By Name</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Must match existing profile name
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                        </Select>
+                      </FormControl>
+
+                      {importMappingStrategy === 'merge_to' && (
+                        <FormControl fullWidth>
+                          <InputLabel>Target Profile</InputLabel>
+                          <Select
+                            value={importMergeToProfileId || ''}
+                            label="Target Profile"
+                            onChange={(e) => setImportMergeToProfileId(e.target.value as number)}
+                          >
+                            {researchProfiles?.profiles?.map((profile: any) => (
+                              <MenuItem key={profile.id} value={profile.id}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Box
+                                    sx={{
+                                      width: 12,
+                                      height: 12,
+                                      borderRadius: '50%',
+                                      bgcolor: profile.color || '#888'
+                                    }}
+                                  />
+                                  <Typography>{profile.name}</Typography>
+                                </Box>
+                              </MenuItem>
+                            )) || []}
+                          </Select>
+                        </FormControl>
+                      )}
+
+                      {importMappingStrategy === 'create_new' && (
+                        <TextField
+                          fullWidth
+                          label="New Profile Name (optional)"
+                          value={importNewProfileName}
+                          onChange={(e) => setImportNewProfileName(e.target.value)}
+                          helperText="Leave empty to use original name with '(Imported)' suffix"
+                        />
+                      )}
+                    </Box>
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
               <input
                 accept=".tar.gz,.tgz,application/gzip,application/x-gzip,application/x-tar"
                 style={{ display: 'none' }}

@@ -47,6 +47,215 @@ class ValidationError(Exception):
     pass
 
 
+class ProfileMapper:
+    """Handles mapping of profile IDs during import."""
+
+    def __init__(self, db_path: str):
+        """Initialize the profile mapper."""
+        self.db_path = db_path
+        self.id_mappings = {}  # {source_id: target_id}
+
+    def map_profile(
+        self,
+        source_profile: Dict,
+        strategy: str = "auto",
+        target_profile_id: int = None,
+        create_new_profile_name: str = None
+    ) -> int:
+        """
+        Map source profile to target profile ID.
+
+        Strategies:
+        - "auto": Match by name, create if not exists
+        - "create_new": Always create new profile
+        - "merge_to": Merge into specified target profile
+        - "match_by_name": Must match existing profile by name
+
+        Args:
+            source_profile: Source profile data
+            strategy: Mapping strategy
+            target_profile_id: For merge_to strategy
+            create_new_profile_name: Override profile name for create_new strategy
+
+        Returns:
+            target_profile_id
+        """
+        source_id = source_profile['id']
+
+        # Check if already mapped
+        if source_id in self.id_mappings:
+            return self.id_mappings[source_id]
+
+        with get_cursor() as cursor:
+            if strategy == "merge_to":
+                if not target_profile_id:
+                    raise ValueError("target_profile_id required for merge_to strategy")
+
+                # Verify target profile exists
+                cursor.execute("SELECT id FROM research_profiles WHERE id = %s", (target_profile_id,))
+                if not cursor.fetchone():
+                    raise ValueError(f"Target profile {target_profile_id} not found")
+
+                self.id_mappings[source_id] = target_profile_id
+                return target_profile_id
+
+            elif strategy == "create_new":
+                # Always create a new profile
+                profile_name = create_new_profile_name or f"{source_profile['name']} (Imported)"
+
+                cursor.execute("""
+                    INSERT INTO research_profiles (
+                        name, description, color, tags, email_recipients,
+                        arxiv_filters, is_active, is_default
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    profile_name,
+                    source_profile.get('description'),
+                    source_profile.get('color'),
+                    json.dumps(source_profile.get('tags', [])),
+                    json.dumps(source_profile.get('email_recipients', [])),
+                    json.dumps(source_profile.get('arxiv_filters', {})),
+                    source_profile.get('is_active', True),
+                    False  # Never set imported profile as default
+                ))
+
+                new_id = cursor.fetchone()['id']
+                self.id_mappings[source_id] = new_id
+                return new_id
+
+            elif strategy == "match_by_name":
+                # Must match existing profile by name
+                cursor.execute(
+                    "SELECT id FROM research_profiles WHERE name = %s",
+                    (source_profile['name'],)
+                )
+                result = cursor.fetchone()
+
+                if not result:
+                    raise ValueError(f"No profile found with name: {source_profile['name']}")
+
+                self.id_mappings[source_id] = result['id']
+                return result['id']
+
+            else:  # "auto" strategy
+                # Try to match by name
+                cursor.execute(
+                    "SELECT id FROM research_profiles WHERE name = %s",
+                    (source_profile['name'],)
+                )
+                result = cursor.fetchone()
+
+                if result:
+                    # Profile exists, use it
+                    self.id_mappings[source_id] = result['id']
+                    return result['id']
+                else:
+                    # Create new profile
+                    cursor.execute("""
+                        INSERT INTO research_profiles (
+                            name, description, color, tags, email_recipients,
+                            arxiv_filters, is_active, is_default
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        source_profile['name'],
+                        source_profile.get('description'),
+                        source_profile.get('color'),
+                        json.dumps(source_profile.get('tags', [])),
+                        json.dumps(source_profile.get('email_recipients', [])),
+                        json.dumps(source_profile.get('arxiv_filters', {})),
+                        source_profile.get('is_active', True),
+                        False  # Never set imported profile as default
+                    ))
+
+                    new_id = cursor.fetchone()['id']
+                    self.id_mappings[source_id] = new_id
+                    return new_id
+
+    def get_mapping(self, source_id: int) -> Optional[int]:
+        """Get the target ID for a source ID."""
+        return self.id_mappings.get(source_id)
+
+
+class ForeignKeyRemapper:
+    """Handles remapping of foreign key references during import."""
+
+    def __init__(self):
+        """Initialize the foreign key remapper."""
+        self.id_mappings = {
+            "research_profiles": {},  # {source_id: target_id}
+            "papers": {},
+            "topics": {}
+        }
+
+    def add_mapping(self, table_name: str, source_id: int, target_id: int):
+        """Add a mapping for a table."""
+        if table_name not in self.id_mappings:
+            self.id_mappings[table_name] = {}
+        self.id_mappings[table_name][source_id] = target_id
+
+    def remap_foreign_keys(
+        self,
+        table_data: List[Dict],
+        table_name: str
+    ) -> List[Dict]:
+        """
+        Remap foreign key references based on import mappings.
+
+        Args:
+            table_data: Table data to remap
+            table_name: Name of the table
+
+        Returns:
+            Remapped table data
+        """
+        if not table_data:
+            return table_data
+
+        remapped_data = []
+
+        for row in table_data:
+            remapped_row = row.copy()
+
+            # Remap paper_profile_scores
+            if table_name == "paper_profile_scores":
+                if 'profile_id' in row and row['profile_id'] in self.id_mappings.get("research_profiles", {}):
+                    remapped_row['profile_id'] = self.id_mappings["research_profiles"][row['profile_id']]
+
+                if 'paper_id' in row and row['paper_id'] in self.id_mappings.get("papers", {}):
+                    remapped_row['paper_id'] = self.id_mappings["papers"][row['paper_id']]
+
+            # Remap profile_research_interests
+            elif table_name == "profile_research_interests":
+                if 'profile_id' in row and row['profile_id'] in self.id_mappings.get("research_profiles", {}):
+                    remapped_row['profile_id'] = self.id_mappings["research_profiles"][row['profile_id']]
+
+            # Remap paper_topics
+            elif table_name == "paper_topics":
+                if 'paper_id' in row and row['paper_id'] in self.id_mappings.get("papers", {}):
+                    remapped_row['paper_id'] = self.id_mappings["papers"][row['paper_id']]
+
+                if 'topic_id' in row and row['topic_id'] in self.id_mappings.get("topics", {}):
+                    remapped_row['topic_id'] = self.id_mappings["topics"][row['topic_id']]
+
+            # Remap paper_fulltext
+            elif table_name == "paper_fulltext":
+                if 'paper_id' in row and row['paper_id'] in self.id_mappings.get("papers", {}):
+                    remapped_row['paper_id'] = self.id_mappings["papers"][row['paper_id']]
+
+            # Remap scheduled_tasks
+            elif table_name == "scheduled_tasks":
+                if 'profile_id' in row and row['profile_id'] in self.id_mappings.get("research_profiles", {}):
+                    remapped_row['profile_id'] = self.id_mappings["research_profiles"][row['profile_id']]
+
+            remapped_data.append(remapped_row)
+
+        return remapped_data
+
+
 class DatabaseImporter:
     """Handles importing database contents from JSON files."""
     
@@ -2228,26 +2437,54 @@ class DatabaseImporter:
         
         return {"imported": imported_count, "skipped": skipped_count, "errors": 0}
 
-    def import_from_directory(self, input_dir: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
+    def import_from_directory(
+        self,
+        input_dir: str,
+        skip_duplicates: bool = True,
+        progress_callback=None,
+        mapping_strategy: str = "auto",
+        merge_to_profile_id: int = None,
+        create_new_profile_name: str = None
+    ) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
-        
+
         Args:
             input_dir: Directory containing the JSON files
             skip_duplicates: Whether to skip duplicate entries
             progress_callback: Optional callback function(current, total, message)
-            
+            mapping_strategy: Profile mapping strategy for profile-scoped imports
+            merge_to_profile_id: Target profile ID for merge_to strategy
+            create_new_profile_name: Override profile name for create_new strategy
+
         Returns:
             Dictionary with import results
         """
         input_path = Path(input_dir)
-        
+
         # Validate metadata if present
         metadata_file = input_path / "metadata.json"
+        is_profile_scoped = False
+        profile_mapper = None
+        fk_remapper = ForeignKeyRemapper()
+
         if metadata_file.exists():
             if not self.validate_metadata(str(metadata_file)):
                 print("Warning: Metadata validation failed, continuing anyway...")
-            
+
+            # Check if this is a profile-scoped import
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+                export_type = metadata.get("export_type")
+
+                if export_type == "profile_scoped":
+                    is_profile_scoped = True
+                    print(f"Detected profile-scoped export (version {metadata.get('export_version', 'unknown')})")
+                    print(f"Mapping strategy: {mapping_strategy}")
+
+                    # Initialize profile mapper
+                    profile_mapper = ProfileMapper(self.db_path)
+
             # Check for required migrations
             migration_info = self.validation_results.get("migration_required")
             if migration_info:
@@ -2259,7 +2496,7 @@ class DatabaseImporter:
                     print("Migration required but auto-migrate not enabled.")
                     print("Use --auto-migrate flag or manually apply migrations before importing.")
                     raise ValueError("Schema migration required before import")
-        
+
         results = {}
         current_step = 0
         
@@ -2315,21 +2552,91 @@ class DatabaseImporter:
             
             try:
                 if table_name == "research_profiles":
-                    results[table_name] = self.import_research_profiles(
-                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
-                    )
+                    # Handle profile mapping for profile-scoped imports
+                    if is_profile_scoped and profile_mapper:
+                        with open(file_path, 'r') as f:
+                            profiles_data = json.load(f)
+
+                        # Map each profile
+                        for profile in profiles_data:
+                            target_id = profile_mapper.map_profile(
+                                profile,
+                                strategy=mapping_strategy,
+                                target_profile_id=merge_to_profile_id,
+                                create_new_profile_name=create_new_profile_name
+                            )
+                            fk_remapper.add_mapping("research_profiles", profile['id'], target_id)
+                            print(f"Mapped profile '{profile['name']}' (ID {profile['id']}) → Target ID {target_id}")
+
+                        results[table_name] = {
+                            "imported": len(profiles_data),
+                            "skipped": 0,
+                            "mapped": True
+                        }
+                    else:
+                        results[table_name] = self.import_research_profiles(
+                            str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                        )
                 elif table_name == "papers":
-                    results[table_name] = self.import_papers(
+                    # Track paper ID mappings for foreign key remapping
+                    papers_result = self.import_papers(
                         str(file_path), skip_duplicates, create_progress_callback(i, table_name)
                     )
+                    results[table_name] = papers_result
+
+                    # If we have imported papers and need to track mappings, load the mappings
+                    # Note: import_papers may update IDs, we'll need to track old→new mappings
+                    # For now, we'll handle this in the FK remapping for dependent tables
+
                 elif table_name == "profile_research_interests":
-                    results[table_name] = self.import_profile_research_interests(
-                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
-                    )
+                    # Remap foreign keys if this is a profile-scoped import
+                    if is_profile_scoped and fk_remapper:
+                        with open(file_path, 'r') as f:
+                            interests_data = json.load(f)
+
+                        # Remap profile_ids
+                        remapped_data = fk_remapper.remap_foreign_keys(interests_data, "profile_research_interests")
+
+                        # Write remapped data to temp file
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                            json.dump(remapped_data, tmp_file, indent=2)
+                            tmp_path = tmp_file.name
+
+                        try:
+                            results[table_name] = self.import_profile_research_interests(
+                                tmp_path, skip_duplicates, create_progress_callback(i, table_name)
+                            )
+                        finally:
+                            os.unlink(tmp_path)
+                    else:
+                        results[table_name] = self.import_profile_research_interests(
+                            str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                        )
+
                 elif table_name == "paper_profile_scores":
-                    results[table_name] = self.import_paper_profile_scores(
-                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
-                    )
+                    # Remap foreign keys if this is a profile-scoped import
+                    if is_profile_scoped and fk_remapper:
+                        with open(file_path, 'r') as f:
+                            scores_data = json.load(f)
+
+                        # Remap profile_ids and paper_ids
+                        remapped_data = fk_remapper.remap_foreign_keys(scores_data, "paper_profile_scores")
+
+                        # Write remapped data to temp file
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                            json.dump(remapped_data, tmp_file, indent=2)
+                            tmp_path = tmp_file.name
+
+                        try:
+                            results[table_name] = self.import_paper_profile_scores(
+                                tmp_path, skip_duplicates, create_progress_callback(i, table_name)
+                            )
+                        finally:
+                            os.unlink(tmp_path)
+                    else:
+                        results[table_name] = self.import_paper_profile_scores(
+                            str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                        )
                 elif table_name == "podcasts":
                     results[table_name] = self.import_podcasts(
                         str(file_path), skip_duplicates, create_progress_callback(i, table_name)
@@ -2411,10 +2718,17 @@ class DatabaseImporter:
                 else:
                     print(f"Note: {filename} not found (this is optional for older exports)")
                     results[table_name] = {"note": "File not found (optional)"}
-        
+
+        # Add profile mapping info if this was a profile-scoped import
+        if is_profile_scoped and profile_mapper:
+            results["profile_mapping"] = profile_mapper.id_mappings
+            print(f"\nProfile mapping summary:")
+            for source_id, target_id in profile_mapper.id_mappings.items():
+                print(f"  Source profile {source_id} → Target profile {target_id}")
+
         if progress_callback:
             progress_callback(100, 100, "Import completed!")
-        
+
         return results
 
     def import_from_archive(self, archive_path: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
@@ -2558,16 +2872,28 @@ class DatabaseImporter:
                 import shutil
                 shutil.rmtree(temp_dir, ignore_errors=True)
     
-    def import_all(self, input_path: str, skip_duplicates: bool = True, parallel: bool = False, max_workers: int = 4) -> Dict[str, Any]:
+    def import_all(
+        self,
+        input_path: str,
+        skip_duplicates: bool = True,
+        parallel: bool = False,
+        max_workers: int = 4,
+        mapping_strategy: str = "auto",
+        merge_to_profile_id: int = None,
+        create_new_profile_name: str = None
+    ) -> Dict[str, Any]:
         """
         Import data from either a directory or archive.
-        
+
         Args:
             input_path: Path to directory or tar.gz archive
             skip_duplicates: Whether to skip duplicate entries
             parallel: Whether to use parallel processing
             max_workers: Maximum parallel workers
-            
+            mapping_strategy: Profile mapping strategy for profile-scoped imports
+            merge_to_profile_id: Target profile ID for merge_to strategy
+            create_new_profile_name: Override profile name for create_new strategy
+
         Returns:
             Dictionary with import results
         """
@@ -2575,22 +2901,28 @@ class DatabaseImporter:
         try:
             from .incremental_ops import IncrementalImporter
             incremental_importer = IncrementalImporter(self.db_path)
-            
+
             if incremental_importer.detect_incremental_import(input_path):
                 print(f"Detected incremental import: {input_path}")
                 return self.import_incremental(input_path)
         except ImportError:
             logger.debug("Incremental import detection not available")
-        
+
         input_path_obj = Path(input_path)
-        
+
         if input_path_obj.is_dir():
             print(f"Importing from directory: {input_path}")
             if parallel:
                 print(f"Using parallel import with {max_workers} workers")
                 return self.import_tables_parallel(input_path, skip_duplicates, max_workers)
             else:
-                return self.import_from_directory(input_path, skip_duplicates)
+                return self.import_from_directory(
+                    input_path,
+                    skip_duplicates,
+                    mapping_strategy=mapping_strategy,
+                    merge_to_profile_id=merge_to_profile_id,
+                    create_new_profile_name=create_new_profile_name
+                )
         elif input_path_obj.suffix == ".gz" and input_path_obj.name.endswith(".tar.gz"):
             print(f"Importing from archive: {input_path}")
             # Extract first then decide on parallel
@@ -2600,7 +2932,13 @@ class DatabaseImporter:
                     print(f"Using parallel import with {max_workers} workers")
                     return self.import_tables_parallel(extract_dir, skip_duplicates, max_workers)
                 else:
-                    return self.import_from_directory(extract_dir, skip_duplicates)
+                    return self.import_from_directory(
+                        extract_dir,
+                        skip_duplicates,
+                        mapping_strategy=mapping_strategy,
+                        merge_to_profile_id=merge_to_profile_id,
+                        create_new_profile_name=create_new_profile_name
+                    )
         else:
             raise ValueError(f"Input path must be a directory or .tar.gz archive: {input_path}")
 

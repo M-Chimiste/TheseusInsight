@@ -32,30 +32,67 @@ class DatabaseMigrator:
         """Initialize the migrator."""
         pass
     
-    def export_database(self, source_db: str, output_path: str, archive_name: str = None, include_new_tables: bool = True) -> Dict[str, Any]:
+    def export_database(
+        self,
+        source_db: str,
+        output_path: str,
+        archive_name: str = None,
+        include_new_tables: bool = True,
+        profile_id: int = None,
+        profile_name: str = None,
+        include_fulltext: bool = True,
+        include_topics: bool = False,
+        streaming: bool = False
+    ) -> Dict[str, Any]:
         """
         Export a database to an archive file.
-        
+
         Args:
             source_db: Source database connection string
             output_path: Output path for the archive
             archive_name: Name for the archive (without extension)
             include_new_tables: Whether to include new MindMap and Research Agent tables
-            
+            profile_id: Profile ID for profile-scoped export
+            profile_name: Profile name for profile-scoped export
+            include_fulltext: Include paper fulltext (profile-scoped only)
+            include_topics: Include topic relationships (profile-scoped only)
+            streaming: Use streaming mode for large datasets
+
         Returns:
             Dictionary with export results
         """
         print(f"Exporting database: {source_db}")
-        
+
         # Create temporary directory for export
         with tempfile.TemporaryDirectory() as temp_dir:
-            exporter = DatabaseExporter(source_db, temp_dir)
-            result = exporter.export_all(create_archive=True, archive_name=archive_name, include_new_tables=include_new_tables)
-            
+            exporter = DatabaseExporter(source_db, temp_dir, streaming=streaming)
+
+            # Check if this is a profile-scoped export
+            if profile_id or profile_name:
+                print(f"Performing profile-scoped export for: {profile_id or profile_name}")
+                result = exporter.export_profile_scoped(
+                    profile_id=profile_id,
+                    profile_name=profile_name,
+                    include_papers=True,
+                    include_fulltext=include_fulltext,
+                    include_topics=include_topics
+                )
+
+                # Create archive from the exported files
+                archive_path = exporter.create_archive(archive_name)
+                result["archive"] = archive_path
+            else:
+                # Full database export
+                result = exporter.export_all(
+                    create_archive=True,
+                    archive_name=archive_name,
+                    include_new_tables=include_new_tables
+                )
+
             # Move archive to desired location
             archive_path = Path(result["archive"])
             output_path_obj = Path(output_path)
-            
+
             if output_path_obj.is_dir():
                 # If output is a directory, place archive there
                 final_path = output_path_obj / archive_path.name
@@ -63,31 +100,48 @@ class DatabaseMigrator:
                 # If output is a file path, use it directly
                 final_path = output_path_obj
                 final_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Move the archive
             archive_path.rename(final_path)
             result["final_archive_path"] = str(final_path)
-            
+
             print(f"Database exported to: {final_path}")
             return result
     
-    def import_database(self, target_db: str, input_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
+    def import_database(
+        self,
+        target_db: str,
+        input_path: str,
+        skip_duplicates: bool = True,
+        mapping_strategy: str = "auto",
+        merge_to_profile_id: int = None,
+        create_new_profile_name: str = None
+    ) -> Dict[str, Any]:
         """
         Import data from an archive or directory to a database.
-        
+
         Args:
             target_db: Target database connection string
             input_path: Path to archive file or directory
             skip_duplicates: Whether to skip duplicate entries
-            
+            mapping_strategy: Profile mapping strategy
+            merge_to_profile_id: Target profile ID for merge_to strategy
+            create_new_profile_name: Override profile name for create_new
+
         Returns:
             Dictionary with import results
         """
         print(f"Importing to database: {target_db}")
-        
+
         importer = DatabaseImporter(target_db)
-        result = importer.import_all(input_path, skip_duplicates=skip_duplicates)
-        
+        result = importer.import_all(
+            input_path,
+            skip_duplicates=skip_duplicates,
+            mapping_strategy=mapping_strategy,
+            merge_to_profile_id=merge_to_profile_id,
+            create_new_profile_name=create_new_profile_name
+        )
+
         print("Database import completed")
         return result
     
@@ -295,14 +349,24 @@ def main():
     export_parser.add_argument("--source-db", required=True, help="Source database connection string")
     export_parser.add_argument("--output", required=True, help="Output path for archive")
     export_parser.add_argument("--archive-name", help="Name for the archive (without extension)")
-    export_parser.add_argument("--exclude-new-tables", action="store_true", 
+    export_parser.add_argument("--exclude-new-tables", action="store_true",
                               help="Exclude new MindMap and Research Agent tables (backwards compatibility)")
+    export_parser.add_argument("--profile-id", type=int, help="Export specific profile by ID (profile-scoped export)")
+    export_parser.add_argument("--profile-name", help="Export specific profile by name (profile-scoped export)")
+    export_parser.add_argument("--include-fulltext", action="store_true", default=True, help="Include paper fulltext (profile-scoped export)")
+    export_parser.add_argument("--include-topics", action="store_true", help="Include topic relationships (profile-scoped export)")
+    export_parser.add_argument("--streaming", action="store_true", help="Use streaming mode for large datasets")
     
     # Import command
     import_parser = subparsers.add_parser("import", help="Import archive to database")
     import_parser.add_argument("--target-db", required=True, help="Target database connection string")
     import_parser.add_argument("--input", required=True, help="Input archive or directory path")
     import_parser.add_argument("--allow-duplicates", action="store_true", help="Allow duplicate entries")
+    import_parser.add_argument("--mapping-strategy", choices=["auto", "create_new", "merge_to", "match_by_name"],
+                              default="auto", help="Profile mapping strategy (default: auto)")
+    import_parser.add_argument("--merge-to-profile-id", type=int, help="Merge into existing profile ID (requires --mapping-strategy merge_to)")
+    import_parser.add_argument("--create-new-profile", action="store_true", help="Always create new profile (shortcut for --mapping-strategy create_new)")
+    import_parser.add_argument("--new-profile-name", help="Override profile name when creating new profile")
     
     # Migrate command
     migrate_parser = subparsers.add_parser("migrate", help="Migrate between databases")
@@ -334,20 +398,44 @@ def main():
                 args.source_db,
                 args.output,
                 args.archive_name,
-                include_new_tables=not args.exclude_new_tables
+                include_new_tables=not args.exclude_new_tables,
+                profile_id=args.profile_id if hasattr(args, 'profile_id') else None,
+                profile_name=args.profile_name if hasattr(args, 'profile_name') else None,
+                include_fulltext=args.include_fulltext if hasattr(args, 'include_fulltext') else True,
+                include_topics=args.include_topics if hasattr(args, 'include_topics') else False,
+                streaming=args.streaming if hasattr(args, 'streaming') else False
             )
             print(f"\nExport completed successfully!")
+            if result.get("export_type") == "profile_scoped":
+                print(f"Export type: Profile-scoped")
+                print(f"Profile: {result['profile_mapping']['source_profile_name']}")
+                print(f"Papers exported: {result['profile_mapping'].get('papers_exported', 0)}")
             print(f"Archive saved to: {result['final_archive_path']}")
             
         elif args.command == "import":
+            # Determine mapping strategy
+            mapping_strategy = args.mapping_strategy
+            if args.create_new_profile:
+                mapping_strategy = "create_new"
+
             result = migrator.import_database(
                 args.target_db,
                 args.input,
-                skip_duplicates=not args.allow_duplicates
+                skip_duplicates=not args.allow_duplicates,
+                mapping_strategy=mapping_strategy,
+                merge_to_profile_id=args.merge_to_profile_id if hasattr(args, 'merge_to_profile_id') else None,
+                create_new_profile_name=args.new_profile_name if hasattr(args, 'new_profile_name') else None
             )
             print(f"\nImport completed successfully!")
+
+            # Show profile mapping info if available
+            if "profile_mapping" in result:
+                print(f"\nProfile Mapping:")
+                for source_id, target_id in result["profile_mapping"].items():
+                    print(f"  Source profile {source_id} → Target profile {target_id}")
+
             for table, stats in result.items():
-                if "error" not in stats:
+                if table != "profile_mapping" and "error" not in stats:
                     print(f"{table.capitalize()}: {stats['imported']} imported, {stats['skipped']} skipped")
             
         elif args.command == "migrate":

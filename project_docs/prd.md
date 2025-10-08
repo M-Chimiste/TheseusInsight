@@ -1,568 +1,681 @@
-## PRD: Multi-Ollama Server Support for Bulk Profile-Aware Ingestion (LLM-as-Judge)
+# PRD: Fine-Grained Database Export/Import System
 
-- Author: TheseusInsight Team
-- Date: 2025-08-20
-- Status: Ready for Implementation
-- Version: 2.0 (Updated with detailed implementation plan)
+## Document Status
+- **Version**: 1.0
+- **Created**: 2025-10-07
+- **Status**: Draft for Review
 
-### Summary
+## Executive Summary
 
-Add first-class support for running bulk profile-aware "LLM as Judge" scoring across multiple Ollama servers (by URL) with one-concurrency-per-server workers, a durable job queue, and a separate long-running worker process. Provide UI controls to enable multi-server execution per bulk job, manage Ollama servers in Settings (CRUD + Test), display a live health dashboard for jobs, suspend all scheduled tasks during the run, and ensure robust idempotency, checkpointing, retry, and timeout handling for 10–200k records and >10-hour runs.
+This PRD outlines enhancements to the Theseus Insight database export/import system to support **fine-grained, profile-aware data migration**. The primary use case is enabling users to export specific research profiles with their associated papers and data, facilitating seamless transfer between machines while maintaining full backward compatibility.
+
+### Current State Analysis
+
+**✅ What Works Well:**
+- Full database export/import functionality exists
+- Support for 21+ table types including profiles, papers, research runs, etc.
+- Backward compatibility with older export formats (v1.0, v2.0, v3.0)
+- Comprehensive duplicate detection across all tables
+- **Streaming export** for large datasets (handles 10k+ papers efficiently)
+- **Parallel processing** for concurrent table exports
+- **Incremental export** capability (export only changes since timestamp)
+- Profile system with 3 core tables: `research_profiles`, `profile_research_interests`, `paper_profile_scores`
+
+**❌ Current Limitations:**
+1. **No fine-grained export**: All-or-nothing export only - cannot export specific profiles
+2. **Profile relationship gaps**: Papers exported without their profile-specific scores and relationships
+3. **No selective table export**: Cannot export just papers + their dependencies
+4. **Profile migration issues**: When importing, profile IDs may change, breaking paper-profile relationships
+5. **No profile mapping**: No mechanism to map source profile IDs to target profile IDs during import
+
+### Problem Statement
+
+Users need to:
+1. Export a **specific research profile** with all its papers and metadata
+2. Transfer their **complete paper library** with profile-specific annotations between machines
+3. **Merge** exported data into existing databases without duplicating papers
+4. Maintain **referential integrity** when profile IDs differ between source and target databases
+
+## Goals and Non-Goals
 
 ### Goals
-
-- Use multiple Ollama servers identified by URL; no auth (vanilla installs; external hosts allowed).
-- Ensure one-concurrency-per-server to avoid GPU contention; faster servers must process more items automatically (dynamic balancing).
-- Prevent UI/API hangs by isolating heavy processing into separate worker processes.
-- Avoid active health checks under load; rely on request success/failure and timeouts.
-- Make retry count and timeout (seconds) configurable (global defaults + per-run overrides).
-- Suspend all scheduled tasks for the duration of a bulk judge job; auto-restore prior states on completion/failure/cancel.
-- Idempotency via Paper+Profile existing score; optional overwrite.
-- Allow cancel/abort for active jobs; maintain resumability via checkpoints/queue state.
-- Intelligent error handling: differentiate between LLM inference failures, server connectivity issues, and data problems.
-- Real-time monitoring dashboard with error rates, processing rates, ETA, and pause/resume/cancel functionality.
+1. ✅ Enable export of specific profiles with all related data (papers, scores, interests)
+2. ✅ Support export of specific table groups (e.g., just papers + metadata)
+3. ✅ Implement intelligent profile ID mapping during import
+4. ✅ Maintain full backward compatibility with existing exports
+5. ✅ Support both full and partial database transfers
+6. ✅ Handle profile merging (import into existing profile vs. create new)
+7. ✅ **Preserve streaming export for profile-scoped exports** (critical for large libraries)
+8. ✅ **Support incremental profile exports** (export only new papers for a profile since timestamp)
 
 ### Non-Goals
+1. ❌ Real-time synchronization between databases
+2. ❌ Partial paper export (papers are atomic units)
+3. ❌ Selective column export within tables
+4. ❌ Cross-version schema migration (handled separately)
 
-- Authentication/TLS to Ollama servers.
-- Cross-provider balancing (scope limited to Ollama for judge path).
-- Changing research agent pipelines unrelated to bulk judging.
-- Parallelism within a single Ollama server (remains 1).
+## User Stories
 
-### User Stories
+### Story 1: Export Single Profile Library
+**As a** researcher with multiple profiles,
+**I want to** export my "Machine Learning" profile with all associated papers,
+**So that** I can transfer it to my laptop for offline work.
 
-- As an admin, I can configure multiple Ollama servers in Settings (name, URL, enabled), test connectivity, and set default timeout/retry values.
-- As an operator, I can start a bulk judge run with a toggle to use multiple servers, choose which servers (or “all enabled”), and optionally override timeout/retry values.
-- As an operator, I can see a job health dashboard showing queue progress, per-server throughput/latency/error counts, and recent failures.
-- As an operator, I can cancel an ongoing job; work in-flight finishes or is safely re-queued.
-- As an operator, I can trust that already-scored Paper+Profile pairs are not reprocessed unless I enable “overwrite existing.”
-- As an operator, I can run 10–200k records for >10 hours without the API/UI freezing.
+**Acceptance Criteria:**
+- Export includes: profile metadata, research interests, all papers scored by this profile, paper-profile scores
+- Related data included: paper fulltext, topics, keywords where applicable
+- Export is self-contained and can be imported standalone
+- File size is optimized (only relevant data included)
 
-### UX and UI Requirements
+### Story 2: Import Library into Existing Database
+**As a** user importing a profile export,
+**I want to** merge it with my existing data without duplicates,
+**So that** I maintain a clean database while adding new content.
 
-#### 1. Settings → Ollama Servers Management
-- **Server List View**:
-  - Table columns: Name, URL, Status, Last Test, Latency, Actions
-  - Status indicators: Online (green), Offline (red), Testing (yellow)
-  - Bulk actions: Enable/Disable multiple servers, Test all servers
+**Acceptance Criteria:**
+- Duplicate papers detected by URL and skipped
+- Profile can be mapped to existing profile OR created as new profile
+- Paper-profile scores correctly linked after import
+- Import provides clear summary of what was added vs. skipped
 
-- **Server Configuration Modal**:
-  - Fields: Name, URL, Notes, Enable/Disable toggle
-  - Test Connection button with real-time feedback
-  - Latency measurement and success/failure indicators
+### Story 3: Bulk Paper Library Transfer
+**As a** user with thousands of papers,
+**I want to** export my entire paper library with all metadata,
+**So that** I can migrate to a new machine without losing data.
 
-- **Global Configuration Panel**:
-  - Default timeout settings (seconds)
-  - Default max retries per error type
-  - Circuit breaker thresholds
+**Acceptance Criteria:**
+- All papers with embeddings, fulltext, keywords exported
+- All profile scores for all profiles included
+- Progress tracking for large exports (10k+ papers)
+- Streaming export to handle memory constraints
 
-#### 2. Bulk Judge Job Interface
-- **Enhanced Job Creation**:
-  - Multi-server toggle with server selection
-  - Configuration overrides (timeout, retries)
-  - Scheduler suspension toggle (default: ON)
-  - Conflict detection with other running jobs
+## Technical Architecture
 
-- **Real-time Monitoring Dashboard**:
-  - **Overall Progress**: Queued/In-Progress/Completed/Failed counts, ETA calculation
-  - **Per-Server Metrics**: Processing rate (papers/sec), error rate, average latency
-  - **Visual Indicators**: Progress bars, status badges, error notifications
-  - **Job Controls**: Pause/Resume/Cancel buttons with confirmation dialogs
+### 1. Export System Enhancements
 
-#### 3. Job History & Monitoring Page
-- **Active Jobs View**:
-  - List of running bulk judge jobs with quick stats
-  - Server utilization overview
-  - Quick access to detailed monitoring
-
-- **Job Details Modal**:
-  - Comprehensive job information
-  - Per-server performance breakdown
-  - Error logs and retry attempts
-  - Timeline view of job progress
-
-#### 4. Conflict Prevention System
-- **Job Conflict Detection**:
-  - Warning when starting newsletter/mindmap/other jobs during bulk operations
-  - Automatic suggestions to pause bulk jobs
-  - Clear messaging about resource conflicts
-
-- **Status Notifications**:
-  - Toast notifications for job state changes
-  - Error alerts with actionable information
-  - Progress updates without being intrusive
-
-#### 5. Responsive Design Considerations
-- **Desktop**: Full dashboard with detailed metrics and controls
-- **Tablet**: Condensed view with collapsible sections
-- **Mobile**: Essential controls and high-level status only
-
-### Functional Requirements
-
-1) Configuration and Settings
-- Manage servers: name (string), url (string), enabled (bool), notes (string optional).
-- Test connection endpoint: returns version/ok and measured latency.
-- Global defaults: request_timeout_sec (int), max_retries (int).
-
-2) Job Submission (Bulk Judge)
-- New parameters: use_multi_server (bool), server_ids (list, optional), request_timeout_sec (optional), max_retries (optional), suspend_scheduled_tasks (bool; default true).
-- Job creation:
-  - Build the workset of Paper+Profile pairs based on filters and overwrite flag.
-  - Enqueue one task per pair into a durable DB-backed queue.
-  - Initialize job state and progress counters.
-  - If suspend_scheduled_tasks true: snapshot enabled states and disable all scheduled tasks.
-
-3) Durable Queue
-- Table stores: id, job_id, paper_id, profile_id, status [pending, leased, in_progress, completed, failed, canceled], attempts, last_error, assigned_server_url (nullable), leased_until (nullable), created_at/updated_at.
-- Unique constraint: (job_id, paper_id, profile_id).
-- Fetch policy: SELECT FOR UPDATE SKIP LOCKED on pending tasks; use short leases to recover from worker death (leased_until).
-- Completion updates job progress counters. Failed tasks re-queued until attempts ≥ max_retries; then marked failed.
-
-4) Worker Service (separate process)
-- One worker per configured/selected server, with concurrency fixed at 1.
-- Pulls tasks from the queue; assigns itself (server_url), and processes sequentially.
-- Distribution policy: dynamic natural balancing—faster workers finish and request next task sooner; no global throttling.
-- Intelligent error handling:
-  - **LLM Inference Errors**: Malformed responses, parsing failures, content validation (retry up to 3 times, then mark failed)
-  - **Server Connectivity**: Network timeouts, connection refused, HTTP errors (retry up to 3 times, then terminate worker)
-  - **Data Issues**: Corrupted paper data, missing abstracts, encoding problems (mark failed immediately)
-- Circuit breaker per server within job: after N consecutive failures (configurable; default derived from max_retries), mark server disabled for remainder of job; unassign and requeue any leased tasks.
-- Timeouts at request level; classify timeouts/connection errors as retriable; parsing/validation errors count as attempt and may either retry or be marked failed (configurable simple policy; default retry up to max_retries).
-- No periodic health checks during load; rely on request results only.
-- On cancel: worker stops pulling new tasks, completes in-flight, and exits gracefully.
-
-5) Scoring Logic
-- Continue using `OptimizedOllamaScorer` caching/prefiltering where applicable, adapted to per-task execution and idempotency.
-- Idempotency: If a Paper+Profile already has a score and overwrite is false, skip (do not enqueue or treat as no-op on execution).
-- Persist scores in batches when possible; ensure safe retry behavior (upsert by Paper+Profile).
-
-6) Scheduled Tasks Suspension
-- On job start: snapshot all tasks where is_enabled=true; set is_enabled=false.
-- On job end (completed/failed/canceled): restore prior states from snapshot.
-- Store snapshot in job state to survive process restarts.
-
-7) Observability & Logs
-- Real-time monitoring dashboard with:
-  - Error rates per server
-  - Processing rates (papers/second per server)
-  - Estimated completion time based on current rates
-  - Pause/resume/cancel functionality
-  - Warning prompts when starting conflicting jobs (newsletter, mindmap, etc.)
-- Per-job, per-server metrics: processed count, average latency, error counts, last error.
-- Expose read APIs for dashboard; polling-based UI (refresh every few seconds).
-- Append structured logs for failures and circuit events, tagged with job_id and server_url.
-
-### Non-Functional Requirements
-
-- Reliability: tolerate restarts—queued tasks survive; leased tasks auto-recover after lease expiry.
-- Scalability: handle 10–200k tasks and >10-hour runs; minimal DB contention via SKIP LOCKED, indexes.
-- Safety: no health probes during load; all calls bounded by request timeout.
-- Backward compatibility: single-server mode remains default and operational.
-
-### Data Model (proposed migrations)
-
-#### 1. `ollama_servers` (New Table)
-```sql
-CREATE TABLE ollama_servers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    url VARCHAR(500) UNIQUE NOT NULL,
-    enabled BOOLEAN DEFAULT TRUE,
-    notes TEXT,
-    last_tested_at TIMESTAMP WITH TIME ZONE,
-    last_test_latency_ms INTEGER,
-    last_test_ok BOOLEAN,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-#### 2. `judge_task_queue` (New Table)
-```sql
-CREATE TABLE judge_task_queue (
-    id SERIAL PRIMARY KEY,
-    job_id UUID NOT NULL REFERENCES processing_jobs(id) ON DELETE CASCADE,
-    paper_id INTEGER NOT NULL,
-    profile_id INTEGER NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'leased', 'in_progress', 'completed', 'failed', 'canceled')),
-    attempts INTEGER DEFAULT 0,
-    last_error TEXT,
-    assigned_server_url VARCHAR(500),
-    leased_until TIMESTAMP WITH TIME ZONE,
-    leased_by_worker VARCHAR(100),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(job_id, paper_id, profile_id)
-);
-
--- Performance indexes
-CREATE INDEX idx_judge_queue_status ON judge_task_queue(status);
-CREATE INDEX idx_judge_queue_job_status ON judge_task_queue(job_id, status);
-CREATE INDEX idx_judge_queue_lease ON judge_task_queue(status, leased_until) WHERE leased_until IS NOT NULL;
-CREATE INDEX idx_judge_queue_server ON judge_task_queue(assigned_server_url, status);
-```
-
-#### 3. `processing_jobs` Extensions
-```sql
--- Add bulk judge specific fields to existing processing_jobs table
-ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS job_type VARCHAR(50) DEFAULT 'bulk_judge';
-ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE;
-
--- Extend state JSONB to include bulk judge specific data
--- Will contain: suspended_tasks_snapshot, circuit_breakers, selected_server_ids, overrides, server_metrics
-```
-
-#### 4. Worker Heartbeat Table (Optional)
-```sql
-CREATE TABLE worker_heartbeats (
-    id SERIAL PRIMARY KEY,
-    worker_id VARCHAR(100) NOT NULL,
-    server_url VARCHAR(500) NOT NULL,
-    job_id UUID REFERENCES processing_jobs(id) ON DELETE CASCADE,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    tasks_processed INTEGER DEFAULT 0,
-    current_task_id INTEGER,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(worker_id, server_url, job_id)
-);
-```
-
-### API Changes
-
-#### 1. Ollama Server Management
-```
-GET    /api/settings/ollama-servers           # List all servers
-POST   /api/settings/ollama-servers           # Create new server
-GET    /api/settings/ollama-servers/{id}      # Get server details
-PUT    /api/settings/ollama-servers/{id}      # Update server
-DELETE /api/settings/ollama-servers/{id}      # Delete server
-POST   /api/settings/ollama-servers/{id}/test # Test server connectivity
-POST   /api/settings/ollama-servers/{id}/toggle # Enable/disable server
-```
-
-#### 2. Bulk Judge Operations
-```
-POST   /api/bulk-operations/bulk-judge          # Start bulk judge job (extended)
-GET    /api/bulk-operations/job/{job_id}       # Get job status
-POST   /api/bulk-operations/job/{job_id}/pause # Pause job
-POST   /api/bulk-operations/job/{job_id}/resume # Resume job
-POST   /api/bulk-operations/job/{job_id}/cancel # Cancel job
-GET    /api/bulk-operations/job/{job_id}/metrics # Get detailed metrics
-```
-
-#### 3. Job Monitoring & Dashboard
-```
-GET    /api/bulk-operations/active-jobs         # List active bulk jobs
-GET    /api/bulk-operations/server-metrics      # Get per-server performance
-GET    /api/bulk-operations/queue-status        # Get queue depth and status
-POST   /api/bulk-operations/conflict-check      # Check for job conflicts
-```
-
-#### 4. Worker Management (Internal)
-```
-POST   /api/workers/launch                      # Launch worker processes
-GET    /api/workers/status                      # Get worker status
-POST   /api/workers/shutdown/{worker_id}       # Shutdown specific worker
-GET    /api/workers/heartbeats                  # Get worker heartbeats
-```
-
-#### 5. Configuration Management
-```
-GET    /api/settings/bulk-judge-config         # Get global defaults
-PUT    /api/settings/bulk-judge-config         # Update global defaults
-GET    /api/settings/scheduler-status          # Get scheduler status
-POST   /api/settings/scheduler/pause           # Pause all scheduled tasks
-POST   /api/settings/scheduler/resume          # Resume scheduled tasks
-```
-
-### Worker Runtime Architecture
-
-#### 1. Process Management
-- **Launcher Script**: `theseus-judge-worker` (Python script)
-- **Environment Detection**: Uses `DATABASE_URL` and working directory for identification
-- **Multi-Process Architecture**: One worker process per Ollama server
-- **Process Monitoring**: Heartbeat system with automatic recovery
-
-#### 2. Worker Lifecycle
-```
-1. Environment validation and database connection
-2. Server assignment and configuration loading
-3. Queue monitoring and task leasing
-4. Processing loop with intelligent error handling
-5. Graceful shutdown with in-flight task completion
-```
-
-#### 3. Processing Loop (Per Worker)
+#### 1.1 Profile-Scoped Export
 ```python
-while active:
-    # 1. Lease next available task (SKIP LOCKED)
-    task = lease_next_task(server_url, job_id)
+class ProfileScopedExporter:
+    def export_profile(
+        self,
+        profile_id: int,
+        include_papers: bool = True,
+        include_fulltext: bool = True,
+        include_topics: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Export a single profile with all related data.
 
-    # 2. Process with appropriate error handling
-    if task:
-        try:
-            result = process_paper(task, server_config)
-            mark_task_completed(task.id, result)
-        except LLMError:
-            handle_llm_error(task, attempt_count)
-        except ServerError:
-            handle_server_error(task, attempt_count)
-        except DataError:
-            mark_task_failed(task, "Data issue")
-
-    # 3. Update heartbeat and metrics
-    update_worker_status()
+        Returns:
+        {
+            "export_type": "profile_scoped",
+            "profile": {...},
+            "profile_research_interests": [...],
+            "papers": [...],  # Papers scored by this profile
+            "paper_profile_scores": [...],
+            "paper_fulltext": [...],  # Optional
+            "metadata": {...}
+        }
+        """
 ```
 
-#### 4. Error Handling Strategy
-- **LLM Inference Errors**: Retry up to 3 times, then mark failed
-- **Server Connectivity**: Retry up to 3 times, then terminate worker
-- **Data Issues**: Immediate failure without retries
-- **Circuit Breaker**: Disable server after consecutive failures
+**Key Features:**
+- Export only papers that have been scored by the specified profile
+- Include profile-specific research interests and scores
+- Optional inclusion of fulltext, topics, and other related data
+- Metadata includes profile mapping information for import
 
-#### 5. Heartbeat & Monitoring
-- **Frequency**: Every 30 seconds during active processing
-- **Data**: Tasks processed, current status, error counts, performance metrics
-- **Recovery**: Automatic lease expiration (5 minutes) for crashed workers
+#### 1.2 Table Group Export
+```python
+class TableGroupExporter:
+    EXPORT_GROUPS = {
+        "papers_only": ["papers", "paper_fulltext", "paper_topics"],
+        "profiles_only": ["research_profiles", "profile_research_interests", "paper_profile_scores"],
+        "research_data": ["research_runs", "research_agent_state", "mindmap_reports"],
+        "content": ["newsletters", "podcasts", "literature_reviews"]
+    }
 
-### Intelligent Error Handling & Classification
+    def export_table_group(
+        self,
+        group_name: str,
+        filters: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """Export a predefined group of related tables."""
+```
 
-#### 1. Error Types & Strategies
+#### 1.3 Enhanced Metadata Format
+```json
+{
+  "export_version": "6.0",
+  "export_type": "profile_scoped",
+  "export_timestamp": "2025-10-07T10:30:00Z",
+  "source_database": {
+    "schema_version": "5.2",
+    "profile_count": 1,
+    "paper_count": 1250
+  },
+  "profile_mapping": {
+    "source_profile_id": 5,
+    "source_profile_name": "Machine Learning",
+    "export_includes_all_papers": false,
+    "papers_exported": 1250
+  },
+  "tables_included": [
+    "research_profiles",
+    "profile_research_interests",
+    "papers",
+    "paper_profile_scores",
+    "paper_fulltext"
+  ],
+  "table_relationships": {
+    "papers": {
+      "foreign_keys": ["profile_research_interests"],
+      "related_scores": "paper_profile_scores"
+    }
+  },
+  "backward_compatible": true
+}
+```
 
-| Error Type | Examples | Retry Strategy | Max Retries | Action After Max |
-|------------|----------|----------------|-------------|------------------|
-| **LLM Inference** | Malformed JSON, parsing errors, content validation failures | Exponential backoff | 3 | Mark task failed |
-| **Server Connectivity** | Network timeouts, connection refused, HTTP 5xx errors | Linear backoff | 3 | Terminate worker |
-| **Data Issues** | Missing abstracts, corrupted content, encoding errors | No retry | 0 | Mark task failed |
-| **Rate Limiting** | HTTP 429, temporary server overload | Exponential backoff | 5 | Mark task failed |
+### 2. Import System Enhancements
 
-#### 2. Circuit Breaker Logic
-- **Trigger**: N consecutive failures (configurable, default: 5)
-- **Action**: Mark server disabled for current job
-- **Recovery**: Server remains disabled until job completion
-- **Requeuing**: Any leased tasks automatically requeued for other servers
+#### 2.1 Profile Mapping Strategy
+```python
+class ProfileMapper:
+    def map_profile(
+        self,
+        source_profile: Dict,
+        target_db_connection: str,
+        strategy: str = "auto"
+    ) -> int:
+        """
+        Map source profile to target profile ID.
 
-#### 3. Worker Termination Conditions
-- **Server Connectivity**: After 3 consecutive server errors
-- **Process Health**: Memory usage > threshold, unresponsive threads
-- **Job Cancellation**: Graceful shutdown with in-flight task completion
-- **Lease Expiration**: Automatic recovery for crashed workers (5-minute timeout)
+        Strategies:
+        - "auto": Match by name, create if not exists
+        - "create_new": Always create new profile
+        - "merge_to": Merge into specified target profile
+        - "match_by_name": Must match existing profile by name
 
-#### 4. Logging & Monitoring
-- **Structured Logs**: Error type, retry count, server URL, task ID
-- **Metrics Collection**: Error rates, retry success rates, worker health
-- **Post-Mortem Analysis**: Detailed error context for debugging
-- **Alerting**: High error rates trigger notifications
+        Returns: target_profile_id
+        """
+```
 
-### Security & Operations
+**Import Flow:**
+1. Read export metadata to identify export type
+2. If profile-scoped export:
+   - Determine profile mapping strategy
+   - Map source profile ID to target profile ID
+   - Update all paper_profile_scores with new profile ID
+3. Import tables in dependency order:
+   - research_profiles (with mapping)
+   - profile_research_interests (with profile_id mapping)
+   - papers (deduplicate by URL)
+   - paper_profile_scores (with profile_id mapping)
+   - Related tables (fulltext, topics, etc.)
 
-- Assumes no auth and plain HTTP Ollama endpoints; document risks and recommend isolating servers on trusted network segments.
-- Document environment sizing and expectations for heterogeneous servers.
+#### 2.2 Foreign Key Remapping
+```python
+class ForeignKeyRemapper:
+    def __init__(self):
+        self.id_mappings = {
+            "research_profiles": {},  # {source_id: target_id}
+            "papers": {},
+            "topics": {}
+        }
 
-### Implementation Timeline
+    def remap_foreign_keys(
+        self,
+        table_data: List[Dict],
+        table_name: str
+    ) -> List[Dict]:
+        """
+        Remap foreign key references based on import mappings.
 
-**Total Duration**: 4 weeks  
-**Total Effort**: ~15-20 days of development
+        Example: paper_profile_scores.profile_id = id_mappings["research_profiles"][original_id]
+        """
+```
 
-#### Phase 1: Database Foundation & Core Infrastructure (Week 1)
-- **Duration**: 3-4 days
-- **Deliverables**: Database migrations, worker process setup, core queue infrastructure
-- **Risk Level**: Low (infrastructure work)
+#### 2.3 Import Modes
+```python
+class ImportMode(Enum):
+    MERGE = "merge"           # Merge with existing data (skip duplicates)
+    OVERWRITE = "overwrite"   # Replace existing data
+    PROFILE_CREATE = "create" # Always create new profile
+    PROFILE_MERGE = "merge"   # Merge into existing profile by name
+```
 
-#### Phase 2: Ollama Server Management & Settings (Week 1-2)
-- **Duration**: 2-3 days
-- **Deliverables**: Server CRUD APIs, Settings UI, configuration management
-- **Risk Level**: Low (standard CRUD operations)
+### 3. Data Relationships & Dependencies
 
-#### Phase 3: Job Management & Scheduler Integration (Week 2)
-- **Duration**: 3-4 days
-- **Deliverables**: Enhanced bulk judge API, scheduler suspension, error handling
-- **Risk Level**: Medium (integrates with existing systems)
+#### 3.1 Table Dependency Graph
+```
+research_profiles (root)
+├── profile_research_interests (depends on: research_profiles)
+├── paper_profile_scores (depends on: research_profiles, papers)
+└── scheduled_tasks (depends on: research_profiles)
 
-#### Phase 4: Worker Service & Processing Logic (Week 2-3)
-- **Duration**: 4-5 days
-- **Deliverables**: Multi-process workers, scoring integration, queue management
-- **Risk Level**: High (core processing logic)
+papers (root)
+├── paper_fulltext (depends on: papers)
+├── paper_topics (depends on: papers, topics)
+├── paper_research_interests (depends on: papers, research_interests)
+└── paper_profile_scores (depends on: papers, research_profiles)
 
-#### Phase 5: Monitoring Dashboard & UI (Week 3-4)
-- **Duration**: 4-5 days
-- **Deliverables**: Real-time dashboard, job controls, conflict prevention
-- **Risk Level**: Medium (UI and monitoring)
+topics (root)
+├── topic_metrics (depends on: topics)
+└── paper_topics (depends on: topics, papers)
+```
 
-#### Phase 6: Testing & Hardening (Week 4)
-- **Duration**: 3-4 days
-- **Deliverables**: Comprehensive testing, production hardening, documentation
-- **Risk Level**: Low (testing and documentation)
+#### 3.2 Import Order (ensures referential integrity)
+1. **Independent tables**: research_profiles, papers, topics, model_catalog
+2. **First-level dependencies**: profile_research_interests, paper_fulltext, topic_metrics
+3. **Second-level dependencies**: paper_profile_scores, paper_topics, paper_research_interests
+4. **Scheduled data**: scheduled_tasks, scheduled_task_runs
 
-### Testing Strategy
+### 4. Export Format Versions
 
-- Unit tests: queue operations (enqueue, lease, complete, retry), circuit breaker, suspension/resume of scheduled tasks snapshot.
-- Integration: two mock Ollama servers (fast/slow) verify dynamic distribution; timeouts and failover requeue; cancel mid-run; resume after restart.
-- E2E: 10k sample run across 2–4 servers; verify no UI/API hangs; verify no reprocessing when rerun without overwrite.
+#### Version 6.0 (New - Fine-Grained)
+- **Features**: Profile-scoped export, table group export, profile mapping metadata
+- **Compatibility**: Can import v1.0, v2.0, v3.0, v5.0, v6.0 exports
+- **New tables**: None (uses existing schema)
+- **New metadata**: `export_type`, `profile_mapping`, `table_relationships`
+
+#### Version 5.0 (Current - Full Export)
+- **Features**: All 21+ tables, streaming, parallel processing
+- **Compatibility**: Can import v1.0, v2.0, v3.0, v5.0
+- **Missing**: Profile-scoped export, selective table export
 
 ## Implementation Plan
 
-### Phase 1: Database Foundation & Core Infrastructure (Week 1)
-**Estimated Time**: 3-4 days
+### Phase 1: Core Profile-Scoped Export (Week 1-2)
+**Files to modify:**
+- `db_export.py`: Add `export_profile_scoped()`, `export_papers_for_profile()`
+- `db_migrate.py`: Add CLI flags: `--profile-id`, `--profile-name`
 
-#### 1.1 Database Schema Creation
-- Create `ollama_servers` table with CRUD operations
-- Create new `judge_task_queue` table (drop existing if present)
-- Extend `processing_jobs` table with bulk judge specific fields
-- Add database indexes for performance
-- Create migration scripts
+**Deliverables:**
+- Export single profile with all related papers
+- Generate v6.0 metadata format
+- Unit tests for profile filtering
 
-#### 1.2 Environment Detection & Worker Process Setup
-- Implement environment identification (DATABASE_URL + working directory)
-- Create worker process launcher script
-- Set up process management and monitoring
-- Implement worker heartbeat mechanism
+### Phase 2: Import with Profile Mapping (Week 2-3)
+**Files to modify:**
+- `db_import.py`: Add `ProfileMapper`, `ForeignKeyRemapper`
+- `db_import.py`: Update `import_from_directory()` to handle profile mapping
 
-#### 1.3 Core Queue Infrastructure
-- Implement queue producer (enqueue papers for processing)
-- Implement queue consumer with SKIP LOCKED
-- Create lease management system
-- Add idempotency checks (Paper+Profile score existence)
+**Deliverables:**
+- Profile ID mapping during import
+- Foreign key remapping for paper_profile_scores
+- Import mode selection (merge vs. create new)
+- Unit tests for mapping logic
 
-### Phase 2: Ollama Server Management & Settings (Week 1-2)
-**Estimated Time**: 2-3 days
+### Phase 3: Table Group Export (Week 3-4)
+**Files to modify:**
+- `db_export.py`: Add `TableGroupExporter`, predefined groups
+- `db_migrate.py`: Add `--export-group` flag
 
-#### 2.1 Backend API for Server Management
-- CRUD operations for Ollama servers
-- Server connectivity testing
-- Server health monitoring (without active probes)
-- Configuration validation
+**Deliverables:**
+- Predefined export groups (papers_only, profiles_only, etc.)
+- Custom table selection via CLI
+- Dependency resolution for selected tables
 
-#### 2.2 Frontend Settings Integration
-- Ollama Servers management UI in Settings
-- Server testing interface
-- Global defaults configuration (timeout, retries)
-- Server enable/disable controls
+### Phase 4: UI Integration (Week 4-5)
+**Files to modify:**
+- `database.py` (API router): Add endpoints for profile-scoped export
+- `Settings.tsx`: Add UI for selecting export scope
 
-### Phase 3: Job Management & Scheduler Integration (Week 2)
-**Estimated Time**: 3-4 days
+**Deliverables:**
+- API endpoints: `POST /api/settings/database/export-profile`
+- UI: Profile selection dropdown in export dialog
+- UI: Table group selection checkboxes
 
-#### 3.1 Enhanced Bulk Judge API
-- Extend bulk judge endpoint with multi-server support
-- Implement job creation with server selection
-- Add configuration overrides (timeout, retries per job)
-- Integrate with existing checkpoint system
+### Phase 5: Testing & Documentation (Week 5-6)
+**Deliverables:**
+- Integration tests for full import/export flow
+- Migration guide for users
+- Update README and API docs
 
-#### 3.2 Scheduler Suspension System
-- Implement scheduled task snapshot mechanism
-- Create pause/resume functionality for background jobs
-- Add automatic restoration on job completion/failure
-- Prevent conflicts with newsletter/mindmap/other jobs
+## API Specifications
 
-#### 3.3 Intelligent Error Handling
-- LLM Inference Error handling (3 retries, then fail)
-- Server Connectivity Error handling (3 retries, then terminate worker)
-- Data Issue handling (immediate failure)
-- Error classification and appropriate retry strategies
+### Export Endpoints
 
-### Phase 4: Worker Service & Processing Logic (Week 2-3)
-**Estimated Time**: 4-5 days
+#### 1. Profile-Scoped Export
+```http
+POST /api/settings/database/export-profile
+Content-Type: application/json
 
-#### 4.1 Worker Process Architecture
-- Multi-process worker launcher
-- One worker per Ollama server (concurrency = 1)
-- Dynamic load balancing implementation
-- Process monitoring and health checks
+{
+  "profile_id": 5,
+  "include_papers": true,
+  "include_fulltext": true,
+  "include_topics": false,
+  "streaming": true
+}
 
-#### 4.2 Scoring Integration
-- Adapt OptimizedOllamaScorer for queue-based processing
-- Implement batch score persistence
-- Add circuit breaker per server
-- Integrate with existing profile scoring logic
+Response:
+{
+  "task_id": "uuid",
+  "message": "Profile export started. Use WebSocket for progress."
+}
+```
 
-#### 4.3 Queue Management
-- Task leasing and lease expiration handling
-- Progress tracking and checkpoint saving
-- Failed task re-queuing logic
-- Worker shutdown and cleanup procedures
+#### 2. Table Group Export
+```http
+POST /api/settings/database/export-group
+Content-Type: application/json
 
-### Phase 5: Monitoring Dashboard & UI (Week 3-4)
-**Estimated Time**: 4-5 days
+{
+  "group": "papers_only",
+  "filters": {
+    "date_from": "2024-01-01",
+    "date_to": "2024-12-31"
+  }
+}
+```
 
-#### 5.1 Backend Monitoring APIs
-- Real-time job status endpoints
-- Per-server metrics (processing rates, error rates)
-- ETA calculation based on current performance
-- Job control APIs (pause, resume, cancel)
+### Import Endpoints
 
-#### 5.2 Frontend Dashboard
-- Job monitoring page with live updates (every few seconds)
-- Per-server performance visualization
-- Error rate and processing rate displays
-- Pause/resume/cancel controls
+#### 1. Profile Import with Mapping
+```http
+POST /api/settings/database/import-profile
+Content-Type: multipart/form-data
 
-#### 5.3 Conflict Prevention
-- Job conflict detection and warning system
-- Prompts when starting conflicting jobs during bulk operations
-- Automatic bulk job pause suggestions
+{
+  "backup_file": <file>,
+  "mapping_strategy": "auto",
+  "target_profile_id": null,  // Optional: merge into existing
+  "create_new_profile": false
+}
+```
 
-### Phase 6: Testing & Hardening (Week 4)
-**Estimated Time**: 3-4 days
+### CLI Specifications
 
-#### 6.1 Comprehensive Testing
-- Unit tests for all new components
-- Integration tests with mock Ollama servers
-- End-to-end testing with real workloads
-- Performance benchmarking
+#### Export Commands
+```bash
+# Export specific profile
+python -m theseus_insight.utils.db_migration.db_migrate export \
+    --source-db "postgresql://..." \
+    --output ./ml_profile_backup.tar.gz \
+    --profile-id 5 \
+    --include-fulltext
 
-#### 6.2 Production Readiness
-- Error handling edge cases
-- Process crash recovery testing
-- Long-running job stability testing
-- Documentation and deployment guides
+# Export by profile name
+python -m theseus_insight.utils.db_migration.db_migrate export \
+    --source-db "postgresql://..." \
+    --output ./ml_backup.tar.gz \
+    --profile-name "Machine Learning"
 
-### Technical Architecture Decisions
+# Export table group
+python -m theseus_insight.utils.db_migration.db_migrate export \
+    --source-db "postgresql://..." \
+    --output ./papers_only.tar.gz \
+    --export-group papers_only
 
-#### Database Strategy
-- **New judge_task_queue table**: Clean separation from existing processing_jobs
-- **Existing PostgreSQL**: Leverage current infrastructure and connection pooling
-- **SKIP LOCKED**: Prevent worker conflicts and ensure fair task distribution
-- **Lease-based recovery**: Handle worker crashes gracefully
+# Export custom tables
+python -m theseus_insight.utils.db_migration.db_migrate export \
+    --source-db "postgresql://..." \
+    --output ./custom.tar.gz \
+    --tables papers paper_fulltext paper_topics
+```
 
-#### Process Architecture
-- **Environment sharing**: Use DATABASE_URL and working directory for worker identification
-- **Multi-process workers**: One process per Ollama server for isolation
-- **Heartbeat monitoring**: Non-locking status updates for dashboard
-- **Graceful shutdown**: Clean worker termination with in-flight task completion
+#### Import Commands
+```bash
+# Auto-detect and import (default behavior)
+python -m theseus_insight.utils.db_migration.db_migrate import \
+    --target-db "postgresql://..." \
+    --input ./ml_profile_backup.tar.gz
 
-#### Error Handling Strategy
-- **LLM Errors**: Retry up to 3 times, then mark failed (data issues)
-- **Server Errors**: Retry up to 3 times, then terminate worker (connectivity issues)
-- **Circuit Breaker**: Disable problematic servers for job remainder
-- **Data Issues**: Immediate failure without retries
+# Create new profile (don't merge)
+python -m theseus_insight.utils.db_migration.db_migrate import \
+    --target-db "postgresql://..." \
+    --input ./ml_profile_backup.tar.gz \
+    --create-new-profile \
+    --new-profile-name "ML (Imported)"
 
-#### Monitoring Approach
-- **Polling-based**: Refresh every few seconds (simple, reliable)
-- **Real-time metrics**: Error rates, processing rates, ETA calculation
-- **Job controls**: Pause, resume, cancel with conflict prevention
-- **Visual feedback**: Clear status indicators and performance graphs
+# Merge into existing profile
+python -m theseus_insight.utils.db_migration.db_migrate import \
+    --target-db "postgresql://..." \
+    --input ./ml_profile_backup.tar.gz \
+    --merge-to-profile "Machine Learning"
 
-### Success Metrics
+# Merge by profile ID
+python -m theseus_insight.utils.db_migration.db_migrate import \
+    --target-db "postgresql://..." \
+    --input ./ml_profile_backup.tar.gz \
+    --merge-to-profile-id 3
+```
 
-- **Performance**: 2-5x speedup compared to single-server processing
-- **Reliability**: <1% job failure rate with intelligent error handling
-- **Scalability**: Support for 10-200k papers across multiple servers
-- **User Experience**: Real-time monitoring without UI blocking
-- **Maintainability**: Clear separation of concerns and modular architecture
+## Testing Strategy
 
-### Risks and Mitigations
+### Unit Tests
+1. Profile filtering logic (export only relevant papers)
+2. Foreign key remapping (profile_id mapping)
+3. Duplicate detection with profile context
+4. Metadata generation for v6.0 format
 
-- DB contention on large queues: mitigate with SKIP LOCKED, proper indexes, batched inserts, and short leases.
-- Worker/process crashes: leases and idempotent upserts ensure recovery; progress is reflected in queue and job counters.
-- Server lockups: bounded per-request timeout and circuit breaker prevent global stalls; other servers continue to progress.
-- Scheduler restoration correctness: snapshot persisted in job state; restoration is idempotent on job exit handlers.
+### Integration Tests
+1. Export profile → Import to empty DB → Verify data
+2. Export profile → Import to DB with existing profile → Verify merge
+3. Export profile → Import with create new → Verify new profile created
+4. Large dataset (10k papers) with streaming and progress tracking
 
-### Architecture Rationale (Scalability & Maintainability)
+### Edge Cases
+1. Export profile with no papers
+2. Import when target profile name conflicts
+3. Import with missing foreign key references (orphaned scores)
+4. Backwards compatibility: Import v5.0 export with new v6.0 importer
 
-The DB-backed task queue with one worker per Ollama server achieves natural dynamic load balancing: faster servers complete tasks sooner and therefore pull more work, without central coordination. One-concurrency-per-server satisfies GPU contention constraints. Using short leases and SKIP LOCKED ensures progress despite crashes, and storing state in `processing_jobs` and the queue makes long (>10h) runs robust to restarts and redeploys.
+## Success Metrics
 
-Separating the worker process from the FastAPI service avoids UI-induced stalls and isolates long-running compute. The modular design (servers config, queue producer, worker, and UI dashboard) localizes concerns and supports incremental rollout. Circuit breakers, bounded timeouts, and global retry policies limit blast radius when a server degrades. The system remains maintainable through clear data models, explicit APIs, and observability endpoints.
+### Functional Metrics
+- ✅ Can export specific profile in <30 seconds for 1000 papers
+- ✅ Can import profile with 100% referential integrity
+- ✅ Zero data loss during profile-scoped export/import
+- ✅ Backward compatible with all previous export formats
 
+### Performance Metrics
+- Export 10k papers: <2 minutes with streaming
+- Import 10k papers: <3 minutes with progress tracking
+- Archive size: 30-40% of raw database size (with compression)
 
+### User Experience Metrics
+- Export workflow: <3 clicks in UI
+- Import workflow: <3 clicks + file selection
+- Clear progress indication during long operations
+- Informative error messages for all failure scenarios
+
+## Migration & Rollback Plan
+
+### Migration Path
+1. **No schema changes required** - uses existing tables
+2. Deploy new export/import code alongside existing
+3. Update UI to add profile selection (optional)
+4. Users can continue using full export or use new profile export
+
+### Rollback Plan
+- New export format (v6.0) is backward compatible
+- Old import code can still import v6.0 exports (ignores new metadata)
+- No database changes required, so rollback is code-only
+
+### Backward Compatibility Matrix
+
+| Import Version | Export v1.0 | Export v2.0 | Export v3.0 | Export v5.0 | Export v6.0 |
+|---------------|-------------|-------------|-------------|-------------|-------------|
+| Importer v1.0 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Importer v2.0 | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Importer v5.0 | ✅ | ✅ | ✅ | ✅ | ⚠️ (ignores profile mapping) |
+| Importer v6.0 | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+## Open Questions & Decisions Needed
+
+### 1. Profile Name Collision Handling
+**Question**: What if imported profile name already exists?
+**Options**:
+- A) Auto-rename to "Profile Name (Imported)"
+- B) Prompt user for new name
+- C) Fail import with error message
+
+**Recommendation**: Option A (auto-rename) with user notification
+
+### 2. Orphaned Data Handling
+**Question**: What if papers reference non-existent profiles in import?
+**Options**:
+- A) Skip importing those papers
+- B) Import papers but omit profile scores
+- C) Create placeholder profile
+
+**Recommendation**: Option B (import papers, log warning about missing scores)
+
+### 3. Partial Export Scope
+**Question**: Should we support exporting only papers with score > 7 for a profile?
+**Decision Needed**: Add filtering options or keep it simple (all papers for profile)?
+
+**Recommendation**: Phase 2 enhancement - start simple, add filters later
+
+### 4. UI Complexity
+**Question**: How to expose profile mapping options in UI without overwhelming users?
+**Options**:
+- A) Advanced options panel (collapsed by default)
+- B) Simple import with smart defaults
+- C) Multi-step wizard
+
+**Recommendation**: Option B for v1, Option A for v2
+
+## Risks & Mitigations
+
+### Risk 1: Foreign Key Integrity Issues
+**Impact**: High
+**Probability**: Medium
+**Mitigation**:
+- Comprehensive foreign key remapping
+- Import validation before committing
+- Rollback capability with savepoints
+
+### Risk 2: Large Export Performance
+**Impact**: Medium
+**Probability**: Low
+**Mitigation**:
+- Streaming export for papers
+- Parallel processing where applicable
+- Progress tracking with estimates
+
+### Risk 3: User Confusion with Mapping Options
+**Impact**: Medium
+**Probability**: Medium
+**Mitigation**:
+- Clear UI labels and help text
+- Sensible defaults (auto-detect)
+- Examples in documentation
+
+### Risk 4: Backward Compatibility Breakage
+**Impact**: High
+**Probability**: Low
+**Mitigation**:
+- Extensive testing with old export formats
+- Version detection in import code
+- Graceful degradation for missing features
+
+## Appendix
+
+### A. Current Export/Import Status
+
+**Profile Tables Currently Exported** ✅:
+- `research_profiles` - exported in `export_all()`
+- `profile_research_interests` - exported in `export_all()`
+- `paper_profile_scores` - exported in `export_all()`
+
+**Profile Tables Currently Imported** ✅:
+- All three profile tables are imported correctly
+- Import order respects dependencies (profiles → interests → scores)
+
+**Current Issues Found** ❌:
+1. No way to export only specific profile
+2. Profile ID mapping not implemented - assumes IDs match between source/target
+3. Cannot export subset of papers (e.g., papers for one profile)
+4. No table group export functionality
+
+### B. Database Schema Summary
+
+**Core Profile Tables**:
+```sql
+research_profiles (id, name, description, color, tags, email_recipients, arxiv_filters, is_active, is_default)
+profile_research_interests (id, profile_id→research_profiles, interest_text, embedding, embedding_model)
+paper_profile_scores (id, paper_id→papers, profile_id→research_profiles, score, related, rationale)
+```
+
+**Paper-Related Tables**:
+```sql
+papers (id, title, abstract, url, embedding, ...)
+paper_fulltext (id, paper_id→papers, content, embedding, ...)
+paper_topics (id, paper_id→papers, topic_id→topics, relevance_score)
+paper_research_interests (id, paper_id→papers, research_interest_id→research_interests, similarity_score)
+```
+
+**Foreign Key Relationships Critical for Profile Export**:
+- `paper_profile_scores.profile_id` → `research_profiles.id`
+- `paper_profile_scores.paper_id` → `papers.id`
+- `profile_research_interests.profile_id` → `research_profiles.id`
+
+### C. Example Export Metadata (v6.0)
+
+```json
+{
+  "export_version": "6.0",
+  "export_type": "profile_scoped",
+  "export_timestamp": "2025-10-07T14:30:00.000Z",
+  "source_database": {
+    "schema_version": "5.2",
+    "profile_count": 1,
+    "paper_count": 1250
+  },
+  "profile_mapping": {
+    "source_profile_id": 5,
+    "source_profile_name": "Machine Learning",
+    "source_profile_color": "#FF6B6B",
+    "export_includes_all_papers": false,
+    "papers_exported": 1250,
+    "paper_selection_criteria": "all papers scored by this profile"
+  },
+  "tables_included": [
+    "research_profiles",
+    "profile_research_interests",
+    "papers",
+    "paper_profile_scores",
+    "paper_fulltext",
+    "paper_topics"
+  ],
+  "table_statistics": {
+    "research_profiles": 1,
+    "profile_research_interests": 15,
+    "papers": 1250,
+    "paper_profile_scores": 1250,
+    "paper_fulltext": 980,
+    "paper_topics": 3500
+  },
+  "table_relationships": {
+    "papers": {
+      "foreign_keys": [],
+      "related_tables": ["paper_profile_scores", "paper_fulltext", "paper_topics"]
+    },
+    "paper_profile_scores": {
+      "foreign_keys": ["papers.id", "research_profiles.id"],
+      "related_tables": []
+    }
+  },
+  "import_hints": {
+    "profile_mapping_required": true,
+    "suggested_mapping_strategy": "auto",
+    "duplicate_handling": "skip_by_url"
+  },
+  "backward_compatible": true,
+  "checksums": {
+    "papers": "sha256:abc123...",
+    "paper_profile_scores": "sha256:def456..."
+  }
+}
+```
+
+### D. References
+- Current export implementation: `theseus_insight/utils/db_migration/db_export.py`
+- Current import implementation: `theseus_insight/utils/db_migration/db_import.py`
+- Profile schema: `scripts/002_migrate_to_profiles.sql`
+- Core schema: `scripts/001_init_schema_postgres.sql`
+- Migration README: `docs/db_migration_README.md`

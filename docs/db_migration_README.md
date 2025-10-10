@@ -200,6 +200,76 @@ The migration tools handle duplicates intelligently across all table types:
 
 By default, duplicates are skipped during import. Use `--allow-duplicates` to override this behavior.
 
+## Complete Database Overwrite
+
+When performing a complete database overwrite (import_mode="overwrite"), the system:
+
+1. **Checks which tables exist** in the target database
+2. **Clears all existing data** in the correct order respecting foreign key constraints
+3. **Deletes child tables first**, then parent tables to avoid FK violations
+4. **Skips tables that don't exist** (graceful handling of schema differences)
+5. **Imports the new data** from the archive
+
+The deletion order follows this hierarchy:
+- System tables (logs, tasks, error_logs)
+- Worker management tables (worker_heartbeats, judge_task_queue)
+- Processing jobs and scheduler tables
+- Research agent state and runs
+- Content tables (newsletters, podcasts, fulltext, mindmaps)
+- Topics, metrics, and relationship tables
+- Research interests and their relationships
+- Profile scores and interests
+- Core tables (papers, research_profiles)
+
+**Important**: Complete overwrites are destructive and cannot be undone. Always ensure you have a backup before performing an overwrite operation.
+
+### Schema Compatibility
+
+The overwrite process is designed to work across different schema versions:
+
+- **Newer schemas**: All tables are cleared in the correct order
+- **Older schemas**: Missing tables are gracefully skipped (e.g., tables from migrations 006-008)
+- **Partial migrations**: Only existing tables are cleared, preventing errors
+
+This ensures that database overwrites work correctly regardless of which migrations have been applied to the target database.
+
+### Research Profiles - Special Handling
+
+Research profiles have special handling during import, particularly for the Default profile:
+
+#### Default Profile Comparison
+
+When importing a Default profile, the system compares it with the existing Default profile in the target database:
+
+- **Profiles Match**: If `arxiv_filters`, `tags`, and `email_recipients` are identical, the import skips the Default profile and maps all associated papers/scores to the existing Default profile
+- **Profiles Differ**: If any of these fields differ, a new profile named "Default (Imported)" is created, and all papers/scores are imported into this new profile
+
+This ensures data integrity and prevents loss of papers when importing databases with different research interests.
+
+#### Example Scenarios
+
+**Scenario 1 - Matching Profiles:**
+```
+Source DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"]
+Target DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"]
+Result: Papers imported to existing Default profile
+```
+
+**Scenario 2 - Different Profiles:**
+```
+Source DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"], 700k papers
+Target DB: Default profile with arxiv_filters: ["cs.CV", "cs.RO"]
+Result: New "Default (Imported)" profile created, all 700k papers imported there
+```
+
+#### Non-Default Profiles
+
+Non-Default profiles are matched by name:
+- If a profile with the same name exists, papers are mapped to the existing profile
+- If no match exists, a new profile is created
+
+See [Database Import Profile Handling](database_import_profile_handling.md) for detailed documentation.
+
 ## Archive Format
 
 ### Version 3.0 Archives (Current)

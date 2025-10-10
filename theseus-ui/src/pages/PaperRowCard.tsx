@@ -45,8 +45,8 @@ const TruncatedTypography = styled(Typography)(() => ({
 
 const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, hasProfilesSelected = false, onPaperUpdated, selectedProfileIds }) => {
   const [expanded, setExpanded] = useState(false);
-  const [localScore, setLocalScore] = useState<number>(paper.score);
-  const [localRelated, setLocalRelated] = useState<boolean>(!!paper.related);
+  const [localScore, setLocalScore] = useState<number>(paper.score ?? paper.profile_score ?? 0);
+  const [localRelated, setLocalRelated] = useState<boolean>(paper.related ?? false);
   const [saving, setSaving] = useState<boolean>(false);
   const [editing, setEditing] = useState<boolean>(false);
   const navigate = useNavigate();
@@ -89,7 +89,7 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
           <Chip 
             label={hasProfilesSelected && paper.profile_score !== undefined 
               ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
-              : `Score: ${paper.score.toFixed(2)}`} 
+              : `Score: ${typeof paper.score === 'number' ? paper.score.toFixed(2) : '—'}`} 
             size="small" 
             color="primary" 
             variant="outlined" 
@@ -129,8 +129,8 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
                   const initialScore = (hasProfilesSelected && typeof (paper as any).profile_score === 'number')
                     ? (paper as any).profile_score as number
                     : paper.score;
-                  setLocalScore(initialScore);
-                  setLocalRelated(!!paper.related);
+                  setLocalScore(initialScore ?? 0);
+                  setLocalRelated(paper.related ?? false);
                   setEditing(true);
                 }}
               >
@@ -144,8 +144,8 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
                   onClick={(e) => {
                     e.stopPropagation();
                     setEditing(false);
-                    setLocalScore(paper.score);
-                    setLocalRelated(!!paper.related);
+                    setLocalScore(paper.score ?? paper.profile_score ?? 0);
+                    setLocalRelated(paper.related ?? false);
                   }}
                 >
                   Cancel
@@ -169,8 +169,8 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
                         payload.profile_ids = selectedProfileIds;
                       }
                       const updated = await papersApi.updatePaper(paper.id, payload);
-                      setLocalScore(updated.score);
-                      setLocalRelated(updated.related);
+                      setLocalScore(updated.score ?? updated.profile_score ?? 0);
+                      setLocalRelated(updated.related ?? false);
                       setEditing(false);
                       onPaperUpdated && onPaperUpdated(updated);
                     } catch (err) {

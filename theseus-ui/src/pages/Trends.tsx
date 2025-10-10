@@ -1225,7 +1225,7 @@ const Trends: React.FC<TrendsProps> = () => {
                       <CardContent sx={{ py: 1 }}>
                         <Typography variant="subtitle2">{paper.title}</Typography>
                         <Typography variant="body2" color="text.secondary">
-                          Score: {paper.score.toFixed(2)} | Date: {paper.date}
+                          Score: {typeof paper.score === 'number' ? paper.score.toFixed(2) : '—'} | Date: {paper.date}
                         </Typography>
                       </CardContent>
                     </Card>

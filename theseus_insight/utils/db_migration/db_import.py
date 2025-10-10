@@ -55,6 +55,92 @@ class ProfileMapper:
         self.db_path = db_path
         self.id_mappings = {}  # {source_id: target_id}
 
+    def _safe_deserialize_json(self, value, default=None):
+        """
+        Safely deserialize a value that might be a JSON string or already a Python object.
+        
+        Args:
+            value: Value to deserialize (can be str, dict, list, or None)
+            default: Default value if deserialization fails or value is None
+            
+        Returns:
+            Deserialized Python object or default
+        """
+        if value is None:
+            return default
+        # If already a dict or list, return as-is
+        if isinstance(value, (dict, list)):
+            return value
+        # If a string, try to parse as JSON
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"Failed to parse JSON value: {value[:100] if len(value) > 100 else value}")
+                return default
+        # Unknown type, return default
+        return default
+    
+    def _safe_serialize_json(self, value):
+        """
+        Safely serialize a value to JSON string.
+        
+        Args:
+            value: Value to serialize (can be str, dict, list, or None)
+            
+        Returns:
+            JSON string
+        """
+        if value is None:
+            return None
+        # If already a string, assume it's JSON and return as-is
+        if isinstance(value, str):
+            # Validate it's valid JSON
+            try:
+                json.loads(value)
+                return value
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON, treat as regular string and encode
+                return json.dumps(value)
+        # Convert dict/list to JSON string
+        return json.dumps(value)
+
+    def _compare_profiles(self, profile1: Dict, profile2: Dict) -> bool:
+        """
+        Compare two profiles to determine if they are substantially the same.
+        
+        Compares: arxiv_filters, tags, email_recipients
+        
+        Args:
+            profile1: First profile data dictionary
+            profile2: Second profile data dictionary
+            
+        Returns:
+            True if profiles are substantially the same, False otherwise
+        """
+        # Compare arxiv_filters
+        filters1 = profile1.get("arxiv_filters", {})
+        filters2 = profile2.get("arxiv_filters", {})
+        if filters1 != filters2:
+            logger.info(f"Profiles differ in arxiv_filters: {filters1} vs {filters2}")
+            return False
+        
+        # Compare tags
+        tags1 = set(profile1.get("tags", []))
+        tags2 = set(profile2.get("tags", []))
+        if tags1 != tags2:
+            logger.info(f"Profiles differ in tags: {tags1} vs {tags2}")
+            return False
+        
+        # Compare email_recipients
+        recipients1 = set(profile1.get("email_recipients", []))
+        recipients2 = set(profile2.get("email_recipients", []))
+        if recipients1 != recipients2:
+            logger.info(f"Profiles differ in email_recipients")
+            return False
+        
+        return True
+
     def map_profile(
         self,
         source_profile: Dict,
@@ -66,7 +152,7 @@ class ProfileMapper:
         Map source profile to target profile ID.
 
         Strategies:
-        - "auto": Match by name, create if not exists
+        - "auto": Match by name, create if not exists. For Default profiles, compares content.
         - "create_new": Always create new profile
         - "merge_to": Merge into specified target profile
         - "match_by_name": Must match existing profile by name
@@ -114,9 +200,9 @@ class ProfileMapper:
                     profile_name,
                     source_profile.get('description'),
                     source_profile.get('color'),
-                    json.dumps(source_profile.get('tags', [])),
-                    json.dumps(source_profile.get('email_recipients', [])),
-                    json.dumps(source_profile.get('arxiv_filters', {})),
+                    self._safe_serialize_json(source_profile.get('tags', [])),
+                    self._safe_serialize_json(source_profile.get('email_recipients', [])),
+                    self._safe_serialize_json(source_profile.get('arxiv_filters', {})),
                     source_profile.get('is_active', True),
                     False  # Never set imported profile as default
                 ))
@@ -140,7 +226,57 @@ class ProfileMapper:
                 return result['id']
 
             else:  # "auto" strategy
-                # Try to match by name
+                # Special handling for Default profile
+                if source_profile.get("is_default", False) or source_profile.get("name") == "Default":
+                    cursor.execute("""
+                        SELECT id, name, description, color, tags, email_recipients, 
+                               arxiv_filters, is_active, is_default 
+                        FROM research_profiles 
+                        WHERE is_default = true
+                    """)
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        # Compare the profiles to see if they're the same
+                        existing_profile = {
+                            "arxiv_filters": self._safe_deserialize_json(result["arxiv_filters"], {}),
+                            "tags": self._safe_deserialize_json(result["tags"], []),
+                            "email_recipients": self._safe_deserialize_json(result["email_recipients"], [])
+                        }
+                        
+                        if self._compare_profiles(source_profile, existing_profile):
+                            # Profiles are the same, use existing default
+                            logger.info(f"Default profiles match - mapping source profile {source_id} to existing Default profile {result['id']}")
+                            self.id_mappings[source_id] = result['id']
+                            return result['id']
+                        else:
+                            # Profiles are different, create a new profile
+                            logger.info(f"Default profiles differ - creating new profile 'Default (Imported)'")
+                            profile_name = "Default (Imported)"
+                            
+                            cursor.execute("""
+                                INSERT INTO research_profiles (
+                                    name, description, color, tags, email_recipients,
+                                    arxiv_filters, is_active, is_default
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                RETURNING id
+                            """, (
+                                profile_name,
+                                source_profile.get('description'),
+                                source_profile.get('color'),
+                                self._safe_serialize_json(source_profile.get('tags', [])),
+                                self._safe_serialize_json(source_profile.get('email_recipients', [])),
+                                self._safe_serialize_json(source_profile.get('arxiv_filters', {})),
+                                source_profile.get('is_active', True),
+                                False  # Never set imported profile as default
+                            ))
+
+                            new_id = cursor.fetchone()['id']
+                            self.id_mappings[source_id] = new_id
+                            return new_id
+                
+                # Try to match by name for non-default profiles
                 cursor.execute(
                     "SELECT id FROM research_profiles WHERE name = %s",
                     (source_profile['name'],)
@@ -164,9 +300,9 @@ class ProfileMapper:
                         source_profile['name'],
                         source_profile.get('description'),
                         source_profile.get('color'),
-                        json.dumps(source_profile.get('tags', [])),
-                        json.dumps(source_profile.get('email_recipients', [])),
-                        json.dumps(source_profile.get('arxiv_filters', {})),
+                        self._safe_serialize_json(source_profile.get('tags', [])),
+                        self._safe_serialize_json(source_profile.get('email_recipients', [])),
+                        self._safe_serialize_json(source_profile.get('arxiv_filters', {})),
                         source_profile.get('is_active', True),
                         False  # Never set imported profile as default
                     ))
@@ -1633,6 +1769,92 @@ class DatabaseImporter:
             print(f"Created default profile with ID: {default_id}")
             return default_id
     
+    def _safe_deserialize_json(self, value, default=None):
+        """
+        Safely deserialize a value that might be a JSON string or already a Python object.
+        
+        Args:
+            value: Value to deserialize (can be str, dict, list, or None)
+            default: Default value if deserialization fails or value is None
+            
+        Returns:
+            Deserialized Python object or default
+        """
+        if value is None:
+            return default
+        # If already a dict or list, return as-is
+        if isinstance(value, (dict, list)):
+            return value
+        # If a string, try to parse as JSON
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"Failed to parse JSON value: {value[:100] if len(value) > 100 else value}")
+                return default
+        # Unknown type, return default
+        return default
+    
+    def _safe_serialize_json(self, value):
+        """
+        Safely serialize a value to JSON string.
+        
+        Args:
+            value: Value to serialize (can be str, dict, list, or None)
+            
+        Returns:
+            JSON string
+        """
+        if value is None:
+            return None
+        # If already a string, assume it's JSON and return as-is
+        if isinstance(value, str):
+            # Validate it's valid JSON
+            try:
+                json.loads(value)
+                return value
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON, treat as regular string and encode
+                return json.dumps(value)
+        # Convert dict/list to JSON string
+        return json.dumps(value)
+    
+    def _compare_profiles(self, profile1: Dict, profile2: Dict) -> bool:
+        """
+        Compare two profiles to determine if they are substantially the same.
+        
+        Compares: arxiv_filters, tags, email_recipients
+        
+        Args:
+            profile1: First profile data dictionary
+            profile2: Second profile data dictionary
+            
+        Returns:
+            True if profiles are substantially the same, False otherwise
+        """
+        # Compare arxiv_filters
+        filters1 = profile1.get("arxiv_filters", {})
+        filters2 = profile2.get("arxiv_filters", {})
+        if filters1 != filters2:
+            logger.info(f"Profiles differ in arxiv_filters: {filters1} vs {filters2}")
+            return False
+        
+        # Compare tags
+        tags1 = set(profile1.get("tags", []))
+        tags2 = set(profile2.get("tags", []))
+        if tags1 != tags2:
+            logger.info(f"Profiles differ in tags: {tags1} vs {tags2}")
+            return False
+        
+        # Compare email_recipients
+        recipients1 = set(profile1.get("email_recipients", []))
+        recipients2 = set(profile2.get("email_recipients", []))
+        if recipients1 != recipients2:
+            logger.info(f"Profiles differ in email_recipients")
+            return False
+        
+        return True
+    
     def import_research_profiles(self, profiles_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
         Import research profiles from JSON file.
@@ -1663,16 +1885,36 @@ class DatabaseImporter:
                 # Special handling for Default profile
                 if profile_data.get("is_default", False) or profile_data["name"] == "Default":
                     with get_cursor() as cursor:
-                        # Get the existing Default profile ID
-                        cursor.execute("SELECT id FROM research_profiles WHERE is_default = true")
+                        # Get the existing Default profile
+                        cursor.execute("""
+                            SELECT id, name, description, color, tags, email_recipients, 
+                                   arxiv_filters, is_active, is_default 
+                            FROM research_profiles 
+                            WHERE is_default = true
+                        """)
                         result = cursor.fetchone()
                         if result and skip_duplicates:
-                            # Map old Default profile ID to existing Default profile ID
-                            if old_profile_id:
-                                self.profile_id_mapping[old_profile_id] = result["id"]
-                            stats["skipped"] += 1
-                            logger.info(f"Skipping Default profile import, using existing Default profile ID: {result['id']}")
-                            continue
+                            # Compare the profiles to see if they're the same
+                            existing_profile = {
+                                "arxiv_filters": self._safe_deserialize_json(result["arxiv_filters"], {}),
+                                "tags": self._safe_deserialize_json(result["tags"], []),
+                                "email_recipients": self._safe_deserialize_json(result["email_recipients"], [])
+                            }
+                            
+                            if self._compare_profiles(profile_data, existing_profile):
+                                # Profiles are the same, map IDs and skip import
+                                if old_profile_id:
+                                    self.profile_id_mapping[old_profile_id] = result["id"]
+                                stats["skipped"] += 1
+                                logger.info(f"Default profiles match - mapping source profile {old_profile_id} to existing Default profile {result['id']}")
+                                continue
+                            else:
+                                # Profiles are different, import as a new profile
+                                logger.info(f"Default profiles differ - importing source Default profile as a new profile")
+                                # Change the name to avoid conflict
+                                profile_data["name"] = "Default (Imported)"
+                                profile_data["is_default"] = False
+                                # Fall through to insert logic below
                         elif result and not skip_duplicates:
                             # In overwrite mode, update the existing Default profile
                             cursor.execute("""
@@ -1686,9 +1928,9 @@ class DatabaseImporter:
                                 profile_data["name"],
                                 profile_data.get("description"),
                                 profile_data.get("color"),
-                                json.dumps(profile_data.get("tags", [])),
-                                json.dumps(profile_data.get("email_recipients", [])),
-                                json.dumps(profile_data.get("arxiv_filters", {})),
+                                self._safe_serialize_json(profile_data.get("tags", [])),
+                                self._safe_serialize_json(profile_data.get("email_recipients", [])),
+                                self._safe_serialize_json(profile_data.get("arxiv_filters", {})),
                                 profile_data.get("is_active", True),
                                 result["id"]
                             ))
@@ -1723,9 +1965,9 @@ class DatabaseImporter:
                         profile_data["name"],
                         profile_data.get("description"),
                         profile_data.get("color"),
-                        json.dumps(profile_data.get("tags", [])),
-                        json.dumps(profile_data.get("email_recipients", [])),
-                        json.dumps(profile_data.get("arxiv_filters", {})),
+                        self._safe_serialize_json(profile_data.get("tags", [])),
+                        self._safe_serialize_json(profile_data.get("email_recipients", [])),
+                        self._safe_serialize_json(profile_data.get("arxiv_filters", {})),
                         profile_data.get("is_active", True),
                         profile_data.get("is_default", False),
                         profile_data.get("created_at"),
@@ -2955,14 +3197,61 @@ class DatabaseImporter:
         """
         print("WARNING: Clearing all data from database tables...")
         
-        # Tables to clear in order (respecting potential foreign key constraints)
+        # Tables to clear in order (respecting foreign key constraints)
+        # Order: Child tables first, then parent tables
+        # Foreign key relationships documented inline
         tables_to_clear = [
-            'logs', 'tasks', 'scheduled_task_runs', 'scheduled_tasks', 'research_agent_state', 
-            'research_runs', 'lit_reviews', 'mindmap_reports', 'model_catalog', 'paper_fulltext', 
-            'newsletters', 'podcasts', 'paper_topics', 'topic_metrics', 'topics', 
-            'paper_research_interests', 'research_interest_metrics', 'research_interests', 
-            'label_summaries', 'paper_profile_scores', 'profile_research_interests', 
-            'papers', 'research_profiles'
+            # System/logging tables (no FK dependencies)
+            'logs', 
+            'error_logs',
+            'tasks',
+            
+            # Worker management (depends on processing_jobs)
+            'worker_heartbeats',  # FK: processing_jobs.id
+            'judge_task_queue',   # FK: processing_jobs.id, papers.id, research_profiles.id
+            
+            # Processing jobs (depends on nothing in this list)
+            'processing_jobs',
+            
+            # Ollama servers (no FK dependencies)
+            'ollama_servers',
+            
+            # Scheduled tasks (depends on research_profiles)
+            'scheduled_task_runs',  # FK: scheduled_tasks.id
+            'scheduled_tasks',      # FK: research_profiles.id
+            
+            # Research agent (depends on research_runs)
+            'research_agent_state',  # FK: research_runs.task_id
+            'research_runs',
+            
+            # Content tables (mostly depend on papers)
+            'lit_reviews',
+            'mindmap_reports',       # FK: papers.id
+            'model_catalog',
+            'paper_fulltext',        # FK: papers.id
+            'newsletters',
+            'podcasts',
+            
+            # Topics and relationships (depend on papers, topics, research_profiles)
+            'paper_topics',          # FK: papers.id, topics.id
+            'topic_metrics',         # FK: topics.id, research_profiles.id
+            'topics',                # FK: research_profiles.id
+            
+            # Research interests (depend on papers, research_interests)
+            'paper_research_interests',      # FK: papers.id, research_interests.id
+            'research_interest_metrics',     # FK: research_interests.id
+            'research_interests',
+            
+            # Misc tables
+            'label_summaries',
+            
+            # Profile relationships (depend on papers, research_profiles)
+            'paper_profile_scores',          # FK: papers.id, research_profiles.id
+            'profile_research_interests',    # FK: research_profiles.id
+            
+            # Core tables (parent tables - delete last)
+            'papers',
+            'research_profiles'
         ]
         deletion_counts = {}
         total_tables = len(tables_to_clear)
@@ -2973,15 +3262,29 @@ class DatabaseImporter:
                     progress_callback(i, total_tables, f"Clearing {table} table...")
                 
                 try:
-                    # Get count before deletion
-                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                    count_before = cursor.fetchone()[0]
+                    # Check if table exists first
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = 'public' 
+                            AND table_name = %s
+                        )
+                    """, (table,))
+                    table_exists = cursor.fetchone()[0]
                     
-                    # Delete all records (PostgreSQL doesn't require special syntax)
-                    cursor.execute(f"DELETE FROM {table}")
-                    deletion_counts[table] = count_before
-                    
-                    print(f"Cleared {count_before} records from {table} table")
+                    if not table_exists:
+                        print(f"Table {table} does not exist, skipping...")
+                        deletion_counts[table] = 0
+                    else:
+                        # Get count before deletion
+                        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                        count_before = cursor.fetchone()[0]
+                        
+                        # Delete all records (PostgreSQL doesn't require special syntax)
+                        cursor.execute(f"DELETE FROM {table}")
+                        deletion_counts[table] = count_before
+                        
+                        print(f"Cleared {count_before} records from {table} table")
                     
                 except Exception as e:
                     print(f"Error clearing table {table}: {e}")

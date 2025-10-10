@@ -2068,7 +2068,7 @@ class DatabaseImporter:
     
     def import_paper_profile_scores(self, scores_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
-        Import paper profile scores from JSON file.
+        Import paper profile scores from JSON file using bulk COPY for efficiency.
         
         Args:
             scores_file: Path to paper_profile_scores.json file
@@ -2083,24 +2083,48 @@ class DatabaseImporter:
         with open(scores_file, 'r', encoding='utf-8') as f:
             scores_data = json.load(f)
         
+        # Apply profile ID mapping if available
+        if hasattr(self, 'profile_id_mapping') and self.profile_id_mapping:
+            for score_data in scores_data:
+                original_profile_id = score_data["profile_id"]
+                if original_profile_id in self.profile_id_mapping:
+                    score_data["profile_id"] = self.profile_id_mapping[original_profile_id]
+                    logger.debug(f"Mapped profile ID {original_profile_id} to {score_data['profile_id']}")
+        
+        # Use bulk COPY import for efficiency (500k+ records)
+        columns = ["paper_id", "profile_id", "score", "related", "rationale", "date_scored", "judge_model"]
+        unique_columns = ["paper_id", "profile_id"]
+        
+        try:
+            stats = self._import_with_copy(
+                "paper_profile_scores",
+                scores_data,
+                columns,
+                skip_duplicates=skip_duplicates,
+                unique_columns=unique_columns,
+                progress_callback=progress_callback
+            )
+            print(f"Paper profile scores import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+            return stats
+        except Exception as e:
+            print(f"Error during bulk import of paper profile scores: {e}")
+            # Fall back to row-by-row import if bulk fails
+            print("Falling back to row-by-row import...")
+            return self._import_paper_profile_scores_fallback(scores_data, skip_duplicates, progress_callback)
+    
+    def _import_paper_profile_scores_fallback(self, scores_data: List[Dict], skip_duplicates: bool, progress_callback=None) -> Dict[str, int]:
+        """Fallback method for importing paper profile scores row-by-row."""
         stats = {"total": len(scores_data), "imported": 0, "skipped": 0, "errors": 0}
         
         for i, score_data in enumerate(scores_data):
             try:
-                # Map old profile ID to new profile ID if available
-                original_profile_id = score_data["profile_id"]
-                mapped_profile_id = original_profile_id
-                if hasattr(self, 'profile_id_mapping') and original_profile_id in self.profile_id_mapping:
-                    mapped_profile_id = self.profile_id_mapping[original_profile_id]
-                    logger.debug(f"Mapped profile ID {original_profile_id} to {mapped_profile_id}")
-                
                 # Check for duplicates if requested
                 if skip_duplicates:
                     with get_cursor() as cursor:
                         cursor.execute("""
                             SELECT COUNT(*) FROM paper_profile_scores 
                             WHERE paper_id = %s AND profile_id = %s
-                        """, (score_data["paper_id"], mapped_profile_id))
+                        """, (score_data["paper_id"], score_data["profile_id"]))
                         if cursor.fetchone()[0] > 0:
                             stats["skipped"] += 1
                             continue
@@ -2113,7 +2137,7 @@ class DatabaseImporter:
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         score_data["paper_id"],
-                        mapped_profile_id,
+                        score_data["profile_id"],
                         score_data.get("score"),
                         score_data.get("related"),
                         score_data.get("rationale"),

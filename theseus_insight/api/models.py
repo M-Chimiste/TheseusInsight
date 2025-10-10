@@ -289,10 +289,10 @@ class PaperApiResponse(BaseModel):
     abstract: str
     date: str
     date_run: str
-    score: float # Or int, needs to match db/model
-    rationale: str
-    related: bool
-    cosine_similarity: float
+    score: Optional[float] = Field(default=None, description="Legacy paper score (use profile_score for profile-specific scores)")
+    rationale: Optional[str] = Field(default=None, description="Legacy rationale (use profile rationale for profile-specific rationales)")
+    related: Optional[bool] = Field(default=False, description="Legacy related flag")
+    cosine_similarity: Optional[float] = Field(default=None, description="Cosine similarity score")
     url: str
     embedding_model: str
     keywords: Optional[List[str]] = Field(default=None, description="Top keywords extracted from title/abstract")

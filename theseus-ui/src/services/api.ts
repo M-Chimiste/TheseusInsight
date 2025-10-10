@@ -924,15 +924,18 @@ export interface PaperApiResponse {
   abstract: string;
   date: string;
   date_run: string;
-  score: number;
-  rationale: string;
-  related: boolean;
-  cosine_similarity: number;
+  score?: number | null; // Legacy paper score (use profile_score for profile-specific scores)
+  rationale?: string | null; // Legacy rationale
+  related?: boolean | null; // Legacy related flag
+  cosine_similarity?: number | null; // Cosine similarity score
   url: string;
   embedding_model: string;
   keywords?: string[];
-  similarity_score?: number; // Optional field for similarity search results
-  profile_score?: number;
+  similarity_score?: number; // Semantic similarity score when returned from similarity search
+  profile_score?: number; // Profile-specific relevance score
+  semantic_score?: number; // Semantic similarity score in hybrid search
+  keyword_score?: number; // Keyword matching score in hybrid search
+  hybrid_score?: number; // Combined hybrid search score
 }
 
 export interface PaginatedPapersResponse {

@@ -166,9 +166,15 @@ def _serialize_paper_info(obj, visited=None):
         JSON-serializable version of the object
     """
     from ...research_agent.tools.deduplication import PaperInfo
+    from ...research_agent.orchestrator import OrchestrationResult
+    from ...research_agent.synthesis_agent import SynthesisResult, SynthesisMetadata, ConflictIdentification
+    from ...research_agent.agent_manager import AgentResult
+    from ...research_agent.question_generator import GeneratedQuestion
     from types import MappingProxyType
     import datetime
     import uuid
+    import inspect
+    from dataclasses import is_dataclass, asdict
     
     # Initialize visited set for cycle detection
     if visited is None:
@@ -181,7 +187,53 @@ def _serialize_paper_info(obj, visited=None):
         return f"<circular-reference: {type(obj).__name__}>"
     
     try:
-        if isinstance(obj, PaperInfo):
+        # Handle property descriptors and other descriptors - skip them
+        if inspect.isdatadescriptor(obj) or inspect.isgetsetdescriptor(obj) or inspect.ismethoddescriptor(obj):
+            return f"<descriptor: {type(obj).__name__}>"
+        
+        # Special handling for OrchestrationResult to include properties
+        if isinstance(obj, OrchestrationResult):
+            visited.add(obj_id)
+            result = {
+                'original_question': obj.original_question,
+                'final_answer': obj.final_answer,
+                'generation_summary': obj.generation_summary,
+                'generated_questions': _serialize_paper_info([{
+                    'agent_id': q.agent_id,
+                    'agent_type': q.agent_type.value,
+                    'question': q.question,
+                    'specialization_focus': q.specialization_focus,
+                    'search_strategy': q.search_strategy
+                } for q in obj.generated_questions], visited),
+                'question_generation_success': obj.question_generation_success,
+                'agent_results': _serialize_paper_info([{
+                    'agent_id': r.agent_id,
+                    'agent_type': r.agent_type.value,
+                    'question': r.question,
+                    'response': r.response,
+                    'sources_gathered': _serialize_paper_info(r.sources_gathered, visited),
+                    'execution_time': r.execution_time,
+                    'success': r.success,
+                    'error_message': r.error_message,
+                    'metadata': _serialize_paper_info(r.metadata, visited)
+                } for r in obj.agent_results], visited),
+                'successful_agents': obj.successful_agents,
+                'failed_agents': obj.failed_agents,
+                'execution_time': obj.execution_time,
+                'success': obj.success,
+                'error_message': obj.error_message,
+                # Include properties
+                'statistics': _serialize_paper_info(obj.statistics, visited),
+                'sub_queries': _serialize_paper_info(obj.sub_queries, visited),
+                'sources_gathered': _serialize_paper_info(obj.sources_gathered, visited),
+                'judged_sources': _serialize_paper_info(obj.judged_sources, visited),
+                'evidence': _serialize_paper_info(obj.evidence, visited),
+                'compressed_notes': obj.compressed_notes,
+                'workflow_messages': _serialize_paper_info(obj.workflow_messages, visited)
+            }
+            visited.discard(obj_id)
+            return result
+        elif isinstance(obj, PaperInfo):
             visited.add(obj_id)
             result = {
                 'paper_id': obj.paper_id,
@@ -227,15 +279,37 @@ def _serialize_paper_info(obj, visited=None):
             result = {key: _serialize_paper_info(value, visited) for key, value in obj.items()}
             visited.discard(obj_id)
             return result
+        elif is_dataclass(obj) and not isinstance(obj, type):
+            # Generic dataclass handler - convert to dict and recursively serialize
+            visited.add(obj_id)
+            try:
+                obj_dict = asdict(obj)
+                result = _serialize_paper_info(obj_dict, visited)
+            except (TypeError, ValueError) as e:
+                # If asdict fails (e.g., due to non-serializable fields), fall back to __dict__
+                logger.warning(f"asdict failed for dataclass {type(obj).__name__}: {e}")
+                obj_dict = {}
+                for key, value in obj.__dict__.items():
+                    if not key.startswith('_') and not callable(value):
+                        obj_dict[key] = value
+                result = _serialize_paper_info(obj_dict, visited)
+            visited.discard(obj_id)
+            return result
         elif hasattr(obj, '__dict__'):
             visited.add(obj_id)
             # For other objects with __dict__, convert to dict
-            result = _serialize_paper_info(obj.__dict__, visited)
+            # Filter out methods and descriptors
+            obj_dict = {}
+            for key, value in obj.__dict__.items():
+                # Skip private attributes and methods
+                if not key.startswith('_') and not callable(value):
+                    obj_dict[key] = value
+            result = _serialize_paper_info(obj_dict, visited)
             visited.discard(obj_id)
             return result
         # Handle callable objects by returning their name, preventing serialization errors
         elif callable(obj):
-            return f"<callable: {getattr(obj, '__name__', 'unnamed')}"
+            return f"<callable: {getattr(obj, '__name__', 'unnamed')}>"
         else:
             # For primitive types (str, int, float, bool, None), return as-is
             return obj
@@ -1064,7 +1138,7 @@ async def _run_multi_agent_research_task(
                 progress=1.0,
                 current_step="Multi-agent research completed",
                 message="Multi-agent orchestration completed successfully",
-                result_json=_serialize_paper_info(result.__dict__),
+                result_json=_serialize_paper_info(result),
                 end_time=completed_at
             )
             

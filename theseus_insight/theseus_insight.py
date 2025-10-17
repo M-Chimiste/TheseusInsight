@@ -877,67 +877,95 @@ Theseus Insight Team
                 print(f"Selected top {extended_count} papers (target: {self.top_n}) to allow for PDF conversion failures")
 
             if self.db_saving:
-                print("Saving papers to DB")
-                # Save all to DB if enabled, tracking duplicates
-                saved_count = 0
-                duplicate_count = 0
-                duplicate_urls = []
+                print("Updating papers with LLM judge scores in DB")
+                # Update papers with LLM scores (papers were already saved during embedding stage)
+                updated_count = 0
+                new_count = 0
                 
                 for _, row in data_df.iterrows():
-                    # Convert numpy array to list if needed for embedding
-                    embedding = row['abstract_embedding']
-                    if hasattr(embedding, 'tolist'):
-                        embedding = embedding.tolist()
-                    elif not isinstance(embedding, list):
-                        embedding = list(embedding)
+                    # Check if paper already exists
+                    existing_paper = PaperRepository.get_by_url(row['pdf_url'])
                     
-                    paper = Paper(
-                        title=row['title'],
-                        abstract=row['abstract'],
-                        url=row['pdf_url'],
-                        date_run=TODAY.strftime('%Y-%m-%d'),
-                        date=row['date'].strftime('%Y-%m-%d'),
-                        score=row['score'],
-                        related=row['related'],
-                        rationale=row['rationale'],
-                        cosine_similarity=row['cosine_similarity'],
-                        embedding_model=self.embedding_model_name,
-                        embedding=embedding
-                    )
-                    
-                    # Try to insert paper, tracking duplicates
-                    was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
-                    if was_inserted:
-                        saved_count += 1
-                        # Extract and cache keywords
+                    if existing_paper:
+                        # Update existing paper with LLM judge scores
                         try:
-                            extractor = getattr(self, '_yake_extractor', None)
-                            if extractor is None:
-                                extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
-                                self._yake_extractor = extractor  # cache for reuse
-                            text_kw = f"{row['title']} {row['abstract']}"
-                            kw_scores = extractor.extract_keywords(text_kw)
-                            keywords = [w for w, _ in kw_scores]
-                            # Retrieve inserted paper ID via URL lookup
-                            inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
-                            if inserted_paper and keywords:
-                                PaperRepository.update_keywords(inserted_paper['id'], keywords)
-                        except Exception:
-                            pass
+                            # Update the paper's score, related, and rationale fields
+                            from .db import get_cursor
+                            with get_cursor() as cur:
+                                cur.execute("""
+                                    UPDATE papers 
+                                    SET score = %s, 
+                                        related = %s, 
+                                        rationale = %s,
+                                        date_run = %s
+                                    WHERE url = %s
+                                """, (
+                                    row['score'],
+                                    row['related'],
+                                    row['rationale'],
+                                    TODAY.strftime('%Y-%m-%d'),
+                                    row['pdf_url']
+                                ))
+                            updated_count += 1
+                            
+                            # Extract and update keywords
+                            try:
+                                extractor = getattr(self, '_yake_extractor', None)
+                                if extractor is None:
+                                    extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+                                    self._yake_extractor = extractor
+                                text_kw = f"{row['title']} {row['abstract']}"
+                                kw_scores = extractor.extract_keywords(text_kw)
+                                keywords = [w for w, _ in kw_scores]
+                                if keywords:
+                                    PaperRepository.update_keywords(existing_paper['id'], keywords)
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"Failed to update paper {row['title']}: {e}")
                     else:
-                        duplicate_count += 1
-                        duplicate_urls.append(row['pdf_url'])
-                        if self.verbose:
-                            print(f"Skipped duplicate paper: {row['title']}")
+                        # Paper doesn't exist yet (shouldn't happen with new flow, but handle gracefully)
+                        embedding = row['abstract_embedding']
+                        if hasattr(embedding, 'tolist'):
+                            embedding = embedding.tolist()
+                        elif not isinstance(embedding, list):
+                            embedding = list(embedding)
+                        
+                        paper = Paper(
+                            title=row['title'],
+                            abstract=row['abstract'],
+                            url=row['pdf_url'],
+                            date_run=TODAY.strftime('%Y-%m-%d'),
+                            date=row['date'].strftime('%Y-%m-%d'),
+                            score=row['score'],
+                            related=row['related'],
+                            rationale=row['rationale'],
+                            cosine_similarity=row['cosine_similarity'],
+                            embedding_model=self.embedding_model_name,
+                            embedding=embedding
+                        )
+                        
+                        was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
+                        if was_inserted:
+                            new_count += 1
+                            # Extract and cache keywords
+                            try:
+                                extractor = getattr(self, '_yake_extractor', None)
+                                if extractor is None:
+                                    extractor = yake.KeywordExtractor(lan="en", n=1, top=5)
+                                    self._yake_extractor = extractor
+                                text_kw = f"{row['title']} {row['abstract']}"
+                                kw_scores = extractor.extract_keywords(text_kw)
+                                keywords = [w for w, _ in kw_scores]
+                                inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
+                                if inserted_paper and keywords:
+                                    PaperRepository.update_keywords(inserted_paper['id'], keywords)
+                            except Exception:
+                                pass
                 
                 if self.verbose:
-                    print(f"Database save complete: {saved_count} new papers saved, {duplicate_count} duplicates skipped")
-                
-                # Keep all top_n papers for newsletter generation, including duplicates
-                if duplicate_count > 0 and self.verbose:
-                    duplicate_in_top_n = len([url for url in duplicate_urls if url in top_n_df['pdf_url'].values])
-                    print(f"Newsletter will use {len(top_n_df)} papers (including {duplicate_in_top_n} duplicates from top papers)")
-                    print("Note: Duplicates are kept in newsletter but were not re-saved to database")
+                    print(f"Database update complete: {updated_count} papers updated with LLM scores, {new_count} new papers inserted")
        
             # Clean up partial checkpoint on success
             partial_checkpoint_path = os.path.join(self.checkpoint_dir, 'ranking_partial_checkpoint.pkl')
@@ -1171,10 +1199,47 @@ Theseus Insight Team
                     print(f"💾 Saving profile scores for {len(profile_ids)} profile(s)...")
                 
                 saved_scores = 0
+                papers_inserted = 0
                 for profile_id in profile_ids:
                     for _, row in scored_df.iterrows():
                         # Get the paper ID from database using URL
                         existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                        
+                        # If paper doesn't exist, insert it first (shouldn't normally happen but handle gracefully)
+                        if not existing_paper:
+                            if self.verbose:
+                                print(f"⚠️ Paper not found in database, inserting: {row['title'][:50]}...")
+                            
+                            # Get or create embedding
+                            embedding = row.get('abstract_embedding')
+                            if embedding is None:
+                                # Generate embedding if not present
+                                embedding = self.embedding_model.invoke(row['abstract'])
+                            
+                            if hasattr(embedding, 'tolist'):
+                                embedding = embedding.tolist()
+                            elif not isinstance(embedding, list):
+                                embedding = list(embedding)
+                            
+                            paper = Paper(
+                                title=row['title'],
+                                abstract=row['abstract'],
+                                url=row['pdf_url'],
+                                date_run=TODAY.strftime('%Y-%m-%d'),
+                                date=row['date'].strftime('%Y-%m-%d'),
+                                score=row['score'],
+                                related=row['related'],
+                                rationale=row['rationale'],
+                                cosine_similarity=row.get('cosine_similarity', 0.0),
+                                embedding_model=self.embedding_model_name,
+                                embedding=embedding
+                            )
+                            
+                            was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
+                            if was_inserted:
+                                papers_inserted += 1
+                                existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                        
                         if existing_paper:
                             # Save profile score
                             success = ProfileScoreRepository.create_or_update_score(
@@ -1187,12 +1252,11 @@ Theseus Insight Team
                             )
                             if success:
                                 saved_scores += 1
-                        else:
-                            if self.verbose:
-                                print(f"⚠️ Paper not found in database: {row['title'][:50]}...")
                 
                 if self.verbose:
                     print(f"✅ Saved {saved_scores} profile scores")
+                    if papers_inserted > 0:
+                        print(f"✅ Inserted {papers_inserted} missing papers into database")
             
             # Take more papers than needed to allow for PDF conversion failures  
             backup_multiplier = 2
@@ -1479,7 +1543,41 @@ Theseus Insight Team
                                 new_papers_df['cosine_similarity'] = cosine_similarities
                                 new_papers_df['abstract_embedding'] = abstract_embeddings
 
-                                # Filter by threshold
+                                # Save ALL embedded papers to database first (before filtering)
+                                if self.db_saving:
+                                    if self.verbose:
+                                        print(f"Saving {len(new_papers_df)} papers to database (before filtering)...")
+                                    saved_count = 0
+                                    for _, row in tqdm(new_papers_df.iterrows(), total=len(new_papers_df), 
+                                                      desc="Saving papers to DB", disable=not self.verbose):
+                                        embedding = row['abstract_embedding']
+                                        if hasattr(embedding, 'tolist'):
+                                            embedding = embedding.tolist()
+                                        elif not isinstance(embedding, list):
+                                            embedding = list(embedding)
+                                        
+                                        paper = Paper(
+                                            title=row['title'],
+                                            abstract=row['abstract'],
+                                            url=row['pdf_url'],
+                                            date_run=TODAY.strftime('%Y-%m-%d'),
+                                            date=row['date'].strftime('%Y-%m-%d'),
+                                            score=0.0,  # Not yet scored by LLM
+                                            related=False,  # Not yet scored
+                                            rationale='Not yet scored by LLM',
+                                            cosine_similarity=row['cosine_similarity'],
+                                            embedding_model=self.embedding_model_name,
+                                            embedding=embedding
+                                        )
+                                        
+                                        was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
+                                        if was_inserted:
+                                            saved_count += 1
+                                    
+                                    if self.verbose:
+                                        print(f"✅ Saved {saved_count} new papers to database")
+
+                                # Filter by threshold for LLM scoring and newsletter generation
                                 filtered_df = new_papers_df[new_papers_df['cosine_similarity'] >= self.cosine_similarity_threshold]
                                 filtered_df = filtered_df.reset_index(drop=True)
                                 
@@ -1533,7 +1631,8 @@ Theseus Insight Team
                             data_df['cosine_similarity'] = cosine_similarities
                             data_df['abstract_embedding'] = abstract_embeddings
 
-                            # Filter by threshold
+                            # Note: When not saving to DB, we can only work with papers in memory
+                            # Filter by threshold for processing
                             filtered_df = data_df[data_df['cosine_similarity'] >= self.cosine_similarity_threshold]
                             filtered_df = filtered_df.reset_index(drop=True)
                             

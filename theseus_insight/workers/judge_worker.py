@@ -55,7 +55,8 @@ class JudgeWorker:
         job_id: Optional[UUID] = None,
         worker_id: Optional[str] = None,
         max_retries: int = 3,
-        timeout: int = 30
+        timeout: int = 30,
+        judge_model_config: Optional[dict] = None
     ):
         self.server_url = server_url
         self.job_id = job_id
@@ -86,13 +87,20 @@ class JudgeWorker:
         self.interests_cache = {}
         self.profile_cache = {}
         
-        # Initialize Ollama client once
+        # Load judge model configuration from database if not provided
+        if judge_model_config is None:
+            judge_model_config = self._load_judge_config()
+        
+        self.judge_model_config = judge_model_config
+        logger.info(f"Using judge model: {judge_model_config.get('model_name')} (type: {judge_model_config.get('model_type')})")
+        
+        # Initialize Ollama client once with configuration from settings
         from ..inference.llm import OllamaInference
         self.ollama_client = OllamaInference(
-            model_name="phi4-mini:3.8b-q8_0",
-            max_new_tokens=512,
-            temperature=0.1,
-            num_ctx=4096,
+            model_name=judge_model_config.get('model_name', 'phi4-mini:3.8b-q8_0'),
+            max_new_tokens=judge_model_config.get('max_new_tokens', 512),
+            temperature=judge_model_config.get('temperature', 0.1),
+            num_ctx=judge_model_config.get('num_ctx', 4096),
             url=server_url,
             request_timeout=timeout
         )
@@ -114,6 +122,49 @@ class JudgeWorker:
         
         logger.info(f"Initialized worker {self.worker_id} for server {server_url}")
         logger.info(f"Logging to {log_file}")
+
+    def _load_judge_config(self) -> dict:
+        """Load judge model configuration from database settings or config file."""
+        try:
+            # Try to load from database first
+            with self.conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute("SELECT value FROM settings WHERE key = %s", ('orchestration',))
+                row = cur.fetchone()
+                
+                if row and row['value']:
+                    orchestration_config = json.loads(row['value'])
+                    judge_config = orchestration_config.get('judge_model', {})
+                    if judge_config:
+                        logger.info("Loaded judge model config from database settings")
+                        return judge_config
+        except Exception as e:
+            logger.warning(f"Failed to load judge config from database: {e}")
+        
+        # Fallback to config file
+        try:
+            import pathlib
+            project_root = pathlib.Path(__file__).parent.parent.parent
+            config_path = project_root / "config" / "orchestration.json"
+            
+            if config_path.exists():
+                with open(config_path) as f:
+                    orchestration_config = json.load(f)
+                    judge_config = orchestration_config.get('judge_model', {})
+                    if judge_config:
+                        logger.info("Loaded judge model config from file")
+                        return judge_config
+        except Exception as e:
+            logger.warning(f"Failed to load judge config from file: {e}")
+        
+        # Ultimate fallback to hardcoded defaults
+        logger.warning("Using hardcoded default judge model config")
+        return {
+            'model_name': 'phi4-mini:3.8b-q8_0',
+            'model_type': 'ollama',
+            'max_new_tokens': 512,
+            'temperature': 0.1,
+            'num_ctx': 4096
+        }
 
     def start(self):
         """Start the worker process."""
@@ -618,13 +669,14 @@ class JudgeWorker:
             pass
 
 
-def run_worker(server_url: str, job_id: Optional[UUID], max_retries: int, timeout: int):
+def run_worker(server_url: str, job_id: Optional[UUID], max_retries: int, timeout: int, judge_model_config: Optional[dict] = None):
     """Run a single worker for a server."""
     worker = JudgeWorker(
         server_url=server_url,
         job_id=job_id,
         max_retries=max_retries,
-        timeout=timeout
+        timeout=timeout,
+        judge_model_config=judge_model_config
     )
     
     try:
@@ -667,7 +719,7 @@ def main():
             job_uuid = UUID(job_id) if job_id else None
             p = multiprocessing.Process(
                 target=run_worker,
-                args=(server_url, job_uuid, args.max_retries, args.timeout)
+                args=(server_url, job_uuid, args.max_retries, args.timeout, None)  # None = load from settings
             )
             p.start()
             processes.append(p)
@@ -687,7 +739,7 @@ def main():
         # Single server - run directly
         server_url, job_id = servers_to_process[0]
         job_uuid = UUID(job_id) if job_id else None
-        run_worker(server_url, job_uuid, args.max_retries, args.timeout)
+        run_worker(server_url, job_uuid, args.max_retries, args.timeout, None)  # None = load from settings
 
 
 if __name__ == "__main__":

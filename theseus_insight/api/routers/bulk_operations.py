@@ -107,50 +107,58 @@ def _filter_valid_abstracts(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]
             filtered.append(p)
     return filtered
 
-def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str]) -> int:
+async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str]) -> int:
     """Ensure all papers in the date range have embeddings before judging.
+    
+    Uses StreamingEmbeddingService for memory-efficient processing of large datasets.
     Returns number of embeddings computed.
     """
     if not date_from and not date_to:
         return 0
 
-    # Only fetch papers missing embeddings to avoid unnecessary work
-    logger.info(f"🔍 Preflight: fetching papers missing embeddings in range {date_from}..{date_to}")
-    missing = PaperRepository.get_papers_missing_embeddings_in_date_range(start_date=date_from, end_date=date_to)
-    if not missing:
+    # Check if any papers need embeddings
+    count = PaperRepository.count_papers_missing_embeddings_in_date_range(
+        start_date=date_from, 
+        end_date=date_to
+    )
+    
+    if count == 0:
         logger.info("Preflight: all papers already have embeddings; skipping embedding stage")
         return 0
-
-    logger.info(f"Preflight: {len(missing)} papers missing embeddings after filtering for non-empty title/abstract")
-
-    # Compute embeddings in batches
-    logger.info(f"🧠 Preflight: embedding {len(missing)} papers in batches")
-    model = SentenceTransformerInference()
-    model_name = model.model_name  # Get the actual model name being used
-    batch_size = 128
-    updates: List[Tuple[int, List[float]]] = []
-    for i in range(0, len(missing), batch_size):
-        batch = missing[i:i+batch_size]
-        texts = [p['abstract'] for p in batch]
-        logger.info(f"🧪 Embedding batch {i//batch_size + 1}/{(len(missing)+batch_size-1)//batch_size} (papers {i+1}-{i+len(batch)})")
-        embs = model.invoke(
-            text=texts,
-            batch_size=batch_size,
-            show_progress_bar=False,
-            to_list=True,
-            convert_to_numpy=True
-        )
-        for p, emb in zip(batch, embs):
-            try:
-                vector = emb.tolist() if hasattr(emb, 'tolist') else list(emb)
-            except Exception:
-                vector = emb
-            updates.append((p['id'], vector))
-
-    if updates:
-        PaperRepository.bulk_update_embeddings(updates, embedding_model=model_name)
-        logger.info(f"✅ Preflight: updated embeddings for {len(updates)} papers using model {model_name}")
-    return len(updates)
+    
+    logger.info(f"🔍 Preflight: {count} papers missing embeddings in range {date_from}..{date_to}")
+    
+    # Use streaming service for memory-efficient processing
+    from ...services import StreamingEmbeddingService, EmbeddingServiceConfig
+    
+    config = EmbeddingServiceConfig(
+        chunk_size=10000,  # Process 10K papers at a time
+        gpu_batch_size=512,  # Will be auto-tuned if enabled
+        auto_tune_batch_size=True,
+        db_flush_interval=1000,
+        verbose=True
+    )
+    
+    service = StreamingEmbeddingService(config)
+    
+    # Run embedding with progress logging
+    def log_progress(current, total):
+        if current % 10000 == 0 or current == total:
+            logger.info(f"📊 Embedding progress: {current}/{total} papers ({100*current/total:.1f}%)")
+    
+    stats = await service.embed_papers_in_date_range(
+        start_date=date_from,
+        end_date=date_to,
+        progress_callback=log_progress
+    )
+    
+    logger.info(f"✅ Preflight: embedded {stats['papers_embedded']} papers in {stats['elapsed_seconds']:.1f}s")
+    logger.info(f"⚡ Throughput: {stats['papers_per_second']:.1f} papers/second")
+    
+    if stats['papers_failed'] > 0:
+        logger.warning(f"⚠️  {stats['papers_failed']} papers failed to embed")
+    
+    return stats['papers_embedded']
 
 
 def _download_arxiv_for_range(
@@ -831,7 +839,7 @@ async def _start_bulk_judge_operation(
 
         # Then, ensure embeddings for all papers in range
         try:
-            pre_embedded = _ensure_embeddings_for_range(request.start_date, request.end_date)
+            pre_embedded = await _ensure_embeddings_for_range(request.start_date, request.end_date)
             logger.info(f"Preflight embeddings ensured for {pre_embedded} papers")
         except Exception as pre_e:
             logger.warning(f"Preflight embedding stage failed or partial: {pre_e}")

@@ -2561,7 +2561,7 @@ Theseus Insight Team
                 progress_callback("filter", 35, f"Filtered to {len(papers_to_embed)} papers needing embeddings")
 
             # -----------
-            # Stage 3: Embed Papers
+            # Stage 3: Embed Papers (Memory-Safe with Chunking)
             # -----------
             embedded_count = 0
             if len(papers_to_embed) > 0:
@@ -2571,12 +2571,14 @@ Theseus Insight Team
                 embedded_df = self._load_checkpoint('papers_embedded')
                 if embedded_df is None:
                     if self.verbose:
-                        print(f"\n🧠 STAGE 3: EMBEDDING {len(papers_to_embed)} PAPERS")
+                        print(f"\n🧠 STAGE 3: EMBEDDING {len(papers_to_embed)} PAPERS (Memory-Safe)")
                         print("="*40)
                     
-                    # Process in batches
+                    # Use chunked processing to avoid memory issues
                     batch_size = getattr(self, 'batch_size', 100)
+                    chunk_size = 10000  # Process 10K papers per chunk, then flush
                     all_embeddings = []
+                    papers_to_save = []
                     
                     for i in tqdm(range(0, len(papers_to_embed), batch_size), 
                                  desc="Embedding batches", disable=not self.verbose):
@@ -2585,17 +2587,44 @@ Theseus Insight Team
                         
                         # Embed batch
                         embeddings = self.embedding_model.invoke(abstracts)
-                        all_embeddings.extend(embeddings)
+                        
+                        # Store embeddings with paper data
+                        for j, (idx, row) in enumerate(batch.iterrows()):
+                            embedding = embeddings[j]
+                            all_embeddings.append(embedding)
+                            papers_to_save.append((idx, embedding))
+                        
+                        # Flush to disk periodically to free memory
+                        if len(papers_to_save) >= chunk_size:
+                            # Create partial dataframe with embeddings
+                            indices = [idx for idx, _ in papers_to_save]
+                            embs = [emb for _, emb in papers_to_save]
+                            papers_to_embed.loc[indices, 'abstract_embedding'] = embs
+                            papers_to_embed.loc[indices, 'cosine_similarity'] = [0.0] * len(embs)
+                            
+                            if self.verbose:
+                                print(f"💾 Flushed {len(papers_to_save)} papers to memory")
+                            
+                            # Clear buffers
+                            papers_to_save = []
+                            
+                            # Force garbage collection to free memory
+                            import gc
+                            gc.collect()
                         
                         # Update progress
                         if progress_callback:
                             embed_progress = 36 + (i / len(papers_to_embed)) * 40
                             progress_callback("embed", embed_progress, f"Embedded {min(i+batch_size, len(papers_to_embed))}/{len(papers_to_embed)} papers")
                     
-                    # Add embeddings to dataframe
-                    papers_to_embed['abstract_embedding'] = all_embeddings
-                    papers_to_embed['cosine_similarity'] = [0.0] * len(papers_to_embed)  # No similarity calculation needed
+                    # Flush any remaining papers
+                    if papers_to_save:
+                        indices = [idx for idx, _ in papers_to_save]
+                        embs = [emb for _, emb in papers_to_save]
+                        papers_to_embed.loc[indices, 'abstract_embedding'] = embs
+                        papers_to_embed.loc[indices, 'cosine_similarity'] = [0.0] * len(embs)
                     
+                    # Final assignment
                     embedded_df = papers_to_embed
                     embedded_count = len(embedded_df)
                     self._save_checkpoint('papers_embedded', embedded_df)

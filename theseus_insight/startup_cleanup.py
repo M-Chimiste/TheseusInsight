@@ -3,9 +3,12 @@
 This module handles cleanup of stuck jobs and orphaned processes on API startup.
 """
 import subprocess
+import logging
 from typing import Optional
 
-from .db.pool import get_connection_pool
+from .db import get_connection_pool
+
+logger = logging.getLogger(__name__)
 
 
 async def cleanup_stuck_jobs_and_processes():
@@ -101,11 +104,32 @@ async def _cleanup_stuck_jobs_in_database():
     """
     try:
         print("🧹 Cleaning up stuck jobs in database...")
+        logger.info("Starting stuck jobs cleanup in database")
         
         pool = await get_connection_pool()
         async with pool.acquire() as conn:
+            # First, query to see what stuck jobs exist
+            stuck_jobs = await conn.fetch(
+                """
+                SELECT id, job_type, status, started_at 
+                FROM processing_jobs 
+                WHERE status IN ('running', 'pending') 
+                AND job_type IN ('bulk_judge', 'harvest_judge', 'newsletter_generation', 
+                                 'mindmap_generation', 'podcast_generation')
+                """
+            )
+            
+            if stuck_jobs:
+                print(f"🔍 Found {len(stuck_jobs)} stuck jobs:")
+                logger.warning(f"Found {len(stuck_jobs)} stuck jobs to clean up")
+                for job in stuck_jobs:
+                    print(f"   - {job['job_type']} (ID: {job['id']}, Status: {job['status']}, Started: {job['started_at']})")
+                    logger.warning(f"Stuck job: {job['job_type']} (ID: {job['id']}, Status: {job['status']}, Started: {job['started_at']})")
+            else:
+                print("✅ No stuck jobs found")
+                logger.info("No stuck jobs found")
+            
             # Mark any running/pending resource-intensive jobs as failed
-            # This includes bulk_judge, harvest_judge, newsletters, mindmaps, podcasts
             result = await conn.execute(
                 """
                 UPDATE processing_jobs 
@@ -118,15 +142,19 @@ async def _cleanup_stuck_jobs_in_database():
                 """
             )
             
-            # Extract number of rows updated
-            jobs_cleaned = result.split()[-1] if result else "0"
-            if jobs_cleaned != "0":
+            # Parse the result string (format: "UPDATE N" where N is number of rows)
+            try:
+                jobs_cleaned = int(result.split()[-1]) if result and result.startswith('UPDATE') else 0
+            except (ValueError, IndexError):
+                jobs_cleaned = len(stuck_jobs)  # Fallback to count from query
+                logger.warning(f"Could not parse UPDATE result: {result}, using count from query: {jobs_cleaned}")
+            
+            if jobs_cleaned > 0:
                 print(f"🧹 Marked {jobs_cleaned} stuck jobs as failed")
-            else:
-                print("✅ No stuck jobs found")
+                logger.info(f"Marked {jobs_cleaned} stuck jobs as failed")
             
             # Clear task queue of leased/in-progress items
-            await conn.execute(
+            queue_result = await conn.execute(
                 """
                 UPDATE judge_task_queue 
                 SET status = 'failed', 
@@ -136,8 +164,16 @@ async def _cleanup_stuck_jobs_in_database():
                 """
             )
             
+            try:
+                queue_tasks_cleaned = int(queue_result.split()[-1]) if queue_result and queue_result.startswith('UPDATE') else 0
+                if queue_tasks_cleaned > 0:
+                    print(f"🧹 Reset {queue_tasks_cleaned} stuck queue tasks")
+                    logger.info(f"Reset {queue_tasks_cleaned} stuck queue tasks")
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse queue UPDATE result: {queue_result}")
+            
             # Mark all worker heartbeats as inactive (preserve failure history)
-            await conn.execute(
+            heartbeat_result = await conn.execute(
                 """
                 UPDATE worker_heartbeats 
                 SET status = CASE 
@@ -149,10 +185,20 @@ async def _cleanup_stuck_jobs_in_database():
                 """
             )
             
+            try:
+                heartbeats_updated = int(heartbeat_result.split()[-1]) if heartbeat_result and heartbeat_result.startswith('UPDATE') else 0
+                if heartbeats_updated > 0:
+                    print(f"🧹 Marked {heartbeats_updated} worker heartbeats as inactive")
+                    logger.info(f"Marked {heartbeats_updated} worker heartbeats as inactive")
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse heartbeat UPDATE result: {heartbeat_result}")
+            
         print("✅ Database state cleaned up")
+        logger.info("Database state cleanup completed successfully")
         
     except Exception as e:
         print(f"⚠️  Error cleaning up database state: {e}")
+        logger.error(f"Error cleaning up database state: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
 

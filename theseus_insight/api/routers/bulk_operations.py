@@ -775,6 +775,51 @@ async def _start_bulk_judge_operation(
                 detail=f"A single-server bulk judge job is running: {conflict_details}. " +
                        f"Either wait for it to complete, or enable multi-server mode to process in parallel."
             )
+        
+        # Check for multi-server bulk judge jobs with overlapping servers
+        if request.use_multi_server:
+            multi_server_bulk_judge = [
+                job for job in conflict_data["conflicts"]
+                if job["job_type"] == 'bulk_judge' and job.get("multi_server", False)
+            ]
+            
+            if multi_server_bulk_judge:
+                # Check for server overlap
+                requested_servers = set(request.server_ids) if request.server_ids else None
+                
+                for running_job in multi_server_bulk_judge:
+                    running_servers = running_job.get("servers", [])
+                    if not running_servers:
+                        # If running job has no specific servers, it's using all available servers
+                        # This creates a potential conflict
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"A multi-server bulk judge job is already using all available Ollama servers. "
+                                   f"Job: {running_job['job_type']} ({running_job['description']}). "
+                                   f"Recommendation: Wait for it to complete, or ensure it has specific servers assigned."
+                        )
+                    
+                    running_server_ids = set(running_servers) if isinstance(running_servers, list) else set()
+                    
+                    # If we didn't specify servers, we want to use all available servers
+                    if requested_servers is None:
+                        # Check if there's any multi-server job running at all
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Cannot start multi-server job using all servers while another multi-server job is running. "
+                                   f"Running job: {running_job['job_type']} ({running_job['description']}). "
+                                   f"Recommendation: Specify specific server_ids that don't overlap, or wait for the job to complete."
+                        )
+                    
+                    # Check for overlap between requested and running servers
+                    overlap = requested_servers & running_server_ids
+                    if overlap:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Server conflict: The following Ollama servers are already in use by another bulk judge job: {sorted(overlap)}. "
+                                   f"Running job: {running_job['job_type']} ({running_job['description']}). "
+                                   f"Recommendation: Use different server_ids that don't overlap, or wait for the job to complete."
+                        )
 
     # Validate multi-server configuration if enabled
     selected_servers = []

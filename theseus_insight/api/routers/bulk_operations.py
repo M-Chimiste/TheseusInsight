@@ -292,8 +292,29 @@ async def run_bulk_judge_task(
     """Run bulk judge operation in background."""
     print(f"🎯 Background task started: run_bulk_judge_task for job {job_id}")
     try:
-        pool = await get_connection_pool()
-        runner = BulkJudgeRunner(pool=pool, checkpoint_manager=checkpoint_manager, job_id=job_id)
+        # Get orchestration config for judge model
+        from ...data_access import SettingsRepository
+        import json
+        
+        orch_json = SettingsRepository.get("orchestration")
+        if not orch_json:
+            await checkpoint_manager.fail_job(job_id, "Orchestration configuration not found")
+            raise ValueError("Orchestration configuration not found")
+        
+        orch_config = json.loads(orch_json)
+        judge_config = orch_config.get('judge_model', {})
+        
+        if not judge_config:
+            await checkpoint_manager.fail_job(job_id, "Judge model configuration not found in orchestration config")
+            raise ValueError("Judge model configuration not found")
+        
+        # Initialize runner with proper judge model config
+        runner = BulkJudgeRunner(
+            judge_model_config=judge_config,
+            verbose=True,
+            use_optimized_scorer=True,
+            checkpoint_manager=checkpoint_manager
+        )
         
         await runner.run_bulk_judge(
             profile_ids=request.profile_ids,
@@ -793,6 +814,25 @@ async def _start_bulk_judge_operation(
                 status_code=400,
                 detail="No valid servers available for multi-server processing"
             )
+        
+        # Validate that judge model is Ollama (multi-server only supports Ollama)
+        from ...data_access import SettingsRepository
+        import json
+        
+        orch_json = SettingsRepository.get("orchestration")
+        if orch_json:
+            orch_config = json.loads(orch_json)
+            judge_config = orch_config.get('judge_model', {})
+            model_type = judge_config.get('model_type', '').lower()
+            
+            if model_type != 'ollama':
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Multi-server mode only supports Ollama models. Current judge model type: {model_type}. "
+                           f"Please switch to an Ollama model in Settings → Orchestration Config or disable multi-server mode."
+                )
+            
+            print(f"✅ Validated judge model is Ollama: {judge_config.get('model_name', 'unknown')}")
 
     # Suspend scheduled tasks if requested
     suspended_tasks_snapshot = []

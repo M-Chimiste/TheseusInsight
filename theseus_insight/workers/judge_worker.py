@@ -86,13 +86,22 @@ class JudgeWorker:
         self.interests_cache = {}
         self.profile_cache = {}
         
+        # Load judge model config from database settings
+        judge_config = self._load_judge_config()
+        model_name = judge_config.get('model_name', 'phi4-mini:3.8b-q8_0')
+        max_new_tokens = judge_config.get('max_new_tokens', 512)
+        temperature = judge_config.get('temperature', 0.1)
+        num_ctx = judge_config.get('num_ctx', 4096)
+        
+        logger.info(f"Loaded judge model config: {model_name}")
+        
         # Initialize Ollama client once
         from ..inference.llm import OllamaInference
         self.ollama_client = OllamaInference(
-            model_name="phi4-mini:3.8b-q8_0",
-            max_new_tokens=512,
-            temperature=0.1,
-            num_ctx=4096,
+            model_name=model_name,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            num_ctx=num_ctx,
             url=server_url,
             request_timeout=timeout
         )
@@ -114,6 +123,33 @@ class JudgeWorker:
         
         logger.info(f"Initialized worker {self.worker_id} for server {server_url}")
         logger.info(f"Logging to {log_file}")
+
+    def _load_judge_config(self) -> dict:
+        """Load judge model configuration from database settings."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key = 'orchestration'")
+                result = cur.fetchone()
+                if result and result[0]:
+                    orchestration_config = json.loads(result[0])
+                    judge_config = orchestration_config.get('judge_model', {})
+                    if judge_config:
+                        logger.info(f"Loaded judge config from database: {judge_config.get('model_name', 'unknown')}")
+                        return judge_config
+                    else:
+                        logger.warning("No judge_model found in orchestration config, using defaults")
+                else:
+                    logger.warning("No orchestration config found in database, using defaults")
+        except Exception as e:
+            logger.error(f"Failed to load judge config from database: {e}")
+        
+        # Return default config if loading fails
+        return {
+            'model_name': 'phi4-mini:3.8b-q8_0',
+            'max_new_tokens': 512,
+            'temperature': 0.1,
+            'num_ctx': 4096
+        }
 
     def start(self):
         """Start the worker process."""

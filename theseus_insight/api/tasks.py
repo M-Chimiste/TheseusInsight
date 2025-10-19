@@ -1570,7 +1570,9 @@ class TaskManager:
             )
             
             # Run the profiles pipeline (stores all papers without scoring)
-            ingestion_result = theseus_insight.run_profiles_pipeline(
+            # Use asyncio.to_thread to avoid blocking the event loop during embedding
+            ingestion_result = await asyncio.to_thread(
+                theseus_insight.run_profiles_pipeline,
                 progress_callback=pipeline_progress_callback
             )
             
@@ -1840,7 +1842,9 @@ class TaskManager:
             theseus_insight.skip_existing = skip_existing
             
             # Run the embedding-only pipeline
-            result = theseus_insight.run_embedding_only_pipeline(
+            # Use asyncio.to_thread to avoid blocking the event loop during embedding
+            result = await asyncio.to_thread(
+                theseus_insight.run_embedding_only_pipeline,
                 progress_callback=pipeline_progress_callback
             )
             

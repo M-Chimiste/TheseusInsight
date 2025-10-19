@@ -37,6 +37,7 @@ import {
 import { ollamaServersApi, type OllamaServer } from '../services/api';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import ProfileSelector from '../components/ProfileSelector';
+import EmbeddingProgress from '../components/EmbeddingProgress';
 import { useLayout } from '../contexts/LayoutContext';
 
 interface BulkOperationsProps {}
@@ -238,6 +239,11 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
           <Tab label="Profile-Aware Full Ingestion" />
           <Tab label="Bulk Embedding Only" />
         </Tabs>
+
+        {/* Show embedding job progress */}
+        <Box sx={{ mb: 3 }}>
+          <EmbeddingProgress autoRefresh={true} refreshInterval={2000} />
+        </Box>
 
         {activeTab === 0 && (
           <Card>

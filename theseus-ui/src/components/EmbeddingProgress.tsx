@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Card,
@@ -11,7 +11,6 @@ import {
   Collapse,
   List,
   ListItem,
-  ListItemText,
   Divider,
   Button,
 } from '@mui/material';
@@ -97,11 +96,6 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
       queryClient.invalidateQueries({ queryKey: ['embedding-jobs'] });
     },
   });
-
-  const formatDate = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleString();
-  };
 
   const formatDuration = (isoString: string) => {
     const start = new Date(isoString);

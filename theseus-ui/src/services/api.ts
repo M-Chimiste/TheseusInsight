@@ -1579,6 +1579,7 @@ export interface PerformanceConfig {
   hdbscan_n_jobs: number;
   clustering_batch_size: number;
   embedding_batch_size: number;
+  auto_tune_batch_size?: boolean;
   vector_processing_workers: number;
   enable_memory_mapping: boolean;
   cache_embeddings: boolean;

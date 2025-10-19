@@ -204,10 +204,13 @@ class StreamingEmbeddingService:
             )
             
             # Auto-tune batch size if enabled
-            if self.config.auto_tune_batch_size and self._optimal_batch_size is None:
-                self._optimal_batch_size = self._auto_tune_batch_size()
-                if self.config.verbose:
-                    logger.info(f"Auto-tuned optimal batch size: {self._optimal_batch_size}")
+            if self.config.auto_tune_batch_size:
+                if self._optimal_batch_size is None:
+                    logger.info("🎯 Running GPU batch size auto-tuning (first run)...")
+                    self._optimal_batch_size = self._auto_tune_batch_size()
+                    logger.info(f"✅ Auto-tuned optimal batch size: {self._optimal_batch_size}")
+                else:
+                    logger.info(f"📌 Using cached optimal batch size: {self._optimal_batch_size}")
         
         return self.embedding_model
     
@@ -217,14 +220,14 @@ class StreamingEmbeddingService:
         Returns:
             Optimal batch size (256-2048)
         """
-        if self.config.verbose:
-            logger.info("🔍 Auto-tuning GPU batch size...")
+        logger.info("⚡ Testing batch sizes: [256, 512, 1024, 2048]")
         
         test_sizes = [256, 512, 1024, 2048]
         sample_texts = ["Sample abstract for testing embedding performance."] * 1000
         
         best_size = self.config.gpu_batch_size  # Default fallback
         best_throughput = 0
+        results = []
         
         for size in test_sizes:
             try:
@@ -239,24 +242,23 @@ class StreamingEmbeddingService:
                 
                 duration = time.time() - start
                 throughput = (size * 4) / duration
+                results.append((size, throughput))
                 
-                if self.config.verbose:
-                    logger.info(f"  Batch size {size}: {throughput:.1f} texts/sec")
+                logger.info(f"  📊 Batch size {size}: {throughput:.1f} texts/sec")
                 
                 if throughput > best_throughput:
                     best_throughput = throughput
                     best_size = size
                 elif throughput < best_throughput * 0.95:
                     # Performance plateau - stop testing
+                    logger.info(f"  ⏸️  Performance plateau detected, stopping tests")
                     break
                     
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                if self.config.verbose:
-                    logger.info(f"  Batch size {size}: Out of memory")
+                logger.info(f"  ⚠️  Batch size {size}: Out of memory, stopping tests")
                 break
         
-        if self.config.verbose:
-            logger.info(f"✅ Optimal batch size: {best_size} ({best_throughput:.1f} texts/sec)")
+        logger.info(f"🏆 Selected batch size: {best_size} ({best_throughput:.1f} texts/sec)")
         
         return best_size
     

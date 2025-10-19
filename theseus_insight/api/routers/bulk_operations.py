@@ -141,6 +141,10 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     
     service = StreamingEmbeddingService(config)
     
+    # Generate job ID for tracking in UI
+    job_id = uuid4()
+    logger.info(f"📋 Created embedding job: {job_id}")
+    
     # Run embedding with progress logging
     def log_progress(current, total):
         if current % 10000 == 0 or current == total:
@@ -149,6 +153,7 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     stats = await service.embed_papers_in_date_range(
         start_date=date_from,
         end_date=date_to,
+        job_id=job_id,  # Pass job_id for UI tracking
         progress_callback=log_progress
     )
     

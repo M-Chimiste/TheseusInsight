@@ -29,9 +29,10 @@ class EmbeddingServiceConfig:
     """Configuration for streaming embedding service."""
     
     # Processing
-    chunk_size: int = 10000  # Papers per chunk
-    gpu_batch_size: int = 512  # Papers per GPU batch (will be auto-tuned if enabled)
+    chunk_size: int = 5000  # Papers per chunk (balanced for memory and performance)
+    gpu_batch_size: int = 256  # Papers per GPU batch (conservative for Metal GPU)
     auto_tune_batch_size: bool = True  # Auto-optimize for hardware
+    max_batch_size: int = 1024  # Maximum batch size for auto-tuning (prevents Metal overflow)
     
     # Memory & Performance
     db_flush_interval: int = 1000  # Write to DB every N papers
@@ -39,7 +40,7 @@ class EmbeddingServiceConfig:
     max_retry_attempts: int = 3  # Retry failed papers
     
     # Progress & Monitoring
-    progress_report_interval: int = 100  # Callback frequency
+    progress_report_interval: int = 1000  # Callback frequency (every 1000 papers)
     verbose: bool = True
     
     # Model
@@ -218,14 +219,18 @@ class StreamingEmbeddingService:
         """Automatically find optimal batch size for current hardware.
         
         Returns:
-            Optimal batch size (256-2048)
+            Optimal batch size (256-max_batch_size)
         """
-        logger.info("⚡ Testing batch sizes: [256, 512, 1024, 2048]")
+        # Generate test sizes up to max_batch_size
+        test_sizes = [s for s in [256, 512, 1024, 2048] if s <= self.config.max_batch_size]
+        if not test_sizes:
+            test_sizes = [self.config.gpu_batch_size]
         
-        test_sizes = [256, 512, 1024, 2048]
+        logger.info(f"⚡ Testing batch sizes: {test_sizes}")
+        
         sample_texts = ["Sample abstract for testing embedding performance."] * 1000
         
-        best_size = self.config.gpu_batch_size  # Default fallback
+        best_size = min(self.config.gpu_batch_size, self.config.max_batch_size)  # Default fallback
         best_throughput = 0
         results = []
         

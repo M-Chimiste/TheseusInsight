@@ -868,7 +868,8 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
                 max_retries=None,  # Use defaults
                 suspend_scheduled_tasks=True,  # Suspend during bulk processing
                 overwrite_existing=request.overwrite_existing,
-                batch_size=request.batch_size
+                batch_size=request.batch_size,
+                use_profile_arxiv_filters=request.use_profile_arxiv_filters
             )
             logger.info(f"✅ BulkJudgeRequest created: profile_ids={bulk_request.profile_ids}, server_ids={bulk_request.server_ids}")
 

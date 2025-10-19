@@ -41,6 +41,15 @@ class TheseusScheduler:
                 replace_existing=True
             )
             
+            # Schedule stuck job checker every hour
+            stuck_job_checker = self.scheduler.add_job(
+                self._run_stuck_job_checker,
+                CronTrigger(minute=0),  # Every hour at minute 0
+                id='stuck_job_checker',
+                name='Stuck Job Checker',
+                replace_existing=True
+            )
+            
             self.scheduler.start()
             self.is_running = True
             
@@ -48,6 +57,7 @@ class TheseusScheduler:
             logger.info("✅ Theseus Scheduler started successfully")
             logger.info(f"📅 Next nightly trends run: {nightly_job.next_run_time}")
             logger.info(f"📅 Next weekly cleanup run: {weekly_job.next_run_time}")
+            logger.info(f"📅 Next stuck job check: {stuck_job_checker.next_run_time}")
             logger.info("⏰ Scheduler timezone: UTC")
             
             # Log current server time for reference
@@ -188,6 +198,76 @@ class TheseusScheduler:
             logger.error(f"Duration: {duration.total_seconds():.2f} seconds")
             logger.error(f"Error: {str(e)}")
             logger.error("=" * 60)
+            logger.error("Full traceback:", exc_info=True)
+    
+    async def _run_stuck_job_checker(self):
+        """
+        Hourly check for stuck jobs that failed to complete properly.
+        
+        This catches jobs that:
+        - Completed successfully but didn't update their status
+        - Have been running for an unusually long time (>4 hours for most jobs)
+        - Are marked as running but have no active workers
+        """
+        start_time = datetime.now()
+        
+        try:
+            logger.info("🔍 STUCK JOB CHECKER STARTED")
+            
+            from .db import get_connection_pool
+            pool = await get_connection_pool()
+            
+            async with pool.acquire() as conn:
+                # Find jobs that have been running for more than 4 hours
+                # (newsletters, mindmaps, podcasts should complete in < 1 hour)
+                # (bulk_judge can take longer but should show progress)
+                long_running_jobs = await conn.fetch(
+                    """
+                    SELECT id, job_type, status, started_at,
+                           EXTRACT(EPOCH FROM (NOW() - started_at))/3600 as hours_running
+                    FROM processing_jobs
+                    WHERE status IN ('running', 'pending')
+                    AND job_type IN ('newsletter_generation', 'mindmap_generation', 'podcast_generation')
+                    AND EXTRACT(EPOCH FROM (NOW() - started_at))/3600 > 4
+                    """
+                )
+                
+                if long_running_jobs:
+                    logger.warning(f"Found {len(long_running_jobs)} stuck jobs (running > 4 hours)")
+                    
+                    for job in long_running_jobs:
+                        logger.warning(
+                            f"Marking stuck job as failed: {job['job_type']} "
+                            f"(ID: {job['id']}, Running for: {job['hours_running']:.1f} hours)"
+                        )
+                    
+                    # Mark them as failed
+                    result = await conn.execute(
+                        """
+                        UPDATE processing_jobs 
+                        SET status = 'failed',
+                            error_message = 'Job stuck - automatically cancelled after running > 4 hours with no completion',
+                            completed_at = NOW()
+                        WHERE status IN ('running', 'pending')
+                        AND job_type IN ('newsletter_generation', 'mindmap_generation', 'podcast_generation')
+                        AND EXTRACT(EPOCH FROM (NOW() - started_at))/3600 > 4
+                        """
+                    )
+                    
+                    jobs_cleaned = int(result.split()[-1]) if result and result.startswith('UPDATE') else 0
+                    logger.info(f"✅ Marked {jobs_cleaned} stuck jobs as failed")
+                else:
+                    logger.info("✅ No stuck jobs found")
+            
+            end_time = datetime.now()
+            duration = end_time - start_time
+            logger.info(f"✅ STUCK JOB CHECKER COMPLETED (Duration: {duration.total_seconds():.2f}s)")
+            
+        except Exception as e:
+            end_time = datetime.now()
+            duration = end_time - start_time
+            logger.error(f"❌ STUCK JOB CHECKER FAILED (Duration: {duration.total_seconds():.2f}s)")
+            logger.error(f"Error: {str(e)}")
             logger.error("Full traceback:", exc_info=True)
             
     def _log_progress(self, stage: str, progress: float, message: str):

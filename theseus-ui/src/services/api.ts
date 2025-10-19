@@ -545,6 +545,7 @@ export interface ProfileAwareIngestRequest {
   overwrite_existing?: boolean;
   cosine_threshold?: number;
   arxiv_categories?: string[];
+  use_profile_arxiv_filters?: boolean;
   batch_size?: number;
   send_error_notifications?: boolean;
   // Multi-server configuration (only used when LLM-as-Judge is configured for Ollama)

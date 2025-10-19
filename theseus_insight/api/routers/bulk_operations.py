@@ -50,6 +50,7 @@ class BulkJudgeRequest(BaseModel):
     limit: Optional[int] = Field(None, description="Limit number of papers to judge")
     start_date: Optional[str] = Field(None, description="Start date for papers")
     end_date: Optional[str] = Field(None, description="End date for papers")
+    use_profile_arxiv_filters: bool = Field(True, description="Use arXiv category filters from selected profiles (if available)")
 
     # Multi-server configuration
     use_multi_server: bool = Field(False, description="Use multiple Ollama servers for distributed processing")
@@ -166,10 +167,68 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     return stats['papers_embedded']
 
 
+def _merge_profile_arxiv_filters(profile_ids: List[int]) -> Optional[Dict[str, Any]]:
+    """
+    Merge arXiv filters from multiple profiles.
+    Returns merged filters with union of all categories, or None if no filters found.
+    """
+    from ...data_access.profiles import ProfileRepository
+    import json
+    
+    all_categories = set()
+    main_categories = set()
+    has_filters = False
+    
+    for profile_id in profile_ids:
+        profile = ProfileRepository.get_by_id(profile_id)
+        if not profile:
+            continue
+            
+        arxiv_filters = profile.get('arxiv_filters')
+        if not arxiv_filters:
+            continue
+            
+        # Parse JSON if it's a string
+        if isinstance(arxiv_filters, str):
+            try:
+                arxiv_filters = json.loads(arxiv_filters)
+            except json.JSONDecodeError:
+                continue
+        
+        if arxiv_filters and isinstance(arxiv_filters, dict):
+            has_filters = True
+            
+            # Get filter_categories (subcategories like cs.AI, cs.CL)
+            filter_cats = arxiv_filters.get('filter_categories', [])
+            if filter_cats:
+                all_categories.update(filter_cats)
+                
+                # Extract main categories from subcategories
+                for cat in filter_cats:
+                    if '.' in cat:
+                        main_cat = cat.split('.')[0]
+                        main_categories.add(main_cat)
+            
+            # Get main_category
+            main_cat = arxiv_filters.get('main_category')
+            if main_cat:
+                main_categories.add(main_cat)
+    
+    if not has_filters:
+        return None
+    
+    # Return merged filters
+    return {
+        'main_category': list(main_categories)[0] if main_categories else None,
+        'filter_categories': list(all_categories) if all_categories else None
+    }
+
 def _download_arxiv_for_range(
     date_from: Optional[str], 
     date_to: Optional[str],
-    overwrite_existing: bool = False
+    overwrite_existing: bool = False,
+    profile_ids: Optional[List[int]] = None,
+    use_profile_arxiv_filters: bool = True
 ) -> Dict[str, int]:
     """Download papers from arXiv for the given range and insert into DB.
     
@@ -178,6 +237,8 @@ def _download_arxiv_for_range(
         date_to: End date for the range
         overwrite_existing: If True, download regardless of existing data.
                           If False, skip download if papers exist.
+        profile_ids: List of profile IDs to use for arXiv filtering
+        use_profile_arxiv_filters: If True, use arXiv filters from profiles
     
     Returns:
         Stats dict {total, imported, skipped, errors} from bulk_insert.
@@ -185,6 +246,24 @@ def _download_arxiv_for_range(
     if not date_from and not date_to:
         logger.info("Preflight: no date range provided; skipping arXiv download")
         return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+    # Determine arXiv filters
+    category = None
+    subcategories = None
+    
+    if use_profile_arxiv_filters and profile_ids:
+        merged_filters = _merge_profile_arxiv_filters(profile_ids)
+        if merged_filters:
+            category = merged_filters.get('main_category')
+            subcategories = merged_filters.get('filter_categories')
+            logger.info(
+                f"🏷️  Preflight: using profile arXiv filters - "
+                f"main_category={category}, filter_categories={subcategories}"
+            )
+        else:
+            logger.info("ℹ️  Preflight: no arXiv filters found in profiles, downloading all categories")
+    else:
+        logger.info("ℹ️  Preflight: profile filtering disabled, downloading all arXiv categories")
 
     # Check for existing papers and decide whether to skip download
     try:
@@ -208,7 +287,13 @@ def _download_arxiv_for_range(
     logger.info(f"📡 Preflight: downloading arXiv papers for range {date_from}..{date_to}")
     try:
         # Force Kaggle via explicit flag to avoid persistent env state
-        proc = ArxivDataProcessor(start_date=date_from, end_date=date_to, category=None, subcategories=None, force_kaggle=True)
+        proc = ArxivDataProcessor(
+            start_date=date_from, 
+            end_date=date_to, 
+            category=category, 
+            subcategories=subcategories, 
+            force_kaggle=True
+        )
         df = proc.download_and_process_data()
     except Exception as e:
         logger.warning(f"Preflight: arXiv download failed: {e}")
@@ -914,6 +999,9 @@ async def _start_bulk_judge_operation(
 
     # Start appropriate background task
     if request.use_multi_server:
+        # Convert profile IDs to integers for use throughout
+        profile_ids_int = [int(pid) for pid in request.profile_ids] if request.profile_ids else None
+        
         # Preflight: ensure downloads/embeddings done before spinning up workers
         # Download new papers from arXiv for this range and insert them
         # Skip download only if overwrite_existing is False and papers exist
@@ -921,7 +1009,9 @@ async def _start_bulk_judge_operation(
             dl_stats = _download_arxiv_for_range(
                 request.start_date, 
                 request.end_date,
-                overwrite_existing=request.overwrite_existing
+                overwrite_existing=request.overwrite_existing,
+                profile_ids=profile_ids_int,
+                use_profile_arxiv_filters=request.use_profile_arxiv_filters
             )
             logger.info(f"Preflight download stats: {dl_stats}")
         except Exception as pre_dle:
@@ -936,7 +1026,6 @@ async def _start_bulk_judge_operation(
 
         # Enqueue tasks synchronously (dynamic pool; no server pre-assignment)
         queue_producer = JudgeQueueProducer()
-        profile_ids_int = [int(pid) for pid in request.profile_ids] if request.profile_ids else None
         result = queue_producer.enqueue_bulk_judge_job(
             job_id=created_job_id,
             profile_ids=profile_ids_int,

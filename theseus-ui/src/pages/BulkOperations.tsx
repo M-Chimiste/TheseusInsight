@@ -71,6 +71,7 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
   const [cosineThresholdIngest, setCosineThresholdIngest] = useState<number>(0.7);
   const [batchSizeIngest, setBatchSizeIngest] = useState<number>(100);
   const [checkExistingData, setCheckExistingData] = useState<boolean>(true);
+  const [useProfileArxivFilters, setUseProfileArxivFilters] = useState<boolean>(true);
 
   // Multi-Server Configuration State
   const [useMultiServer, setUseMultiServer] = useState<boolean>(false);
@@ -183,6 +184,7 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
       batch_size: batchSizeIngest,
       score_all_profiles: false,
       overwrite_existing: !checkExistingData,
+      use_profile_arxiv_filters: useProfileArxivFilters,
       // Multi-server configuration (only included if enabled)
       use_multi_server: useMultiServer,
       server_ids: useMultiServer && selectedServers.length > 0 ? selectedServers : undefined,
@@ -392,6 +394,18 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                       />
                     }
                     label="Check for existing data (skip downloading if already available)"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={useProfileArxivFilters}
+                        onChange={(e) => setUseProfileArxivFilters(e.target.checked)}
+                      />
+                    }
+                    label="Use profile arXiv filters (download only papers from categories configured in the selected profiles)"
                   />
                 </Grid>
 

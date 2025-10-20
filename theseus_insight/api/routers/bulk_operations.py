@@ -129,12 +129,26 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     
     logger.info(f"🔍 Preflight: {count} papers missing embeddings in range {date_from}..{date_to}")
     
+    # Get embedding model config from settings
+    from ...data_access import SettingsRepository
+    import json
+    
+    orchestration_config = SettingsRepository.get_orchestration_config()
+    embedding_config = orchestration_config.get('embedding_model', {})
+    
+    model_name = embedding_config.get('model_name', 'Alibaba-NLP/gte-large-en-v1.5')
+    trust_remote_code = embedding_config.get('trust_remote_code', True)
+    
+    logger.info(f"📋 Using embedding model from settings: {model_name}")
+    
     # Use streaming service for memory-efficient processing
     from ...services import StreamingEmbeddingService, EmbeddingServiceConfig
     
     config = EmbeddingServiceConfig(
-        chunk_size=10000,  # Process 10K papers at a time
-        gpu_batch_size=512,  # Will be auto-tuned if enabled
+        # chunk_size uses default (5000) for Metal GPU compatibility
+        # gpu_batch_size will be auto-tuned, capped at max_batch_size for Metal GPU
+        model_name=model_name,
+        trust_remote_code=trust_remote_code,
         auto_tune_batch_size=True,
         db_flush_interval=1000,
         verbose=True
@@ -1002,51 +1016,61 @@ async def _start_bulk_judge_operation(
         # Convert profile IDs to integers for use throughout
         profile_ids_int = [int(pid) for pid in request.profile_ids] if request.profile_ids else None
         
-        # Preflight: ensure downloads/embeddings done before spinning up workers
-        # Download new papers from arXiv for this range and insert them
-        # Skip download only if overwrite_existing is False and papers exist
-        try:
-            dl_stats = _download_arxiv_for_range(
-                request.start_date, 
-                request.end_date,
-                overwrite_existing=request.overwrite_existing,
-                profile_ids=profile_ids_int,
-                use_profile_arxiv_filters=request.use_profile_arxiv_filters
-            )
-            logger.info(f"Preflight download stats: {dl_stats}")
-        except Exception as pre_dle:
-            logger.warning(f"Preflight arXiv download failed or partial: {pre_dle}")
+        # Run arXiv download + embedding + judging in background task (async, non-blocking)
+        # This allows the response to return immediately and UI to stay responsive
+        async def run_download_embedding_and_judging():
+            """Background task: download papers, embed them, then launch judge workers"""
+            # Step 1: Download papers from arXiv
+            try:
+                dl_stats = _download_arxiv_for_range(
+                    request.start_date, 
+                    request.end_date,
+                    overwrite_existing=request.overwrite_existing,
+                    profile_ids=profile_ids_int,
+                    use_profile_arxiv_filters=request.use_profile_arxiv_filters
+                )
+                logger.info(f"✅ ArXiv download complete: {dl_stats}")
+            except Exception as dl_e:
+                logger.error(f"❌ ArXiv download failed: {dl_e}")
+                await checkpoint_manager.fail_job(created_job_id, f"ArXiv download failed: {str(dl_e)}")
+                return
 
-        # Then, ensure embeddings for all papers in range
-        try:
-            pre_embedded = await _ensure_embeddings_for_range(request.start_date, request.end_date)
-            logger.info(f"Preflight embeddings ensured for {pre_embedded} papers")
-        except Exception as pre_e:
-            logger.warning(f"Preflight embedding stage failed or partial: {pre_e}")
+            # Step 2: Ensure embeddings for all papers in range
+            try:
+                pre_embedded = await _ensure_embeddings_for_range(request.start_date, request.end_date)
+                logger.info(f"✅ Embeddings ensured for {pre_embedded} papers")
+            except Exception as pre_e:
+                logger.error(f"❌ Embedding stage failed: {pre_e}")
+                await checkpoint_manager.fail_job(created_job_id, f"Embedding failed: {str(pre_e)}")
+                return
 
-        # Enqueue tasks synchronously (dynamic pool; no server pre-assignment)
-        queue_producer = JudgeQueueProducer()
-        result = queue_producer.enqueue_bulk_judge_job(
-            job_id=created_job_id,
-            profile_ids=profile_ids_int,
-            date_from=request.start_date,
-            date_to=request.end_date,
-            overwrite_existing=request.overwrite_existing,
-            create_processing_job=False,
-            server_urls=None  # dynamic pooling
-        )
+            try:
+                # Enqueue judge tasks
+                queue_producer = JudgeQueueProducer()
+                result = queue_producer.enqueue_bulk_judge_job(
+                    job_id=created_job_id,
+                    profile_ids=profile_ids_int,
+                    date_from=request.start_date,
+                    date_to=request.end_date,
+                    overwrite_existing=request.overwrite_existing,
+                    create_processing_job=False,
+                    server_urls=None  # dynamic pooling
+                )
+                
+                logger.info(f"📊 Queue producer result: {result}")
+                
+                # Launch worker processes
+                await _launch_worker_processes(created_job_id, selected_servers, request.request_timeout_sec, request.max_retries)
+                
+                # Monitor the job
+                await _monitor_multi_server_job(created_job_id, checkpoint_manager)
+                
+            except Exception as e:
+                logger.error(f"Error in judging phase: {e}")
+                await checkpoint_manager.fail_job(created_job_id, f"Judging failed: {str(e)}")
         
-        print(f"📊 Queue producer result: {result}")
-        
-        # Launch workers immediately (not in background task)
-        await _launch_worker_processes(created_job_id, selected_servers, request.request_timeout_sec, request.max_retries)
-        
-        # Use queue-based multi-server processing
-        background_tasks.add_task(
-            _monitor_multi_server_job,
-            created_job_id,
-            checkpoint_manager
-        )
+        # Add the entire workflow (download → embed → judge) as a background task
+        background_tasks.add_task(run_download_embedding_and_judging)
     else:
         # Use traditional single-server processing
         background_tasks.add_task(

@@ -32,7 +32,7 @@ class EmbeddingServiceConfig:
     chunk_size: int = 5000  # Papers per chunk (balanced for memory and performance)
     gpu_batch_size: int = 256  # Papers per GPU batch (conservative for Metal GPU)
     auto_tune_batch_size: bool = True  # Auto-optimize for hardware
-    max_batch_size: int = 1024  # Maximum batch size for auto-tuning (prevents Metal overflow)
+    max_batch_size: int = 512  # Maximum batch size for auto-tuning (Metal GPU safe limit)
     
     # Memory & Performance
     db_flush_interval: int = 1000  # Write to DB every N papers
@@ -205,13 +205,21 @@ class StreamingEmbeddingService:
             )
             
             # Auto-tune batch size if enabled
-            if self.config.auto_tune_batch_size:
+            # For Metal GPU, use more conservative settings to avoid memory errors
+            if self.config.auto_tune_batch_size and device != "mps":
                 if self._optimal_batch_size is None:
                     logger.info("🎯 Running GPU batch size auto-tuning (first run)...")
                     self._optimal_batch_size = self._auto_tune_batch_size()
                     logger.info(f"✅ Auto-tuned optimal batch size: {self._optimal_batch_size}")
                 else:
                     logger.info(f"📌 Using cached optimal batch size: {self._optimal_batch_size}")
+            elif device == "mps":
+                # Metal GPU: use fixed conservative batch size (auto-tuning can be unreliable)
+                self._optimal_batch_size = 256
+                logger.info(f"🍎 Metal GPU detected: using conservative batch size: {self._optimal_batch_size}")
+            else:
+                # Use configured default
+                self._optimal_batch_size = self.config.gpu_batch_size
         
         return self.embedding_model
     
@@ -337,6 +345,24 @@ class StreamingEmbeddingService:
             "papers_failed": 0,
             "papers_processed": offset
         }
+        
+        # Save initial checkpoint so UI can immediately see the job
+        self.checkpoint_manager.save(
+            job_id=job_id,
+            operation="embed_date_range",
+            parameters={
+                "start_date": start_date,
+                "end_date": end_date,
+                "model_name": self.config.model_name
+            },
+            progress={
+                "total_papers": total_papers,
+                "processed_papers": 0,
+                "offset": 0
+            },
+            statistics=stats
+        )
+        logger.info(f"💾 Saved initial checkpoint for job {job_id}")
         
         # Process in chunks
         db_buffer = []  # Buffer for bulk DB writes

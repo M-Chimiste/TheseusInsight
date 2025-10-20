@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from typing import Optional, List
 import json
 from datetime import datetime, date
@@ -784,7 +784,10 @@ async def find_similar_papers_to_existing(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/profile-aware-ingest", response_model=ProfileAwareIngestResponse)
-async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
+async def start_profile_aware_ingest(
+    request: ProfileAwareIngestRequest,
+    background_tasks: BackgroundTasks
+):
     """
     Start a profile-aware paper ingestion task.
     
@@ -850,12 +853,10 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
         if request.use_multi_server:
             logger.info("🚀 Multi-server request detected, routing to bulk operations")
             # Route to bulk operations API for multi-server processing
-            from .bulk_operations import _start_bulk_judge_operation
-            from fastapi import BackgroundTasks
+            from .bulk_operations import _start_bulk_judge_operation, BulkJudgeRequest
 
             # Convert to BulkJudgeRequest format
             logger.info("🔄 Converting ProfileAwareIngestRequest to BulkJudgeRequest")
-            from .bulk_operations import BulkJudgeRequest
             bulk_request = BulkJudgeRequest(
                 profile_ids=[str(pid) for pid in request.profile_ids] if request.profile_ids else None,
                 all_profiles=request.score_all_profiles,
@@ -873,10 +874,7 @@ async def start_profile_aware_ingest(request: ProfileAwareIngestRequest):
             )
             logger.info(f"✅ BulkJudgeRequest created: profile_ids={bulk_request.profile_ids}, server_ids={bulk_request.server_ids}")
 
-            # Create background tasks dependency
-            background_tasks = BackgroundTasks()
-
-            # Call bulk judge core operation
+            # Call bulk judge core operation (background_tasks passed from route handler)
             logger.info("⚡ Calling _start_bulk_judge_operation...")
             bulk_response = await _start_bulk_judge_operation(bulk_request, background_tasks)
             logger.info(f"✅ Bulk judge operation completed: job_id={bulk_response.job_id}")

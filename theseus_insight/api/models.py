@@ -67,11 +67,17 @@ class VisualizerSettings(BaseModel):
 
 class ModelConfig(BaseModel):
     model_name: str
-    model_type: str # This refers to the provider name e.g., "ollama", "openai"
+    model_type: str # This refers to the provider name e.g., "ollama", "lmstudio", "openai"
     max_new_tokens: Optional[int] = Field(None, example=2048)
     temperature: Optional[float] = Field(None, example=0.7)
     num_ctx: Optional[int] = Field(None, example=4096) # Context window size
     trust_remote_code: Optional[bool] = Field(None, example=False)
+
+    # LMStudio-specific fields
+    host: Optional[str] = Field(None, example="localhost:1234", description="LMStudio server host:port")
+    context_length: Optional[int] = Field(None, example=32768, description="Context window for LMStudio")
+    gpu_offload: Optional[str] = Field(None, example="max", description="GPU offload: 'max', 'off', or ratio 0-1")
+
     # Any other model-specific parameters can be added here or in a Dict[str, Any]
 
 class TTSModelConfig(BaseModel):

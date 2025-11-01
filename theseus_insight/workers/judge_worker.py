@@ -52,6 +52,8 @@ class JudgeWorker:
     def __init__(
         self,
         server_url: str,
+        provider: str = "ollama",
+        config_json: Optional[dict] = None,
         job_id: Optional[UUID] = None,
         worker_id: Optional[str] = None,
         max_retries: int = 3,
@@ -59,8 +61,10 @@ class JudgeWorker:
         judge_model_config: Optional[dict] = None
     ):
         self.server_url = server_url
+        self.provider = provider
+        self.config_json = config_json or {}
         self.job_id = job_id
-        self.worker_id = worker_id or f"worker_{server_url.replace('://', '_').replace('/', '_')}"
+        self.worker_id = worker_id or f"worker_{provider}_{server_url.replace('://', '_').replace('/', '_')}"
         self.max_retries = max_retries
         self.timeout = timeout
         self.running = False
@@ -93,18 +97,16 @@ class JudgeWorker:
         
         self.judge_model_config = judge_model_config
         logger.info(f"Using judge model: {judge_model_config.get('model_name')} (type: {judge_model_config.get('model_type')})")
-        
-        # Initialize Ollama client once with configuration from settings
-        from ..inference.llm import OllamaInference
-        self.ollama_client = OllamaInference(
-            model_name=judge_model_config.get('model_name', 'phi4-mini:3.8b-q8_0'),
-            max_new_tokens=judge_model_config.get('max_new_tokens', 512),
-            temperature=judge_model_config.get('temperature', 0.1),
-            num_ctx=judge_model_config.get('num_ctx', 4096),
-            url=server_url,
-            request_timeout=timeout
+
+        # Initialize inference client based on provider
+        self.inference_client = self._create_inference_client(
+            judge_model_config,
+            server_url,
+            provider,
+            self.config_json,
+            timeout
         )
-        
+
         # Add file handler for this specific worker
         log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'logs')
         log_file = os.path.join(log_dir, f'judge_worker_{self.worker_id}.log')
@@ -114,14 +116,56 @@ class JudgeWorker:
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
         self.log_file = log_file
-        
+
         # Watchdog to dump stack traces if we stall
         self.last_progress_ts = time.time()
         self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self._watchdog_thread.start()
-        
-        logger.info(f"Initialized worker {self.worker_id} for server {server_url}")
+
+        logger.info(f"Initialized {provider} worker {self.worker_id} for server {server_url}")
         logger.info(f"Logging to {log_file}")
+
+    def _create_inference_client(
+        self,
+        judge_model_config: dict,
+        server_url: str,
+        provider: str,
+        config_json: dict,
+        timeout: int
+    ):
+        """Create appropriate inference client based on provider."""
+        from LLMFactory import LLMModelFactory
+
+        model_name = judge_model_config.get('model_name', 'phi4-mini:3.8b-q8_0')
+        max_new_tokens = judge_model_config.get('max_new_tokens', 512)
+        temperature = judge_model_config.get('temperature', 0.1)
+
+        if provider.lower() == 'ollama':
+            return LLMModelFactory.create_model(
+                model_type='ollama',
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                num_ctx=judge_model_config.get('num_ctx', 4096),
+                url=server_url,
+                request_timeout=timeout
+            )
+        elif provider.lower() == 'lmstudio':
+            # Extract LMStudio-specific config
+            context_length = config_json.get('context_length', 8192)
+            gpu_offload = config_json.get('gpu_offload', 'max')
+
+            return LLMModelFactory.create_model(
+                model_type='lmstudio',
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                host=server_url,
+                context_length=context_length,
+                gpu_offload=gpu_offload
+            )
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
 
     def _load_judge_config(self) -> dict:
         """Load judge model configuration from database settings or config file."""
@@ -507,7 +551,7 @@ class JudgeWorker:
                 score_data['score'],
                 score_data['related'],
                 score_data['rationale'],
-                self.ollama_client.model_name
+                self.inference_client.model_name
             ))
             
             # Mark task as completed
@@ -571,7 +615,7 @@ class JudgeWorker:
         
         def _invoke_with_timeout():
             try:
-                result[0] = self.ollama_client.invoke(
+                result[0] = self.inference_client.invoke(
                     messages=messages,
                     system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
                     schema=ResearchInterestsPromptData
@@ -655,10 +699,10 @@ class JudgeWorker:
         except Exception as e:
             logger.warning(f"Failed to mark worker as inactive: {e}")
         
-        # Close Ollama client connections
+        # Close inference client connections
         try:
-            if hasattr(self.ollama_client, 'close'):
-                self.ollama_client.close()
+            if hasattr(self.inference_client, 'close'):
+                self.inference_client.close()
         except:
             pass
         

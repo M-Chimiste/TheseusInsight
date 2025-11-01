@@ -12,7 +12,8 @@ import asyncio
 import threading
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
-from ..inference.llm import LLMModelFactory, InferenceModel
+from LLMFactory import LLMModelFactory
+from LLMFactory.providers import InferenceModel
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class ModelClient:
         )
         
         # Determine if this is a local model that needs rate limiting
-        self.is_local_model = provider.lower() in ['ollama', 'llamacpp', 'local']
+        self.is_local_model = provider.lower() in ['ollama', 'llamacpp', 'local', 'lmstudio']
     
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str = "", schema: Any = None) -> str:
         """Invoke the model with rate limiting for local models."""
@@ -95,9 +96,10 @@ def supports_structured_output(model_type: str) -> bool:
     Returns:
         True if the model supports structured output
     """
-    # Only local models and custom-oai support structured output to avoid OpenAI API errors
+    # Providers that support structured JSON output
     structured_providers = {
-        "ollama", "custom-oai", "llamacpp"
+        "ollama", "lmstudio", "llamacpp",  # Local providers
+        "custom-oai", "openai", "gemini"    # Cloud providers with structured output support
     }
     return model_type.lower() in structured_providers
 

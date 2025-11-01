@@ -29,6 +29,8 @@ langgraph
 yake
 
 # LLM & AI Services
+# LLMFactory - Unified inference interface for multiple providers
+git+https://github.com/M-Chimiste/LLMFactory.git
 anthropic[bedrock]
 openai
 ollama

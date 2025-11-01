@@ -10,7 +10,7 @@ from ..data_access.judge_task_queue import JudgeTaskQueueRepository, JudgeTask
 from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
 from ..data_access.papers import PaperRepository
 from ..data_access.profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
-from ..inference.llm import OllamaInference
+from LLMFactory.providers import OllamaInference
 from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
 from .error_handler import DistributedErrorHandler, error_handler
 import json_repair

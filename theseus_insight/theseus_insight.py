@@ -313,23 +313,23 @@ class TheseusInsight:
             if model_type == "anthropic":
                 if ANTHROPIC_API_KEY is None:
                     raise ValueError("Anthropic API key is not set.")
-                from .inference.llm import AnthropicInference
+                from LLMFactory.providers import AnthropicInference
                 return AnthropicInference(model_name, max_new_tokens, temperature)
-            
+
             elif model_type == "openai":
                 if OPENAI_API_KEY is None:
                     raise ValueError("OpenAI API key is not set.")
-                from .inference.llm import OpenAIInference
+                from LLMFactory.providers import OpenAIInference
                 return OpenAIInference(model_name, max_new_tokens, temperature)
 
             elif model_type == "gemini":
                 if GOOGLE_API_KEY is None:
                     raise ValueError("Google API key is not set.")
-                from .inference.llm import GeminiInference
+                from LLMFactory.providers import GeminiInference
                 return GeminiInference(model_name, max_new_tokens, temperature)
 
             elif model_type == "ollama":
-                from .inference.llm import OllamaInference
+                from LLMFactory.providers import OllamaInference
                 kwargs = {
                     'model_name': model_name,
                     'max_new_tokens': max_new_tokens,

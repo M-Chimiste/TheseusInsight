@@ -32,7 +32,7 @@ from theseus_insight.data_model.papers import Paper
 from theseus_insight.data_processing.arxiv import ArxivDataProcessor
 from theseus_insight.data_processing.checkpoint_manager import CheckpointManager
 from theseus_insight.inference import SentenceTransformerInference
-from theseus_insight.inference.llm import (
+from LLMFactory.providers import (
     OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
 )
 from theseus_insight.prompt import (

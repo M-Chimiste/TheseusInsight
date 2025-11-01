@@ -33,7 +33,7 @@ from theseus_insight.data_access import PaperRepository, SettingsRepository
 from theseus_insight.data_model.papers import Paper
 from theseus_insight.data_processing.paperswithcode import PapersWithCode
 from theseus_insight.inference import SentenceTransformerInference
-from theseus_insight.inference.llm import (
+from LLMFactory.providers import (
     OllamaInference, OpenAIInference, AnthropicInference, GeminiInference,
 )
 from theseus_insight.prompt import (

@@ -10,7 +10,7 @@ from typing import Dict, Any, List
 import asyncio
 
 from ..state import MindMapState, Message
-from ...inference.llm import LLMModelFactory
+from LLMFactory import LLMModelFactory
 from ...data_access import PaperRepository
 
 logger = logging.getLogger(__name__)

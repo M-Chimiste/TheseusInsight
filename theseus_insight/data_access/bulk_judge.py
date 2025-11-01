@@ -12,7 +12,7 @@ import json_repair
 from tqdm import tqdm
 import asyncio
 
-from ..inference.llm import OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
+from LLMFactory.providers import OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
 from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
 from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
 from .papers import PaperRepository

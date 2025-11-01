@@ -251,6 +251,8 @@ if ($Environment -eq "docker") {
     $OptimizeIndexesFile = "C:\app\sql\005_optimize_indexes.sql"
     $ProcessingCheckpointsFile = "C:\app\sql\006_add_processing_checkpoints.sql"
     $ScheduledTasksFile = "C:\app\sql\007_add_scheduled_tasks.sql"
+    $MultiOllamaFile = "C:\app\sql\008_add_multi_ollama_support.sql"
+    $LMStudioMultiServerFile = "C:\app\sql\009_add_lmstudio_multi_server.sql"
     $CreateMigrationTrackingFile = "C:\app\sql\create_migration_tracking.sql"
 }
 else {
@@ -261,6 +263,8 @@ else {
     $OptimizeIndexesFile = "$PSScriptRoot\005_optimize_indexes.sql"
     $ProcessingCheckpointsFile = "$PSScriptRoot\006_add_processing_checkpoints.sql"
     $ScheduledTasksFile = "$PSScriptRoot\007_add_scheduled_tasks.sql"
+    $MultiOllamaFile = "$PSScriptRoot\008_add_multi_ollama_support.sql"
+    $LMStudioMultiServerFile = "$PSScriptRoot\009_add_lmstudio_multi_server.sql"
     $CreateMigrationTrackingFile = "$PSScriptRoot\create_migration_tracking.sql"
 }
 
@@ -388,6 +392,48 @@ if (Test-Path $ScheduledTasksFile) {
 else {
     Write-Warning "⚠️  Warning: Scheduled tasks migration file not found at $ScheduledTasksFile"
     Write-Host "   Scheduled task features may not be available"
+}
+
+# Apply multi-Ollama server support migration
+if (Test-Path $MultiOllamaFile) {
+    Write-Status "📋 Applying multi-Ollama server migration from: $MultiOllamaFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $MultiOllamaFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply multi-Ollama server migration from $MultiOllamaFile"
+            exit 1
+        }
+        Write-Success "✅ Multi-Ollama server migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply multi-Ollama server migration from $MultiOllamaFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Multi-Ollama server migration file not found at $MultiOllamaFile"
+    Write-Host "   Multi-server bulk operations may not be available"
+}
+
+# Apply LMStudio multi-server support migration
+if (Test-Path $LMStudioMultiServerFile) {
+    Write-Status "📋 Applying LMStudio multi-server migration from: $LMStudioMultiServerFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $LMStudioMultiServerFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply LMStudio multi-server migration from $LMStudioMultiServerFile"
+            exit 1
+        }
+        Write-Success "✅ LMStudio multi-server migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply LMStudio multi-server migration from $LMStudioMultiServerFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: LMStudio multi-server migration file not found at $LMStudioMultiServerFile"
+    Write-Host "   LMStudio provider features may not be available"
 }
 
 Write-Host ""

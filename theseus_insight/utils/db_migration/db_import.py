@@ -3236,10 +3236,10 @@ class DatabaseImporter:
             
             # Processing jobs (depends on nothing in this list)
             'processing_jobs',
-            
-            # Ollama servers (no FK dependencies)
-            'ollama_servers',
-            
+
+            # Inference servers (no FK dependencies) - renamed from ollama_servers
+            'inference_servers',
+
             # Scheduled tasks (depends on research_profiles)
             'scheduled_task_runs',  # FK: scheduled_tasks.id
             'scheduled_tasks',      # FK: research_profiles.id

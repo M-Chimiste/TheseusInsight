@@ -1042,8 +1042,7 @@ class PaperRepository:
         """Return papers within a date range that are missing embeddings.
 
         Only returns fields needed for embedding preflight to minimize payload.
-        Filters to non-empty title and abstract to avoid embedding useless rows.
-        """
+        Filters to non-empty title and abstract to avoid embedding useless rows.        """
         with get_cursor() as cur:
             query = (
                 "SELECT id, title, abstract FROM papers WHERE "

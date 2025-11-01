@@ -17,13 +17,13 @@ from ...data_access.bulk_judge import BulkJudgeRunner
 from ...utils.backfill_embeddings import backfill_embeddings
 from ...utils.backfill_keywords import backfill_keywords
 from ...db import get_connection_pool
-from ...data_access.ollama_servers import OllamaServersRepository
+from ...data_access.inference_servers import InferenceServersRepository
 from ...data_processing.queue_producer import JudgeQueueProducer
 from ...scheduler import scheduler
 from ...data_access.papers import PaperRepository
 from ...data_processing.arxiv import ArxivDataProcessor
 from ...data_model.papers import Paper as PaperModel
-from ...inference.llm import SentenceTransformerInference
+from LLMFactory.providers import SentenceTransformerInference
 
 # Initialize logger for the module
 logger = logging.getLogger(__name__)
@@ -99,6 +99,7 @@ class JobStatusResponse(BaseModel):
 # -------------------------------
 
 def _filter_valid_abstracts(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Filter out papers with missing or empty abstracts."""
     filtered = []
     for p in papers:
         title = (p.get('title') or '').strip()
@@ -746,7 +747,7 @@ async def _start_bulk_judge_operation(
     selected_servers = []
     if request.use_multi_server:
         print(f"🔍 Multi-server mode enabled, requested server_ids: {request.server_ids}")
-        server_repo = OllamaServersRepository()
+        server_repo = InferenceServersRepository()
         available_servers = server_repo.get_enabled()
         print(f"📋 Found {len(available_servers)} available servers: {[(s.id, s.name, s.url) for s in available_servers]}")
 
@@ -1674,10 +1675,10 @@ async def get_active_jobs() -> Dict[str, Any]:
 
 @router.get("/server-metrics", response_model=Dict[str, Any])
 async def get_server_metrics() -> Dict[str, Any]:
-    """Get performance metrics for all Ollama servers."""
+    """Get performance metrics for all inference servers."""
     try:
-        from ...data_access.ollama_servers import OllamaServersRepository
-        server_repo = OllamaServersRepository()
+        from ...data_access.inference_servers import InferenceServersRepository
+        server_repo = InferenceServersRepository()
 
         servers = server_repo.get_all()
         server_metrics = []
@@ -2174,13 +2175,13 @@ async def validate_bulk_judge_job(request: BulkJudgeRequest) -> Dict[str, Any]:
 
             # Validate multi-server configuration
             if request.use_multi_server:
-                from ...data_access.ollama_servers import OllamaServersRepository
-                server_repo = OllamaServersRepository()
+                from ...data_access.inference_servers import InferenceServersRepository
+                server_repo = InferenceServersRepository()
                 available_servers = server_repo.get_enabled()
 
                 if not available_servers:
                     validation_result["valid"] = False
-                    validation_result["errors"].append("Multi-server mode requested but no enabled Ollama servers found")
+                    validation_result["errors"].append("Multi-server mode requested but no enabled inference servers found")
                 else:
                     if request.server_ids:
                         available_ids = {server.id for server in available_servers}

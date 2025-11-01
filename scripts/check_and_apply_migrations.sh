@@ -89,6 +89,7 @@ migration_files=(
     "006_add_processing_checkpoints.sql"
     "007_add_scheduled_tasks.sql"
     "008_add_multi_ollama_support.sql"
+    "009_add_lmstudio_multi_server.sql"
 )
 
 migration_descriptions=(
@@ -101,6 +102,7 @@ migration_descriptions=(
     "Add checkpoint system for resumable processing"
     "Add scheduled task system"
     "Add multi-Ollama server support for bulk judge operations"
+    "Add LMStudio multi-server support and rename to inference_servers"
 )
 
 # Check and apply migrations

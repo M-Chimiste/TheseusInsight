@@ -35,8 +35,7 @@ from ..data_access import (
     ResearchInterestsRepository, ResearchInterestMetricsRepository,
     PaperResearchInterestsRepository
 )
-from ..inference import SentenceTransformerInference
-from ..inference.llm import SentenceTransformerInference
+from LLMFactory.providers import SentenceTransformerInference
 
 logger = logging.getLogger(__name__)
 

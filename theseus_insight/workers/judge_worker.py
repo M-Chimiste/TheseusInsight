@@ -713,10 +713,20 @@ class JudgeWorker:
             pass
 
 
-def run_worker(server_url: str, job_id: Optional[UUID], max_retries: int, timeout: int, judge_model_config: Optional[dict] = None):
+def run_worker(
+    server_url: str,
+    job_id: Optional[UUID],
+    max_retries: int,
+    timeout: int,
+    provider: str = "ollama",
+    config_json: Optional[dict] = None,
+    judge_model_config: Optional[dict] = None
+):
     """Run a single worker for a server."""
     worker = JudgeWorker(
         server_url=server_url,
+        provider=provider,
+        config_json=config_json,
         job_id=job_id,
         max_retries=max_retries,
         timeout=timeout,
@@ -743,12 +753,12 @@ def main():
     # For --all-enabled, we need to get the list of servers
     # Import here to avoid early module loading
     if args.all_enabled:
-        from ..data_access.ollama_servers import OllamaServersRepository
-        servers = OllamaServersRepository.get_enabled()
-        servers_to_process = [(server.url, args.job_id) for server in servers]
+        from ..data_access.inference_servers import InferenceServersRepository
+        servers = InferenceServersRepository.get_enabled()
+        servers_to_process = [(server.url, server.provider, server.config_json, args.job_id) for server in servers]
         logger.info(f"Processing all {len(servers_to_process)} enabled servers")
     elif args.server_url:
-        servers_to_process = [(args.server_url, args.job_id)]
+        servers_to_process = [(args.server_url, "ollama", {}, args.job_id)]
         logger.info(f"Processing single server: {args.server_url}")
     else:
         logger.error("Must specify either --server-url or --all-enabled")
@@ -758,16 +768,16 @@ def main():
     if len(servers_to_process) > 1:
         import multiprocessing
         processes = []
-        
-        for server_url, job_id in servers_to_process:
+
+        for server_url, provider, config_json, job_id in servers_to_process:
             job_uuid = UUID(job_id) if job_id else None
             p = multiprocessing.Process(
                 target=run_worker,
-                args=(server_url, job_uuid, args.max_retries, args.timeout, None)  # None = load from settings
+                args=(server_url, job_uuid, args.max_retries, args.timeout, provider, config_json, None)  # None = load from settings
             )
             p.start()
             processes.append(p)
-            logger.info(f"Started worker process for {server_url}")
+            logger.info(f"Started {provider} worker process for {server_url}")
         
         # Wait for all processes
         try:
@@ -781,9 +791,9 @@ def main():
                 p.join(timeout=5)
     else:
         # Single server - run directly
-        server_url, job_id = servers_to_process[0]
+        server_url, provider, config_json, job_id = servers_to_process[0]
         job_uuid = UUID(job_id) if job_id else None
-        run_worker(server_url, job_uuid, args.max_retries, args.timeout, None)  # None = load from settings
+        run_worker(server_url, job_uuid, args.max_retries, args.timeout, provider, config_json, None)  # None = load judge_model_config from settings
 
 
 if __name__ == "__main__":

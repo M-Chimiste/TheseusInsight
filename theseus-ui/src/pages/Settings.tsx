@@ -76,7 +76,7 @@ const MODEL_TABS = [
   { key: 'podcast_model', label: 'Podcast Model', tooltip: 'Used for podcast generation.' },
   { key: 'tts_model', label: 'TTS Model', tooltip: 'Text-to-speech for podcast.' },
   { key: 'mind_map_config', label: 'Mind-Map Explorer', tooltip: 'Configuration for mind-map visualization and paper relationship exploration.' },
-  { key: 'ollama_servers', label: 'Ollama Servers', tooltip: 'Configure multiple Ollama servers for distributed bulk processing.' },
+  { key: 'inference_servers', label: 'Inference Servers', tooltip: 'Configure multiple Ollama and LMStudio servers for distributed bulk processing.' },
 ];
 
 // Research Agent Configuration Tabs
@@ -1073,7 +1073,7 @@ const Settings: React.FC = () => {
                   value={currentConfig.summarization_model?.temperature || 0.3}
                   onChange={e => handleModelConfigChange(modelKey, 'summarization_model.temperature', parseFloat(e.target.value))}
                 />
-                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'llamacpp') && (
+                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'llamacpp' || currentConfig.summarization_model?.model_type === 'lmstudio') && (
                   <TextField
                     fullWidth
                     label="Context Window (num_ctx)"
@@ -1136,7 +1136,7 @@ const Settings: React.FC = () => {
             />
           )}
           {typeof currentConfig.num_ctx === 'number' && ( // Only show for certain providers
-             (currentConfig.model_type === 'ollama' || currentConfig.model_type === 'llamacpp')
+             (currentConfig.model_type === 'ollama' || currentConfig.model_type === 'llamacpp' || currentConfig.model_type === 'lmstudio')
           ) && (
             <TextField
               fullWidth
@@ -1232,7 +1232,7 @@ const Settings: React.FC = () => {
                 value={modelObj.temperature || 0.1}
                 onChange={e => handleSingleAgentConfigChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
               />
-              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp') && (
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp' || modelObj.model_type === 'lmstudio') && (
                 <TextField
                   fullWidth
                   label="Context Window (num_ctx)"
@@ -1427,7 +1427,7 @@ const Settings: React.FC = () => {
                 value={modelObj.temperature || 0.1}
                 onChange={e => handleMultiAgentConfigChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
               />
-              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp') && (
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp' || modelObj.model_type === 'lmstudio') && (
                 <TextField
                   fullWidth
                   label="Context Window (num_ctx)"
@@ -1686,8 +1686,8 @@ const Settings: React.FC = () => {
                     {tabDef.label} Settings
                   </Typography>
 
-                  {/* Special handling for Ollama servers */}
-                  {tabDef.key === 'ollama_servers' ? (
+                  {/* Special handling for Inference servers (Ollama & LMStudio) */}
+                  {tabDef.key === 'inference_servers' ? (
                     <OllamaServersSettings />
                   ) : orchestrationConfig && orchestrationConfig[tabDef.key] ? (
                     renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
@@ -1695,8 +1695,8 @@ const Settings: React.FC = () => {
                     <Typography>Loading configuration for {tabDef.label}...</Typography>
                   )}
 
-                  {/* Only show save button for non-Ollama servers tabs */}
-                  {tabDef.key !== 'ollama_servers' && (
+                  {/* Only show save button for non-Inference servers tabs */}
+                  {tabDef.key !== 'inference_servers' && (
                     <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
                       <Button
                         variant="contained"

@@ -114,7 +114,7 @@ async def lifespan(app_instance: FastAPI):
         # Initialize model providers
         from .data_access import ModelProviderRepository
         try:
-            ModelProviderRepository.initialize_default_providers()
+            ModelProviderRepository.ensure_providers_exist()
         except Exception as e:
             print(f"ERROR:    Failed to initialize model providers: {e}")
 

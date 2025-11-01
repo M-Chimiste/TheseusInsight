@@ -69,12 +69,14 @@ const OllamaServersSettings: React.FC = () => {
   const [formData, setFormData] = useState<OllamaServerCreate>({
     name: '',
     url: '',
+    provider: 'ollama',
     notes: ''
   });
 
   const [editFormData, setEditFormData] = useState<OllamaServerUpdate>({
     name: '',
     url: '',
+    provider: 'ollama',
     enabled: true,
     notes: ''
   });
@@ -102,7 +104,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       setCreateDialogOpen(false);
-      setFormData({ name: '', url: '', notes: '' });
+      setFormData({ name: '', url: '', provider: 'ollama', notes: '' });
       showSnackbar('Server created successfully', 'success');
     },
     onError: (error: unknown) => {
@@ -199,7 +201,7 @@ const OllamaServersSettings: React.FC = () => {
 
   const handleCreateDialogClose = () => {
     setCreateDialogOpen(false);
-    setFormData({ name: '', url: '', notes: '' });
+    setFormData({ name: '', url: '', provider: 'ollama', notes: '' });
   };
 
   const handleEditDialogOpen = (server: OllamaServer) => {
@@ -207,6 +209,7 @@ const OllamaServersSettings: React.FC = () => {
     setEditFormData({
       name: server.name,
       url: server.url,
+      provider: server.provider,
       enabled: server.enabled,
       notes: server.notes || ''
     });
@@ -216,7 +219,7 @@ const OllamaServersSettings: React.FC = () => {
   const handleEditDialogClose = () => {
     setEditDialogOpen(false);
     setSelectedServer(null);
-    setEditFormData({ name: '', url: '', enabled: true, notes: '' });
+    setEditFormData({ name: '', url: '', provider: 'ollama', enabled: true, notes: '' });
   };
 
   const handleCreateSubmit = () => {

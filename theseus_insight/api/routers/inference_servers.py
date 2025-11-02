@@ -80,6 +80,13 @@ class ServerTestRequest(BaseModel):
     timeout_seconds: int = Field(60, ge=1, le=300, description="Test timeout in seconds")
 
 
+class GlobalDefaults(BaseModel):
+    """Global defaults for inference server operations."""
+    request_timeout_sec: int = Field(30, ge=1, le=600, description="Request timeout in seconds")
+    max_retries: int = Field(3, ge=0, le=10, description="Maximum number of retries")
+    circuit_breaker_threshold: int = Field(5, ge=1, le=20, description="Circuit breaker failure threshold")
+
+
 # Global repository instance
 repo = InferenceServersRepository()
 
@@ -205,6 +212,38 @@ async def test_server_url(request: ServerTestRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to test server: {str(e)}")
+
+
+@router.get("/defaults", response_model=GlobalDefaults)
+async def get_global_defaults():
+    """Get global defaults for inference server operations."""
+    try:
+        # Retrieve settings with fallback to defaults
+        request_timeout = SettingsRepository.get_int("inference_request_timeout_sec", 30)
+        max_retries = SettingsRepository.get_int("inference_max_retries", 3)
+        circuit_breaker = SettingsRepository.get_int("inference_circuit_breaker_threshold", 5)
+
+        return GlobalDefaults(
+            request_timeout_sec=request_timeout,
+            max_retries=max_retries,
+            circuit_breaker_threshold=circuit_breaker
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get global defaults: {str(e)}")
+
+
+@router.put("/defaults", response_model=GlobalDefaults)
+async def update_global_defaults(defaults: GlobalDefaults):
+    """Update global defaults for inference server operations."""
+    try:
+        # Update settings in database
+        SettingsRepository.set("inference_request_timeout_sec", str(defaults.request_timeout_sec))
+        SettingsRepository.set("inference_max_retries", str(defaults.max_retries))
+        SettingsRepository.set("inference_circuit_breaker_threshold", str(defaults.circuit_breaker_threshold))
+
+        return defaults
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update global defaults: {str(e)}")
 
 
 @router.get("/{server_id}", response_model=InferenceServerResponse)

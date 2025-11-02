@@ -107,7 +107,7 @@ class TheseusInsight:
         
         # Store task_id for logging
         self.task_id = task_id or f"theseus_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
+
         self.verbose = verbose
         self.save_dialogue = save_dialogue
         self.checkpoint_dir = checkpoint_dir
@@ -115,6 +115,10 @@ class TheseusInsight:
         self.publish_podcast = publish_podcast
         self.generate_podcast = generate_podcast
         self.use_database_checkpoints = use_database_checkpoints
+
+        # Set error notification flag early (before any operations that might fail)
+        self.send_error_notifications = send_error_notifications
+        self.error_notified = False
         
         # Initialize checkpoint manager if using database checkpoints
         self.checkpoint_manager = None
@@ -304,8 +308,6 @@ class TheseusInsight:
         # 4) Arxiv search categories
         self.arxiv_main_category = self.orchestration_config['arxiv_search_categories']['main_category']
         self.arxiv_filter_categories = self.orchestration_config['arxiv_search_categories']['filter_categories']
-        self.send_error_notifications = send_error_notifications
-        self.error_notified = False
 
     def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
         """Load the appropriate inference model based on model type."""
@@ -339,6 +341,22 @@ class TheseusInsight:
                 if num_ctx is not None:
                     kwargs['num_ctx'] = num_ctx
                 return OllamaInference(**kwargs)
+
+            elif model_type == "lmstudio":
+                from LLMFactory import LLMModelFactory
+                # LMStudio needs host parameter instead of url
+                # Default to localhost:1234 if not set in environment
+                lmstudio_host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+                kwargs = {
+                    'model_type': 'lmstudio',
+                    'model_name': model_name,
+                    'max_new_tokens': max_new_tokens,
+                    'temperature': temperature,
+                    'host': lmstudio_host
+                }
+                if num_ctx is not None:
+                    kwargs['context_length'] = num_ctx
+                return LLMModelFactory.create_model(**kwargs)
 
             else:
                 raise ValueError(f"Invalid model type: {model_type}")

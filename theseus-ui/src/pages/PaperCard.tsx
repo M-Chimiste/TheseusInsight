@@ -40,8 +40,8 @@ interface PaperCardProps {
 
 const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, initialExpanded = false, hasProfilesSelected = false, onPaperUpdated, selectedProfileIds }) => {
   const [expanded, setExpanded] = useState(initialExpanded);
-  const [localScore, setLocalScore] = useState<number>(paper.score);
-  const [localRelated, setLocalRelated] = useState<boolean>(!!paper.related);
+  const [localScore, setLocalScore] = useState<number>(paper.score ?? paper.profile_score ?? 0);
+  const [localRelated, setLocalRelated] = useState<boolean>(paper.related ?? false);
   const [saving, setSaving] = useState<boolean>(false);
   const [editing, setEditing] = useState<boolean>(false);
   const navigate = useNavigate();
@@ -226,8 +226,8 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
                   const initialScore = (hasProfilesSelected && typeof (paper as any).profile_score === 'number')
                     ? (paper as any).profile_score as number
                     : paper.score;
-                  setLocalScore(initialScore);
-                  setLocalRelated(!!paper.related);
+                  setLocalScore(initialScore ?? 0);
+                  setLocalRelated(paper.related ?? false);
                   setEditing(true);
                 }}
               >
@@ -241,8 +241,8 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
                   onClick={(e) => {
                     e.stopPropagation();
                     setEditing(false);
-                    setLocalScore(paper.score);
-                    setLocalRelated(!!paper.related);
+                    setLocalScore(paper.score ?? paper.profile_score ?? 0);
+                    setLocalRelated(paper.related ?? false);
                   }}
                 >
                   Cancel
@@ -266,8 +266,8 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
                         payload.profile_ids = selectedProfileIds;
                       }
                       const updated = await papersApi.updatePaper(paper.id, payload);
-                      setLocalScore(updated.score);
-                      setLocalRelated(updated.related);
+                      setLocalScore(updated.score ?? updated.profile_score ?? 0);
+                      setLocalRelated(updated.related ?? false);
                       setEditing(false);
                       onPaperUpdated && onPaperUpdated(updated);
                     } catch (err) {

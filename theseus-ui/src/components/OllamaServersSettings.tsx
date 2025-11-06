@@ -29,6 +29,10 @@ import {
   AccordionSummary,
   AccordionDetails,
   Grid,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -69,13 +73,17 @@ const OllamaServersSettings: React.FC = () => {
   const [formData, setFormData] = useState<OllamaServerCreate>({
     name: '',
     url: '',
+    provider: 'ollama',
+    config_json: {},
     notes: ''
   });
 
   const [editFormData, setEditFormData] = useState<OllamaServerUpdate>({
     name: '',
     url: '',
+    provider: 'ollama',
     enabled: true,
+    config_json: {},
     notes: ''
   });
 
@@ -102,7 +110,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       setCreateDialogOpen(false);
-      setFormData({ name: '', url: '', notes: '' });
+      setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, model_name: undefined, model_config: {}, notes: '' });
       showSnackbar('Server created successfully', 'success');
     },
     onError: (error: unknown) => {
@@ -199,7 +207,7 @@ const OllamaServersSettings: React.FC = () => {
 
   const handleCreateDialogClose = () => {
     setCreateDialogOpen(false);
-    setFormData({ name: '', url: '', notes: '' });
+    setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, model_name: undefined, model_config: {}, notes: '' });
   };
 
   const handleEditDialogOpen = (server: OllamaServer) => {
@@ -207,7 +215,11 @@ const OllamaServersSettings: React.FC = () => {
     setEditFormData({
       name: server.name,
       url: server.url,
+      provider: server.provider,
       enabled: server.enabled,
+      config_json: server.config_json || {},
+      model_name: server.model_name,
+      model_config: server.model_config || {},
       notes: server.notes || ''
     });
     setEditDialogOpen(true);
@@ -216,7 +228,7 @@ const OllamaServersSettings: React.FC = () => {
   const handleEditDialogClose = () => {
     setEditDialogOpen(false);
     setSelectedServer(null);
-    setEditFormData({ name: '', url: '', enabled: true, notes: '' });
+    setEditFormData({ name: '', url: '', provider: 'ollama', enabled: true, config_json: {}, model_name: undefined, model_config: {}, notes: '' });
   };
 
   const handleCreateSubmit = () => {
@@ -302,9 +314,9 @@ const OllamaServersSettings: React.FC = () => {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <Typography variant="h6" fontWeight={600} sx={{ flex: 1 }}>
-          Ollama Servers
+          Inference Servers
         </Typography>
-        <Tooltip title="Configure multiple Ollama servers for distributed bulk processing">
+        <Tooltip title="Configure multiple Ollama and LM Studio servers for distributed bulk processing">
           <InfoIcon color="action" sx={{ mr: 2 }} />
         </Tooltip>
         <Button
@@ -377,7 +389,9 @@ const OllamaServersSettings: React.FC = () => {
               <TableHead>
                 <TableRow>
                   <TableCell>Name</TableCell>
+                  <TableCell>Provider</TableCell>
                   <TableCell>URL</TableCell>
+                  <TableCell>Model</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Last Test</TableCell>
                   <TableCell>Latency</TableCell>
@@ -387,15 +401,15 @@ const OllamaServersSettings: React.FC = () => {
               <TableBody>
                 {serversLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} align="center">
+                    <TableCell colSpan={8} align="center">
                       <CircularProgress size={24} />
                     </TableCell>
                   </TableRow>
                 ) : servers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} align="center">
+                    <TableCell colSpan={8} align="center">
                       <Typography color="textSecondary">
-                        No Ollama servers configured. Click "Add Server" to get started.
+                        No inference servers configured. Click "Add Server" to get started.
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -412,7 +426,25 @@ const OllamaServersSettings: React.FC = () => {
                           )}
                         </Box>
                       </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={server.provider === 'ollama' ? 'Ollama' : 'LM Studio'}
+                          size="small"
+                          color={server.provider === 'ollama' ? 'primary' : 'secondary'}
+                        />
+                      </TableCell>
                       <TableCell>{server.url}</TableCell>
+                      <TableCell>
+                        {server.model_name ? (
+                          <Tooltip title="Custom model configured for this server">
+                            <Chip label={server.model_name} size="small" variant="outlined" />
+                          </Tooltip>
+                        ) : (
+                          <Typography variant="body2" color="textSecondary">
+                            Default
+                          </Typography>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           {getStatusIcon(server)}
@@ -487,9 +519,20 @@ const OllamaServersSettings: React.FC = () => {
 
       {/* Create Server Dialog */}
       <Dialog open={createDialogOpen} onClose={handleCreateDialogClose} maxWidth="sm" fullWidth>
-        <DialogTitle>Add Ollama Server</DialogTitle>
+        <DialogTitle>Add Inference Server</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <FormControl fullWidth required>
+              <InputLabel>Provider</InputLabel>
+              <Select
+                value={formData.provider}
+                label="Provider"
+                onChange={(e) => setFormData({ ...formData, provider: e.target.value as 'ollama' | 'lmstudio', config_json: {} })}
+              >
+                <MenuItem value="ollama">Ollama</MenuItem>
+                <MenuItem value="lmstudio">LM Studio</MenuItem>
+              </Select>
+            </FormControl>
             <TextField
               fullWidth
               label="Server Name"
@@ -502,10 +545,95 @@ const OllamaServersSettings: React.FC = () => {
               label="Server URL"
               value={formData.url}
               onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-              placeholder="http://localhost:11434"
+              placeholder={formData.provider === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234'}
               required
-              helperText="Include protocol and port (e.g., http://server:11434)"
+              helperText={formData.provider === 'ollama'
+                ? 'Include protocol and port (e.g., http://server:11434)'
+                : 'Include protocol and port (e.g., http://server:1234)'}
             />
+            {formData.provider === 'lmstudio' && (
+              <>
+                <TextField
+                  fullWidth
+                  label="Context Length"
+                  type="number"
+                  value={formData.config_json?.context_length || ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, context_length: parseInt(e.target.value) || undefined }
+                  })}
+                  placeholder="32768"
+                  helperText="Maximum context window size (optional)"
+                />
+                <TextField
+                  fullWidth
+                  label="GPU Offload"
+                  value={formData.config_json?.gpu_offload || ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, gpu_offload: e.target.value || undefined }
+                  })}
+                  placeholder="max"
+                  helperText="GPU offload setting (e.g., 'max', '0', '32') (optional)"
+                />
+              </>
+            )}
+            <TextField
+              fullWidth
+              label="Model Name (optional)"
+              value={formData.model_name || ''}
+              onChange={(e) => setFormData({ ...formData, model_name: e.target.value || undefined })}
+              placeholder={formData.provider === 'ollama' ? 'phi4:latest' : 'phi4-mlx'}
+              helperText="Override the default model name for this server (leave empty to use global default)"
+            />
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="subtitle2">Model Configuration Overrides (Optional)</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    value={formData.model_config?.temperature ?? ''}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      model_config: { ...formData.model_config, temperature: e.target.value ? parseFloat(e.target.value) : undefined }
+                    })}
+                    placeholder="0.7"
+                    inputProps={{ step: 0.1, min: 0, max: 2 }}
+                    helperText="Override temperature for this server"
+                  />
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={formData.model_config?.max_new_tokens ?? ''}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      model_config: { ...formData.model_config, max_new_tokens: e.target.value ? parseInt(e.target.value) : undefined }
+                    })}
+                    placeholder="2048"
+                    helperText="Override max_new_tokens for this server"
+                  />
+                  {formData.provider === 'ollama' && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={formData.model_config?.num_ctx ?? ''}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        model_config: { ...formData.model_config, num_ctx: e.target.value ? parseInt(e.target.value) : undefined }
+                      })}
+                      placeholder="131072"
+                      helperText="Override Ollama context window size"
+                    />
+                  )}
+                </Box>
+              </AccordionDetails>
+            </Accordion>
             <TextField
               fullWidth
               label="Notes (optional)"
@@ -530,9 +658,20 @@ const OllamaServersSettings: React.FC = () => {
 
       {/* Edit Server Dialog */}
       <Dialog open={editDialogOpen} onClose={handleEditDialogClose} maxWidth="sm" fullWidth>
-        <DialogTitle>Edit Ollama Server</DialogTitle>
+        <DialogTitle>Edit Inference Server</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <FormControl fullWidth required>
+              <InputLabel>Provider</InputLabel>
+              <Select
+                value={editFormData.provider}
+                label="Provider"
+                onChange={(e) => setEditFormData({ ...editFormData, provider: e.target.value as 'ollama' | 'lmstudio', config_json: {} })}
+              >
+                <MenuItem value="ollama">Ollama</MenuItem>
+                <MenuItem value="lmstudio">LM Studio</MenuItem>
+              </Select>
+            </FormControl>
             <TextField
               fullWidth
               label="Server Name"
@@ -545,10 +684,95 @@ const OllamaServersSettings: React.FC = () => {
               label="Server URL"
               value={editFormData.url}
               onChange={(e) => setEditFormData({ ...editFormData, url: e.target.value })}
-              placeholder="http://localhost:11434"
+              placeholder={editFormData.provider === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234'}
               required
-              helperText="Include protocol and port (e.g., http://server:11434)"
+              helperText={editFormData.provider === 'ollama'
+                ? 'Include protocol and port (e.g., http://server:11434)'
+                : 'Include protocol and port (e.g., http://server:1234)'}
             />
+            {editFormData.provider === 'lmstudio' && (
+              <>
+                <TextField
+                  fullWidth
+                  label="Context Length"
+                  type="number"
+                  value={editFormData.config_json?.context_length || ''}
+                  onChange={(e) => setEditFormData({
+                    ...editFormData,
+                    config_json: { ...editFormData.config_json, context_length: parseInt(e.target.value) || undefined }
+                  })}
+                  placeholder="32768"
+                  helperText="Maximum context window size (optional)"
+                />
+                <TextField
+                  fullWidth
+                  label="GPU Offload"
+                  value={editFormData.config_json?.gpu_offload || ''}
+                  onChange={(e) => setEditFormData({
+                    ...editFormData,
+                    config_json: { ...editFormData.config_json, gpu_offload: e.target.value || undefined }
+                  })}
+                  placeholder="max"
+                  helperText="GPU offload setting (e.g., 'max', '0', '32') (optional)"
+                />
+              </>
+            )}
+            <TextField
+              fullWidth
+              label="Model Name (optional)"
+              value={editFormData.model_name || ''}
+              onChange={(e) => setEditFormData({ ...editFormData, model_name: e.target.value || undefined })}
+              placeholder={editFormData.provider === 'ollama' ? 'phi4:latest' : 'phi4-mlx'}
+              helperText="Override the default model name for this server (leave empty to use global default)"
+            />
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="subtitle2">Model Configuration Overrides (Optional)</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    value={editFormData.model_config?.temperature ?? ''}
+                    onChange={(e) => setEditFormData({
+                      ...editFormData,
+                      model_config: { ...editFormData.model_config, temperature: e.target.value ? parseFloat(e.target.value) : undefined }
+                    })}
+                    placeholder="0.7"
+                    inputProps={{ step: 0.1, min: 0, max: 2 }}
+                    helperText="Override temperature for this server"
+                  />
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={editFormData.model_config?.max_new_tokens ?? ''}
+                    onChange={(e) => setEditFormData({
+                      ...editFormData,
+                      model_config: { ...editFormData.model_config, max_new_tokens: e.target.value ? parseInt(e.target.value) : undefined }
+                    })}
+                    placeholder="2048"
+                    helperText="Override max_new_tokens for this server"
+                  />
+                  {editFormData.provider === 'ollama' && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={editFormData.model_config?.num_ctx ?? ''}
+                      onChange={(e) => setEditFormData({
+                        ...editFormData,
+                        model_config: { ...editFormData.model_config, num_ctx: e.target.value ? parseInt(e.target.value) : undefined }
+                      })}
+                      placeholder="131072"
+                      helperText="Override Ollama context window size"
+                    />
+                  )}
+                </Box>
+              </AccordionDetails>
+            </Accordion>
             <TextField
               fullWidth
               label="Notes (optional)"
@@ -582,16 +806,21 @@ const OllamaServersSettings: React.FC = () => {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
-        <DialogTitle>Delete Ollama Server</DialogTitle>
+        <DialogTitle>Delete Inference Server</DialogTitle>
         <DialogContent>
           <Typography>
             Are you sure you want to delete the server "{serverToDelete?.name}"?
             This action cannot be undone.
           </Typography>
           {serverToDelete && (
-            <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-              Server URL: {serverToDelete.url}
-            </Typography>
+            <>
+              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                Provider: {serverToDelete.provider}
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                Server URL: {serverToDelete.url}
+              </Typography>
+            </>
           )}
           <Typography variant="body2" color="warning.main" sx={{ mt: 2 }}>
             Warning: Any bulk judge jobs using this server will be affected.

@@ -67,11 +67,26 @@ class VisualizerSettings(BaseModel):
 
 class ModelConfig(BaseModel):
     model_name: str
-    model_type: str # This refers to the provider name e.g., "ollama", "openai"
+    model_type: str # This refers to the provider name e.g., "ollama", "lmstudio", "openai"
     max_new_tokens: Optional[int] = Field(None, example=2048)
     temperature: Optional[float] = Field(None, example=0.7)
     num_ctx: Optional[int] = Field(None, example=4096) # Context window size
     trust_remote_code: Optional[bool] = Field(None, example=False)
+
+    # Host configuration (supports Ollama, LMStudio, Custom-OAI)
+    host: Optional[str] = Field(
+        None,
+        example="athena.local:11434",
+        description="Custom host for Ollama, LMStudio, or Custom-OAI providers. "
+                   "Format: 'host:port' or 'http://host:port'. "
+                   "Priority: configured host > env variable > provider default. "
+                   "Leave empty to use OLLAMA_URL, LMSTUDIO_HOST, or provider defaults."
+    )
+
+    # LMStudio-specific fields
+    context_length: Optional[int] = Field(None, example=32768, description="Context window for LMStudio")
+    gpu_offload: Optional[str] = Field(None, example="max", description="GPU offload: 'max', 'off', or ratio 0-1")
+
     # Any other model-specific parameters can be added here or in a Dict[str, Any]
 
 class TTSModelConfig(BaseModel):
@@ -289,10 +304,10 @@ class PaperApiResponse(BaseModel):
     abstract: str
     date: str
     date_run: str
-    score: float # Or int, needs to match db/model
-    rationale: str
-    related: bool
-    cosine_similarity: float
+    score: Optional[float] = Field(default=None, description="Legacy paper score (use profile_score for profile-specific scores)")
+    rationale: Optional[str] = Field(default=None, description="Legacy rationale (use profile rationale for profile-specific rationales)")
+    related: Optional[bool] = Field(default=False, description="Legacy related flag")
+    cosine_similarity: Optional[float] = Field(default=None, description="Cosine similarity score")
     url: str
     embedding_model: str
     keywords: Optional[List[str]] = Field(default=None, description="Top keywords extracted from title/abstract")

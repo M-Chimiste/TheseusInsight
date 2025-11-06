@@ -11,6 +11,7 @@ export interface ModelConfig {
   temperature?: number;
   num_ctx?: number;
   trust_remote_code?: boolean;
+  host?: string;  // Custom host for Ollama, LMStudio, or Custom-OAI providers
 }
 
 export interface MindMapConfig {
@@ -135,12 +136,25 @@ export const settingsApi = {
   },
 };
 
-// Ollama Servers API
-export interface OllamaServer {
+// Inference Servers API (Ollama & LMStudio)
+export interface InferenceServer {
   id: number;
   name: string;
   url: string;
+  provider: 'ollama' | 'lmstudio';
   enabled: boolean;
+  config_json?: {
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
   notes?: string;
   last_tested_at?: string;
   last_test_latency_ms?: number;
@@ -149,18 +163,49 @@ export interface OllamaServer {
   updated_at?: string;
 }
 
-export interface OllamaServerCreate {
+export interface InferenceServerCreate {
   name: string;
   url: string;
+  provider: 'ollama' | 'lmstudio';
+  config_json?: {
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
   notes?: string;
 }
 
-export interface OllamaServerUpdate {
+export interface InferenceServerUpdate {
   name: string;
   url: string;
+  provider: 'ollama' | 'lmstudio';
   enabled: boolean;
+  config_json?: {
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
   notes?: string;
 }
+
+// Backward compatibility aliases
+export type OllamaServer = InferenceServer;
+export type OllamaServerCreate = InferenceServerCreate;
+export type OllamaServerUpdate = InferenceServerUpdate;
 
 export interface ServerTestResult {
   success: boolean;
@@ -227,19 +272,25 @@ export interface ActiveJob {
   profile_count?: number | string;
 }
 
-export const ollamaServersApi = {
-  getAllServers: () => api.get('/settings/ollama-servers/'),
-  getServer: (id: number) => api.get(`/settings/ollama-servers/${id}`),
-  createServer: (server: OllamaServerCreate) => api.post('/settings/ollama-servers/', server),
-  updateServer: (id: number, server: OllamaServerUpdate) => api.put(`/settings/ollama-servers/${id}`, server),
-  deleteServer: (id: number) => api.delete(`/settings/ollama-servers/${id}`),
-  testServer: (id: number) => api.post(`/settings/ollama-servers/${id}/test`),
-  toggleServer: (id: number) => api.post(`/settings/ollama-servers/${id}/toggle`),
-  getHealthOverview: () => api.get('/settings/ollama-servers/health/overview'),
-  getGlobalDefaults: () => api.get('/settings/ollama-servers/defaults'),
-  updateGlobalDefaults: (defaults: GlobalDefaults) => api.put('/settings/ollama-servers/defaults', defaults),
-  testUrl: (url: string) => api.post('/settings/ollama-servers/test-url', { url }),
+// Inference Servers API (supports both Ollama and LMStudio)
+export const inferenceServersApi = {
+  getAllServers: (provider?: 'ollama' | 'lmstudio') =>
+    api.get('/settings/inference-servers/', provider ? { params: { provider } } : undefined),
+  getServer: (id: number) => api.get(`/settings/inference-servers/${id}`),
+  createServer: (server: InferenceServerCreate) => api.post('/settings/inference-servers/', server),
+  updateServer: (id: number, server: InferenceServerUpdate) => api.put(`/settings/inference-servers/${id}`, server),
+  deleteServer: (id: number) => api.delete(`/settings/inference-servers/${id}`),
+  testServer: (id: number) => api.post(`/settings/inference-servers/${id}/test`),
+  toggleServer: (id: number) => api.post(`/settings/inference-servers/${id}/toggle`),
+  getHealthOverview: () => api.get('/settings/inference-servers/health/overview'),
+  getGlobalDefaults: () => api.get('/settings/inference-servers/defaults'),
+  updateGlobalDefaults: (defaults: GlobalDefaults) => api.put('/settings/inference-servers/defaults', defaults),
+  testUrl: (url: string, provider: 'ollama' | 'lmstudio' = 'ollama') =>
+    api.post('/settings/inference-servers/test-url', { url, provider }),
 };
+
+// Backward compatibility alias
+export const ollamaServersApi = inferenceServersApi;
 
 export interface ServerMetrics {
   id: number;
@@ -924,15 +975,18 @@ export interface PaperApiResponse {
   abstract: string;
   date: string;
   date_run: string;
-  score: number;
-  rationale: string;
-  related: boolean;
-  cosine_similarity: number;
+  score?: number | null; // Legacy paper score (use profile_score for profile-specific scores)
+  rationale?: string | null; // Legacy rationale
+  related?: boolean | null; // Legacy related flag
+  cosine_similarity?: number | null; // Cosine similarity score
   url: string;
   embedding_model: string;
   keywords?: string[];
-  similarity_score?: number; // Optional field for similarity search results
-  profile_score?: number;
+  similarity_score?: number; // Semantic similarity score when returned from similarity search
+  profile_score?: number; // Profile-specific relevance score
+  semantic_score?: number; // Semantic similarity score in hybrid search
+  keyword_score?: number; // Keyword matching score in hybrid search
+  hybrid_score?: number; // Combined hybrid search score
 }
 
 export interface PaginatedPapersResponse {

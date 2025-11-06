@@ -160,6 +160,8 @@ if "%ENVIRONMENT%"=="docker" (
     set OPTIMIZE_INDEXES_FILE=C:\app\sql\005_optimize_indexes.sql
     set PROCESSING_CHECKPOINTS_FILE=C:\app\sql\006_add_processing_checkpoints.sql
     set SCHEDULED_TASKS_FILE=C:\app\sql\007_add_scheduled_tasks.sql
+    set MULTI_OLLAMA_FILE=C:\app\sql\008_add_multi_ollama_support.sql
+    set LMSTUDIO_MULTI_SERVER_FILE=C:\app\sql\009_add_lmstudio_multi_server.sql
     set CREATE_MIGRATION_TRACKING_FILE=C:\app\sql\create_migration_tracking.sql
 ) else (
     set MIGRATION_COMPAT_FILE=%~dp0000_migration_compatibility.sql
@@ -169,6 +171,8 @@ if "%ENVIRONMENT%"=="docker" (
     set OPTIMIZE_INDEXES_FILE=%~dp0005_optimize_indexes.sql
     set PROCESSING_CHECKPOINTS_FILE=%~dp0006_add_processing_checkpoints.sql
     set SCHEDULED_TASKS_FILE=%~dp0007_add_scheduled_tasks.sql
+    set MULTI_OLLAMA_FILE=%~dp0008_add_multi_ollama_support.sql
+    set LMSTUDIO_MULTI_SERVER_FILE=%~dp0009_add_lmstudio_multi_server.sql
     set CREATE_MIGRATION_TRACKING_FILE=%~dp0create_migration_tracking.sql
 )
 
@@ -254,6 +258,34 @@ if exist "%SCHEDULED_TASKS_FILE%" (
 ) else (
     echo ⚠️  Warning: Scheduled tasks migration file not found at %SCHEDULED_TASKS_FILE%
     echo    Scheduled task features may not be available
+)
+
+REM Apply multi-Ollama server support migration
+if exist "%MULTI_OLLAMA_FILE%" (
+    echo 📋 Applying multi-Ollama server migration from: %MULTI_OLLAMA_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%MULTI_OLLAMA_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply multi-Ollama server migration from %MULTI_OLLAMA_FILE%
+        exit /b 1
+    )
+    echo ✅ Multi-Ollama server migration completed successfully
+) else (
+    echo ⚠️  Warning: Multi-Ollama server migration file not found at %MULTI_OLLAMA_FILE%
+    echo    Multi-server bulk operations may not be available
+)
+
+REM Apply LMStudio multi-server support migration
+if exist "%LMSTUDIO_MULTI_SERVER_FILE%" (
+    echo 📋 Applying LMStudio multi-server migration from: %LMSTUDIO_MULTI_SERVER_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%LMSTUDIO_MULTI_SERVER_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply LMStudio multi-server migration from %LMSTUDIO_MULTI_SERVER_FILE%
+        exit /b 1
+    )
+    echo ✅ LMStudio multi-server migration completed successfully
+) else (
+    echo ⚠️  Warning: LMStudio multi-server migration file not found at %LMSTUDIO_MULTI_SERVER_FILE%
+    echo    LMStudio provider features may not be available
 )
 
 echo.

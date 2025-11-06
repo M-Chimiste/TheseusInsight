@@ -242,13 +242,22 @@ async def run_newsletter_pipeline_endpoint(
                     if profile_recipients:
                         final_email_recipients = profile_recipients
 
+            # Load orchestration config from database settings
+            from ...data_access.settings import SettingsRepository
+            orchestration_config_json = SettingsRepository.get("orchestration")
+            if orchestration_config_json:
+                orchestration_config = json.loads(orchestration_config_json)
+            else:
+                # Fallback to config file if not in database
+                orchestration_config = "config/orchestration.json"
+
             ti_instance = TheseusInsight(
                 research_interests_override=params.research_interests,
                 start_date_override=params.start_date,
                 end_date_override=params.end_date,
                 receiver_address_override=final_email_recipients,
                 profile_ids_override=resolved_profile_ids,
-# topic_id handled via separate logic in TheseusInsight if needed
+                orchestration_config=orchestration_config,  # Pass config from database
                 generate_podcast=params.generate_podcast_run,
                 db_saving=True, 
                 data_path=run_db_path,

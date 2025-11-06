@@ -36,7 +36,7 @@ from ...data_access import (
 from ...data_processing.trends import TrendsProcessor
 from ..tasks import task_manager, TaskStatus
 from ...prompt.system_prompts import TRENDS_LEGEND_LABEL_SYSTEM_PROMPT
-from ...inference.llm import LLMModelFactory
+from LLMFactory import LLMModelFactory
 
 router = APIRouter(prefix="/api/trends", tags=["trends"])
 

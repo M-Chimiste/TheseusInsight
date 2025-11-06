@@ -11,6 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+DEPRECATED: This module has been replaced by the external LLMFactory package.
+https://github.com/M-Chimiste/LLMFactory
+
+This file is kept for reference only and will be removed in a future version.
+All imports should now use:
+    from theseus_insight.inference import LLMModelFactory, OllamaInference, etc.
+
+Migration Date: 2025-10-30
+"""
+
+import warnings
+warnings.warn(
+    "llm_legacy.py is deprecated. Use the LLMFactory package instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 import os
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional, Iterator

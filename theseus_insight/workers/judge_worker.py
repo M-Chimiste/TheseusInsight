@@ -52,14 +52,21 @@ class JudgeWorker:
     def __init__(
         self,
         server_url: str,
+        provider: str = "ollama",
+        config_json: Optional[dict] = None,
         job_id: Optional[UUID] = None,
         worker_id: Optional[str] = None,
         max_retries: int = 3,
-        timeout: int = 30
+        timeout: int = 30,
+        judge_model_config: Optional[dict] = None,
+        server_model_name: Optional[str] = None,
+        server_model_config: Optional[dict] = None
     ):
         self.server_url = server_url
+        self.provider = provider
+        self.config_json = config_json or {}
         self.job_id = job_id
-        self.worker_id = worker_id or f"worker_{server_url.replace('://', '_').replace('/', '_')}"
+        self.worker_id = worker_id or f"worker_{provider}_{server_url.replace('://', '_').replace('/', '_')}"
         self.max_retries = max_retries
         self.timeout = timeout
         self.running = False
@@ -86,17 +93,31 @@ class JudgeWorker:
         self.interests_cache = {}
         self.profile_cache = {}
         
-        # Initialize Ollama client once
-        from ..inference.llm import OllamaInference
-        self.ollama_client = OllamaInference(
-            model_name="phi4-mini:3.8b-q8_0",
-            max_new_tokens=512,
-            temperature=0.1,
-            num_ctx=4096,
-            url=server_url,
-            request_timeout=timeout
+        # Load judge model configuration from database if not provided
+        if judge_model_config is None:
+            judge_model_config = self._load_judge_config()
+
+        # Merge server-specific model configuration with global config
+        # Priority: server config → global config → defaults
+        self.judge_model_config = self._merge_model_configs(
+            global_config=judge_model_config,
+            server_model_name=server_model_name,
+            server_model_config=server_model_config
         )
-        
+        logger.info(f"Using judge model: {self.judge_model_config.get('model_name')} (type: {self.judge_model_config.get('model_type')})")
+        if server_model_name or server_model_config:
+            logger.info(f"Per-server model override active: model_name={server_model_name}, custom_params={bool(server_model_config)}")
+
+        # Initialize inference client based on provider
+        # Use the merged config which includes per-server overrides
+        self.inference_client = self._create_inference_client(
+            self.judge_model_config,
+            server_url,
+            provider,
+            self.config_json,
+            timeout
+        )
+
         # Add file handler for this specific worker
         log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'logs')
         log_file = os.path.join(log_dir, f'judge_worker_{self.worker_id}.log')
@@ -106,14 +127,138 @@ class JudgeWorker:
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
         self.log_file = log_file
-        
+
         # Watchdog to dump stack traces if we stall
         self.last_progress_ts = time.time()
         self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self._watchdog_thread.start()
-        
-        logger.info(f"Initialized worker {self.worker_id} for server {server_url}")
+
+        logger.info(f"Initialized {provider} worker {self.worker_id} for server {server_url}")
         logger.info(f"Logging to {log_file}")
+
+    def _create_inference_client(
+        self,
+        judge_model_config: dict,
+        server_url: str,
+        provider: str,
+        config_json: dict,
+        timeout: int
+    ):
+        """Create appropriate inference client based on provider."""
+        from LLMFactory import LLMModelFactory
+
+        model_name = judge_model_config.get('model_name', 'phi4-mini:3.8b-q8_0')
+        max_new_tokens = judge_model_config.get('max_new_tokens', 512)
+        temperature = judge_model_config.get('temperature', 0.1)
+
+        if provider.lower() == 'ollama':
+            return LLMModelFactory.create_model(
+                model_type='ollama',
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                num_ctx=judge_model_config.get('num_ctx', 4096),
+                url=server_url,
+                request_timeout=timeout
+            )
+        elif provider.lower() == 'lmstudio':
+            # Extract LMStudio-specific config
+            context_length = config_json.get('context_length', 8192)
+            gpu_offload = config_json.get('gpu_offload', 'max')
+
+            return LLMModelFactory.create_model(
+                model_type='lmstudio',
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                host=server_url,
+                context_length=context_length,
+                gpu_offload=gpu_offload
+            )
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
+
+    def _load_judge_config(self) -> dict:
+        """Load judge model configuration from database settings or config file."""
+        try:
+            # Try to load from database first
+            with self.conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute("SELECT value FROM settings WHERE key = %s", ('orchestration',))
+                row = cur.fetchone()
+                
+                if row and row['value']:
+                    orchestration_config = json.loads(row['value'])
+                    judge_config = orchestration_config.get('judge_model', {})
+                    if judge_config:
+                        logger.info("Loaded judge model config from database settings")
+                        return judge_config
+        except Exception as e:
+            logger.warning(f"Failed to load judge config from database: {e}")
+        
+        # Fallback to config file
+        try:
+            import pathlib
+            project_root = pathlib.Path(__file__).parent.parent.parent
+            config_path = project_root / "config" / "orchestration.json"
+            
+            if config_path.exists():
+                with open(config_path) as f:
+                    orchestration_config = json.load(f)
+                    judge_config = orchestration_config.get('judge_model', {})
+                    if judge_config:
+                        logger.info("Loaded judge model config from file")
+                        return judge_config
+        except Exception as e:
+            logger.warning(f"Failed to load judge config from file: {e}")
+        
+        # Ultimate fallback to hardcoded defaults
+        logger.warning("Using hardcoded default judge model config")
+        return {
+            'model_name': 'phi4-mini:3.8b-q8_0',
+            'model_type': 'ollama',
+            'max_new_tokens': 512,
+            'temperature': 0.1,
+            'num_ctx': 4096
+        }
+
+    def _merge_model_configs(
+        self,
+        global_config: dict,
+        server_model_name: Optional[str],
+        server_model_config: Optional[dict]
+    ) -> dict:
+        """
+        Merge global and server-specific model configs.
+
+        Priority (highest to lowest):
+        1. server_model_config fields (per-server overrides)
+        2. global_config fields
+        3. Defaults (already in global_config)
+
+        Args:
+            global_config: Global judge_model from orchestration settings
+            server_model_name: Override model name for this server
+            server_model_config: Override parameters for this server
+
+        Returns:
+            Merged configuration dictionary
+        """
+        # Start with a copy of the global configuration
+        merged = global_config.copy()
+
+        # Override model name if server specifies one
+        if server_model_name:
+            merged['model_name'] = server_model_name
+            logger.debug(f"Overriding model_name with per-server value: {server_model_name}")
+
+        # Override individual parameters if server specifies them
+        if server_model_config:
+            for key, value in server_model_config.items():
+                if value is not None:
+                    merged[key] = value
+                    logger.debug(f"Overriding {key} with per-server value: {value}")
+
+        return merged
 
     def start(self):
         """Start the worker process."""
@@ -456,7 +601,7 @@ class JudgeWorker:
                 score_data['score'],
                 score_data['related'],
                 score_data['rationale'],
-                self.ollama_client.model_name
+                self.inference_client.model_name
             ))
             
             # Mark task as completed
@@ -520,7 +665,7 @@ class JudgeWorker:
         
         def _invoke_with_timeout():
             try:
-                result[0] = self.ollama_client.invoke(
+                result[0] = self.inference_client.invoke(
                     messages=messages,
                     system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
                     schema=ResearchInterestsPromptData
@@ -604,10 +749,10 @@ class JudgeWorker:
         except Exception as e:
             logger.warning(f"Failed to mark worker as inactive: {e}")
         
-        # Close Ollama client connections
+        # Close inference client connections
         try:
-            if hasattr(self.ollama_client, 'close'):
-                self.ollama_client.close()
+            if hasattr(self.inference_client, 'close'):
+                self.inference_client.close()
         except:
             pass
         
@@ -618,13 +763,28 @@ class JudgeWorker:
             pass
 
 
-def run_worker(server_url: str, job_id: Optional[UUID], max_retries: int, timeout: int):
+def run_worker(
+    server_url: str,
+    job_id: Optional[UUID],
+    max_retries: int,
+    timeout: int,
+    provider: str = "ollama",
+    config_json: Optional[dict] = None,
+    judge_model_config: Optional[dict] = None,
+    server_model_name: Optional[str] = None,
+    server_model_config: Optional[dict] = None
+):
     """Run a single worker for a server."""
     worker = JudgeWorker(
         server_url=server_url,
+        provider=provider,
+        config_json=config_json,
         job_id=job_id,
         max_retries=max_retries,
-        timeout=timeout
+        timeout=timeout,
+        judge_model_config=judge_model_config,
+        server_model_name=server_model_name,
+        server_model_config=server_model_config
     )
     
     try:
@@ -641,18 +801,36 @@ def main():
     parser.add_argument('--all-enabled', action='store_true', help='Process all enabled servers')
     parser.add_argument('--max-retries', type=int, default=3, help='Max retries per task')
     parser.add_argument('--timeout', type=int, default=30, help='Request timeout in seconds')
+    parser.add_argument('--server-model-name', help='Override model name for this server')
+    parser.add_argument('--server-model-config', help='Override model config (JSON string) for this server')
 
     args = parser.parse_args()
+
+    # Parse server model config if provided
+    server_model_config = None
+    if args.server_model_config:
+        try:
+            server_model_config = json.loads(args.server_model_config)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON for --server-model-config: {e}")
+            sys.exit(1)
 
     # For --all-enabled, we need to get the list of servers
     # Import here to avoid early module loading
     if args.all_enabled:
-        from ..data_access.ollama_servers import OllamaServersRepository
-        servers = OllamaServersRepository.get_enabled()
-        servers_to_process = [(server.url, args.job_id) for server in servers]
+        from ..data_access.inference_servers import InferenceServersRepository
+        servers = InferenceServersRepository.get_enabled()
+        # Include per-server model configuration from database
+        servers_to_process = [
+            (server.url, server.provider, server.config_json, args.job_id, server.model_name, server.model_config)
+            for server in servers
+        ]
         logger.info(f"Processing all {len(servers_to_process)} enabled servers")
     elif args.server_url:
-        servers_to_process = [(args.server_url, args.job_id)]
+        # Single server mode - use CLI arguments for model overrides
+        servers_to_process = [
+            (args.server_url, "ollama", {}, args.job_id, args.server_model_name, server_model_config)
+        ]
         logger.info(f"Processing single server: {args.server_url}")
     else:
         logger.error("Must specify either --server-url or --all-enabled")
@@ -662,16 +840,29 @@ def main():
     if len(servers_to_process) > 1:
         import multiprocessing
         processes = []
-        
-        for server_url, job_id in servers_to_process:
+
+        for server_url, provider, config_json, job_id, model_name, model_config in servers_to_process:
             job_uuid = UUID(job_id) if job_id else None
             p = multiprocessing.Process(
                 target=run_worker,
-                args=(server_url, job_uuid, args.max_retries, args.timeout)
+                args=(
+                    server_url,
+                    job_uuid,
+                    args.max_retries,
+                    args.timeout,
+                    provider,
+                    config_json,
+                    None,  # judge_model_config - load from settings
+                    model_name,  # server_model_name - from database or CLI
+                    model_config  # server_model_config - from database or CLI
+                )
             )
             p.start()
             processes.append(p)
-            logger.info(f"Started worker process for {server_url}")
+            if model_name:
+                logger.info(f"Started {provider} worker process for {server_url} with custom model: {model_name}")
+            else:
+                logger.info(f"Started {provider} worker process for {server_url}")
         
         # Wait for all processes
         try:
@@ -685,9 +876,19 @@ def main():
                 p.join(timeout=5)
     else:
         # Single server - run directly
-        server_url, job_id = servers_to_process[0]
+        server_url, provider, config_json, job_id, model_name, model_config = servers_to_process[0]
         job_uuid = UUID(job_id) if job_id else None
-        run_worker(server_url, job_uuid, args.max_retries, args.timeout)
+        run_worker(
+            server_url,
+            job_uuid,
+            args.max_retries,
+            args.timeout,
+            provider,
+            config_json,
+            None,  # judge_model_config - load from settings
+            model_name,  # server_model_name - from database or CLI
+            model_config  # server_model_config - from database or CLI
+        )
 
 
 if __name__ == "__main__":

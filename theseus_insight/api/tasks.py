@@ -1344,7 +1344,7 @@ class TaskManager:
             
             # Import PDF processing utilities
             from ..pdf.processing import MarkitdownDocProcessor
-            from ..inference.llm import LLMModelFactory
+            from LLMFactory import LLMModelFactory
             
             # Get embedding model configuration with proper fallback hierarchy: DB -> config file -> defaults
             orchestration_config = self._get_orchestration_config()
@@ -1614,7 +1614,7 @@ class TaskManager:
             embedding_config = orchestration_config.get("embedding_model", {})
             if embedding_config:
                 try:
-                    from ..inference.llm import LLMModelFactory
+                    from LLMFactory import LLMModelFactory
                     embedding_model = LLMModelFactory.create_model(
                         model_type=embedding_config.get("model_type", "sentence-transformer"),
                         model_name=embedding_config.get("model_name", "Alibaba-NLP/gte-large-en-v1.5"),

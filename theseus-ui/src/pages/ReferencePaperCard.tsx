@@ -37,7 +37,7 @@ const ReferencePaperCard: React.FC<ReferencePaperCardProps> = ({ paper }) => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <ScoreIcon fontSize="small" color="action" />
             <Chip 
-              label={`Score: ${paper.score.toFixed(2)}`} 
+              label={`Score: ${typeof paper.score === 'number' ? paper.score.toFixed(2) : '—'}`} 
               size="small" 
               color="primary" 
               variant="outlined"

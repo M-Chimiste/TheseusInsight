@@ -10,6 +10,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Overview](#overview)
 - [Quickstart](#quickstart)
 - [Features](#features)
+- [LLM Inference Architecture](#llm-inference-architecture)
 - [Architecture and Modules](#architecture-and-modules)
 - [Installation](#installation)
 - [Database Setup](#database-setup)
@@ -39,6 +40,8 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or provided PDFs, produces newsletters summarising the most relevant papers and can create podcast episodes with optional video visualisations.  A modern React UI communicates with the FastAPI backend via REST and WebSocket endpoints, providing real‑time feedback while background tasks run. 
 
 **🔄 Now Powered by PostgreSQL:** The latest version has been fully migrated from SQLite to PostgreSQL with pgvector, enabling advanced vector similarity search, improved performance, and enhanced scalability for large research paper collections.
+
+**🤖 Unified LLM Interface:** Theseus Insight now uses [LLMFactory](https://github.com/M-Chimiste/LLMFactory.git) for LLM inference, providing seamless integration with multiple providers including OpenAI, Anthropic, Gemini, Ollama, LM Studio, and LlamaCPP with support for local and remote inference.
 
 The system introduces the **Mind-Map Explorer**, an interactive visualization system for exploring multi-order research paper relationships through configurable network graphs, enabling researchers to discover both direct and indirect connections in the academic literature.
 
@@ -132,7 +135,8 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **Profile Integration**: Seamless integration across all features - newsletters, podcasts, mind-maps, and research agent workflows use profile-specific settings.
   - **Default Profile System**: Designate default profiles for streamlined workflows with automatic population of settings for new profiles.
   - **Visual Organization**: Color-coded profiles with custom descriptions and tag-based organization for easy identification.
-- **Flexible LLM and TTS providers** including OpenAI, Anthropic, Gemini, Ollama, Polly and KokoroTTS.
+- **Unified LLM Interface via LLMFactory**: Powered by [LLMFactory](https://github.com/M-Chimiste/LLMFactory.git), providing a consistent interface across multiple inference providers including OpenAI, Anthropic, Gemini, Ollama, LM Studio, and LlamaCPP with support for streaming, structured output, and multimodal capabilities.
+- **Flexible TTS providers** including OpenAI, Amazon Polly, and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers with PostgreSQL.
 - **Advanced Research Agent System**: Dual-mode AI research orchestration with support for both single-agent sequential workflows and multi-agent parallel processing.
@@ -144,6 +148,189 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **Real-Time Progress Tracking**: WebSocket-powered progress updates with detailed agent status and execution metrics.
   - **Configuration Management**: Comprehensive settings interface for model selection, workflow parameters, and agent specialization.
   - **Research History**: Complete research run tracking with results persistence and analysis capabilities.
+
+---
+
+## LLM Inference Architecture
+
+Theseus Insight leverages **[LLMFactory](https://github.com/M-Chimiste/LLMFactory.git)**, a unified inference library that provides a consistent interface across multiple LLM providers. This architecture enables seamless switching between local and cloud-based models without changing application code.
+
+### Supported LLM Providers
+
+**Local Inference:**
+- **Ollama** - Local model inference with support for Llama, Mistral, Qwen, and other open models
+- **LM Studio** - Local inference with remote connection support, configurable context length, and GPU offload options
+- **LlamaCPP** - Direct GGUF model loading with hardware acceleration
+
+**Cloud APIs:**
+- **OpenAI** - GPT-4, GPT-4o, GPT-3.5-turbo models
+- **Anthropic** - Claude models via direct API or AWS Bedrock
+- **Google Gemini** - Gemini Pro and Flash models
+- **Custom OpenAI-Compatible** - Any OpenAI-compatible API endpoint
+
+**Embedding Models:**
+- **Sentence Transformers** - HuggingFace embedding models with GPU acceleration
+- **Ollama Embeddings** - Local embedding generation via Ollama
+
+### Key Features
+
+- **Unified Interface**: Single API for all providers with consistent message format
+- **Streaming Support**: Token-by-token streaming across all providers
+- **Structured Output**: Schema-based JSON output with Pydantic models for compatible providers
+- **Multimodal Support**: Vision capabilities for compatible models
+- **Flexible Configuration**: Environment variables, direct parameters, or database-stored credentials
+- **Type Safety**: Full type hints for better IDE support and error detection
+
+### LM Studio Configuration
+
+LM Studio provides local LLM inference with enterprise features:
+
+**Connection Options:**
+```bash
+# Local default
+LMSTUDIO_HOST=localhost:1234
+
+# Remote connection
+LMSTUDIO_HOST=athena.local:1234
+```
+
+**Advanced Features:**
+- **Remote Connections**: Connect to LM Studio instances on other machines
+- **Context Length Configuration**: Customize context windows (e.g., 32768, 131072 tokens)
+- **GPU Offload Options**: Configure GPU memory usage (`max`, `off`, or ratio 0-1)
+- **Model Hot-Swapping**: Change models without restarting the application
+
+**Example Configuration** (in `config/orchestration.json`):
+```json
+{
+  "judge_model": {
+    "model_name": "granite-4.0-h-tiny-mlx",
+    "model_type": "lmstudio",
+    "max_new_tokens": 512,
+    "temperature": 0.2,
+    "num_ctx": 128000,
+    "host": null
+  }
+}
+```
+
+When `host` is `null`, LM Studio uses the `LMSTUDIO_HOST` environment variable or defaults to `localhost:1234`.
+
+### Multi-Server Support
+
+Theseus Insight supports configuring multiple inference servers for distributed processing:
+- **Multiple Ollama Servers**: Configure multiple Ollama instances for parallel processing
+- **Multiple LM Studio Servers**: Distribute workload across multiple LM Studio instances
+- **Dynamic Load Balancing**: Automatic task distribution across available servers
+- **Health Monitoring**: Server health checks and automatic failover
+
+Configure additional servers in Settings → Inference Servers.
+
+### Advanced Configuration: Per-Model Host and Non-Homogeneous Deployments
+
+Theseus Insight supports advanced deployment scenarios with flexible host configuration and per-server model customization:
+
+#### Per-Model Host Configuration
+
+Configure different hosts for different models or tasks using a 3-tier priority system:
+
+**Priority System:**
+1. **Configured Host** (Highest Priority) - Set directly in model configuration
+2. **Environment Variable** - Falls back to `OLLAMA_URL` or `LMSTUDIO_HOST`
+3. **Provider Default** (Lowest Priority) - Uses default localhost settings
+
+**Example Use Cases:**
+
+**Newsletter on Remote Server, Bulk Judge on Local:**
+```json
+{
+  "newsletter_intro_model": {
+    "model_name": "qwen2.5:32b",
+    "model_type": "ollama",
+    "host": "athena.local:11434"
+  },
+  "judge_model": {
+    "model_name": "phi4:latest",
+    "model_type": "ollama",
+    "host": null
+  }
+}
+```
+
+**Multiple Remote Hosts:**
+```json
+{
+  "research_agent_model_config": {
+    "boss_model": {
+      "model_name": "qwen2.5:32b",
+      "model_type": "ollama",
+      "host": "server1.local:11434"
+    }
+  },
+  "podcast_model": {
+    "model_name": "granite-4.0-h-tiny-mlx",
+    "model_type": "lmstudio",
+    "host": "server2.local:1234"
+  }
+}
+```
+
+**Configuration via UI:** Set the "Host (Optional)" field in Settings → Model Configuration for any Ollama, LMStudio, or Custom-OAI model.
+
+#### Non-Homogeneous Multi-Server Deployments
+
+Configure different models and parameters for each inference server in distributed bulk processing:
+
+**Per-Server Model Override:**
+- Configure unique model names for each server (e.g., "phi4:latest" on Ollama, "phi4-mlx" on LMStudio)
+- Set per-server model parameters (temperature, max_new_tokens, context window)
+- Mix different model variants across servers while maintaining API compatibility
+
+**Configuration Example:**
+
+| Server | Provider | Model | Parameters | Use Case |
+|--------|----------|-------|------------|----------|
+| GPU Server 1 | Ollama | `qwen2.5:32b` | `temperature: 0.1, num_ctx: 131072` | High-quality analysis |
+| GPU Server 2 | LMStudio | `phi4-mlx` | `temperature: 0.2, context_length: 128000` | Fast processing |
+| CPU Server | Ollama | `phi4:latest` | `temperature: 0.3, num_ctx: 32768` | Fallback/testing |
+
+**Benefits:**
+- **Hardware Optimization**: Use quantized models (MLX) on Apple Silicon, full models on NVIDIA GPUs
+- **Cost Efficiency**: Deploy cheaper models on some servers, premium models on others
+- **A/B Testing**: Compare different models/parameters across servers in production
+- **Graceful Degradation**: Fall back to lighter models on resource-constrained servers
+
+**Configuration via UI:**
+1. Navigate to Settings → Inference Servers
+2. Add or edit a server
+3. Set "Model Name (optional)" to override the global model
+4. Expand "Model Configuration Overrides" to set per-server parameters
+5. The system automatically uses these overrides for bulk judge operations
+
+**Example Workflow:**
+```bash
+# Server configurations (via UI)
+Server 1 (Ollama): model_name="qwen2.5:32b", temperature=0.1
+Server 2 (LMStudio): model_name="phi4-mlx", temperature=0.2
+Server 3 (Ollama): NULL (uses global config)
+
+# When bulk judge operation runs:
+# - Server 1 uses qwen2.5:32b with temperature 0.1
+# - Server 2 uses phi4-mlx with temperature 0.2
+# - Server 3 uses global judge_model configuration
+```
+
+**Model Validation:**
+Use the validation endpoint to verify model availability before deployment:
+```bash
+POST /api/settings/inference-servers/{server_id}/validate-model
+{
+  "model_name": "phi4:latest",
+  "model_config": {"temperature": 0.2}
+}
+```
+
+For more details on LLMFactory capabilities, visit the [LLMFactory GitHub repository](https://github.com/M-Chimiste/LLMFactory.git).
 
 ---
 
@@ -209,6 +396,7 @@ Create a `.env` file in the project root containing keys and settings:
 | `GOOGLE_API_KEY` | API key for Google Gemini models |
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
 | `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
+| `LMSTUDIO_HOST` | LM Studio server host:port for local inference (default `localhost:1234`). Supports remote connections (e.g., `athena.local:1234`) |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
 | `DEBUG` | When set to `true`, `1`, or `yes` globally re-enables verbose `print()` statements and DEBUG-level logger output. Leave unset (default) for a quiet console |
@@ -657,6 +845,7 @@ For detailed documentation and advanced usage examples, see [docs/db_migration_R
 
 - [paperswithcode.com](https://paperswithcode.com/) for research paper data.
 - [arxiv.org](https://arxiv.org/) for open access to research paper data.
+- [LLMFactory](https://github.com/M-Chimiste/LLMFactory.git) for unified LLM inference across multiple providers.
 - [Docling](https://github.com/doclingjs/docling) for document parsing.
 - [pydub](https://github.com/jiaaro/pydub) for audio processing.
 - [Amazon Polly](https://aws.amazon.com/polly/), [OpenAI TTS](https://platform.openai.com/docs/) for text-to-speech.

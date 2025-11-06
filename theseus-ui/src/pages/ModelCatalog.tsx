@@ -186,6 +186,37 @@ const ModelCatalog: React.FC = () => {
     return Array.from(new Set(hosts)).sort();
   }, [inferenceServers]);
 
+  // Query Ollama models when provider is ollama
+  const ollamaHost = formData.provider_name === 'ollama'
+    ? (formData.host || 'localhost:11434')
+    : null;
+
+  const { data: ollamaModels, isLoading: ollamaModelsLoading } = useQuery({
+    queryKey: ['ollamaModels', ollamaHost],
+    queryFn: async () => {
+      if (!ollamaHost) return [];
+
+      try {
+        // Ensure host has protocol
+        const hostWithProtocol = ollamaHost.startsWith('http')
+          ? ollamaHost
+          : `http://${ollamaHost}`;
+
+        const response = await fetch(`${hostWithProtocol}/api/tags`);
+        if (!response.ok) return [];
+
+        const data = await response.json();
+        // Extract model names from the response
+        return data.models?.map((model: any) => model.name) || [];
+      } catch (error) {
+        console.error('Failed to fetch Ollama models:', error);
+        return [];
+      }
+    },
+    enabled: formData.provider_name === 'ollama',
+    staleTime: 60000, // Cache for 1 minute
+  });
+
   // Query LMStudio models when provider is lmstudio
   const lmstudioHost = formData.provider_name === 'lmstudio'
     ? (formData.host || 'localhost:1234')
@@ -214,6 +245,37 @@ const ModelCatalog: React.FC = () => {
       }
     },
     enabled: formData.provider_name === 'lmstudio',
+    staleTime: 60000, // Cache for 1 minute
+  });
+
+  // Query custom-oai models when provider is custom-oai
+  const customOaiHost = formData.provider_name === 'custom-oai'
+    ? formData.host
+    : null;
+
+  const { data: customOaiModels, isLoading: customOaiModelsLoading } = useQuery({
+    queryKey: ['customOaiModels', customOaiHost],
+    queryFn: async () => {
+      if (!customOaiHost) return [];
+
+      try {
+        // Ensure host has protocol
+        const hostWithProtocol = customOaiHost.startsWith('http')
+          ? customOaiHost
+          : `https://${customOaiHost}`;
+
+        const response = await fetch(`${hostWithProtocol}/v1/models`);
+        if (!response.ok) return [];
+
+        const data = await response.json();
+        // Extract model IDs from the response
+        return data.data?.map((model: any) => model.id) || [];
+      } catch (error) {
+        console.error('Failed to fetch custom-oai models:', error);
+        return [];
+      }
+    },
+    enabled: formData.provider_name === 'custom-oai' && !!customOaiHost,
     staleTime: 60000, // Cache for 1 minute
   });
 
@@ -817,7 +879,32 @@ const ModelCatalog: React.FC = () => {
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
-              {formData.provider_name === 'lmstudio' ? (
+              {formData.provider_name === 'ollama' ? (
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={ollamaModels || []}
+                  value={formData.model_string}
+                  loading={ollamaModelsLoading}
+                  onInputChange={(_, newInputValue) => {
+                    setFormData({ ...formData, model_string: newInputValue });
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Model String"
+                      required
+                      helperText={
+                        ollamaModelsLoading
+                          ? 'Loading models from Ollama...'
+                          : ollamaModels && ollamaModels.length > 0
+                            ? `${ollamaModels.length} models available - select or enter custom name`
+                            : 'Enter model name (models list unavailable)'
+                      }
+                    />
+                  )}
+                />
+              ) : formData.provider_name === 'lmstudio' ? (
                 <Autocomplete
                   fullWidth
                   freeSolo
@@ -838,6 +925,33 @@ const ModelCatalog: React.FC = () => {
                           : lmstudioModels && lmstudioModels.length > 0
                             ? `${lmstudioModels.length} models available - select or enter custom name`
                             : 'Enter model name (models list unavailable)'
+                      }
+                    />
+                  )}
+                />
+              ) : formData.provider_name === 'custom-oai' ? (
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={customOaiModels || []}
+                  value={formData.model_string}
+                  loading={customOaiModelsLoading}
+                  onInputChange={(_, newInputValue) => {
+                    setFormData({ ...formData, model_string: newInputValue });
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Model String"
+                      required
+                      helperText={
+                        !formData.host
+                          ? 'Enter host first to load available models'
+                          : customOaiModelsLoading
+                            ? 'Loading models from server...'
+                            : customOaiModels && customOaiModels.length > 0
+                              ? `${customOaiModels.length} models available - select or enter custom name`
+                              : 'Enter model name (models list unavailable)'
                       }
                     />
                   )}

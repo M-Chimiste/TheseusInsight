@@ -226,6 +226,110 @@ Theseus Insight supports configuring multiple inference servers for distributed 
 
 Configure additional servers in Settings → Inference Servers.
 
+### Advanced Configuration: Per-Model Host and Non-Homogeneous Deployments
+
+Theseus Insight supports advanced deployment scenarios with flexible host configuration and per-server model customization:
+
+#### Per-Model Host Configuration
+
+Configure different hosts for different models or tasks using a 3-tier priority system:
+
+**Priority System:**
+1. **Configured Host** (Highest Priority) - Set directly in model configuration
+2. **Environment Variable** - Falls back to `OLLAMA_URL` or `LMSTUDIO_HOST`
+3. **Provider Default** (Lowest Priority) - Uses default localhost settings
+
+**Example Use Cases:**
+
+**Newsletter on Remote Server, Bulk Judge on Local:**
+```json
+{
+  "newsletter_intro_model": {
+    "model_name": "qwen2.5:32b",
+    "model_type": "ollama",
+    "host": "athena.local:11434"
+  },
+  "judge_model": {
+    "model_name": "phi4:latest",
+    "model_type": "ollama",
+    "host": null
+  }
+}
+```
+
+**Multiple Remote Hosts:**
+```json
+{
+  "research_agent_model_config": {
+    "boss_model": {
+      "model_name": "qwen2.5:32b",
+      "model_type": "ollama",
+      "host": "server1.local:11434"
+    }
+  },
+  "podcast_model": {
+    "model_name": "granite-4.0-h-tiny-mlx",
+    "model_type": "lmstudio",
+    "host": "server2.local:1234"
+  }
+}
+```
+
+**Configuration via UI:** Set the "Host (Optional)" field in Settings → Model Configuration for any Ollama, LMStudio, or Custom-OAI model.
+
+#### Non-Homogeneous Multi-Server Deployments
+
+Configure different models and parameters for each inference server in distributed bulk processing:
+
+**Per-Server Model Override:**
+- Configure unique model names for each server (e.g., "phi4:latest" on Ollama, "phi4-mlx" on LMStudio)
+- Set per-server model parameters (temperature, max_new_tokens, context window)
+- Mix different model variants across servers while maintaining API compatibility
+
+**Configuration Example:**
+
+| Server | Provider | Model | Parameters | Use Case |
+|--------|----------|-------|------------|----------|
+| GPU Server 1 | Ollama | `qwen2.5:32b` | `temperature: 0.1, num_ctx: 131072` | High-quality analysis |
+| GPU Server 2 | LMStudio | `phi4-mlx` | `temperature: 0.2, context_length: 128000` | Fast processing |
+| CPU Server | Ollama | `phi4:latest` | `temperature: 0.3, num_ctx: 32768` | Fallback/testing |
+
+**Benefits:**
+- **Hardware Optimization**: Use quantized models (MLX) on Apple Silicon, full models on NVIDIA GPUs
+- **Cost Efficiency**: Deploy cheaper models on some servers, premium models on others
+- **A/B Testing**: Compare different models/parameters across servers in production
+- **Graceful Degradation**: Fall back to lighter models on resource-constrained servers
+
+**Configuration via UI:**
+1. Navigate to Settings → Inference Servers
+2. Add or edit a server
+3. Set "Model Name (optional)" to override the global model
+4. Expand "Model Configuration Overrides" to set per-server parameters
+5. The system automatically uses these overrides for bulk judge operations
+
+**Example Workflow:**
+```bash
+# Server configurations (via UI)
+Server 1 (Ollama): model_name="qwen2.5:32b", temperature=0.1
+Server 2 (LMStudio): model_name="phi4-mlx", temperature=0.2
+Server 3 (Ollama): NULL (uses global config)
+
+# When bulk judge operation runs:
+# - Server 1 uses qwen2.5:32b with temperature 0.1
+# - Server 2 uses phi4-mlx with temperature 0.2
+# - Server 3 uses global judge_model configuration
+```
+
+**Model Validation:**
+Use the validation endpoint to verify model availability before deployment:
+```bash
+POST /api/settings/inference-servers/{server_id}/validate-model
+{
+  "model_name": "phi4:latest",
+  "model_config": {"temperature": 0.2}
+}
+```
+
 For more details on LLMFactory capabilities, visit the [LLMFactory GitHub repository](https://github.com/M-Chimiste/LLMFactory.git).
 
 ---

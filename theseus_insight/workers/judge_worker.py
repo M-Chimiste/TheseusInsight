@@ -58,7 +58,9 @@ class JudgeWorker:
         worker_id: Optional[str] = None,
         max_retries: int = 3,
         timeout: int = 30,
-        judge_model_config: Optional[dict] = None
+        judge_model_config: Optional[dict] = None,
+        server_model_name: Optional[str] = None,
+        server_model_config: Optional[dict] = None
     ):
         self.server_url = server_url
         self.provider = provider
@@ -94,13 +96,22 @@ class JudgeWorker:
         # Load judge model configuration from database if not provided
         if judge_model_config is None:
             judge_model_config = self._load_judge_config()
-        
-        self.judge_model_config = judge_model_config
-        logger.info(f"Using judge model: {judge_model_config.get('model_name')} (type: {judge_model_config.get('model_type')})")
+
+        # Merge server-specific model configuration with global config
+        # Priority: server config → global config → defaults
+        self.judge_model_config = self._merge_model_configs(
+            global_config=judge_model_config,
+            server_model_name=server_model_name,
+            server_model_config=server_model_config
+        )
+        logger.info(f"Using judge model: {self.judge_model_config.get('model_name')} (type: {self.judge_model_config.get('model_type')})")
+        if server_model_name or server_model_config:
+            logger.info(f"Per-server model override active: model_name={server_model_name}, custom_params={bool(server_model_config)}")
 
         # Initialize inference client based on provider
+        # Use the merged config which includes per-server overrides
         self.inference_client = self._create_inference_client(
-            judge_model_config,
+            self.judge_model_config,
             server_url,
             provider,
             self.config_json,
@@ -209,6 +220,45 @@ class JudgeWorker:
             'temperature': 0.1,
             'num_ctx': 4096
         }
+
+    def _merge_model_configs(
+        self,
+        global_config: dict,
+        server_model_name: Optional[str],
+        server_model_config: Optional[dict]
+    ) -> dict:
+        """
+        Merge global and server-specific model configs.
+
+        Priority (highest to lowest):
+        1. server_model_config fields (per-server overrides)
+        2. global_config fields
+        3. Defaults (already in global_config)
+
+        Args:
+            global_config: Global judge_model from orchestration settings
+            server_model_name: Override model name for this server
+            server_model_config: Override parameters for this server
+
+        Returns:
+            Merged configuration dictionary
+        """
+        # Start with a copy of the global configuration
+        merged = global_config.copy()
+
+        # Override model name if server specifies one
+        if server_model_name:
+            merged['model_name'] = server_model_name
+            logger.debug(f"Overriding model_name with per-server value: {server_model_name}")
+
+        # Override individual parameters if server specifies them
+        if server_model_config:
+            for key, value in server_model_config.items():
+                if value is not None:
+                    merged[key] = value
+                    logger.debug(f"Overriding {key} with per-server value: {value}")
+
+        return merged
 
     def start(self):
         """Start the worker process."""
@@ -720,7 +770,9 @@ def run_worker(
     timeout: int,
     provider: str = "ollama",
     config_json: Optional[dict] = None,
-    judge_model_config: Optional[dict] = None
+    judge_model_config: Optional[dict] = None,
+    server_model_name: Optional[str] = None,
+    server_model_config: Optional[dict] = None
 ):
     """Run a single worker for a server."""
     worker = JudgeWorker(
@@ -730,7 +782,9 @@ def run_worker(
         job_id=job_id,
         max_retries=max_retries,
         timeout=timeout,
-        judge_model_config=judge_model_config
+        judge_model_config=judge_model_config,
+        server_model_name=server_model_name,
+        server_model_config=server_model_config
     )
     
     try:
@@ -747,18 +801,36 @@ def main():
     parser.add_argument('--all-enabled', action='store_true', help='Process all enabled servers')
     parser.add_argument('--max-retries', type=int, default=3, help='Max retries per task')
     parser.add_argument('--timeout', type=int, default=30, help='Request timeout in seconds')
+    parser.add_argument('--server-model-name', help='Override model name for this server')
+    parser.add_argument('--server-model-config', help='Override model config (JSON string) for this server')
 
     args = parser.parse_args()
+
+    # Parse server model config if provided
+    server_model_config = None
+    if args.server_model_config:
+        try:
+            server_model_config = json.loads(args.server_model_config)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON for --server-model-config: {e}")
+            sys.exit(1)
 
     # For --all-enabled, we need to get the list of servers
     # Import here to avoid early module loading
     if args.all_enabled:
         from ..data_access.inference_servers import InferenceServersRepository
         servers = InferenceServersRepository.get_enabled()
-        servers_to_process = [(server.url, server.provider, server.config_json, args.job_id) for server in servers]
+        # Include per-server model configuration from database
+        servers_to_process = [
+            (server.url, server.provider, server.config_json, args.job_id, server.model_name, server.model_config)
+            for server in servers
+        ]
         logger.info(f"Processing all {len(servers_to_process)} enabled servers")
     elif args.server_url:
-        servers_to_process = [(args.server_url, "ollama", {}, args.job_id)]
+        # Single server mode - use CLI arguments for model overrides
+        servers_to_process = [
+            (args.server_url, "ollama", {}, args.job_id, args.server_model_name, server_model_config)
+        ]
         logger.info(f"Processing single server: {args.server_url}")
     else:
         logger.error("Must specify either --server-url or --all-enabled")
@@ -769,15 +841,28 @@ def main():
         import multiprocessing
         processes = []
 
-        for server_url, provider, config_json, job_id in servers_to_process:
+        for server_url, provider, config_json, job_id, model_name, model_config in servers_to_process:
             job_uuid = UUID(job_id) if job_id else None
             p = multiprocessing.Process(
                 target=run_worker,
-                args=(server_url, job_uuid, args.max_retries, args.timeout, provider, config_json, None)  # None = load from settings
+                args=(
+                    server_url,
+                    job_uuid,
+                    args.max_retries,
+                    args.timeout,
+                    provider,
+                    config_json,
+                    None,  # judge_model_config - load from settings
+                    model_name,  # server_model_name - from database or CLI
+                    model_config  # server_model_config - from database or CLI
+                )
             )
             p.start()
             processes.append(p)
-            logger.info(f"Started {provider} worker process for {server_url}")
+            if model_name:
+                logger.info(f"Started {provider} worker process for {server_url} with custom model: {model_name}")
+            else:
+                logger.info(f"Started {provider} worker process for {server_url}")
         
         # Wait for all processes
         try:
@@ -791,9 +876,19 @@ def main():
                 p.join(timeout=5)
     else:
         # Single server - run directly
-        server_url, provider, config_json, job_id = servers_to_process[0]
+        server_url, provider, config_json, job_id, model_name, model_config = servers_to_process[0]
         job_uuid = UUID(job_id) if job_id else None
-        run_worker(server_url, job_uuid, args.max_retries, args.timeout, provider, config_json, None)  # None = load judge_model_config from settings
+        run_worker(
+            server_url,
+            job_uuid,
+            args.max_retries,
+            args.timeout,
+            provider,
+            config_json,
+            None,  # judge_model_config - load from settings
+            model_name,  # server_model_name - from database or CLI
+            model_config  # server_model_config - from database or CLI
+        )
 
 
 if __name__ == "__main__":

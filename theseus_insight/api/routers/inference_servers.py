@@ -22,19 +22,25 @@ class InferenceServerCreate(BaseModel):
     provider: str = Field("ollama", description="Provider type: ollama or lmstudio")
     enabled: bool = Field(True, description="Whether the server is enabled")
     config_json: Optional[Dict[str, Any]] = Field(None, description="Provider-specific configuration")
+    model_name: Optional[str] = Field(None, description="Override model name for this server (e.g., phi4:latest)")
+    model_configuration: Optional[Dict[str, Any]] = Field(None, description="Override model config for this server (e.g., temperature, max_new_tokens)", serialization_alias="model_config", validation_alias="model_config")
     notes: Optional[str] = Field(None, description="Optional notes about the server")
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "populate_by_name": True,
+        "json_schema_extra": {
             "example": {
                 "name": "Local Ollama",
                 "url": "http://localhost:11434",
                 "provider": "ollama",
                 "enabled": True,
                 "config_json": {},
+                "model_name": "phi4:latest",
+                "model_config": {"temperature": 0.2, "max_new_tokens": 1024},
                 "notes": "Default local Ollama installation"
             }
         }
+    }
 
 
 class InferenceServerUpdate(BaseModel):
@@ -44,7 +50,11 @@ class InferenceServerUpdate(BaseModel):
     provider: str = Field(..., description="Provider type: ollama or lmstudio")
     enabled: bool = Field(True, description="Whether the server is enabled")
     config_json: Optional[Dict[str, Any]] = Field(None, description="Provider-specific configuration")
+    model_name: Optional[str] = Field(None, description="Override model name for this server (e.g., phi4:latest)")
+    model_configuration: Optional[Dict[str, Any]] = Field(None, description="Override model config for this server (e.g., temperature, max_new_tokens)", serialization_alias="model_config", validation_alias="model_config")
     notes: Optional[str] = Field(None, description="Optional notes about the server")
+    
+    model_config = {"populate_by_name": True}
 
 
 class InferenceServerResponse(BaseModel):
@@ -55,12 +65,16 @@ class InferenceServerResponse(BaseModel):
     provider: str
     enabled: bool
     config_json: Optional[Dict[str, Any]] = None
+    model_name: Optional[str] = None
+    model_configuration: Optional[Dict[str, Any]] = Field(None, serialization_alias="model_config", validation_alias="model_config")
     notes: Optional[str] = None
     last_tested_at: Optional[str] = None
     last_test_latency_ms: Optional[int] = None
     last_test_ok: Optional[bool] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    
+    model_config = {"populate_by_name": True}
 
 
 class ServerTestResult(BaseModel):
@@ -145,6 +159,8 @@ async def create_server(server: InferenceServerCreate):
             provider=server.provider,
             enabled=server.enabled,
             config_json=server.config_json,
+            model_name=server.model_name,
+            model_config=server.model_configuration,
             notes=server.notes
         )
         return created_server.to_dict()
@@ -184,7 +200,9 @@ async def get_servers_health_overview(
                 "status": health_status,
                 "last_tested": server.last_tested_at.isoformat() if server.last_tested_at else None,
                 "latency_ms": server.last_test_latency_ms,
-                "config_json": server.config_json
+                "config_json": server.config_json,
+                "model_name": server.model_name,
+                "model_config": server.model_configuration
             })
 
         return {
@@ -292,6 +310,8 @@ async def update_server(server_id: int, server_update: InferenceServerUpdate):
             provider=server_update.provider,
             enabled=server_update.enabled,
             config_json=server_update.config_json,
+            model_name=server_update.model_name,
+            model_config=server_update.model_configuration,
             notes=server_update.notes
         )
 
@@ -511,6 +531,91 @@ async def _test_lmstudio_connectivity(
         error=error,
         provider='lmstudio'
     )
+
+
+@router.post("/{server_id}/validate-model")
+async def validate_server_model_config(
+    server_id: int,
+    model_name: Optional[str] = None,
+    model_config: Optional[Dict[str, Any]] = None
+):
+    """
+    Validate that a model configuration works with a specific server.
+    Tests connectivity and model availability if model_name is provided.
+    """
+    try:
+        # Get server
+        server = repo.get_by_id(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+        # Validate model_config structure if provided
+        if model_config:
+            valid_keys = ['temperature', 'max_new_tokens', 'num_ctx', 'context_length', 'gpu_offload']
+            invalid_keys = [k for k in model_config.keys() if k not in valid_keys]
+            if invalid_keys:
+                return {
+                    "valid": False,
+                    "error": f"Invalid config keys: {', '.join(invalid_keys)}. Valid keys: {', '.join(valid_keys)}"
+                }
+
+            # Validate value types
+            for key, value in model_config.items():
+                if key in ['temperature'] and not isinstance(value, (int, float)):
+                    return {"valid": False, "error": f"{key} must be a number"}
+                if key in ['max_new_tokens', 'num_ctx', 'context_length'] and not isinstance(value, int):
+                    return {"valid": False, "error": f"{key} must be an integer"}
+                if key == 'gpu_offload' and not isinstance(value, (str, int, float)):
+                    return {"valid": False, "error": "gpu_offload must be 'max', 'off', or a number between 0 and 1"}
+
+        # If model_name provided, test if model is available on server
+        if model_name:
+            if server.provider == 'ollama':
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.get(f"{server.url}/api/tags")
+                        if response.status_code == 200:
+                            models_data = response.json()
+                            available_models = [m.get('name', '') for m in models_data.get('models', [])]
+
+                            if model_name not in available_models:
+                                return {
+                                    "valid": False,
+                                    "warning": f"Model '{model_name}' not found on server. Available models: {', '.join(available_models[:10])}"
+                                }
+                except Exception as e:
+                    return {
+                        "valid": False,
+                        "error": f"Could not verify model availability: {str(e)}"
+                    }
+            elif server.provider == 'lmstudio':
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.get(f"{server.url}/v1/models")
+                        if response.status_code == 200:
+                            models_data = response.json()
+                            available_models = [m.get('id', '') for m in models_data.get('data', [])]
+
+                            if model_name not in available_models:
+                                return {
+                                    "valid": False,
+                                    "warning": f"Model '{model_name}' not found on server. Available models: {', '.join(available_models)}"
+                                }
+                except Exception as e:
+                    return {
+                        "valid": False,
+                        "error": f"Could not verify model availability: {str(e)}"
+                    }
+
+        return {
+            "valid": True,
+            "message": "Configuration is valid"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
 
 
 # Backward compatibility: Keep old route prefix as alias

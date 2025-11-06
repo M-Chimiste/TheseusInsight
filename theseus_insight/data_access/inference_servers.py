@@ -18,6 +18,8 @@ class InferenceServer:
         provider: str = "ollama",
         enabled: bool = True,
         config_json: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        model_config: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None,
         last_tested_at: Optional[datetime] = None,
         last_test_latency_ms: Optional[int] = None,
@@ -31,6 +33,8 @@ class InferenceServer:
         self.provider = provider
         self.enabled = enabled
         self.config_json = config_json or {}
+        self.model_name = model_name
+        self.model_config = model_config or {}
         self.notes = notes
         self.last_tested_at = last_tested_at
         self.last_test_latency_ms = last_test_latency_ms
@@ -49,6 +53,14 @@ class InferenceServer:
             except (json.JSONDecodeError, TypeError):
                 config_json = {}
 
+        # Handle model_config which might be a string from DB
+        model_config = data.get('model_config', {})
+        if isinstance(model_config, str):
+            try:
+                model_config = json.loads(model_config)
+            except (json.JSONDecodeError, TypeError):
+                model_config = {}
+
         return cls(
             id=data['id'],
             name=data['name'],
@@ -56,6 +68,8 @@ class InferenceServer:
             provider=data.get('provider', 'ollama'),
             enabled=data.get('enabled', True),
             config_json=config_json,
+            model_name=data.get('model_name'),
+            model_config=model_config,
             notes=data.get('notes'),
             last_tested_at=data.get('last_tested_at'),
             last_test_latency_ms=data.get('last_test_latency_ms'),
@@ -73,6 +87,8 @@ class InferenceServer:
             'provider': self.provider,
             'enabled': self.enabled,
             'config_json': self.config_json,
+            'model_name': self.model_name,
+            'model_config': self.model_config,
             'notes': self.notes,
             'last_tested_at': self.last_tested_at.isoformat() if self.last_tested_at else None,
             'last_test_latency_ms': self.last_test_latency_ms,
@@ -90,7 +106,7 @@ class InferenceServersRepository:
         """Get all inference servers."""
         with get_cursor() as cursor:
             cursor.execute("""
-                SELECT id, name, url, provider, enabled, config_json, notes,
+                SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                        last_tested_at, last_test_latency_ms, last_test_ok,
                        created_at, updated_at
                 FROM inference_servers
@@ -110,7 +126,7 @@ class InferenceServersRepository:
         with get_cursor() as cursor:
             if provider:
                 cursor.execute("""
-                    SELECT id, name, url, provider, enabled, config_json, notes,
+                    SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                            last_tested_at, last_test_latency_ms, last_test_ok,
                            created_at, updated_at
                     FROM inference_servers
@@ -119,7 +135,7 @@ class InferenceServersRepository:
                 """, (provider,))
             else:
                 cursor.execute("""
-                    SELECT id, name, url, provider, enabled, config_json, notes,
+                    SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                            last_tested_at, last_test_latency_ms, last_test_ok,
                            created_at, updated_at
                     FROM inference_servers
@@ -134,7 +150,7 @@ class InferenceServersRepository:
         """Get all servers for a specific provider."""
         with get_cursor() as cursor:
             cursor.execute("""
-                SELECT id, name, url, provider, enabled, config_json, notes,
+                SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                        last_tested_at, last_test_latency_ms, last_test_ok,
                        created_at, updated_at
                 FROM inference_servers
@@ -149,7 +165,7 @@ class InferenceServersRepository:
         """Get an inference server by ID."""
         with get_cursor() as cursor:
             cursor.execute("""
-                SELECT id, name, url, provider, enabled, config_json, notes,
+                SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                        last_tested_at, last_test_latency_ms, last_test_ok,
                        created_at, updated_at
                 FROM inference_servers
@@ -164,7 +180,7 @@ class InferenceServersRepository:
         with get_cursor() as cursor:
             if provider:
                 cursor.execute("""
-                    SELECT id, name, url, provider, enabled, config_json, notes,
+                    SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                            last_tested_at, last_test_latency_ms, last_test_ok,
                            created_at, updated_at
                     FROM inference_servers
@@ -172,7 +188,7 @@ class InferenceServersRepository:
                 """, (url, provider))
             else:
                 cursor.execute("""
-                    SELECT id, name, url, provider, enabled, config_json, notes,
+                    SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                            last_tested_at, last_test_latency_ms, last_test_ok,
                            created_at, updated_at
                     FROM inference_servers
@@ -188,18 +204,21 @@ class InferenceServersRepository:
         provider: str = "ollama",
         enabled: bool = True,
         config_json: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        model_config: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None
     ) -> InferenceServer:
         """Create a new inference server."""
         config_json = config_json or {}
+        model_config = model_config or {}
         with get_cursor() as cursor:
             cursor.execute("""
-                INSERT INTO inference_servers (name, url, provider, enabled, config_json, notes)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, name, url, provider, enabled, config_json, notes,
+                INSERT INTO inference_servers (name, url, provider, enabled, config_json, model_name, model_config, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                           last_tested_at, last_test_latency_ms, last_test_ok,
                           created_at, updated_at
-            """, (name, url, provider, enabled, json.dumps(config_json), notes))
+            """, (name, url, provider, enabled, json.dumps(config_json), model_name, json.dumps(model_config), notes))
             row = cursor.fetchone()
             return InferenceServer.from_dict(dict(row))
 
@@ -211,20 +230,24 @@ class InferenceServersRepository:
         provider: str,
         enabled: bool,
         config_json: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        model_config: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None
     ) -> Optional[InferenceServer]:
         """Update an inference server."""
         config_json = config_json or {}
+        model_config = model_config or {}
         with get_cursor() as cursor:
             cursor.execute("""
                 UPDATE inference_servers
                 SET name = %s, url = %s, provider = %s, enabled = %s,
-                    config_json = %s, notes = %s, updated_at = CURRENT_TIMESTAMP
+                    config_json = %s, model_name = %s, model_config = %s, notes = %s,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-                RETURNING id, name, url, provider, enabled, config_json, notes,
+                RETURNING id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                           last_tested_at, last_test_latency_ms, last_test_ok,
                           created_at, updated_at
-            """, (name, url, provider, enabled, json.dumps(config_json), notes, server_id))
+            """, (name, url, provider, enabled, json.dumps(config_json), model_name, json.dumps(model_config), notes, server_id))
             row = cursor.fetchone()
             return InferenceServer.from_dict(dict(row)) if row else None
 
@@ -257,7 +280,7 @@ class InferenceServersRepository:
                 UPDATE inference_servers
                 SET enabled = NOT enabled, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-                RETURNING id, name, url, provider, enabled, config_json, notes,
+                RETURNING id, name, url, provider, enabled, config_json, model_name, model_config, notes,
                           last_tested_at, last_test_latency_ms, last_test_ok,
                           created_at, updated_at
             """, (server_id,))

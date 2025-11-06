@@ -101,10 +101,20 @@ class PodcastGenerator:
             "max_new_tokens": self.text_model_config["max_new_tokens"],
             "temperature": self.text_model_config["temperature"]
         }
-        
+
+        # Add host parameter if specified (supports Ollama, LMStudio, Custom-OAI)
+        if "host" in self.text_model_config and self.text_model_config["host"]:
+            model_params["host"] = self.text_model_config["host"]
+
+        # Add provider-specific parameters
         if model_type == "ollama" and "num_ctx" in self.text_model_config:
             model_params["num_ctx"] = self.text_model_config["num_ctx"]
-        
+        elif model_type == "lmstudio":
+            if "context_length" in self.text_model_config:
+                model_params["context_length"] = self.text_model_config["context_length"]
+            if "gpu_offload" in self.text_model_config:
+                model_params["gpu_offload"] = self.text_model_config["gpu_offload"]
+
         self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
 
         # Initialize TTS models based on provider

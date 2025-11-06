@@ -653,18 +653,23 @@ Theseus Insight Team
                     print(f"Failed to send 'no papers found' notification: {e}")
                 self._log_error(500, e)
 
-    def rank_papers_with_historical_scores(self, data_df):
-        """Optimized ranking that uses existing scores when available, only ranking new papers."""
+    def rank_papers_with_historical_scores(self, data_df, return_all_scored=False):
+        """Optimized ranking that uses existing scores when available, only ranking new papers.
+
+        Args:
+            data_df: DataFrame of papers to rank
+            return_all_scored: If True, return tuple (top_n_df, all_scored_df) for profile scoring
+        """
         try:
             if self.verbose:
                 print(f"\n🏃‍♂️ OPTIMIZED RANKING WITH HISTORICAL SCORES")
                 print(f"Total papers to process: {len(data_df)}")
                 print("="*60)
-            
+
             # Separate papers into those with and without existing scores
             papers_with_scores = []
             papers_without_scores = []
-            
+
             for idx, row in data_df.iterrows():
                 existing_paper = PaperRepository.get_by_url(row['pdf_url'])
                 if existing_paper and existing_paper.get('score') is not None and existing_paper.get('score') > 0:
@@ -677,15 +682,15 @@ Theseus Insight Team
                 else:
                     # Paper needs to be scored
                     papers_without_scores.append(row.to_dict())
-            
+
             if self.verbose:
                 print(f"📊 Papers with existing scores: {len(papers_with_scores)}")
                 print(f"🔄 Papers needing new scores: {len(papers_without_scores)}")
-            
+
             # Create DataFrames
             scored_papers_df = pd.DataFrame(papers_with_scores) if papers_with_scores else pd.DataFrame()
             unscored_papers_df = pd.DataFrame(papers_without_scores) if papers_without_scores else pd.DataFrame()
-            
+
             # Score the papers that don't have scores yet
             if not unscored_papers_df.empty:
                 if self.verbose:
@@ -693,7 +698,7 @@ Theseus Insight Team
                 newly_scored_df = self.rank_papers(unscored_papers_df)
             else:
                 newly_scored_df = pd.DataFrame()
-            
+
             # Combine all papers
             if not scored_papers_df.empty and not newly_scored_df.empty:
                 combined_df = pd.concat([scored_papers_df, newly_scored_df], ignore_index=True)
@@ -703,20 +708,22 @@ Theseus Insight Team
                 combined_df = newly_scored_df
             else:
                 combined_df = pd.DataFrame()
-            
+
             if combined_df.empty:
                 if self.verbose:
                     print("⚠️ No papers available after scoring")
+                if return_all_scored:
+                    return pd.DataFrame(), pd.DataFrame()
                 return pd.DataFrame()
-            
-            # Sort by score and return top papers
+
+            # Sort by score
             combined_df = combined_df.sort_values(by='score', ascending=False)
-            
+
             # Get more papers than needed to allow for PDF conversion failures
             backup_multiplier = 2
             extended_count = min(len(combined_df), self.top_n * backup_multiplier)
             top_n_df = combined_df.head(extended_count)
-            
+
             if self.verbose:
                 print(f"✅ Final ranking complete:")
                 print(f"   Total papers ranked: {len(combined_df)}")
@@ -725,7 +732,13 @@ Theseus Insight Team
                 print(f"   Top papers selected: {len(top_n_df)} (target: {self.top_n})")
                 if len(top_n_df) > 0:
                     print(f"   Score range: {top_n_df['score'].min():.1f} - {top_n_df['score'].max():.1f}")
-            
+                if return_all_scored:
+                    print(f"   Returning all {len(combined_df)} scored papers for profile saving")
+
+            # Return both limited and full results if requested (for profile scoring)
+            if return_all_scored:
+                return top_n_df, combined_df
+
             return top_n_df
             
         except Exception as e:
@@ -1197,29 +1210,31 @@ Theseus Insight Team
             
             if self.verbose:
                 print(f"🧠 Starting scoring process with judge model...")
-            
+
             # Temporarily override research interests for profile-specific scoring
             original_research_interests = self.research_interests
             self.research_interests = research_interests_text
-            
+
             try:
                 # Score papers using the optimized ranking method
-                scored_df = self.rank_papers_with_historical_scores(df)
+                # Get both top_n for newsletter AND all scored papers for profile saving
+                top_n_df, all_scored_df = self.rank_papers_with_historical_scores(df, return_all_scored=True)
             finally:
                 # Restore original research interests
                 self.research_interests = original_research_interests
-            
-            # Save profile-specific scores to paper_profile_scores table
-            if self.db_saving and not scored_df.empty:
+
+            # Save ALL scored papers to paper_profile_scores table (not just top_n)
+            if self.db_saving and not all_scored_df.empty:
                 from .data_access.profiles import ProfileScoreRepository
                 
                 if self.verbose:
                     print(f"💾 Saving profile scores for {len(profile_ids)} profile(s)...")
-                
+
                 saved_scores = 0
                 papers_inserted = 0
                 for profile_id in profile_ids:
-                    for _, row in scored_df.iterrows():
+                    # Save ALL scored papers, not just top_n
+                    for _, row in all_scored_df.iterrows():
                         # Get the paper ID from database using URL
                         existing_paper = PaperRepository.get_by_url(row['pdf_url'])
                         
@@ -1276,13 +1291,13 @@ Theseus Insight Team
                     if papers_inserted > 0:
                         print(f"✅ Inserted {papers_inserted} missing papers into database")
             
-            # Take more papers than needed to allow for PDF conversion failures  
-            backup_multiplier = 2
-            extended_count = min(len(scored_df), self.top_n * backup_multiplier)
-            top_df = scored_df.head(extended_count)
-            
+            # Return the limited top_n_df for newsletter generation
+            # (all_scored_df was already saved to database above)
+            top_df = top_n_df
+
             if self.verbose:
-                print(f"Selected top {extended_count} papers (target: {self.top_n}) to allow for PDF conversion failures")
+                print(f"✅ Returning top {len(top_df)} papers for newsletter generation (target: {self.top_n})")
+                print(f"✅ Saved {len(all_scored_df)} total papers to paper_profile_scores")
             
             if self.verbose:
                 print(f"✅ Scored and selected top {len(top_df)} papers")

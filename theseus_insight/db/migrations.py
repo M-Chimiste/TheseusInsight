@@ -50,6 +50,7 @@ class MigrationRunner:
             (7, "007_add_scheduled_tasks.sql", "Add scheduled tasks configuration"),
             (8, "008_add_multi_ollama_support.sql", "Add multi-Ollama server support for bulk judge operations"),
             (9, "009_add_lmstudio_multi_server.sql", "Add LMStudio multi-server support and rename to inference_servers"),
+            (10, "010_add_per_server_model_config.sql", "Add per-server model name and config overrides for non-homogeneous deployments"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:

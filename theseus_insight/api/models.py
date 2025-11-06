@@ -73,8 +73,17 @@ class ModelConfig(BaseModel):
     num_ctx: Optional[int] = Field(None, example=4096) # Context window size
     trust_remote_code: Optional[bool] = Field(None, example=False)
 
+    # Host configuration (supports Ollama, LMStudio, Custom-OAI)
+    host: Optional[str] = Field(
+        None,
+        example="athena.local:11434",
+        description="Custom host for Ollama, LMStudio, or Custom-OAI providers. "
+                   "Format: 'host:port' or 'http://host:port'. "
+                   "Priority: configured host > env variable > provider default. "
+                   "Leave empty to use OLLAMA_URL, LMSTUDIO_HOST, or provider defaults."
+    )
+
     # LMStudio-specific fields
-    host: Optional[str] = Field(None, example="localhost:1234", description="LMStudio server host:port")
     context_length: Optional[int] = Field(None, example=32768, description="Context window for LMStudio")
     gpu_offload: Optional[str] = Field(None, example="max", description="GPU offload: 'max', 'off', or ratio 0-1")
 

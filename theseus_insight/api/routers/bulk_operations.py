@@ -444,17 +444,25 @@ async def _restore_scheduled_tasks(suspend_scheduled_tasks: bool, checkpoint_man
     except Exception as e:
         print(f"Error restoring scheduled tasks: {e}")
 
-async def _launch_single_worker(job_id: UUID, server_url: str, request_timeout_sec: int, max_retries: int):
+async def _launch_single_worker(
+    job_id: UUID,
+    server_url: str,
+    request_timeout_sec: int,
+    max_retries: int,
+    model_name: Optional[str] = None,
+    model_config: Optional[dict] = None
+):
     """Launch a single worker process for a specific server."""
     import subprocess
     import sys
     import os
-    
+    import json
+
     print(f"🚀 Launching single worker for job {job_id} on {server_url}")
-    
+
     # Get the current conda environment
     conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'base')
-    
+
     try:
         # Build the command to run the worker
         cmd = [
@@ -464,6 +472,15 @@ async def _launch_single_worker(job_id: UUID, server_url: str, request_timeout_s
             '--timeout', str(request_timeout_sec),
             '--max-retries', str(max_retries)
         ]
+
+        # Add per-server model overrides if specified
+        if model_name:
+            cmd.extend(['--server-model-name', model_name])
+            print(f"🔧 Using per-server model name: {model_name}")
+
+        if model_config:
+            cmd.extend(['--server-model-config', json.dumps(model_config)])
+            print(f"🔧 Using per-server model config: {model_config}")
         
         # Launch the process in the background; send output to DEVNULL to avoid pipe backpressure
         process = subprocess.Popen(
@@ -518,6 +535,16 @@ async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeo
                     "--timeout", str(request_timeout_sec),
                     "--max-retries", str(max_retries)
                 ]
+
+                # Add per-server model overrides if specified
+                if server.model_name:
+                    cmd.extend(["--server-model-name", server.model_name])
+                    print(f"🔧 Using per-server model name: {server.model_name}")
+
+                if server.model_config:
+                    import json
+                    cmd.extend(["--server-model-config", json.dumps(server.model_config)])
+                    print(f"🔧 Using per-server model config: {server.model_config}")
 
                 print(f"📋 Worker command: {' '.join(cmd)}")
 
@@ -1490,12 +1517,19 @@ async def restart_failed_workers(job_id: UUID) -> Dict[str, Any]:
                 )
                 
                 if success:
+                    # Look up server to get per-server model config
+                    server = InferenceServersRepository.get_by_url(worker.server_url)
+                    model_name = server.model_name if server else None
+                    model_config = server.model_config if server else None
+
                     # Launch new worker process
                     await _launch_single_worker(
                         job_id=job_id,
                         server_url=worker.server_url,
                         request_timeout_sec=30,
-                        max_retries=3
+                        max_retries=3,
+                        model_name=model_name,
+                        model_config=model_config
                     )
                     
                     restarted_workers.append({
@@ -2008,9 +2042,21 @@ async def retry_failed_worker(
         
         if not success:
             raise HTTPException(status_code=500, detail="Failed to reset worker status")
-        
+
+        # Look up server to get per-server model config
+        server = InferenceServersRepository.get_by_url(server_url)
+        model_name = server.model_name if server else None
+        model_config = server.model_config if server else None
+
         # Launch new worker process
-        await _launch_single_worker(job_id, server_url, 30, 3)  # Default timeout and retries
+        await _launch_single_worker(
+            job_id,
+            server_url,
+            30,  # Default timeout
+            3,   # Default retries
+            model_name=model_name,
+            model_config=model_config
+        )
         
         return {
             "message": f"Worker {worker_id} retry initiated",

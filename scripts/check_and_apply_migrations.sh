@@ -90,6 +90,7 @@ migration_files=(
     "007_add_scheduled_tasks.sql"
     "008_add_multi_ollama_support.sql"
     "009_add_lmstudio_multi_server.sql"
+    "010_add_per_server_model_config.sql"
 )
 
 migration_descriptions=(
@@ -103,6 +104,7 @@ migration_descriptions=(
     "Add scheduled task system"
     "Add multi-Ollama server support for bulk judge operations"
     "Add LMStudio multi-server support and rename to inference_servers"
+    "Add per-server model name and config overrides for non-homogeneous deployments"
 )
 
 # Check and apply migrations

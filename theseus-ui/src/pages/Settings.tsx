@@ -1082,6 +1082,20 @@ const Settings: React.FC = () => {
                     onChange={e => handleModelConfigChange(modelKey, 'summarization_model.num_ctx', Number(e.target.value))}
                   />
                 )}
+                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'lmstudio' || currentConfig.summarization_model?.model_type === 'custom-oai') && (
+                  <TextField
+                    fullWidth
+                    label="Host (Optional)"
+                    value={currentConfig.summarization_model?.host || ''}
+                    onChange={e => handleModelConfigChange(modelKey, 'summarization_model.host', e.target.value || undefined)}
+                    placeholder={
+                      currentConfig.summarization_model?.model_type === 'ollama' ? 'athena.local:11434' :
+                      currentConfig.summarization_model?.model_type === 'lmstudio' ? 'localhost:1234' :
+                      'http://custom-server:8000'
+                    }
+                    helperText="Custom host for this model (leave empty to use environment default)"
+                  />
+                )}
               </Box>
             </Box>
           </Box>
@@ -1144,6 +1158,20 @@ const Settings: React.FC = () => {
               type="number"
               value={currentConfig.num_ctx}
               onChange={e => handleModelConfigChange(modelKey, 'num_ctx', Number(e.target.value))}
+            />
+          )}
+          {(currentConfig.model_type === 'ollama' || currentConfig.model_type === 'lmstudio' || currentConfig.model_type === 'custom-oai') && (
+            <TextField
+              fullWidth
+              label="Host (Optional)"
+              value={currentConfig.host || ''}
+              onChange={e => handleModelConfigChange(modelKey, 'host', e.target.value || undefined)}
+              placeholder={
+                currentConfig.model_type === 'ollama' ? 'athena.local:11434' :
+                currentConfig.model_type === 'lmstudio' ? 'localhost:1234' :
+                'http://custom-server:8000'
+              }
+              helperText="Custom host for this model (leave empty to use environment default)"
             />
           )}
           {currentConfig.model_type === 'sentence-transformers' && (
@@ -1239,6 +1267,20 @@ const Settings: React.FC = () => {
                   type="number"
                   value={modelObj.num_ctx || 131072}
                   onChange={e => handleSingleAgentConfigChange(`${modelPath}.num_ctx`, Number(e.target.value))}
+                />
+              )}
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
+                <TextField
+                  fullWidth
+                  label="Host (Optional)"
+                  value={modelObj.host || ''}
+                  onChange={e => handleSingleAgentConfigChange(`${modelPath}.host`, e.target.value || undefined)}
+                  placeholder={
+                    modelObj.model_type === 'ollama' ? 'athena.local:11434' :
+                    modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
+                    'http://custom-server:8000'
+                  }
+                  helperText="Custom host for this model (leave empty to use environment default)"
                 />
               )}
             </Box>
@@ -1434,6 +1476,20 @@ const Settings: React.FC = () => {
                   type="number"
                   value={modelObj.num_ctx || 131072}
                   onChange={e => handleMultiAgentConfigChange(`${modelPath}.num_ctx`, Number(e.target.value))}
+                />
+              )}
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
+                <TextField
+                  fullWidth
+                  label="Host (Optional)"
+                  value={modelObj.host || ''}
+                  onChange={e => handleMultiAgentConfigChange(`${modelPath}.host`, e.target.value || undefined)}
+                  placeholder={
+                    modelObj.model_type === 'ollama' ? 'athena.local:11434' :
+                    modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
+                    'http://custom-server:8000'
+                  }
+                  helperText="Custom host for this model (leave empty to use environment default)"
                 />
               )}
             </Box>

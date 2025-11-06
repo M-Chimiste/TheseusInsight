@@ -110,7 +110,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       setCreateDialogOpen(false);
-      setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, notes: '' });
+      setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, model_name: undefined, model_config: {}, notes: '' });
       showSnackbar('Server created successfully', 'success');
     },
     onError: (error: unknown) => {
@@ -207,7 +207,7 @@ const OllamaServersSettings: React.FC = () => {
 
   const handleCreateDialogClose = () => {
     setCreateDialogOpen(false);
-    setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, notes: '' });
+    setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, model_name: undefined, model_config: {}, notes: '' });
   };
 
   const handleEditDialogOpen = (server: OllamaServer) => {
@@ -218,6 +218,8 @@ const OllamaServersSettings: React.FC = () => {
       provider: server.provider,
       enabled: server.enabled,
       config_json: server.config_json || {},
+      model_name: server.model_name,
+      model_config: server.model_config || {},
       notes: server.notes || ''
     });
     setEditDialogOpen(true);
@@ -226,7 +228,7 @@ const OllamaServersSettings: React.FC = () => {
   const handleEditDialogClose = () => {
     setEditDialogOpen(false);
     setSelectedServer(null);
-    setEditFormData({ name: '', url: '', provider: 'ollama', enabled: true, config_json: {}, notes: '' });
+    setEditFormData({ name: '', url: '', provider: 'ollama', enabled: true, config_json: {}, model_name: undefined, model_config: {}, notes: '' });
   };
 
   const handleCreateSubmit = () => {
@@ -389,6 +391,7 @@ const OllamaServersSettings: React.FC = () => {
                   <TableCell>Name</TableCell>
                   <TableCell>Provider</TableCell>
                   <TableCell>URL</TableCell>
+                  <TableCell>Model</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Last Test</TableCell>
                   <TableCell>Latency</TableCell>
@@ -398,13 +401,13 @@ const OllamaServersSettings: React.FC = () => {
               <TableBody>
                 {serversLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} align="center">
+                    <TableCell colSpan={8} align="center">
                       <CircularProgress size={24} />
                     </TableCell>
                   </TableRow>
                 ) : servers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} align="center">
+                    <TableCell colSpan={8} align="center">
                       <Typography color="textSecondary">
                         No inference servers configured. Click "Add Server" to get started.
                       </Typography>
@@ -431,6 +434,17 @@ const OllamaServersSettings: React.FC = () => {
                         />
                       </TableCell>
                       <TableCell>{server.url}</TableCell>
+                      <TableCell>
+                        {server.model_name ? (
+                          <Tooltip title="Custom model configured for this server">
+                            <Chip label={server.model_name} size="small" variant="outlined" />
+                          </Tooltip>
+                        ) : (
+                          <Typography variant="body2" color="textSecondary">
+                            Default
+                          </Typography>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           {getStatusIcon(server)}
@@ -566,6 +580,62 @@ const OllamaServersSettings: React.FC = () => {
             )}
             <TextField
               fullWidth
+              label="Model Name (optional)"
+              value={formData.model_name || ''}
+              onChange={(e) => setFormData({ ...formData, model_name: e.target.value || undefined })}
+              placeholder={formData.provider === 'ollama' ? 'phi4:latest' : 'phi4-mlx'}
+              helperText="Override the default model name for this server (leave empty to use global default)"
+            />
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="subtitle2">Model Configuration Overrides (Optional)</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    value={formData.model_config?.temperature ?? ''}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      model_config: { ...formData.model_config, temperature: e.target.value ? parseFloat(e.target.value) : undefined }
+                    })}
+                    placeholder="0.7"
+                    inputProps={{ step: 0.1, min: 0, max: 2 }}
+                    helperText="Override temperature for this server"
+                  />
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={formData.model_config?.max_new_tokens ?? ''}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      model_config: { ...formData.model_config, max_new_tokens: e.target.value ? parseInt(e.target.value) : undefined }
+                    })}
+                    placeholder="2048"
+                    helperText="Override max_new_tokens for this server"
+                  />
+                  {formData.provider === 'ollama' && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={formData.model_config?.num_ctx ?? ''}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        model_config: { ...formData.model_config, num_ctx: e.target.value ? parseInt(e.target.value) : undefined }
+                      })}
+                      placeholder="131072"
+                      helperText="Override Ollama context window size"
+                    />
+                  )}
+                </Box>
+              </AccordionDetails>
+            </Accordion>
+            <TextField
+              fullWidth
               label="Notes (optional)"
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -647,6 +717,62 @@ const OllamaServersSettings: React.FC = () => {
                 />
               </>
             )}
+            <TextField
+              fullWidth
+              label="Model Name (optional)"
+              value={editFormData.model_name || ''}
+              onChange={(e) => setEditFormData({ ...editFormData, model_name: e.target.value || undefined })}
+              placeholder={editFormData.provider === 'ollama' ? 'phi4:latest' : 'phi4-mlx'}
+              helperText="Override the default model name for this server (leave empty to use global default)"
+            />
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="subtitle2">Model Configuration Overrides (Optional)</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Temperature"
+                    type="number"
+                    value={editFormData.model_config?.temperature ?? ''}
+                    onChange={(e) => setEditFormData({
+                      ...editFormData,
+                      model_config: { ...editFormData.model_config, temperature: e.target.value ? parseFloat(e.target.value) : undefined }
+                    })}
+                    placeholder="0.7"
+                    inputProps={{ step: 0.1, min: 0, max: 2 }}
+                    helperText="Override temperature for this server"
+                  />
+                  <TextField
+                    fullWidth
+                    label="Max New Tokens"
+                    type="number"
+                    value={editFormData.model_config?.max_new_tokens ?? ''}
+                    onChange={(e) => setEditFormData({
+                      ...editFormData,
+                      model_config: { ...editFormData.model_config, max_new_tokens: e.target.value ? parseInt(e.target.value) : undefined }
+                    })}
+                    placeholder="2048"
+                    helperText="Override max_new_tokens for this server"
+                  />
+                  {editFormData.provider === 'ollama' && (
+                    <TextField
+                      fullWidth
+                      label="Context Window (num_ctx)"
+                      type="number"
+                      value={editFormData.model_config?.num_ctx ?? ''}
+                      onChange={(e) => setEditFormData({
+                        ...editFormData,
+                        model_config: { ...editFormData.model_config, num_ctx: e.target.value ? parseInt(e.target.value) : undefined }
+                      })}
+                      placeholder="131072"
+                      helperText="Override Ollama context window size"
+                    />
+                  )}
+                </Box>
+              </AccordionDetails>
+            </Accordion>
             <TextField
               fullWidth
               label="Notes (optional)"

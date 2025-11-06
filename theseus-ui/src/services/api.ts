@@ -11,6 +11,7 @@ export interface ModelConfig {
   temperature?: number;
   num_ctx?: number;
   trust_remote_code?: boolean;
+  host?: string;  // Custom host for Ollama, LMStudio, or Custom-OAI providers
 }
 
 export interface MindMapConfig {
@@ -146,6 +147,14 @@ export interface InferenceServer {
     context_length?: number;
     gpu_offload?: string;
   };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
   notes?: string;
   last_tested_at?: string;
   last_test_latency_ms?: number;
@@ -162,6 +171,14 @@ export interface InferenceServerCreate {
     context_length?: number;
     gpu_offload?: string;
   };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
   notes?: string;
 }
 
@@ -171,6 +188,14 @@ export interface InferenceServerUpdate {
   provider: 'ollama' | 'lmstudio';
   enabled: boolean;
   config_json?: {
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
     context_length?: number;
     gpu_offload?: string;
   };

@@ -7,6 +7,7 @@ Enhanced to support both single-agent workflow and multi-agent orchestration.
 """
 
 import logging
+import os
 import time
 import asyncio
 import threading
@@ -16,6 +17,70 @@ from LLMFactory import LLMModelFactory
 from LLMFactory.providers import InferenceModel
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_host_for_provider(
+    provider: str,
+    configured_host: Optional[str] = None
+) -> Optional[str]:
+    """
+    Resolve the host for a given provider with priority handling.
+
+    Priority:
+    1. configured_host (from ModelConfig.host) - highest priority
+    2. Environment variable (OLLAMA_URL, LMSTUDIO_HOST)
+    3. None (let provider use its default)
+
+    Args:
+        provider: Provider type ('ollama', 'lmstudio', 'custom-oai')
+        configured_host: Host from ModelConfig (highest priority)
+
+    Returns:
+        Resolved host string or None for default
+    """
+    # Priority 1: Explicit configuration
+    if configured_host:
+        logger.info(f"Using configured host for {provider}: {configured_host}")
+        return configured_host
+
+    # Priority 2: Environment variables
+    if provider.lower() == 'ollama':
+        env_url = os.getenv('OLLAMA_URL')
+        if env_url:
+            logger.info(f"Using OLLAMA_URL from environment: {env_url}")
+            return env_url
+    elif provider.lower() == 'lmstudio':
+        env_host = os.getenv('LMSTUDIO_HOST')
+        if env_host:
+            logger.info(f"Using LMSTUDIO_HOST from environment: {env_host}")
+            return env_host
+    elif provider.lower() == 'custom-oai':
+        # Custom-OAI typically passes base_url directly
+        pass
+
+    # Priority 3: Use provider defaults (return None)
+    logger.debug(f"Using default host for {provider}")
+    return None
+
+
+def normalize_ollama_url(host: str) -> str:
+    """
+    Normalize Ollama URL to ensure it has http:// prefix.
+
+    Args:
+        host: Host string (may or may not have http:// prefix)
+
+    Returns:
+        Normalized URL with http:// prefix
+    """
+    if not host:
+        return "http://127.0.0.1:11434"
+
+    # Add http:// if not present
+    if not host.startswith(('http://', 'https://')):
+        host = f"http://{host}"
+
+    return host
 
 
 # Rate limiting for local models to prevent throttling
@@ -36,14 +101,30 @@ class ModelClient:
         self.model_name = model_name
         self.config = config
         self.logger = logging.getLogger(__name__)
-        
+
+        # Resolve host with priority handling (configured host > env variable > default)
+        configured_host = config.pop('host', None)
+        resolved_host = resolve_host_for_provider(provider, configured_host)
+
+        # Apply resolved host to appropriate provider parameter
+        if resolved_host:
+            if provider.lower() == 'ollama':
+                config['url'] = normalize_ollama_url(resolved_host)
+                self.logger.info(f"Ollama using resolved URL: {config['url']}")
+            elif provider.lower() == 'lmstudio':
+                config['host'] = resolved_host
+                self.logger.info(f"LMStudio using resolved host: {resolved_host}")
+            elif provider.lower() == 'custom-oai':
+                config['base_url'] = resolved_host
+                self.logger.info(f"Custom-OAI using resolved base_url: {resolved_host}")
+
         # Create the actual model client
         self._client = LLMModelFactory.create_model(
             model_type=provider,
             model_name=model_name,
             **config
         )
-        
+
         # Determine if this is a local model that needs rate limiting
         self.is_local_model = provider.lower() in ['ollama', 'llamacpp', 'local', 'lmstudio']
     
@@ -261,21 +342,34 @@ def _create_model_client_from_config(node_config: Dict[str, Any], node_name: str
         "temperature": temperature,
         "max_new_tokens": max_tokens
     }
-    
+
+    # Add host parameter if specified (works for Ollama, LMStudio, Custom-OAI)
+    if "host" in node_config and node_config["host"]:
+        model_kwargs["host"] = node_config["host"]
+        logger.info(f"Using configured host for {node_name}: {node_config['host']}")
+
     # Add type-specific parameters
     if model_type == "ollama":
         model_kwargs["num_ctx"] = node_config.get("num_ctx", 131072)
-        if "url" in node_config:
+        # NOTE: url is deprecated in favor of host, but keep for backward compatibility
+        if "url" in node_config and "host" not in model_kwargs:
             model_kwargs["url"] = node_config["url"]
+    elif model_type == "lmstudio":
+        # LMStudio-specific parameters
+        if "context_length" in node_config:
+            model_kwargs["context_length"] = node_config["context_length"]
+        if "gpu_offload" in node_config:
+            model_kwargs["gpu_offload"] = node_config["gpu_offload"]
     elif model_type == "custom-oai":
-        if "base_url" in node_config:
+        # NOTE: base_url is deprecated in favor of host, but keep for backward compatibility
+        if "base_url" in node_config and "host" not in model_kwargs:
             model_kwargs["base_url"] = node_config["base_url"]
         if "api_key" in node_config:
             model_kwargs["api_key"] = node_config["api_key"]
     elif model_type == "llamacpp":
         model_kwargs["num_ctx"] = node_config.get("num_ctx", 131072)
         model_kwargs["n_gpu_layers"] = node_config.get("n_gpu_layers", -1)
-    
+
     # Create model using the factory - model_name passed as positional argument only
     return ModelClient(model_type, model_name, **model_kwargs)
 

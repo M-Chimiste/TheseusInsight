@@ -109,6 +109,7 @@ const OllamaServersSettings: React.FC = () => {
     mutationFn: (server: OllamaServerCreate) => ollamaServersApi.createServer(server).then((res: { data: any; }) => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
       setCreateDialogOpen(false);
       setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, model_name: undefined, model_config: {}, notes: '' });
       showSnackbar('Server created successfully', 'success');
@@ -124,6 +125,7 @@ const OllamaServersSettings: React.FC = () => {
       ollamaServersApi.updateServer(id, server).then((res: { data: any; }) => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
       setEditDialogOpen(false);
       setSelectedServer(null);
       showSnackbar('Server updated successfully', 'success');
@@ -138,6 +140,7 @@ const OllamaServersSettings: React.FC = () => {
     mutationFn: (id: number) => ollamaServersApi.deleteServer(id).then((res: { data: any; }) => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
       showSnackbar('Server deleted successfully', 'success');
     },
     onError: (error: unknown) => {
@@ -150,6 +153,7 @@ const OllamaServersSettings: React.FC = () => {
     mutationFn: (id: number) => ollamaServersApi.testServer(id).then((res: { data: any; }) => res.data),
     onSuccess: (data: ServerTestResult) => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
       if (data.success) {
         showSnackbar(`Server test successful (${data.latency_ms}ms)`, 'success');
       } else {
@@ -166,6 +170,7 @@ const OllamaServersSettings: React.FC = () => {
     mutationFn: (id: number) => ollamaServersApi.toggleServer(id).then((res: { data: any; }) => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
     },
     onError: (error: unknown) => {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

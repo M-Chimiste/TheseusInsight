@@ -30,7 +30,7 @@ import {
   Chip,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi, modelCatalogApi, performanceApi, researchAgentApi } from '../services/api';
+import { settingsApi, modelCatalogApi, performanceApi, researchAgentApi, ollamaServersApi } from '../services/api';
 import type { PerformanceConfig, SystemInfo } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -325,21 +325,27 @@ const Settings: React.FC = () => {
   });
 
   // Query for inference servers to provide host autocomplete
-  const { data: inferenceServersData } = useQuery({
+  const { data: inferenceServers } = useQuery({
     queryKey: ['inferenceServersForSettings'],
-    queryFn: async () => {
-      const response = await fetch('/api/settings/inference-servers/');
-      if (!response.ok) throw new Error('Failed to fetch inference servers');
-      return response.json();
-    }
+    queryFn: () => ollamaServersApi.getAllServers().then((res: any) => res.data)
   });
 
-  // Extract unique host URLs from inference servers for autocomplete
-  const availableHosts = React.useMemo(() => {
-    if (!inferenceServersData?.servers) return [];
-    const hosts = inferenceServersData.servers.map((server: any) => server.url);
+  // Helper function to get hosts filtered by provider
+  const getHostsByProvider = React.useCallback((provider: 'ollama' | 'lmstudio' | 'custom-oai') => {
+    if (!inferenceServers || !Array.isArray(inferenceServers)) return [];
+
+    // For custom-oai, we could show all hosts or none - let's show all
+    if (provider === 'custom-oai') {
+      const hosts = inferenceServers.map((server: any) => server.url);
+      return Array.from(new Set(hosts)).sort();
+    }
+
+    // Filter by provider and extract URLs
+    const hosts = inferenceServers
+      .filter((server: any) => server.provider === provider)
+      .map((server: any) => server.url);
     return Array.from(new Set(hosts)).sort();
-  }, [inferenceServersData]);
+  }, [inferenceServers]);
 
   // Query for research profiles (for profile-scoped export)
   const { data: researchProfiles } = useQuery({
@@ -1103,7 +1109,7 @@ const Settings: React.FC = () => {
                   <Autocomplete
                     fullWidth
                     freeSolo
-                    options={availableHosts}
+                    options={getHostsByProvider(currentConfig.summarization_model?.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
                     value={currentConfig.summarization_model?.host || ''}
                     onInputChange={(_, newInputValue) => {
                       handleModelConfigChange(modelKey, 'summarization_model.host', newInputValue || undefined);
@@ -1190,7 +1196,7 @@ const Settings: React.FC = () => {
             <Autocomplete
               fullWidth
               freeSolo
-              options={availableHosts}
+              options={getHostsByProvider(currentConfig.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
               value={currentConfig.host || ''}
               onInputChange={(_, newInputValue) => {
                 handleModelConfigChange(modelKey, 'host', newInputValue || undefined);
@@ -1308,7 +1314,7 @@ const Settings: React.FC = () => {
                 <Autocomplete
                   fullWidth
                   freeSolo
-                  options={availableHosts}
+                  options={getHostsByProvider(modelObj.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
                   value={modelObj.host || ''}
                   onInputChange={(_, newInputValue) => {
                     handleSingleAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
@@ -1526,7 +1532,7 @@ const Settings: React.FC = () => {
                 <Autocomplete
                   fullWidth
                   freeSolo
-                  options={availableHosts}
+                  options={getHostsByProvider(modelObj.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
                   value={modelObj.host || ''}
                   onInputChange={(_, newInputValue) => {
                     handleMultiAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);

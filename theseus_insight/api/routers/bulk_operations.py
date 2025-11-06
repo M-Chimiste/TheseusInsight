@@ -1389,8 +1389,8 @@ async def resume_job(
         if await _is_multi_server_job(job_id, pool):
             logger.info(f"🔄 Resuming multi-server job {job_id}")
             
-            from ...data_access.ollama_servers import OllamaServersRepository
-            server_repo = OllamaServersRepository()
+            from ...data_access.inference_servers import InferenceServersRepository
+            server_repo = InferenceServersRepository()
             
             # Get selected servers from configuration, or use all enabled servers as fallback
             selected_servers = []

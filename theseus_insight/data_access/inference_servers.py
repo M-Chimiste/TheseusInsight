@@ -331,8 +331,3 @@ class InferenceServersRepository:
                 """)
             row = cursor.fetchone()
             return dict(row) if row else {}
-
-
-# Backward compatibility aliases
-OllamaServer = InferenceServer
-OllamaServersRepository = InferenceServersRepository

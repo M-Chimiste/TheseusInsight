@@ -5,7 +5,6 @@ import {
   CircularProgress,
   Alert,
   IconButton,
-  Paper,
   FormControl,
   InputLabel,
   Select,
@@ -18,6 +17,8 @@ import { papersApi } from '../services/api';
 import type { PaperApiResponse, SimilarPapersResponse } from '../services/api';
 import PaperRowCard from './PaperRowCard';
 import ReferencePaperCard from './ReferencePaperCard';
+import { useProfile } from '../contexts/ProfileContext';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface SimilarityViewProps {
   referencePaper: PaperApiResponse;
@@ -29,6 +30,11 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState<number>(10);
+  
+  // Get profile and layout context
+  const { selectedProfileIds } = useProfile();
+  const { headerHeight } = useLayout();
+  const hasProfilesSelected = selectedProfileIds.length > 0;
 
 
   const fetchSimilarPapers = useCallback(async (selectedLimit: number) => {
@@ -81,8 +87,8 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   }
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header with close button and controls - STICKY */}
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {/* Header with close button and controls - FIXED */}
       <Box sx={{ 
         display: 'flex', 
         alignItems: 'center', 
@@ -93,9 +99,11 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
         borderColor: 'divider',
         backgroundColor: 'background.paper',
         minHeight: 'auto',
-        position: 'sticky',
-        top: 0,
-        zIndex: 1000
+        position: 'fixed',
+        top: `${headerHeight}px`,
+        left: 0,
+        right: 0,
+        zIndex: 999
       }}>
         <Typography variant="h6" component="h1" sx={{ fontWeight: 600 }}>
           Similar Papers
@@ -128,18 +136,15 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
         </Box>
       </Box>
 
-      {/* Main content area */}
-      <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left side - Reference paper - STICKY */}
+      {/* Main content area - add top padding to account for fixed header */}
+      <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden', pt: '57px' }}>
+        {/* Left side - Reference paper */}
         <Box sx={{ 
           width: '40%', 
           borderRight: 1, 
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
-          position: 'sticky',
-          top: 0,
-          height: 'calc(100vh - 64px)', // Subtract header height
           overflow: 'auto'
         }}>
           <Box sx={{ p: 1.5 }}>
@@ -153,8 +158,7 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
         {/* Right side - Similar papers - SCROLLABLE */}
         <Box sx={{ 
           width: '60%', 
-          overflow: 'auto',
-          height: 'calc(100vh - 64px)' // Subtract header height
+          overflow: 'auto'
         }}>
           <Box sx={{ p: 1.5 }}>
             {loading && (
@@ -178,14 +182,16 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
             {/* Similar papers list */}
             {similarPapers.map((paper, index) => (
               <Box key={`${paper.id}_${paper.date_run}_similar_${index}`} sx={{ mb: 1.5 }}>
-                <Paper elevation={1} sx={{ p: 0.75 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                    <Typography variant="body2" color="primary" sx={{ fontWeight: 'bold', mr: 1 }}>
-                      Similarity: {((paper.similarity_score || 0) * 100).toFixed(1)}%
-                    </Typography>
-                  </Box>
-                  <PaperRowCard paper={paper} />
-                </Paper>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                  <Typography variant="body2" color="primary" sx={{ fontWeight: 'bold', mr: 1 }}>
+                    Similarity: {((paper.similarity_score ?? 0) * 100).toFixed(1)}%
+                  </Typography>
+                </Box>
+                <PaperRowCard 
+                  paper={paper} 
+                  hasProfilesSelected={hasProfilesSelected}
+                  selectedProfileIds={selectedProfileIds}
+                />
               </Box>
             ))}
           </Box>

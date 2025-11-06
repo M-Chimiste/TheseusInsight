@@ -324,6 +324,23 @@ const Settings: React.FC = () => {
     }).then(res => res.data),
   });
 
+  // Query for inference servers to provide host autocomplete
+  const { data: inferenceServersData } = useQuery({
+    queryKey: ['inferenceServersForSettings'],
+    queryFn: async () => {
+      const response = await fetch('/api/settings/inference-servers/');
+      if (!response.ok) throw new Error('Failed to fetch inference servers');
+      return response.json();
+    }
+  });
+
+  // Extract unique host URLs from inference servers for autocomplete
+  const availableHosts = React.useMemo(() => {
+    if (!inferenceServersData?.servers) return [];
+    const hosts = inferenceServersData.servers.map((server: any) => server.url);
+    return Array.from(new Set(hosts)).sort();
+  }, [inferenceServersData]);
+
   // Query for research profiles (for profile-scoped export)
   const { data: researchProfiles } = useQuery({
     queryKey: ['researchProfilesForExport'],
@@ -1083,17 +1100,26 @@ const Settings: React.FC = () => {
                   />
                 )}
                 {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'lmstudio' || currentConfig.summarization_model?.model_type === 'custom-oai') && (
-                  <TextField
+                  <Autocomplete
                     fullWidth
-                    label="Host (Optional)"
+                    freeSolo
+                    options={availableHosts}
                     value={currentConfig.summarization_model?.host || ''}
-                    onChange={e => handleModelConfigChange(modelKey, 'summarization_model.host', e.target.value || undefined)}
-                    placeholder={
-                      currentConfig.summarization_model?.model_type === 'ollama' ? 'athena.local:11434' :
-                      currentConfig.summarization_model?.model_type === 'lmstudio' ? 'localhost:1234' :
-                      'http://custom-server:8000'
-                    }
-                    helperText="Custom host for this model (leave empty to use environment default)"
+                    onInputChange={(_, newInputValue) => {
+                      handleModelConfigChange(modelKey, 'summarization_model.host', newInputValue || undefined);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Host (Optional)"
+                        placeholder={
+                          currentConfig.summarization_model?.model_type === 'ollama' ? 'athena.local:11434' :
+                          currentConfig.summarization_model?.model_type === 'lmstudio' ? 'localhost:1234' :
+                          'http://custom-server:8000'
+                        }
+                        helperText="Custom host for this model (leave empty to use environment default)"
+                      />
+                    )}
                   />
                 )}
               </Box>
@@ -1161,17 +1187,26 @@ const Settings: React.FC = () => {
             />
           )}
           {(currentConfig.model_type === 'ollama' || currentConfig.model_type === 'lmstudio' || currentConfig.model_type === 'custom-oai') && (
-            <TextField
+            <Autocomplete
               fullWidth
-              label="Host (Optional)"
+              freeSolo
+              options={availableHosts}
               value={currentConfig.host || ''}
-              onChange={e => handleModelConfigChange(modelKey, 'host', e.target.value || undefined)}
-              placeholder={
-                currentConfig.model_type === 'ollama' ? 'athena.local:11434' :
-                currentConfig.model_type === 'lmstudio' ? 'localhost:1234' :
-                'http://custom-server:8000'
-              }
-              helperText="Custom host for this model (leave empty to use environment default)"
+              onInputChange={(_, newInputValue) => {
+                handleModelConfigChange(modelKey, 'host', newInputValue || undefined);
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Host (Optional)"
+                  placeholder={
+                    currentConfig.model_type === 'ollama' ? 'athena.local:11434' :
+                    currentConfig.model_type === 'lmstudio' ? 'localhost:1234' :
+                    'http://custom-server:8000'
+                  }
+                  helperText="Custom host for this model (leave empty to use environment default)"
+                />
+              )}
             />
           )}
           {currentConfig.model_type === 'sentence-transformers' && (
@@ -1270,17 +1305,26 @@ const Settings: React.FC = () => {
                 />
               )}
               {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
-                <TextField
+                <Autocomplete
                   fullWidth
-                  label="Host (Optional)"
+                  freeSolo
+                  options={availableHosts}
                   value={modelObj.host || ''}
-                  onChange={e => handleSingleAgentConfigChange(`${modelPath}.host`, e.target.value || undefined)}
-                  placeholder={
-                    modelObj.model_type === 'ollama' ? 'athena.local:11434' :
-                    modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
-                    'http://custom-server:8000'
-                  }
-                  helperText="Custom host for this model (leave empty to use environment default)"
+                  onInputChange={(_, newInputValue) => {
+                    handleSingleAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Host (Optional)"
+                      placeholder={
+                        modelObj.model_type === 'ollama' ? 'athena.local:11434' :
+                        modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
+                        'http://custom-server:8000'
+                      }
+                      helperText="Custom host for this model (leave empty to use environment default)"
+                    />
+                  )}
                 />
               )}
             </Box>
@@ -1479,17 +1523,26 @@ const Settings: React.FC = () => {
                 />
               )}
               {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
-                <TextField
+                <Autocomplete
                   fullWidth
-                  label="Host (Optional)"
+                  freeSolo
+                  options={availableHosts}
                   value={modelObj.host || ''}
-                  onChange={e => handleMultiAgentConfigChange(`${modelPath}.host`, e.target.value || undefined)}
-                  placeholder={
-                    modelObj.model_type === 'ollama' ? 'athena.local:11434' :
-                    modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
-                    'http://custom-server:8000'
-                  }
-                  helperText="Custom host for this model (leave empty to use environment default)"
+                  onInputChange={(_, newInputValue) => {
+                    handleMultiAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Host (Optional)"
+                      placeholder={
+                        modelObj.model_type === 'ollama' ? 'athena.local:11434' :
+                        modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
+                        'http://custom-server:8000'
+                      }
+                      helperText="Custom host for this model (leave empty to use environment default)"
+                    />
+                  )}
                 />
               )}
             </Box>

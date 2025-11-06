@@ -87,9 +87,13 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
         </Box>
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: '120px', width: '240px' }}>
           <Chip 
-            label={hasProfilesSelected && paper.profile_score !== undefined 
-              ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
-              : `Score: ${typeof paper.score === 'number' ? paper.score.toFixed(2) : '—'}`} 
+            label={
+              hasProfilesSelected && paper.profile_score != null 
+                ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
+                : typeof paper.score === 'number' && paper.score != null
+                ? `Score: ${paper.score.toFixed(2)}`
+                : '—'
+            } 
             size="small" 
             color="primary" 
             variant="outlined" 
@@ -99,22 +103,30 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
               color: theme => theme.palette.mode === 'dark' ? theme.palette.common.white : theme.palette.primary.main,
             }} 
           />
-          {/* Related status visual (no change here) */}
-          {paper.related !== undefined && hasProfilesSelected && (
-             <Chip 
+          {/* Related status visual */}
+          {hasProfilesSelected ? (
+            paper.related != null ? (
+              <Chip 
                 label={paper.related ? "Relevant" : "Not Relevant"} 
                 color={paper.related ? "success" : "default"} 
                 size="small"
                 sx={{mb: 1, width: '100%'}}
-             />
-          )}
-          {!hasProfilesSelected && (
-             <Chip 
+              />
+            ) : (
+              <Chip 
                 label="Not Applicable" 
                 color="default" 
                 size="small"
                 sx={{mb: 1, width: '100%'}}
-             />
+              />
+            )
+          ) : (
+            <Chip 
+              label="Not Applicable" 
+              color="default" 
+              size="small"
+              sx={{mb: 1, width: '100%'}}
+            />
           )}
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1}}>
             <Typography variant="body2" color="text.secondary">

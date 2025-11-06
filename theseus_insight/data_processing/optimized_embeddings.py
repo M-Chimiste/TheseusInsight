@@ -61,21 +61,82 @@ class OptimizedEmbeddingPipeline:
         research_interests: Optional[str] = None,
         cosine_threshold: Optional[float] = None,
         use_bulk_operations: bool = True,
-        verbose: bool = True
+        verbose: bool = True,
+        use_streaming: Optional[bool] = None
     ) -> Dict[str, any]:
-        """
-        Process all papers without embeddings using optimized pipeline.
+        """Process all papers without embeddings using optimized pipeline.
+        
+        Option C: Smart selection based on dataset size
+        - Small datasets (<100K): Use threading pipeline (this class) for speed
+        - Large datasets (>=100K): Use StreamingEmbeddingService for memory safety
         
         Args:
             research_interests: Optional research interests for similarity calculation
             cosine_threshold: Optional threshold for filtering papers by similarity
             use_bulk_operations: Whether to use bulk database operations
             verbose: Whether to show progress information
+            use_streaming: Force streaming mode (None=auto, True=streaming, False=threading)
             
         Returns:
             Dictionary with processing statistics
         """
         start_time = time.time()
+        
+        # Get total count first (efficient count query)
+        total_papers = PaperRepository.count_without_embeddings()
+        
+        if total_papers == 0:
+            if verbose:
+                print("✅ All papers already have embeddings!")
+            return {
+                'papers_processed': 0,
+                'batches_processed': 0,
+                'errors': 0,
+                'skipped_low_similarity': 0,
+                'papers_per_second': 0
+            }
+        
+        # Option C: Auto-select strategy based on dataset size
+        threshold = 100000  # 100K papers
+        should_use_streaming = use_streaming if use_streaming is not None else (total_papers >= threshold)
+        
+        if should_use_streaming:
+            # Large dataset: Use StreamingEmbeddingService for memory safety
+            if verbose:
+                print(f"📊 Large dataset detected ({total_papers} papers)")
+                print(f"🌊 Using StreamingEmbeddingService for memory-safe processing")
+            
+            from ..services import StreamingEmbeddingService, EmbeddingServiceConfig
+            
+            config = EmbeddingServiceConfig(
+                chunk_size=10000,
+                gpu_batch_size=self.batch_size,
+                auto_tune_batch_size=False,  # Use provided batch size
+                db_flush_interval=1000,
+                checkpoint_interval=10000,
+                verbose=verbose
+            )
+            
+            service = StreamingEmbeddingService(config)
+            
+            import asyncio
+            stats = asyncio.run(service.embed_all_missing_papers())
+            
+            # Convert stats to expected format
+            return {
+                'papers_processed': stats['papers_embedded'],
+                'batches_processed': stats['papers_embedded'] // self.batch_size,
+                'errors': stats['papers_failed'],
+                'skipped_low_similarity': 0,
+                'papers_per_second': stats.get('papers_per_second', 0)
+            }
+        
+        # Small dataset: Use threading pipeline for speed
+        if verbose:
+            print(f"📄 Processing {total_papers} papers with threading pipeline")
+            print(f"⚡ Using batch size: {self.batch_size}")
+            print(f"🔄 Prefetching {self.prefetch_size} batches")
+        
         stats = {
             'papers_processed': 0,
             'batches_processed': 0,
@@ -92,24 +153,31 @@ class OptimizedEmbeddingPipeline:
             if hasattr(research_embedding, 'cpu'):
                 research_embedding = research_embedding.cpu().numpy()
         
-        # Get total count for progress bar
-        papers_without_embeddings = PaperRepository.get_papers_without_embeddings()
-        total_papers = len(papers_without_embeddings)
+        # Use pagination for fetching papers (memory-safe)
+        papers_fetched = []
+        offset = 0
+        fetch_chunk_size = 50000  # Fetch 50K at a time
         
-        if total_papers == 0:
-            if verbose:
-                print("✅ All papers already have embeddings!")
-            return stats
+        while offset < total_papers:
+            chunk = PaperRepository.without_embeddings_paginated(
+                limit=min(fetch_chunk_size, total_papers - offset),
+                offset=offset
+            )
+            if not chunk:
+                break
+            papers_fetched.extend(chunk)
+            offset += len(chunk)
+            
+            if verbose and len(papers_fetched) % 50000 == 0:
+                print(f"📦 Fetched {len(papers_fetched)}/{total_papers} papers...")
         
         if verbose:
-            print(f"📄 Found {total_papers} papers without embeddings")
-            print(f"⚡ Using batch size: {self.batch_size}")
-            print(f"🔄 Prefetching {self.prefetch_size} batches")
+            print(f"✅ Fetched all {len(papers_fetched)} papers")
         
-        # Start producer thread (fetches papers from DB)
+        # Start producer thread (fetches papers from list)
         producer = threading.Thread(
             target=self._data_producer,
-            args=(papers_without_embeddings,)
+            args=(papers_fetched,)
         )
         producer.start()
         

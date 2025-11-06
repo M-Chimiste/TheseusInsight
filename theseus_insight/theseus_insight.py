@@ -2456,22 +2456,141 @@ Theseus Insight Team
                         'total_processed': len(data_df)
                     }
                 
-                # Embed abstracts
-                abstracts = list(new_df['abstract'])
-                embeddings = self.embedding_model.invoke(abstracts)
+                # Create job checkpoint for UI tracking
+                from .services.embedding_service import EmbeddingJobCheckpoint
+                from uuid import uuid4
+                job_id = uuid4()
+                checkpoint_mgr = EmbeddingJobCheckpoint()
                 
-                # Convert 2D embeddings array to list of 1D arrays for pandas
-                if hasattr(embeddings, 'tolist'):
-                    embeddings_list = embeddings.tolist()
-                elif isinstance(embeddings, list):
-                    embeddings_list = embeddings
-                else:
-                    # Handle numpy arrays or other tensor types
-                    import numpy as np
-                    embeddings_array = np.array(embeddings)
-                    embeddings_list = [embeddings_array[i] for i in range(len(embeddings_array))]
+                # Initialize checkpoint
+                checkpoint_mgr.save(
+                    job_id=job_id,
+                    operation="profile_aware_embed",
+                    parameters={
+                        "start_date": self.start_date.strftime('%Y-%m-%d'),
+                        "end_date": self.end_date.strftime('%Y-%m-%d'),
+                        "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown"
+                    },
+                    progress={
+                        "total_papers": len(new_df),
+                        "processed_papers": 0,
+                        "offset": 0
+                    },
+                    statistics={
+                        "papers_embedded": 0,
+                        "papers_failed": 0
+                    }
+                )
                 
-                new_df['abstract_embedding'] = embeddings_list
+                if self.verbose:
+                    print(f"📋 Created embedding job for UI tracking: {job_id}")
+                
+                # Embed abstracts in batches to avoid memory issues
+                batch_size = getattr(self, 'batch_size', 100)
+                all_embeddings = []
+                processed_count = 0
+                
+                try:
+                    for i in tqdm(range(0, len(new_df), batch_size), 
+                                 desc="Embedding batches", disable=not self.verbose):
+                        batch_df = new_df.iloc[i:i+batch_size]
+                        abstracts = list(batch_df['abstract'])
+                        batch_embeddings = self.embedding_model.invoke(abstracts)
+                        all_embeddings.extend(batch_embeddings)
+                        
+                        processed_count += len(batch_df)
+                        
+                        # Update checkpoint every 500 papers for more frequent UI updates
+                        if processed_count % 500 == 0:
+                            checkpoint_mgr.save(
+                                job_id=job_id,
+                                operation="profile_aware_embed",
+                                parameters={
+                                    "start_date": self.start_date.strftime('%Y-%m-%d'),
+                                    "end_date": self.end_date.strftime('%Y-%m-%d'),
+                                    "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown"
+                                },
+                                progress={
+                                    "total_papers": len(new_df),
+                                    "processed_papers": processed_count,
+                                    "offset": processed_count
+                                },
+                                statistics={
+                                    "papers_embedded": processed_count,
+                                    "papers_failed": 0
+                                }
+                            )
+                    
+                    embeddings = all_embeddings
+                    
+                    # Convert 2D embeddings array to list of 1D arrays for pandas
+                    if hasattr(embeddings, 'tolist'):
+                        embeddings_list = embeddings.tolist()
+                    elif isinstance(embeddings, list):
+                        embeddings_list = embeddings
+                    else:
+                        # Handle numpy arrays or other tensor types
+                        import numpy as np
+                        embeddings_array = np.array(embeddings)
+                        embeddings_list = [embeddings_array[i] for i in range(len(embeddings_array))]
+                    
+                    new_df['abstract_embedding'] = embeddings_list
+                    
+                    # Final checkpoint update
+                    checkpoint_mgr.save(
+                        job_id=job_id,
+                        operation="profile_aware_embed",
+                        parameters={
+                            "start_date": self.start_date.strftime('%Y-%m-%d'),
+                            "end_date": self.end_date.strftime('%Y-%m-%d'),
+                            "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown"
+                        },
+                        progress={
+                            "total_papers": len(new_df),
+                            "processed_papers": len(new_df),
+                            "offset": len(new_df)
+                        },
+                        statistics={
+                            "papers_embedded": len(new_df),
+                            "papers_failed": 0
+                        }
+                    )
+                    
+                    # Clean up checkpoint after successful completion
+                    checkpoint_mgr.delete(job_id)
+                    
+                    if self.verbose:
+                        print(f"✅ Embedded {len(new_df)} papers")
+                        print(f"🗑️  Cleaned up job checkpoint: {job_id}")
+                        
+                except Exception as e:
+                    # On failure, update checkpoint but DON'T delete
+                    checkpoint_mgr.save(
+                        job_id=job_id,
+                        operation="profile_aware_embed",
+                        parameters={
+                            "start_date": self.start_date.strftime('%Y-%m-%d'),
+                            "end_date": self.end_date.strftime('%Y-%m-%d'),
+                            "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown",
+                            "error": str(e)
+                        },
+                        progress={
+                            "total_papers": len(new_df),
+                            "processed_papers": processed_count,
+                            "offset": processed_count
+                        },
+                        statistics={
+                            "papers_embedded": processed_count,
+                            "papers_failed": len(new_df) - processed_count
+                        }
+                    )
+                    
+                    if self.verbose:
+                        print(f"❌ Embedding failed at {processed_count}/{len(new_df)} papers")
+                        print(f"💾 Job checkpoint preserved for debugging: {job_id}")
+                    
+                    # Re-raise the exception
+                    raise
                 
                 # Calculate cosine similarity with research interests
                 if self.research_interests and self.research_interests.strip():
@@ -2693,7 +2812,7 @@ Theseus Insight Team
                 progress_callback("filter", 35, f"Filtered to {len(papers_to_embed)} papers needing embeddings")
 
             # -----------
-            # Stage 3: Embed Papers
+            # Stage 3: Embed Papers (Memory-Safe with Chunking)
             # -----------
             embedded_count = 0
             if len(papers_to_embed) > 0:
@@ -2703,37 +2822,174 @@ Theseus Insight Team
                 embedded_df = self._load_checkpoint('papers_embedded')
                 if embedded_df is None:
                     if self.verbose:
-                        print(f"\n🧠 STAGE 3: EMBEDDING {len(papers_to_embed)} PAPERS")
+                        print(f"\n🧠 STAGE 3: EMBEDDING {len(papers_to_embed)} PAPERS (Memory-Safe)")
                         print("="*40)
                     
-                    # Process in batches
-                    batch_size = getattr(self, 'batch_size', 100)
-                    all_embeddings = []
+                    # Create job checkpoint for UI tracking
+                    from .services.embedding_service import EmbeddingJobCheckpoint
+                    from uuid import uuid4
+                    job_id = uuid4()
+                    checkpoint_mgr = EmbeddingJobCheckpoint()
                     
-                    for i in tqdm(range(0, len(papers_to_embed), batch_size), 
-                                 desc="Embedding batches", disable=not self.verbose):
-                        batch = papers_to_embed.iloc[i:i+batch_size]
-                        abstracts = batch['abstract'].tolist()
-                        
-                        # Embed batch
-                        embeddings = self.embedding_model.invoke(abstracts)
-                        all_embeddings.extend(embeddings)
-                        
-                        # Update progress
-                        if progress_callback:
-                            embed_progress = 36 + (i / len(papers_to_embed)) * 40
-                            progress_callback("embed", embed_progress, f"Embedded {min(i+batch_size, len(papers_to_embed))}/{len(papers_to_embed)} papers")
-                    
-                    # Add embeddings to dataframe
-                    papers_to_embed['abstract_embedding'] = all_embeddings
-                    papers_to_embed['cosine_similarity'] = [0.0] * len(papers_to_embed)  # No similarity calculation needed
-                    
-                    embedded_df = papers_to_embed
-                    embedded_count = len(embedded_df)
-                    self._save_checkpoint('papers_embedded', embedded_df)
+                    # Initialize checkpoint
+                    checkpoint_mgr.save(
+                        job_id=job_id,
+                        operation="profile_aware_embed",
+                        parameters={
+                            "start_date": self.start_date,
+                            "end_date": self.end_date,
+                            "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown"
+                        },
+                        progress={
+                            "total_papers": len(papers_to_embed),
+                            "processed_papers": 0,
+                            "offset": 0
+                        },
+                        statistics={
+                            "papers_embedded": 0,
+                            "papers_failed": 0
+                        }
+                    )
                     
                     if self.verbose:
-                        print(f"✅ Embedded {embedded_count} papers")
+                        print(f"📋 Created embedding job for UI tracking: {job_id}")
+                    
+                    # Use chunked processing to avoid memory issues
+                    batch_size = getattr(self, 'batch_size', 100)
+                    chunk_size = 10000  # Process 10K papers per chunk, then flush
+                    all_embeddings = []
+                    papers_to_save = []
+                    processed_count = 0
+                    
+                    try:
+                        for i in tqdm(range(0, len(papers_to_embed), batch_size), 
+                                     desc="Embedding batches", disable=not self.verbose):
+                            batch = papers_to_embed.iloc[i:i+batch_size]
+                            abstracts = batch['abstract'].tolist()
+                            
+                            # Embed batch
+                            embeddings = self.embedding_model.invoke(abstracts)
+                            
+                            # Store embeddings with paper data
+                            for j, (idx, row) in enumerate(batch.iterrows()):
+                                embedding = embeddings[j]
+                                all_embeddings.append(embedding)
+                                papers_to_save.append((idx, embedding))
+                            
+                            processed_count += len(batch)
+                            
+                            # Update checkpoint every 1000 papers for UI
+                            if processed_count % 1000 == 0:
+                                checkpoint_mgr.save(
+                                    job_id=job_id,
+                                    operation="profile_aware_embed",
+                                    parameters={
+                                        "start_date": self.start_date,
+                                        "end_date": self.end_date,
+                                        "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown"
+                                    },
+                                    progress={
+                                        "total_papers": len(papers_to_embed),
+                                        "processed_papers": processed_count,
+                                        "offset": processed_count
+                                    },
+                                    statistics={
+                                        "papers_embedded": processed_count,
+                                        "papers_failed": 0
+                                    }
+                                )
+                            
+                            # Flush to disk periodically to free memory
+                            if len(papers_to_save) >= chunk_size:
+                                # Create partial dataframe with embeddings
+                                indices = [idx for idx, _ in papers_to_save]
+                                embs = [emb for _, emb in papers_to_save]
+                                papers_to_embed.loc[indices, 'abstract_embedding'] = embs
+                                papers_to_embed.loc[indices, 'cosine_similarity'] = [0.0] * len(embs)
+                                
+                                if self.verbose:
+                                    print(f"💾 Flushed {len(papers_to_save)} papers to memory")
+                                
+                                # Clear buffers
+                                papers_to_save = []
+                                
+                                # Force garbage collection to free memory
+                                import gc
+                                gc.collect()
+                            
+                            # Update progress
+                            if progress_callback:
+                                embed_progress = 36 + (i / len(papers_to_embed)) * 40
+                                progress_callback("embed", embed_progress, f"Embedded {min(i+batch_size, len(papers_to_embed))}/{len(papers_to_embed)} papers")
+                        
+                        # Flush any remaining papers
+                        if papers_to_save:
+                            indices = [idx for idx, _ in papers_to_save]
+                            embs = [emb for _, emb in papers_to_save]
+                            papers_to_embed.loc[indices, 'abstract_embedding'] = embs
+                            papers_to_embed.loc[indices, 'cosine_similarity'] = [0.0] * len(embs)
+                        
+                        # Final assignment
+                        embedded_df = papers_to_embed
+                        embedded_count = len(embedded_df)
+                        self._save_checkpoint('papers_embedded', embedded_df)
+                        
+                        # Final checkpoint update
+                        checkpoint_mgr.save(
+                            job_id=job_id,
+                            operation="profile_aware_embed",
+                            parameters={
+                                "start_date": self.start_date,
+                                "end_date": self.end_date,
+                                "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown"
+                            },
+                            progress={
+                                "total_papers": len(papers_to_embed),
+                                "processed_papers": embedded_count,
+                                "offset": embedded_count
+                            },
+                            statistics={
+                                "papers_embedded": embedded_count,
+                                "papers_failed": 0
+                            }
+                        )
+                        
+                        # Clean up checkpoint after successful completion
+                        checkpoint_mgr.delete(job_id)
+                        
+                        if self.verbose:
+                            print(f"✅ Embedded {embedded_count} papers")
+                            print(f"🗑️  Cleaned up job checkpoint: {job_id}")
+                            
+                    except Exception as e:
+                        # On failure, update checkpoint but DON'T delete
+                        # This allows the UI to show the hung job and where it stopped
+                        checkpoint_mgr.save(
+                            job_id=job_id,
+                            operation="profile_aware_embed",
+                            parameters={
+                                "start_date": self.start_date,
+                                "end_date": self.end_date,
+                                "model_name": self.embedding_model.model_name if hasattr(self.embedding_model, 'model_name') else "unknown",
+                                "error": str(e)  # Include error in parameters for debugging
+                            },
+                            progress={
+                                "total_papers": len(papers_to_embed),
+                                "processed_papers": processed_count,
+                                "offset": processed_count
+                            },
+                            statistics={
+                                "papers_embedded": processed_count,
+                                "papers_failed": len(papers_to_embed) - processed_count
+                            }
+                        )
+                        
+                        if self.verbose:
+                            print(f"❌ Embedding failed at {processed_count}/{len(papers_to_embed)} papers")
+                            print(f"💾 Job checkpoint preserved for debugging: {job_id}")
+                        
+                        # Re-raise the exception
+                        raise
                 else:
                     embedded_count = len(embedded_df)
                     if self.verbose:

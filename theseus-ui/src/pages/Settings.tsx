@@ -2040,9 +2040,29 @@ const Settings: React.FC = () => {
                       type="number"
                       value={performanceConfig.embedding_batch_size}
                       onChange={(e) => handlePerformanceConfigChange('embedding_batch_size', parseInt(e.target.value))}
-                      helperText="Embeddings computed per batch"
+                      helperText={performanceConfig.auto_tune_batch_size ? "Auto-tuned on first run" : "Embeddings computed per batch"}
                       inputProps={{ min: 32, max: 2048 }}
+                      disabled={performanceConfig.auto_tune_batch_size}
                     />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={performanceConfig.auto_tune_batch_size !== false}
+                          onChange={(e) => handlePerformanceConfigChange('auto_tune_batch_size', e.target.checked)}
+                        />
+                      }
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          Auto-tune Batch Size
+                          <Tooltip title="Automatically optimizes batch size for your hardware on first run. Recommended for best performance.">
+                            <InfoOutlinedIcon fontSize="small" />
+                          </Tooltip>
+                        </Box>
+                      }
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                      Auto-tuning tests 256, 512, 1024, and 2048 batch sizes to find optimal throughput for your GPU
+                    </Typography>
                   </Box>
                   <Box sx={{ flex: '1 1 300px' }}>
                     <TextField

@@ -1003,6 +1003,7 @@ class ProfileAwareIngestRequest(BaseModel):
     overwrite_existing: bool = False
     cosine_threshold: float = 0.5
     arxiv_categories: Optional[List[str]] = None
+    use_profile_arxiv_filters: bool = True  # Use arXiv filters from selected profiles
     batch_size: int = 10
     send_error_notifications: bool = False
     # Multi-server configuration (only used when LLM-as-Judge uses Ollama)

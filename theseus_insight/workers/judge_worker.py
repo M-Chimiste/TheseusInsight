@@ -93,16 +93,24 @@ class JudgeWorker:
         self.interests_cache = {}
         self.profile_cache = {}
         
-        # Load judge model configuration from database if not provided
-        if judge_model_config is None:
-            judge_model_config = self._load_judge_config()
-
-        # Merge server-specific model configuration with global config
-        # Priority: server config → global config → defaults
-        self.judge_model_config = self._merge_model_configs(
-            global_config=judge_model_config,
-            server_model_name=server_model_name,
-            server_model_config=server_model_config
+        # Load judge model config from database settings
+        judge_config = self._load_judge_config()
+        model_name = judge_config.get('model_name', 'phi4-mini:3.8b-q8_0')
+        max_new_tokens = judge_config.get('max_new_tokens', 512)
+        temperature = judge_config.get('temperature', 0.1)
+        num_ctx = judge_config.get('num_ctx', 4096)
+        
+        logger.info(f"Loaded judge model config: {model_name}")
+        
+        # Initialize Ollama client once
+        from ..inference.llm import OllamaInference
+        self.ollama_client = OllamaInference(
+            model_name=model_name,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            num_ctx=num_ctx,
+            url=server_url,
+            request_timeout=timeout
         )
         logger.info(f"Using judge model: {self.judge_model_config.get('model_name')} (type: {self.judge_model_config.get('model_type')})")
         if server_model_name or server_model_config:
@@ -136,129 +144,32 @@ class JudgeWorker:
         logger.info(f"Initialized {provider} worker {self.worker_id} for server {server_url}")
         logger.info(f"Logging to {log_file}")
 
-    def _create_inference_client(
-        self,
-        judge_model_config: dict,
-        server_url: str,
-        provider: str,
-        config_json: dict,
-        timeout: int
-    ):
-        """Create appropriate inference client based on provider."""
-        from LLMFactory import LLMModelFactory
-
-        model_name = judge_model_config.get('model_name', 'phi4-mini:3.8b-q8_0')
-        max_new_tokens = judge_model_config.get('max_new_tokens', 512)
-        temperature = judge_model_config.get('temperature', 0.1)
-
-        if provider.lower() == 'ollama':
-            return LLMModelFactory.create_model(
-                model_type='ollama',
-                model_name=model_name,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                num_ctx=judge_model_config.get('num_ctx', 4096),
-                url=server_url,
-                request_timeout=timeout
-            )
-        elif provider.lower() == 'lmstudio':
-            # Extract LMStudio-specific config
-            context_length = config_json.get('context_length', 8192)
-            gpu_offload = config_json.get('gpu_offload', 'max')
-
-            return LLMModelFactory.create_model(
-                model_type='lmstudio',
-                model_name=model_name,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                host=server_url,
-                context_length=context_length,
-                gpu_offload=gpu_offload
-            )
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
-
     def _load_judge_config(self) -> dict:
-        """Load judge model configuration from database settings or config file."""
+        """Load judge model configuration from database settings."""
         try:
-            # Try to load from database first
-            with self.conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                cur.execute("SELECT value FROM settings WHERE key = %s", ('orchestration',))
-                row = cur.fetchone()
-                
-                if row and row['value']:
-                    orchestration_config = json.loads(row['value'])
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key = 'orchestration'")
+                result = cur.fetchone()
+                if result and result[0]:
+                    orchestration_config = json.loads(result[0])
                     judge_config = orchestration_config.get('judge_model', {})
                     if judge_config:
-                        logger.info("Loaded judge model config from database settings")
+                        logger.info(f"Loaded judge config from database: {judge_config.get('model_name', 'unknown')}")
                         return judge_config
+                    else:
+                        logger.warning("No judge_model found in orchestration config, using defaults")
+                else:
+                    logger.warning("No orchestration config found in database, using defaults")
         except Exception as e:
-            logger.warning(f"Failed to load judge config from database: {e}")
+            logger.error(f"Failed to load judge config from database: {e}")
         
-        # Fallback to config file
-        try:
-            import pathlib
-            project_root = pathlib.Path(__file__).parent.parent.parent
-            config_path = project_root / "config" / "orchestration.json"
-            
-            if config_path.exists():
-                with open(config_path) as f:
-                    orchestration_config = json.load(f)
-                    judge_config = orchestration_config.get('judge_model', {})
-                    if judge_config:
-                        logger.info("Loaded judge model config from file")
-                        return judge_config
-        except Exception as e:
-            logger.warning(f"Failed to load judge config from file: {e}")
-        
-        # Ultimate fallback to hardcoded defaults
-        logger.warning("Using hardcoded default judge model config")
+        # Return default config if loading fails
         return {
             'model_name': 'phi4-mini:3.8b-q8_0',
-            'model_type': 'ollama',
             'max_new_tokens': 512,
             'temperature': 0.1,
             'num_ctx': 4096
         }
-
-    def _merge_model_configs(
-        self,
-        global_config: dict,
-        server_model_name: Optional[str],
-        server_model_config: Optional[dict]
-    ) -> dict:
-        """
-        Merge global and server-specific model configs.
-
-        Priority (highest to lowest):
-        1. server_model_config fields (per-server overrides)
-        2. global_config fields
-        3. Defaults (already in global_config)
-
-        Args:
-            global_config: Global judge_model from orchestration settings
-            server_model_name: Override model name for this server
-            server_model_config: Override parameters for this server
-
-        Returns:
-            Merged configuration dictionary
-        """
-        # Start with a copy of the global configuration
-        merged = global_config.copy()
-
-        # Override model name if server specifies one
-        if server_model_name:
-            merged['model_name'] = server_model_name
-            logger.debug(f"Overriding model_name with per-server value: {server_model_name}")
-
-        # Override individual parameters if server specifies them
-        if server_model_config:
-            for key, value in server_model_config.items():
-                if value is not None:
-                    merged[key] = value
-                    logger.debug(f"Overriding {key} with per-server value: {value}")
-
-        return merged
 
     def start(self):
         """Start the worker process."""

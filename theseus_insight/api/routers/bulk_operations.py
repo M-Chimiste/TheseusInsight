@@ -50,6 +50,7 @@ class BulkJudgeRequest(BaseModel):
     limit: Optional[int] = Field(None, description="Limit number of papers to judge")
     start_date: Optional[str] = Field(None, description="Start date for papers")
     end_date: Optional[str] = Field(None, description="End date for papers")
+    use_profile_arxiv_filters: bool = Field(True, description="Use arXiv category filters from selected profiles (if available)")
 
     # Multi-server configuration
     use_multi_server: bool = Field(False, description="Use multiple Ollama servers for distributed processing")
@@ -108,56 +109,141 @@ def _filter_valid_abstracts(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]
             filtered.append(p)
     return filtered
 
-def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str]) -> int:
+async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Optional[str]) -> int:
     """Ensure all papers in the date range have embeddings before judging.
+    
+    Uses StreamingEmbeddingService for memory-efficient processing of large datasets.
     Returns number of embeddings computed.
     """
     if not date_from and not date_to:
         return 0
 
-    # Only fetch papers missing embeddings to avoid unnecessary work
-    logger.info(f"🔍 Preflight: fetching papers missing embeddings in range {date_from}..{date_to}")
-    missing = PaperRepository.get_papers_missing_embeddings_in_date_range(start_date=date_from, end_date=date_to)
-    if not missing:
+    # Check if any papers need embeddings
+    count = PaperRepository.count_papers_missing_embeddings_in_date_range(
+        start_date=date_from, 
+        end_date=date_to
+    )
+    
+    if count == 0:
         logger.info("Preflight: all papers already have embeddings; skipping embedding stage")
         return 0
+    
+    logger.info(f"🔍 Preflight: {count} papers missing embeddings in range {date_from}..{date_to}")
+    
+    # Get embedding model config from settings
+    from ...data_access import SettingsRepository
+    import json
+    
+    orchestration_config = SettingsRepository.get_orchestration_config()
+    embedding_config = orchestration_config.get('embedding_model', {})
+    
+    model_name = embedding_config.get('model_name', 'Alibaba-NLP/gte-large-en-v1.5')
+    trust_remote_code = embedding_config.get('trust_remote_code', True)
+    
+    logger.info(f"📋 Using embedding model from settings: {model_name}")
+    
+    # Use streaming service for memory-efficient processing
+    from ...services import StreamingEmbeddingService, EmbeddingServiceConfig
+    
+    config = EmbeddingServiceConfig(
+        # chunk_size uses default (5000) for Metal GPU compatibility
+        # gpu_batch_size will be auto-tuned, capped at max_batch_size for Metal GPU
+        model_name=model_name,
+        trust_remote_code=trust_remote_code,
+        auto_tune_batch_size=True,
+        db_flush_interval=1000,
+        verbose=True
+    )
+    
+    service = StreamingEmbeddingService(config)
+    
+    # Generate job ID for tracking in UI
+    job_id = uuid4()
+    logger.info(f"📋 Created embedding job: {job_id}")
+    
+    # Run embedding with progress logging
+    def log_progress(current, total):
+        if current % 10000 == 0 or current == total:
+            logger.info(f"📊 Embedding progress: {current}/{total} papers ({100*current/total:.1f}%)")
+    
+    stats = await service.embed_papers_in_date_range(
+        start_date=date_from,
+        end_date=date_to,
+        job_id=job_id,  # Pass job_id for UI tracking
+        progress_callback=log_progress
+    )
+    
+    logger.info(f"✅ Preflight: embedded {stats['papers_embedded']} papers in {stats['elapsed_seconds']:.1f}s")
+    logger.info(f"⚡ Throughput: {stats['papers_per_second']:.1f} papers/second")
+    
+    if stats['papers_failed'] > 0:
+        logger.warning(f"⚠️  {stats['papers_failed']} papers failed to embed")
+    
+    return stats['papers_embedded']
 
-    logger.info(f"Preflight: {len(missing)} papers missing embeddings after filtering for non-empty title/abstract")
 
-    # Compute embeddings in batches
-    logger.info(f"🧠 Preflight: embedding {len(missing)} papers in batches")
-    model = SentenceTransformerInference()
-    model_name = model.model_name  # Get the actual model name being used
-    batch_size = 128
-    updates: List[Tuple[int, List[float]]] = []
-    for i in range(0, len(missing), batch_size):
-        batch = missing[i:i+batch_size]
-        texts = [p['abstract'] for p in batch]
-        logger.info(f"🧪 Embedding batch {i//batch_size + 1}/{(len(missing)+batch_size-1)//batch_size} (papers {i+1}-{i+len(batch)})")
-        embs = model.invoke(
-            text=texts,
-            batch_size=batch_size,
-            show_progress_bar=False,
-            to_list=True,
-            convert_to_numpy=True
-        )
-        for p, emb in zip(batch, embs):
+def _merge_profile_arxiv_filters(profile_ids: List[int]) -> Optional[Dict[str, Any]]:
+    """
+    Merge arXiv filters from multiple profiles.
+    Returns merged filters with union of all categories, or None if no filters found.
+    """
+    from ...data_access.profiles import ProfileRepository
+    import json
+    
+    all_categories = set()
+    main_categories = set()
+    has_filters = False
+    
+    for profile_id in profile_ids:
+        profile = ProfileRepository.get_by_id(profile_id)
+        if not profile:
+            continue
+            
+        arxiv_filters = profile.get('arxiv_filters')
+        if not arxiv_filters:
+            continue
+            
+        # Parse JSON if it's a string
+        if isinstance(arxiv_filters, str):
             try:
-                vector = emb.tolist() if hasattr(emb, 'tolist') else list(emb)
-            except Exception:
-                vector = emb
-            updates.append((p['id'], vector))
-
-    if updates:
-        PaperRepository.bulk_update_embeddings(updates, embedding_model=model_name)
-        logger.info(f"✅ Preflight: updated embeddings for {len(updates)} papers using model {model_name}")
-    return len(updates)
-
+                arxiv_filters = json.loads(arxiv_filters)
+            except json.JSONDecodeError:
+                continue
+        
+        if arxiv_filters and isinstance(arxiv_filters, dict):
+            has_filters = True
+            
+            # Get filter_categories (subcategories like cs.AI, cs.CL)
+            filter_cats = arxiv_filters.get('filter_categories', [])
+            if filter_cats:
+                all_categories.update(filter_cats)
+                
+                # Extract main categories from subcategories
+                for cat in filter_cats:
+                    if '.' in cat:
+                        main_cat = cat.split('.')[0]
+                        main_categories.add(main_cat)
+            
+            # Get main_category
+            main_cat = arxiv_filters.get('main_category')
+            if main_cat:
+                main_categories.add(main_cat)
+    
+    if not has_filters:
+        return None
+    
+    # Return merged filters
+    return {
+        'main_category': list(main_categories)[0] if main_categories else None,
+        'filter_categories': list(all_categories) if all_categories else None
+    }
 
 def _download_arxiv_for_range(
     date_from: Optional[str], 
     date_to: Optional[str],
-    overwrite_existing: bool = False
+    overwrite_existing: bool = False,
+    profile_ids: Optional[List[int]] = None,
+    use_profile_arxiv_filters: bool = True
 ) -> Dict[str, int]:
     """Download papers from arXiv for the given range and insert into DB.
     
@@ -166,6 +252,8 @@ def _download_arxiv_for_range(
         date_to: End date for the range
         overwrite_existing: If True, download regardless of existing data.
                           If False, skip download if papers exist.
+        profile_ids: List of profile IDs to use for arXiv filtering
+        use_profile_arxiv_filters: If True, use arXiv filters from profiles
     
     Returns:
         Stats dict {total, imported, skipped, errors} from bulk_insert.
@@ -173,6 +261,24 @@ def _download_arxiv_for_range(
     if not date_from and not date_to:
         logger.info("Preflight: no date range provided; skipping arXiv download")
         return {"total": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+    # Determine arXiv filters
+    category = None
+    subcategories = None
+    
+    if use_profile_arxiv_filters and profile_ids:
+        merged_filters = _merge_profile_arxiv_filters(profile_ids)
+        if merged_filters:
+            category = merged_filters.get('main_category')
+            subcategories = merged_filters.get('filter_categories')
+            logger.info(
+                f"🏷️  Preflight: using profile arXiv filters - "
+                f"main_category={category}, filter_categories={subcategories}"
+            )
+        else:
+            logger.info("ℹ️  Preflight: no arXiv filters found in profiles, downloading all categories")
+    else:
+        logger.info("ℹ️  Preflight: profile filtering disabled, downloading all arXiv categories")
 
     # Check for existing papers and decide whether to skip download
     try:
@@ -196,7 +302,13 @@ def _download_arxiv_for_range(
     logger.info(f"📡 Preflight: downloading arXiv papers for range {date_from}..{date_to}")
     try:
         # Force Kaggle via explicit flag to avoid persistent env state
-        proc = ArxivDataProcessor(start_date=date_from, end_date=date_to, category=None, subcategories=None, force_kaggle=True)
+        proc = ArxivDataProcessor(
+            start_date=date_from, 
+            end_date=date_to, 
+            category=category, 
+            subcategories=subcategories, 
+            force_kaggle=True
+        )
         df = proc.download_and_process_data()
     except Exception as e:
         logger.warning(f"Preflight: arXiv download failed: {e}")
@@ -280,8 +392,29 @@ async def run_bulk_judge_task(
     """Run bulk judge operation in background."""
     print(f"🎯 Background task started: run_bulk_judge_task for job {job_id}")
     try:
-        pool = await get_connection_pool()
-        runner = BulkJudgeRunner(pool=pool, checkpoint_manager=checkpoint_manager, job_id=job_id)
+        # Get orchestration config for judge model
+        from ...data_access import SettingsRepository
+        import json
+        
+        orch_json = SettingsRepository.get("orchestration")
+        if not orch_json:
+            await checkpoint_manager.fail_job(job_id, "Orchestration configuration not found")
+            raise ValueError("Orchestration configuration not found")
+        
+        orch_config = json.loads(orch_json)
+        judge_config = orch_config.get('judge_model', {})
+        
+        if not judge_config:
+            await checkpoint_manager.fail_job(job_id, "Judge model configuration not found in orchestration config")
+            raise ValueError("Judge model configuration not found")
+        
+        # Initialize runner with proper judge model config
+        runner = BulkJudgeRunner(
+            judge_model_config=judge_config,
+            verbose=True,
+            use_optimized_scorer=True,
+            checkpoint_manager=checkpoint_manager
+        )
         
         await runner.run_bulk_judge(
             profile_ids=request.profile_ids,
@@ -791,6 +924,51 @@ async def _start_bulk_judge_operation(
                 detail=f"A single-server bulk judge job is running: {conflict_details}. " +
                        f"Either wait for it to complete, or enable multi-server mode to process in parallel."
             )
+        
+        # Check for multi-server bulk judge jobs with overlapping servers
+        if request.use_multi_server:
+            multi_server_bulk_judge = [
+                job for job in conflict_data["conflicts"]
+                if job["job_type"] == 'bulk_judge' and job.get("multi_server", False)
+            ]
+            
+            if multi_server_bulk_judge:
+                # Check for server overlap
+                requested_servers = set(request.server_ids) if request.server_ids else None
+                
+                for running_job in multi_server_bulk_judge:
+                    running_servers = running_job.get("servers", [])
+                    if not running_servers:
+                        # If running job has no specific servers, it's using all available servers
+                        # This creates a potential conflict
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"A multi-server bulk judge job is already using all available Ollama servers. "
+                                   f"Job: {running_job['job_type']} ({running_job['description']}). "
+                                   f"Recommendation: Wait for it to complete, or ensure it has specific servers assigned."
+                        )
+                    
+                    running_server_ids = set(running_servers) if isinstance(running_servers, list) else set()
+                    
+                    # If we didn't specify servers, we want to use all available servers
+                    if requested_servers is None:
+                        # Check if there's any multi-server job running at all
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Cannot start multi-server job using all servers while another multi-server job is running. "
+                                   f"Running job: {running_job['job_type']} ({running_job['description']}). "
+                                   f"Recommendation: Specify specific server_ids that don't overlap, or wait for the job to complete."
+                        )
+                    
+                    # Check for overlap between requested and running servers
+                    overlap = requested_servers & running_server_ids
+                    if overlap:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Server conflict: The following Ollama servers are already in use by another bulk judge job: {sorted(overlap)}. "
+                                   f"Running job: {running_job['job_type']} ({running_job['description']}). "
+                                   f"Recommendation: Use different server_ids that don't overlap, or wait for the job to complete."
+                        )
 
     # Validate multi-server configuration if enabled
     selected_servers = []
@@ -830,6 +1008,25 @@ async def _start_bulk_judge_operation(
                 status_code=400,
                 detail="No valid servers available for multi-server processing"
             )
+        
+        # Validate that judge model is Ollama (multi-server only supports Ollama)
+        from ...data_access import SettingsRepository
+        import json
+        
+        orch_json = SettingsRepository.get("orchestration")
+        if orch_json:
+            orch_config = json.loads(orch_json)
+            judge_config = orch_config.get('judge_model', {})
+            model_type = judge_config.get('model_type', '').lower()
+            
+            if model_type != 'ollama':
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Multi-server mode only supports Ollama models. Current judge model type: {model_type}. "
+                           f"Please switch to an Ollama model in Settings → Orchestration Config or disable multi-server mode."
+                )
+            
+            print(f"✅ Validated judge model is Ollama: {judge_config.get('model_name', 'unknown')}")
 
     # Suspend scheduled tasks if requested
     suspended_tasks_snapshot = []
@@ -866,50 +1063,64 @@ async def _start_bulk_judge_operation(
 
     # Start appropriate background task
     if request.use_multi_server:
-        # Preflight: ensure downloads/embeddings done before spinning up workers
-        # Download new papers from arXiv for this range and insert them
-        # Skip download only if overwrite_existing is False and papers exist
-        try:
-            dl_stats = _download_arxiv_for_range(
-                request.start_date, 
-                request.end_date,
-                overwrite_existing=request.overwrite_existing
-            )
-            logger.info(f"Preflight download stats: {dl_stats}")
-        except Exception as pre_dle:
-            logger.warning(f"Preflight arXiv download failed or partial: {pre_dle}")
-
-        # Then, ensure embeddings for all papers in range
-        try:
-            pre_embedded = _ensure_embeddings_for_range(request.start_date, request.end_date)
-            logger.info(f"Preflight embeddings ensured for {pre_embedded} papers")
-        except Exception as pre_e:
-            logger.warning(f"Preflight embedding stage failed or partial: {pre_e}")
-
-        # Enqueue tasks synchronously (dynamic pool; no server pre-assignment)
-        queue_producer = JudgeQueueProducer()
+        # Convert profile IDs to integers for use throughout
         profile_ids_int = [int(pid) for pid in request.profile_ids] if request.profile_ids else None
-        result = queue_producer.enqueue_bulk_judge_job(
-            job_id=created_job_id,
-            profile_ids=profile_ids_int,
-            date_from=request.start_date,
-            date_to=request.end_date,
-            overwrite_existing=request.overwrite_existing,
-            create_processing_job=False,
-            server_urls=None  # dynamic pooling
-        )
         
-        print(f"📊 Queue producer result: {result}")
+        # Run arXiv download + embedding + judging in background task (async, non-blocking)
+        # This allows the response to return immediately and UI to stay responsive
+        async def run_download_embedding_and_judging():
+            """Background task: download papers, embed them, then launch judge workers"""
+            # Step 1: Download papers from arXiv
+            try:
+                dl_stats = _download_arxiv_for_range(
+                    request.start_date, 
+                    request.end_date,
+                    overwrite_existing=request.overwrite_existing,
+                    profile_ids=profile_ids_int,
+                    use_profile_arxiv_filters=request.use_profile_arxiv_filters
+                )
+                logger.info(f"✅ ArXiv download complete: {dl_stats}")
+            except Exception as dl_e:
+                logger.error(f"❌ ArXiv download failed: {dl_e}")
+                await checkpoint_manager.fail_job(created_job_id, f"ArXiv download failed: {str(dl_e)}")
+                return
+
+            # Step 2: Ensure embeddings for all papers in range
+            try:
+                pre_embedded = await _ensure_embeddings_for_range(request.start_date, request.end_date)
+                logger.info(f"✅ Embeddings ensured for {pre_embedded} papers")
+            except Exception as pre_e:
+                logger.error(f"❌ Embedding stage failed: {pre_e}")
+                await checkpoint_manager.fail_job(created_job_id, f"Embedding failed: {str(pre_e)}")
+                return
+
+            try:
+                # Enqueue judge tasks
+                queue_producer = JudgeQueueProducer()
+                result = queue_producer.enqueue_bulk_judge_job(
+                    job_id=created_job_id,
+                    profile_ids=profile_ids_int,
+                    date_from=request.start_date,
+                    date_to=request.end_date,
+                    overwrite_existing=request.overwrite_existing,
+                    create_processing_job=False,
+                    server_urls=None  # dynamic pooling
+                )
+                
+                logger.info(f"📊 Queue producer result: {result}")
+                
+                # Launch worker processes
+                await _launch_worker_processes(created_job_id, selected_servers, request.request_timeout_sec, request.max_retries)
+                
+                # Monitor the job
+                await _monitor_multi_server_job(created_job_id, checkpoint_manager)
+                
+            except Exception as e:
+                logger.error(f"Error in judging phase: {e}")
+                await checkpoint_manager.fail_job(created_job_id, f"Judging failed: {str(e)}")
         
-        # Launch workers immediately (not in background task)
-        await _launch_worker_processes(created_job_id, selected_servers, request.request_timeout_sec, request.max_retries)
-        
-        # Use queue-based multi-server processing
-        background_tasks.add_task(
-            _monitor_multi_server_job,
-            created_job_id,
-            checkpoint_manager
-        )
+        # Add the entire workflow (download → embed → judge) as a background task
+        background_tasks.add_task(run_download_embedding_and_judging)
     else:
         # Use traditional single-server processing
         background_tasks.add_task(

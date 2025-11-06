@@ -459,9 +459,65 @@ class PaperRepository:
 
     @staticmethod
     def without_embeddings() -> List[Dict[str, Any]]:
+        """Get all papers without embeddings.
+        
+        WARNING: This method loads ALL papers into memory.
+        For large datasets, use without_embeddings_paginated() instead.
+        """
         with get_cursor() as cur:
             cur.execute("SELECT * FROM papers WHERE embedding IS NULL ORDER BY id DESC")
             return cur.fetchall()
+
+    @staticmethod
+    def without_embeddings_paginated(limit: int = 10000, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get papers without embeddings with pagination support.
+        
+        This method enables streaming/chunked processing for large datasets.
+        Only returns essential fields (id, title, abstract) to minimize memory usage.
+        
+        Args:
+            limit: Maximum papers to return in this batch
+            offset: Number of papers to skip (for pagination)
+            
+        Returns:
+            List of paper dicts with id, title, abstract
+        """
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, title, abstract 
+                FROM papers 
+                WHERE embedding IS NULL
+                  AND LENGTH(TRIM(COALESCE(title, ''))) > 0 
+                  AND LENGTH(TRIM(COALESCE(abstract, ''))) > 0
+                ORDER BY id DESC 
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset)
+            )
+            return cur.fetchall()
+
+    @staticmethod
+    def count_without_embeddings() -> int:
+        """Count papers without embeddings.
+        
+        More efficient than fetching all papers when you only need the count.
+        
+        Returns:
+            Count of papers without embeddings
+        """
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) as count 
+                FROM papers 
+                WHERE embedding IS NULL
+                  AND LENGTH(TRIM(COALESCE(title, ''))) > 0 
+                  AND LENGTH(TRIM(COALESCE(abstract, ''))) > 0
+                """
+            )
+            row = cur.fetchone()
+            return int(row['count']) if row and 'count' in row else 0
 
     @staticmethod
     def update_embedding(paper_id: int, embedding: List[float]):
@@ -1042,7 +1098,11 @@ class PaperRepository:
         """Return papers within a date range that are missing embeddings.
 
         Only returns fields needed for embedding preflight to minimize payload.
-        Filters to non-empty title and abstract to avoid embedding useless rows.        """
+        Filters to non-empty title and abstract to avoid embedding useless rows.
+        
+        WARNING: This method loads ALL matching papers into memory.
+        For large datasets, use get_papers_missing_embeddings_in_date_range_paginated() instead.
+        """
         with get_cursor() as cur:
             query = (
                 "SELECT id, title, abstract FROM papers WHERE "
@@ -1065,3 +1125,104 @@ class PaperRepository:
                 {"id": row["id"], "title": row["title"], "abstract": row["abstract"]}
                 for row in rows
             ]
+
+    @staticmethod
+    def get_papers_missing_embeddings_in_date_range_paginated(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 10000,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Return papers missing embeddings in date range with pagination.
+        
+        This method enables streaming/chunked processing for large datasets by
+        fetching papers in batches. Memory usage is constant regardless of total
+        paper count.
+        
+        Args:
+            start_date: Start date (YYYY-MM-DD format, inclusive)
+            end_date: End date (YYYY-MM-DD format, inclusive)
+            limit: Maximum papers to return in this batch
+            offset: Number of papers to skip (for pagination)
+            
+        Returns:
+            List of paper dicts with id, title, abstract
+            
+        Example:
+            # Process in chunks of 10K
+            offset = 0
+            while True:
+                chunk = PaperRepository.get_papers_missing_embeddings_in_date_range_paginated(
+                    "2024-01-01", "2024-12-31", limit=10000, offset=offset
+                )
+                if not chunk:
+                    break
+                # Process chunk...
+                offset += len(chunk)
+        """
+        with get_cursor() as cur:
+            query = (
+                "SELECT id, title, abstract FROM papers WHERE "
+                "(embedding IS NULL OR embedding_model IS NULL OR embedding_model IN ('pending', ''))"
+            )
+            params: List[Any] = []
+            
+            if start_date:
+                query += " AND date >= %s"
+                params.append(start_date)
+            
+            if end_date:
+                query += " AND date <= %s"
+                params.append(end_date)
+            
+            # Require non-empty title and abstract
+            query += " AND LENGTH(TRIM(COALESCE(title, ''))) > 0 AND LENGTH(TRIM(COALESCE(abstract, ''))) > 0"
+            query += " ORDER BY date DESC, id ASC"  # Consistent ordering for pagination
+            query += " LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+            
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            return [
+                {"id": row["id"], "title": row["title"], "abstract": row["abstract"]}
+                for row in rows
+            ]
+
+    @staticmethod
+    def count_papers_missing_embeddings_in_date_range(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> int:
+        """Return count of papers missing embeddings in date range.
+        
+        This is more efficient than fetching all papers when you only need the count.
+        Useful for progress tracking and determining if processing is needed.
+        
+        Args:
+            start_date: Start date (YYYY-MM-DD format, inclusive)
+            end_date: End date (YYYY-MM-DD format, inclusive)
+            
+        Returns:
+            Count of papers missing embeddings
+        """
+        with get_cursor() as cur:
+            query = (
+                "SELECT COUNT(*) as count FROM papers WHERE "
+                "(embedding IS NULL OR embedding_model IS NULL OR embedding_model IN ('pending', ''))"
+            )
+            params: List[Any] = []
+            
+            if start_date:
+                query += " AND date >= %s"
+                params.append(start_date)
+            
+            if end_date:
+                query += " AND date <= %s"
+                params.append(end_date)
+            
+            # Require non-empty title and abstract
+            query += " AND LENGTH(TRIM(COALESCE(title, ''))) > 0 AND LENGTH(TRIM(COALESCE(abstract, ''))) > 0"
+            
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return int(row['count']) if row and 'count' in row else 0

@@ -118,6 +118,39 @@ The Theseus Insight API is organized into focused router modules for better main
 | **WS** | `/ws/podcast/{task_id}` | WebSocket progress updates for podcast generation |
 | **WS** | `/ws/visualizer/{task_id}` | WebSocket progress updates for visualizer generation |
 
+### 3.10 Embedding Service Router (`embedding_service.py` → `/api/embedding-service`)
+**Handles**: Bulk embedding job management, progress tracking, and hung job cleanup
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| **GET** | `/api/embedding-service/jobs` | List all active embedding jobs with checkpoints |
+| **GET** | `/api/embedding-service/jobs/{job_id}` | Get status of a specific embedding job |
+| **POST** | `/api/embedding-service/jobs/{job_id}/resume` | Resume an interrupted embedding job from checkpoint |
+| **DELETE** | `/api/embedding-service/jobs/{job_id}` | Delete an embedding job and its checkpoint |
+| **POST** | `/api/embedding-service/jobs/cleanup-hung` | Clean up jobs inactive >24 hours |
+
+**Job Status Response:**
+```json
+{
+  "job_id": "uuid",
+  "operation": "embed_date_range | embed_all_missing",
+  "parameters": {
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
+    "model_name": "Alibaba-NLP/gte-large-en-v1.5"
+  },
+  "progress": {
+    "total_papers": 500000,
+    "processed_papers": 125000,
+    "offset": 125000
+  },
+  "statistics": {
+    "papers_embedded": 124500,
+    "papers_failed": 500
+  },
+  "last_updated": "2025-10-17T10:30:00Z"
+}
+```
+
 ## 4. Status Objects
 
 Long‑running status routes converge on the following schema:

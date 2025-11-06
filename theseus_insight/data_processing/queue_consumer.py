@@ -41,12 +41,21 @@ class JudgeQueueConsumer:
         self.task_queue_repo = JudgeTaskQueueRepository()
         self.heartbeat_repo = WorkerHeartbeatsRepository()
 
+        # Load judge model config from database settings
+        judge_config = self._load_judge_config()
+        model_name = judge_config.get('model_name', 'phi4-mini:3.8b-q8_0')
+        max_new_tokens = judge_config.get('max_new_tokens', 512)
+        temperature = judge_config.get('temperature', 0.1)
+        num_ctx = judge_config.get('num_ctx', 4096)
+        
+        logger.info(f"Loaded judge model config: {model_name}")
+
         # Initialize Ollama client with timeout for bulk processing
         self.ollama_client = OllamaInference(
-            model_name="phi4-mini:3.8b-q8_0",  # Should be configurable
-            max_new_tokens=512,
-            temperature=0.1,
-            num_ctx=4096,
+            model_name=model_name,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            num_ctx=num_ctx,
             request_timeout=timeout
         )
         self.ollama_client.base_url = server_url
@@ -59,6 +68,34 @@ class JudgeQueueConsumer:
         self.current_task_id = None
 
         logger.info(f"Initialized queue consumer {worker_id} for server {server_url}")
+
+    def _load_judge_config(self) -> dict:
+        """Load judge model configuration from database settings."""
+        try:
+            from ..data_access import SettingsRepository
+            import json
+            
+            orch_json = SettingsRepository.get("orchestration")
+            if orch_json:
+                orchestration_config = json.loads(orch_json)
+                judge_config = orchestration_config.get('judge_model', {})
+                if judge_config:
+                    logger.info(f"Loaded judge config from database: {judge_config.get('model_name', 'unknown')}")
+                    return judge_config
+                else:
+                    logger.warning("No judge_model found in orchestration config, using defaults")
+            else:
+                logger.warning("No orchestration config found in database, using defaults")
+        except Exception as e:
+            logger.error(f"Failed to load judge config from database: {e}")
+        
+        # Return default config if loading fails
+        return {
+            'model_name': 'phi4-mini:3.8b-q8_0',
+            'max_new_tokens': 512,
+            'temperature': 0.1,
+            'num_ctx': 4096
+        }
 
     async def start_processing(self, job_id: Optional[UUID] = None):
         """Start processing tasks from the queue."""

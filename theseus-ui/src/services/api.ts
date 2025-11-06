@@ -596,6 +596,7 @@ export interface ProfileAwareIngestRequest {
   overwrite_existing?: boolean;
   cosine_threshold?: number;
   arxiv_categories?: string[];
+  use_profile_arxiv_filters?: boolean;
   batch_size?: number;
   send_error_notifications?: boolean;
   // Multi-server configuration (only used when LLM-as-Judge is configured for Ollama)
@@ -1630,6 +1631,7 @@ export interface PerformanceConfig {
   hdbscan_n_jobs: number;
   clustering_batch_size: number;
   embedding_batch_size: number;
+  auto_tune_batch_size?: boolean;
   vector_processing_workers: number;
   enable_memory_mapping: boolean;
   cache_embeddings: boolean;

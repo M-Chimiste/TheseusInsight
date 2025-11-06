@@ -48,7 +48,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { modelCatalogApi, settingsApi } from '../services/api';
+import { modelCatalogApi, settingsApi, ollamaServersApi } from '../services/api';
 import { useLayout } from '../contexts/LayoutContext';
 
 interface ModelCatalogEntry {
@@ -61,6 +61,7 @@ interface ModelCatalogEntry {
   max_new_tokens?: number;
   temperature?: number;
   num_ctx?: number;
+  host?: string;
   trust_remote_code?: boolean;
   tags?: string[];
   is_favorite?: boolean;
@@ -77,6 +78,7 @@ interface CreateEditModelData {
   max_new_tokens?: number;
   temperature?: number;
   num_ctx?: number;
+  host?: string;
   trust_remote_code: boolean;
   tags: string[];
   is_favorite: boolean;
@@ -125,6 +127,7 @@ const ModelCatalog: React.FC = () => {
     max_new_tokens: undefined,
     temperature: undefined,
     num_ctx: undefined,
+    host: undefined,
     trust_remote_code: false,
     tags: [],
     is_favorite: false
@@ -148,6 +151,70 @@ const ModelCatalog: React.FC = () => {
   const { data: modelProviders, error: providersError } = useQuery({
     queryKey: ['modelProviders'],
     queryFn: () => settingsApi.getModelProviders().then(res => res.data || []),
+  });
+
+  // Query for inference servers to provide host autocomplete
+  const { data: inferenceServers } = useQuery({
+    queryKey: ['inferenceServersForModelCatalog'],
+    queryFn: () => ollamaServersApi.getAllServers().then((res: any) => res.data)
+  });
+
+  // Helper function to get hosts filtered by provider
+  const getHostsByProvider = React.useCallback((provider: string) => {
+    if (!inferenceServers || !Array.isArray(inferenceServers)) return [];
+
+    // Map provider_name to inference server provider type
+    const providerTypeMap: { [key: string]: 'ollama' | 'lmstudio' | 'custom-oai' | null } = {
+      'ollama': 'ollama',
+      'lmstudio': 'lmstudio',
+      'custom-oai': 'custom-oai',
+    };
+
+    const providerType = providerTypeMap[provider.toLowerCase()];
+    if (!providerType) return [];
+
+    // For custom-oai, show all hosts
+    if (providerType === 'custom-oai') {
+      const hosts = inferenceServers.map((server: any) => server.url);
+      return Array.from(new Set(hosts)).sort();
+    }
+
+    // Filter by provider and extract URLs
+    const hosts = inferenceServers
+      .filter((server: any) => server.provider === providerType)
+      .map((server: any) => server.url);
+    return Array.from(new Set(hosts)).sort();
+  }, [inferenceServers]);
+
+  // Query LMStudio models when provider is lmstudio
+  const lmstudioHost = formData.provider_name === 'lmstudio'
+    ? (formData.host || 'localhost:1234')
+    : null;
+
+  const { data: lmstudioModels, isLoading: lmstudioModelsLoading } = useQuery({
+    queryKey: ['lmstudioModels', lmstudioHost],
+    queryFn: async () => {
+      if (!lmstudioHost) return [];
+
+      try {
+        // Ensure host has protocol
+        const hostWithProtocol = lmstudioHost.startsWith('http')
+          ? lmstudioHost
+          : `http://${lmstudioHost}`;
+
+        const response = await fetch(`${hostWithProtocol}/v1/models`);
+        if (!response.ok) return [];
+
+        const data = await response.json();
+        // Extract model IDs from the response
+        return data.data?.map((model: any) => model.id) || [];
+      } catch (error) {
+        console.error('Failed to fetch LMStudio models:', error);
+        return [];
+      }
+    },
+    enabled: formData.provider_name === 'lmstudio',
+    staleTime: 60000, // Cache for 1 minute
   });
 
   // Client-side filtering function
@@ -313,6 +380,7 @@ const ModelCatalog: React.FC = () => {
       max_new_tokens: undefined,
       temperature: undefined,
       num_ctx: undefined,
+      host: undefined,
       trust_remote_code: false,
       tags: [],
       is_favorite: false
@@ -335,6 +403,7 @@ const ModelCatalog: React.FC = () => {
       max_new_tokens: model.max_new_tokens,
       temperature: model.temperature,
       num_ctx: model.num_ctx,
+      host: model.host,
       trust_remote_code: model.trust_remote_code || false,
       tags: model.tags || [],
       is_favorite: model.is_favorite || false
@@ -748,14 +817,41 @@ const ModelCatalog: React.FC = () => {
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField
-                fullWidth
-                label="Model String"
-                value={formData.model_string}
-                onChange={(e) => setFormData({ ...formData, model_string: e.target.value })}
-                required
-                helperText="e.g., phi4-mini:3.8b-q8_0"
-              />
+              {formData.provider_name === 'lmstudio' ? (
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={lmstudioModels || []}
+                  value={formData.model_string}
+                  loading={lmstudioModelsLoading}
+                  onInputChange={(_, newInputValue) => {
+                    setFormData({ ...formData, model_string: newInputValue });
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Model String"
+                      required
+                      helperText={
+                        lmstudioModelsLoading
+                          ? 'Loading models from LMStudio...'
+                          : lmstudioModels && lmstudioModels.length > 0
+                            ? `${lmstudioModels.length} models available - select or enter custom name`
+                            : 'Enter model name (models list unavailable)'
+                      }
+                    />
+                  )}
+                />
+              ) : (
+                <TextField
+                  fullWidth
+                  label="Model String"
+                  value={formData.model_string}
+                  onChange={(e) => setFormData({ ...formData, model_string: e.target.value })}
+                  required
+                  helperText="e.g., phi4-mini:3.8b-q8_0"
+                />
+              )}
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
               <FormControl fullWidth required>
@@ -789,6 +885,31 @@ const ModelCatalog: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
+            {(formData.provider_name === 'ollama' || formData.provider_name === 'lmstudio' || formData.provider_name === 'custom-oai') && (
+              <Grid size={{ xs: 12 }}>
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={getHostsByProvider(formData.provider_name)}
+                  value={formData.host || ''}
+                  onInputChange={(_, newInputValue) => {
+                    setFormData({ ...formData, host: newInputValue || undefined });
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Host (Optional)"
+                      placeholder={
+                        formData.provider_name === 'ollama' ? 'athena.local:11434' :
+                        formData.provider_name === 'lmstudio' ? 'localhost:1234' :
+                        'http://custom-server:8000'
+                      }
+                      helperText="Custom host for this model (leave empty to use environment default)"
+                    />
+                  )}
+                />
+              </Grid>
+            )}
             <Grid size={{ xs: 12 }}>
               <TextField
                 fullWidth

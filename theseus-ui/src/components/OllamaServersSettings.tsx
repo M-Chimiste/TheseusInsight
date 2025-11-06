@@ -110,6 +110,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForModelCatalog'] });
       setCreateDialogOpen(false);
       setFormData({ name: '', url: '', provider: 'ollama', config_json: {}, model_name: undefined, model_config: {}, notes: '' });
       showSnackbar('Server created successfully', 'success');
@@ -126,6 +127,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForModelCatalog'] });
       setEditDialogOpen(false);
       setSelectedServer(null);
       showSnackbar('Server updated successfully', 'success');
@@ -141,6 +143,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForModelCatalog'] });
       showSnackbar('Server deleted successfully', 'success');
     },
     onError: (error: unknown) => {
@@ -154,6 +157,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: (data: ServerTestResult) => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForModelCatalog'] });
       if (data.success) {
         showSnackbar(`Server test successful (${data.latency_ms}ms)`, 'success');
       } else {
@@ -171,6 +175,7 @@ const OllamaServersSettings: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollamaServers'] });
       queryClient.invalidateQueries({ queryKey: ['inferenceServersForSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['inferenceServersForModelCatalog'] });
     },
     onError: (error: unknown) => {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

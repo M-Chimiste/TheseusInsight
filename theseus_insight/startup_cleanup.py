@@ -108,14 +108,12 @@ async def _cleanup_stuck_jobs_in_database():
         
         pool = await get_connection_pool()
         async with pool.acquire() as conn:
-            # First, query to see what stuck jobs exist
+            # First, query to see what stuck jobs exist - include ALL job types
             stuck_jobs = await conn.fetch(
                 """
                 SELECT id, job_type, status, started_at 
                 FROM processing_jobs 
-                WHERE status IN ('running', 'pending') 
-                AND job_type IN ('bulk_judge', 'harvest_judge', 'newsletter_generation', 
-                                 'mindmap_generation', 'podcast_generation')
+                WHERE status IN ('running', 'pending')
                 """
             )
             
@@ -129,16 +127,14 @@ async def _cleanup_stuck_jobs_in_database():
                 print("✅ No stuck jobs found")
                 logger.info("No stuck jobs found")
             
-            # Mark any running/pending resource-intensive jobs as failed
+            # Mark ANY running/pending jobs as failed (remove job_type filter)
             result = await conn.execute(
                 """
                 UPDATE processing_jobs 
                 SET status = 'failed', 
                     error_message = 'Job terminated on server restart',
                     completed_at = NOW()
-                WHERE status IN ('running', 'pending') 
-                AND job_type IN ('bulk_judge', 'harvest_judge', 'newsletter_generation', 
-                                 'mindmap_generation', 'podcast_generation')
+                WHERE status IN ('running', 'pending')
                 """
             )
             
@@ -192,6 +188,25 @@ async def _cleanup_stuck_jobs_in_database():
                     logger.info(f"Marked {heartbeats_updated} worker heartbeats as inactive")
             except (ValueError, IndexError):
                 logger.warning(f"Could not parse heartbeat UPDATE result: {heartbeat_result}")
+            
+            # Clean up tasks table as well
+            tasks_result = await conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'failed',
+                    end_time = NOW(),
+                    error = 'Task terminated on server restart'
+                WHERE status IN ('running', 'pending', 'in_progress')
+                """
+            )
+            
+            try:
+                tasks_cleaned = int(tasks_result.split()[-1]) if tasks_result and tasks_result.startswith('UPDATE') else 0
+                if tasks_cleaned > 0:
+                    print(f"🧹 Reset {tasks_cleaned} stuck tasks in tasks table")
+                    logger.info(f"Reset {tasks_cleaned} stuck tasks in tasks table")
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse tasks UPDATE result: {tasks_result}")
             
         print("✅ Database state cleaned up")
         logger.info("Database state cleanup completed successfully")

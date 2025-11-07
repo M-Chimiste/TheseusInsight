@@ -699,8 +699,8 @@ async def generate_profile_newsletter(
         Task information for tracking newsletter generation progress
     """
     try:
-        # Verify profile exists and is active
-        profile = ProfileRepository.get_by_id(profile_id)
+        # Verify profile exists and is active (run in thread to avoid blocking event loop)
+        profile = await asyncio.to_thread(ProfileRepository.get_by_id, profile_id)
         if not profile:
             raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
         
@@ -710,7 +710,7 @@ async def generate_profile_newsletter(
         # Get profile's research interests if not provided in request
         research_interests_text = request.research_interests
         if not research_interests_text:
-            interests = ProfileInterestsRepository.get_by_profile(profile_id)
+            interests = await asyncio.to_thread(ProfileInterestsRepository.get_by_profile, profile_id)
             if interests:
                 research_interests_text = "\n".join([interest["interest_text"] for interest in interests])
             else:
@@ -771,8 +771,8 @@ async def generate_profile_newsletter(
                     print(f"RuntimeError creating task for status update: {e}")
 
         # Prepare profile-specific orchestration config with ArXiv filters
-        # Get base orchestration config from settings
-        base_orchestration_json = SettingsRepository.get("orchestration")
+        # Get base orchestration config from settings (run in thread to avoid blocking event loop)
+        base_orchestration_json = await asyncio.to_thread(SettingsRepository.get, "orchestration")
         if base_orchestration_json:
             orchestration_config = json.loads(base_orchestration_json)
         else:
@@ -845,8 +845,9 @@ async def generate_profile_newsletter(
                     task_id=task_id
                 )
                 
-                await asyncio.to_thread(
-                    ti_instance.run,
+                # Call run_async directly since we're already in an async context
+                # Using asyncio.to_thread with run() causes nested event loops and connection conflicts
+                await ti_instance.run_async(
                     progress_callback=pipeline_progress_callback,
                 )
                 

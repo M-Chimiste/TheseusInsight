@@ -264,8 +264,9 @@ async def run_newsletter_pipeline_endpoint(
                 verbose=True,
                 task_id=task_id
             )
-            await asyncio.to_thread(
-                ti_instance.run,
+            # Call run_async directly since we're already in an async context
+            # Using asyncio.to_thread with run() causes nested event loops and connection conflicts
+            await ti_instance.run_async(
                 progress_callback=pipeline_progress_callback,
             )
             

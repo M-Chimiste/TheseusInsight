@@ -163,8 +163,9 @@ class TaskManager:
         print(f"[DEBUG] Creating task {task_id} with config: {config}")
         start_time = datetime.now().isoformat()
         
-        # Store task in database using repository
-        TaskRepository.insert_task(
+        # Store task in database using repository (run in thread to avoid blocking event loop)
+        await asyncio.to_thread(
+            TaskRepository.insert_task,
             task_id=task_id,
             task_type=task_type,
             status=TaskStatus.PENDING.value,
@@ -222,8 +223,8 @@ class TaskManager:
         result: dict | None = None,
     ) -> None:
         """Update task status and notify subscribers."""
-        # Check if task exists in database
-        task = TaskRepository.get_task(task_id)
+        # Check if task exists in database (run in thread to avoid blocking event loop)
+        task = await asyncio.to_thread(TaskRepository.get_task, task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
@@ -237,9 +238,10 @@ class TaskManager:
         # Calculate final progress based on status
         final_progress = progress if status == TaskStatus.PROCESSING else (100 if status == TaskStatus.COMPLETED else 0)
         
-        # Update task in database using repository
+        # Update task in database using repository (run in thread to avoid blocking event loop)
         end_time = datetime.now().isoformat() if status in [TaskStatus.COMPLETED, TaskStatus.FAILED] else None
-        TaskRepository.update_task_status(
+        await asyncio.to_thread(
+            TaskRepository.update_task_status,
             task_id=task_id,
             status=status.value,
             progress=final_progress,

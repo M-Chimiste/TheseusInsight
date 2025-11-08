@@ -175,6 +175,32 @@ class InferenceServersRepository:
             return InferenceServer.from_dict(dict(row)) if row else None
 
     @staticmethod
+    def get_by_ids(server_ids: List[int]) -> List[InferenceServer]:
+        """
+        Get multiple inference servers by their IDs.
+
+        Args:
+            server_ids: List of server IDs to retrieve
+
+        Returns:
+            List of InferenceServer objects (in the order they appear in the database)
+        """
+        if not server_ids:
+            return []
+
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, name, url, provider, enabled, config_json, model_name, model_config, notes,
+                       last_tested_at, last_test_latency_ms, last_test_ok,
+                       created_at, updated_at
+                FROM inference_servers
+                WHERE id = ANY(%s)
+                ORDER BY name
+            """, (server_ids,))
+            rows = cursor.fetchall()
+            return [InferenceServer.from_dict(dict(row)) for row in rows]
+
+    @staticmethod
     def get_by_url(url: str, provider: Optional[str] = None) -> Optional[InferenceServer]:
         """Get an inference server by URL, optionally filtered by provider."""
         with get_cursor() as cursor:

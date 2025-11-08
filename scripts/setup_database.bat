@@ -162,6 +162,8 @@ if "%ENVIRONMENT%"=="docker" (
     set SCHEDULED_TASKS_FILE=C:\app\sql\007_add_scheduled_tasks.sql
     set MULTI_OLLAMA_FILE=C:\app\sql\008_add_multi_ollama_support.sql
     set LMSTUDIO_MULTI_SERVER_FILE=C:\app\sql\009_add_lmstudio_multi_server.sql
+    set PER_SERVER_MODEL_CONFIG_FILE=C:\app\sql\010_add_per_server_model_config.sql
+    set NEWSLETTER_MULTI_SERVER_FILE=C:\app\sql\011_newsletter_multi_server.sql
     set CREATE_MIGRATION_TRACKING_FILE=C:\app\sql\create_migration_tracking.sql
 ) else (
     set MIGRATION_COMPAT_FILE=%~dp0000_migration_compatibility.sql
@@ -173,6 +175,8 @@ if "%ENVIRONMENT%"=="docker" (
     set SCHEDULED_TASKS_FILE=%~dp0007_add_scheduled_tasks.sql
     set MULTI_OLLAMA_FILE=%~dp0008_add_multi_ollama_support.sql
     set LMSTUDIO_MULTI_SERVER_FILE=%~dp0009_add_lmstudio_multi_server.sql
+    set PER_SERVER_MODEL_CONFIG_FILE=%~dp0010_add_per_server_model_config.sql
+    set NEWSLETTER_MULTI_SERVER_FILE=%~dp0011_newsletter_multi_server.sql
     set CREATE_MIGRATION_TRACKING_FILE=%~dp0create_migration_tracking.sql
 )
 
@@ -286,6 +290,34 @@ if exist "%LMSTUDIO_MULTI_SERVER_FILE%" (
 ) else (
     echo ⚠️  Warning: LMStudio multi-server migration file not found at %LMSTUDIO_MULTI_SERVER_FILE%
     echo    LMStudio provider features may not be available
+)
+
+REM Apply per-server model config migration
+if exist "%PER_SERVER_MODEL_CONFIG_FILE%" (
+    echo 📋 Applying per-server model config migration from: %PER_SERVER_MODEL_CONFIG_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%PER_SERVER_MODEL_CONFIG_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply per-server model config migration from %PER_SERVER_MODEL_CONFIG_FILE%
+        exit /b 1
+    )
+    echo ✅ Per-server model config migration completed successfully
+) else (
+    echo ⚠️  Warning: Per-server model config migration file not found at %PER_SERVER_MODEL_CONFIG_FILE%
+    echo    Per-server model configuration may not be available
+)
+
+REM Apply newsletter multi-server support migration
+if exist "%NEWSLETTER_MULTI_SERVER_FILE%" (
+    echo 📋 Applying newsletter multi-server migration from: %NEWSLETTER_MULTI_SERVER_FILE%
+    psql -v ON_ERROR_STOP=1 -U "%DB_USER%" -d "%DB_NAME%" -f "%NEWSLETTER_MULTI_SERVER_FILE%"
+    if %errorlevel% neq 0 (
+        echo ❌ Error: Failed to apply newsletter multi-server migration from %NEWSLETTER_MULTI_SERVER_FILE%
+        exit /b 1
+    )
+    echo ✅ Newsletter multi-server migration completed successfully
+) else (
+    echo ⚠️  Warning: Newsletter multi-server migration file not found at %NEWSLETTER_MULTI_SERVER_FILE%
+    echo    Newsletter multi-server features may not be available
 )
 
 echo.

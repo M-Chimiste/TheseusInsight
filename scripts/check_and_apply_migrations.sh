@@ -91,6 +91,7 @@ migration_files=(
     "008_add_multi_ollama_support.sql"
     "009_add_lmstudio_multi_server.sql"
     "010_add_per_server_model_config.sql"
+    "011_newsletter_multi_server.sql"
 )
 
 migration_descriptions=(
@@ -105,6 +106,7 @@ migration_descriptions=(
     "Add multi-Ollama server support for bulk judge operations"
     "Add LMStudio multi-server support and rename to inference_servers"
     "Add per-server model name and config overrides for non-homogeneous deployments"
+    "Add newsletter multi-server judge support"
 )
 
 # Check and apply migrations
@@ -151,7 +153,7 @@ echo ""
 echo -e "${BLUE}🔍 Verifying database state...${NC}"
 
 # Check critical tables
-critical_tables=("papers" "research_profiles" "topics")
+critical_tables=("papers" "research_profiles" "topics" "newsletter_jobs")
 all_good=true
 
 for table in "${critical_tables[@]}"; do

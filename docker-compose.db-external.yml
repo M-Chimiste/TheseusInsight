@@ -27,6 +27,8 @@ services:
       - ./scripts/007_add_scheduled_tasks.sql:/app/sql/007_add_scheduled_tasks.sql
       - ./scripts/008_add_multi_ollama_support.sql:/app/sql/008_add_multi_ollama_support.sql
       - ./scripts/009_add_lmstudio_multi_server.sql:/app/sql/009_add_lmstudio_multi_server.sql
+      - ./scripts/010_add_per_server_model_config.sql:/app/sql/010_add_per_server_model_config.sql
+      - ./scripts/011_newsletter_multi_server.sql:/app/sql/011_newsletter_multi_server.sql
       # Mount migration tracking files
       - ./scripts/create_migration_tracking.sql:/app/sql/create_migration_tracking.sql
       - ./scripts/check_and_apply_migrations.sh:/app/sql/check_and_apply_migrations.sh 

@@ -251,6 +251,29 @@ async def run_newsletter_pipeline_endpoint(
                 # Fallback to config file if not in database
                 orchestration_config = "config/orchestration.json"
 
+            # Create newsletter job if using multi-server judge
+            newsletter_job_id = None
+            if params.use_multi_server_judge:
+                from ...data_access.newsletters import NewsletterJobRepository
+
+                # Validate server IDs if provided
+                if params.judge_server_ids:
+                    from ...data_access.inference_servers import InferenceServersRepository
+                    servers = InferenceServersRepository.get_by_ids(params.judge_server_ids)
+                    enabled_servers = [s for s in servers if s.enabled]
+                    if not enabled_servers:
+                        raise HTTPException(status_code=400, detail="No enabled servers found in selection")
+
+                # Create newsletter job record
+                newsletter_job_id = NewsletterJobRepository.create_job(
+                    profile_ids=resolved_profile_ids or [],
+                    use_multi_server=True,
+                    server_ids=params.judge_server_ids,
+                    research_interests=params.research_interests,
+                    date_range_start=params.start_date,
+                    date_range_end=params.end_date
+                )
+
             ti_instance = TheseusInsight(
                 research_interests_override=params.research_interests,
                 start_date_override=params.start_date,
@@ -259,10 +282,16 @@ async def run_newsletter_pipeline_endpoint(
                 profile_ids_override=resolved_profile_ids,
                 orchestration_config=orchestration_config,  # Pass config from database
                 generate_podcast=params.generate_podcast_run,
-                db_saving=True, 
+                db_saving=True,
                 data_path=run_db_path,
                 verbose=True,
-                task_id=task_id
+                task_id=task_id,
+                # Multi-server judge parameters
+                use_multi_server_judge=params.use_multi_server_judge,
+                judge_server_ids=params.judge_server_ids,
+                newsletter_job_id=newsletter_job_id,
+                judge_request_timeout_sec=params.judge_request_timeout_sec,
+                judge_max_retries=params.judge_max_retries
             )
             # Call run_async directly since we're already in an async context
             # Using asyncio.to_thread with run() causes nested event loops and connection conflicts

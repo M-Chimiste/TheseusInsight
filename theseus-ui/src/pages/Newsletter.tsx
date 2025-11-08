@@ -12,7 +12,12 @@ import {
   Tooltip,
   Container,
   Chip,
-  CircularProgress
+  CircularProgress,
+  Switch,
+  FormControlLabel,
+  FormGroup,
+  Checkbox,
+  Grid,
 } from '@mui/material';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -21,7 +26,8 @@ import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import StopIcon from '@mui/icons-material/Stop';
-import { profileApi, settingsApi } from '../services/api';
+import { profileApi, settingsApi, inferenceServersApi } from '../services/api';
+import type { InferenceServer, NewsletterRunParams } from '../services/api';
 import { useTaskState } from '../hooks/useTaskState';
 import { useProfile } from '../contexts/ProfileContext';
 import ProfileSelector from '../components/ProfileSelector';
@@ -55,11 +61,16 @@ const Newsletter = () => {
   const [researchInterests, setResearchInterests] = useState<string>('');
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
   const [isAborting, setIsAborting] = useState<boolean>(false);
+
+  // Multi-server judge configuration state
+  const [useMultiServerJudge, setUseMultiServerJudge] = useState<boolean>(false);
+  const [selectedJudgeServers, setSelectedJudgeServers] = useState<number[]>([]);
+  const [judgeRequestTimeout, setJudgeRequestTimeout] = useState<number>(60);
+  const [judgeMaxRetries, setJudgeMaxRetries] = useState<number>(3);
   
   // Use profile context
   const { getSelectedProfiles, selectedProfileIds } = useProfile();
   const selectedProfiles = getSelectedProfiles();
-  const primaryProfile = selectedProfiles[0]; // Use first selected profile
   
   // Use the new task state hook
   const { taskState, setTaskId, isCheckingForActiveTasks } = useTaskState('newsletter');
@@ -69,18 +80,35 @@ const Newsletter = () => {
     queryKey: ['all-profile-interests', selectedProfileIds.sort().join(',')],
     queryFn: async () => {
       if (selectedProfileIds.length === 0) return [];
-      
+
       const currentProfiles = getSelectedProfiles();
       const interestsPromises = currentProfiles.map(async (profile) => {
         const response = await profileApi.getProfileInterests(profile.id);
         return response.data;
       });
-      
+
       const allInterests = await Promise.all(interestsPromises);
       return allInterests.flat();
     },
     enabled: selectedProfileIds.length > 0,
   });
+
+  // Load available inference servers
+  const { data: availableServers = [] } = useQuery<InferenceServer[]>({
+    queryKey: ['inference-servers'],
+    queryFn: async () => {
+      const response = await inferenceServersApi.getAllServers();
+      return response.data.filter((s: InferenceServer) => s.enabled);
+    },
+  });
+
+  // Auto-select all enabled servers when they load or when multi-server is enabled
+  useEffect(() => {
+    if (useMultiServerJudge && availableServers.length > 0) {
+      const enabledIds = availableServers.map(s => s.id);
+      setSelectedJudgeServers(enabledIds);
+    }
+  }, [availableServers, useMultiServerJudge]);
 
   // Update form data when profiles change
   useEffect(() => {
@@ -199,19 +227,30 @@ const Newsletter = () => {
       return;
     }
 
+    // Validate multi-server configuration
+    if (useMultiServerJudge && selectedJudgeServers.length === 0) {
+      setStatusMessages(prev => [...prev, `[ERROR] ${new Date().toLocaleTimeString()}: At least one server must be selected for multi-server mode.`]);
+      return;
+    }
+
     setStatusMessages([]);
 
     try {
-      const params = {
+      const params: NewsletterRunParams = {
         start_date: startDate ? startDate.toISOString().split('T')[0] : '',
         end_date: endDate ? endDate.toISOString().split('T')[0] : '',
         email_recipients: emailRecipients,
         research_interests: researchInterests,
+        profile_ids: selectedProfileIds,
+        // Multi-server judge configuration
+        use_multi_server_judge: useMultiServerJudge,
+        judge_server_ids: useMultiServerJudge ? selectedJudgeServers : undefined,
+        judge_request_timeout_sec: useMultiServerJudge ? judgeRequestTimeout : undefined,
+        judge_max_retries: useMultiServerJudge ? judgeMaxRetries : undefined,
       };
-      
-      // Use profile-specific newsletter generation API with primary profile
-      // In the future, this could be enhanced to support multi-profile newsletters
-      const response = await profileApi.generateProfileNewsletter(primaryProfile.id, params);
+
+      // Use the general newsletter pipeline endpoint
+      const response = await settingsApi.runNewsletterPipeline(params);
       setTaskId(response.data.task_id);
     } catch (err: any) {
       console.error("Failed to start newsletter pipeline:", err);
@@ -315,6 +354,110 @@ const Newsletter = () => {
           </CardContent>
         </Card>
 
+        {/* Multi-Server Judge Configuration Section */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" fontWeight={600} sx={{ flexGrow: 1 }}>
+                🚀 LLM Judge Configuration
+              </Typography>
+              <Tooltip title="Configure how papers are scored for relevance to research interests. Multi-server mode distributes scoring across multiple inference servers for faster processing.">
+                <InfoOutlinedIcon color="action" />
+              </Tooltip>
+            </Box>
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={useMultiServerJudge}
+                  onChange={(e) => setUseMultiServerJudge(e.target.checked)}
+                />
+              }
+              label="Use Multi-Server Judge (faster for large paper sets)"
+            />
+
+            {useMultiServerJudge && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Available Inference Servers ({availableServers.length} enabled)
+                </Typography>
+
+                {availableServers.length === 0 ? (
+                  <Alert severity="warning" sx={{ mt: 1 }}>
+                    No enabled inference servers found. Please configure servers in Settings → Inference Servers.
+                  </Alert>
+                ) : (
+                  <>
+                    <FormGroup>
+                      {availableServers.map((server) => (
+                        <FormControlLabel
+                          key={server.id}
+                          control={
+                            <Checkbox
+                              checked={selectedJudgeServers.includes(server.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedJudgeServers([...selectedJudgeServers, server.id]);
+                                } else {
+                                  setSelectedJudgeServers(
+                                    selectedJudgeServers.filter(id => id !== server.id)
+                                  );
+                                }
+                              }}
+                            />
+                          }
+                          label={
+                            <Box>
+                              <Typography variant="body2">
+                                {server.name} ({server.provider})
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {server.url}
+                                {server.model_name && ` - Model: ${server.model_name}`}
+                              </Typography>
+                            </Box>
+                          }
+                        />
+                      ))}
+                    </FormGroup>
+
+                    {selectedJudgeServers.length === 0 && (
+                      <Alert severity="warning" sx={{ mt: 1 }}>
+                        At least one server must be selected for multi-server mode
+                      </Alert>
+                    )}
+
+                    <Grid container spacing={2} sx={{ mt: 2 }}>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Request Timeout (seconds)"
+                          value={judgeRequestTimeout}
+                          onChange={(e) => setJudgeRequestTimeout(Number(e.target.value))}
+                          inputProps={{ min: 10, max: 300 }}
+                          helperText="Max time to wait for each LLM request"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Max Retries"
+                          value={judgeMaxRetries}
+                          onChange={(e) => setJudgeMaxRetries(Number(e.target.value))}
+                          inputProps={{ min: 0, max: 10 }}
+                          helperText="Number of retry attempts for failed tasks"
+                        />
+                      </Grid>
+                    </Grid>
+                  </>
+                )}
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Targeting and Content Focus Section */}
         <Card sx={{ mb: 3 }}>
           <CardContent>
@@ -415,7 +558,35 @@ const Newsletter = () => {
             )}
             {taskState.isRunning && (
               <Box sx={{ mb: 2 }}>
-                <Typography variant="body1" gutterBottom>{taskState.stage} - {taskState.message}</Typography>
+                {/* Show enhanced status for scoring phase */}
+                {taskState.stage === 'rank' && useMultiServerJudge && (
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    🚀 Multi-Server Scoring in Progress
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      Using {selectedJudgeServers.length} inference server{selectedJudgeServers.length > 1 ? 's' : ''} to score papers in parallel.
+                      {availableServers.length > 0 && (
+                        <>
+                          <br />
+                          Servers: {availableServers
+                            .filter(s => selectedJudgeServers.includes(s.id))
+                            .map(s => s.name)
+                            .join(', ')}
+                        </>
+                      )}
+                    </Typography>
+                  </Alert>
+                )}
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                  <Typography variant="body1" fontWeight={500}>
+                    {taskState.stage.charAt(0).toUpperCase() + taskState.stage.slice(1)}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {taskState.progress.toFixed(0)}%
+                  </Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  {taskState.message}
+                </Typography>
                 <LinearProgress variant="determinate" value={taskState.progress} />
               </Box>
             )}

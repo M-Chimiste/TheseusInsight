@@ -103,7 +103,12 @@ class TheseusInsight:
                  checkpoint_dir="checkpoints",
                  task_id=None,
                  send_error_notifications=True,
-                 use_database_checkpoints=True):
+                 use_database_checkpoints=True,
+                 use_multi_server_judge=False,
+                 judge_server_ids=None,
+                 newsletter_job_id=None,
+                 judge_request_timeout_sec=None,
+                 judge_max_retries=None):
         
         # Store task_id for logging
         self.task_id = task_id or f"theseus_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -115,6 +120,13 @@ class TheseusInsight:
         self.publish_podcast = publish_podcast
         self.generate_podcast = generate_podcast
         self.use_database_checkpoints = use_database_checkpoints
+
+        # Multi-server judge configuration
+        self.use_multi_server_judge = use_multi_server_judge
+        self.judge_server_ids = judge_server_ids
+        self.newsletter_job_id = newsletter_job_id
+        self.judge_request_timeout_sec = judge_request_timeout_sec
+        self.judge_max_retries = judge_max_retries
 
         # Set error notification flag early (before any operations that might fail)
         self.send_error_notifications = send_error_notifications
@@ -747,8 +759,122 @@ Theseus Insight Team
             # Fallback to original ranking method
             return self.rank_papers(data_df)
 
+    async def rank_papers_async(self, data_df):
+        """Async wrapper for rank_papers that supports both single and multi-server modes."""
+        if self.use_multi_server_judge:
+            return await self._rank_papers_multi_server(data_df)
+        else:
+            # Run sync rank_papers in thread pool to avoid blocking
+            return await asyncio.to_thread(self._rank_papers_single_server, data_df)
+
+    async def _rank_papers_multi_server(self, data_df):
+        """Rank papers using multi-server worker pool."""
+        from theseus_insight.data_processing.newsletter_scorer import NewsletterScorer
+
+        if self.verbose:
+            print(f"\n🚀 MULTI-SERVER JUDGE SCORING")
+            print(f"Total papers to score: {len(data_df)}")
+            print(f"Using {len(self.judge_server_ids)} inference servers")
+            print("="*60)
+
+        # Prepare papers for scoring
+        papers = []
+        for idx, row in data_df.iterrows():
+            papers.append({
+                'id': row.get('id'),  # Assuming paper has ID from database
+                'title': row.get('title', ''),
+                'abstract': row.get('abstract', '')
+            })
+
+        # Create newsletter scorer
+        scorer = NewsletterScorer(self.orchestration_config)
+
+        # Progress callback
+        def progress_callback(status, progress):
+            if self.verbose:
+                print(f"Scoring progress: {status} - {progress*100:.1f}%")
+
+        # Score papers using multi-server worker pool
+        # Uses profile-specific scoring like bulk judge, then aggregates across profiles
+        results = await scorer.score_papers_multi_server(
+            job_id=self.newsletter_job_id,
+            papers=papers,
+            profile_ids=self.profile_ids_override or [],
+            server_ids=self.judge_server_ids,
+            progress_callback=progress_callback,
+            request_timeout_sec=self.judge_request_timeout_sec,
+            max_retries=self.judge_max_retries
+        )
+
+        # Convert results back to DataFrame format
+        # Create a mapping from paper_id to scores
+        score_map = {}
+        for result in results:
+            score_map[result['paper_id']] = {
+                'score': result.get('score', 1),
+                'related': result.get('related', False),
+                'rationale': result.get('rationale', 'No rationale provided')
+            }
+
+        # Add scores to dataframe
+        scores, related, rationale = [], [], []
+        for idx, row in data_df.iterrows():
+            paper_id = row.get('id')
+            if paper_id in score_map:
+                scores.append(score_map[paper_id]['score'])
+                related.append(score_map[paper_id]['related'])
+                rationale.append(score_map[paper_id]['rationale'])
+            else:
+                # Paper not scored (failed) - use defaults
+                scores.append(1)
+                related.append(False)
+                rationale.append('Failed to score')
+
+        data_df['score'] = scores
+        data_df['related'] = related
+        data_df['rationale'] = rationale
+        data_df = data_df.sort_values(by='score', ascending=False)
+
+        # Get more papers than needed to allow for PDF conversion failures
+        backup_multiplier = 2
+        extended_count = min(len(data_df), self.top_n * backup_multiplier)
+        top_n_df = data_df.head(extended_count)
+
+        if self.verbose:
+            print(f"✅ Multi-server scoring complete:")
+            print(f"   Total papers scored: {len(results)}")
+            print(f"   Top papers selected: {len(top_n_df)} (target: {self.top_n})")
+            if len(top_n_df) > 0:
+                print(f"   Score range: {top_n_df['score'].min():.1f} - {top_n_df['score'].max():.1f}")
+
+        return top_n_df
+
     def rank_papers(self, data_df):
-        """Given embedded papers, use judge model to score them."""
+        """Given embedded papers, use judge model to score them (single-server mode)."""
+        # If multi-server mode is enabled, delegate to async version
+        if self.use_multi_server_judge:
+            # Check if we're already in an async context
+            try:
+                loop = asyncio.get_running_loop()
+                # We're inside an event loop - use asyncio.create_task or run in thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self._rank_papers_multi_server(data_df))
+                    return future.result()
+            except RuntimeError:
+                # Not in an event loop - safe to create one
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                return loop.run_until_complete(self._rank_papers_multi_server(data_df))
+        else:
+            return self._rank_papers_single_server(data_df)
+
+    def _rank_papers_single_server(self, data_df):
+        """Single-server sequential scoring (original implementation)."""
         try:
             abstracts = list(data_df['abstract'])
             scores, related, rationale = [], [], []
@@ -908,35 +1034,59 @@ Theseus Insight Team
                 print(f"Selected top {extended_count} papers (target: {self.top_n}) to allow for PDF conversion failures")
 
             if self.db_saving:
-                print("Updating papers with LLM judge scores in DB")
-                # Update papers with LLM scores (papers were already saved during embedding stage)
+                print("Saving LLM judge scores to paper_profile_scores table")
+                # Save scores to paper_profile_scores for each selected profile
                 updated_count = 0
                 new_count = 0
-                
+
+                # Get the model name for judge_model field
+                judge_model_name = getattr(self.judge_inference, 'model_name', 'unknown')
+
                 for _, row in data_df.iterrows():
                     # Check if paper already exists
                     existing_paper = PaperRepository.get_by_url(row['pdf_url'])
-                    
+
                     if existing_paper:
-                        # Update existing paper with LLM judge scores
+                        # Save scores to paper_profile_scores for each selected profile
                         try:
-                            # Update the paper's score, related, and rationale fields
                             from .db import get_cursor
                             with get_cursor() as cur:
+                                # Update date_run in papers table
                                 cur.execute("""
-                                    UPDATE papers 
-                                    SET score = %s, 
-                                        related = %s, 
-                                        rationale = %s,
-                                        date_run = %s
+                                    UPDATE papers
+                                    SET date_run = %s
                                     WHERE url = %s
                                 """, (
-                                    row['score'],
-                                    row['related'],
-                                    row['rationale'],
                                     TODAY.strftime('%Y-%m-%d'),
                                     row['pdf_url']
                                 ))
+
+                                # Write scores to paper_profile_scores for each profile
+                                profile_ids = self.profile_ids_override or []
+                                if not profile_ids:
+                                    print("Warning: No profiles selected for newsletter - scores will not be saved")
+                                    continue
+
+                                for profile_id in profile_ids:
+                                    cur.execute("""
+                                        INSERT INTO paper_profile_scores
+                                            (paper_id, profile_id, score, related, rationale, judge_model, date_scored)
+                                        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                                        ON CONFLICT (paper_id, profile_id)
+                                        DO UPDATE SET
+                                            score = EXCLUDED.score,
+                                            related = EXCLUDED.related,
+                                            rationale = EXCLUDED.rationale,
+                                            judge_model = EXCLUDED.judge_model,
+                                            date_scored = CURRENT_TIMESTAMP
+                                    """, (
+                                        existing_paper.id,
+                                        profile_id,
+                                        row['score'],
+                                        row['related'],
+                                        row['rationale'],
+                                        judge_model_name
+                                    ))
                             updated_count += 1
                             
                             # Extract and update keywords
@@ -962,24 +1112,57 @@ Theseus Insight Team
                             embedding = embedding.tolist()
                         elif not isinstance(embedding, list):
                             embedding = list(embedding)
-                        
+
                         paper = Paper(
                             title=row['title'],
                             abstract=row['abstract'],
                             url=row['pdf_url'],
                             date_run=TODAY.strftime('%Y-%m-%d'),
                             date=row['date'].strftime('%Y-%m-%d'),
-                            score=row['score'],
-                            related=row['related'],
-                            rationale=row['rationale'],
+                            score=None,  # Scores are now stored in paper_profile_scores
+                            related=None,
+                            rationale=None,
                             cosine_similarity=row['cosine_similarity'],
                             embedding_model=self.embedding_model_name,
                             embedding=embedding
                         )
-                        
+
                         was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
                         if was_inserted:
                             new_count += 1
+
+                            # Get the inserted paper to get its ID
+                            inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
+                            if inserted_paper:
+                                # Save scores to paper_profile_scores for each profile
+                                try:
+                                    from .db import get_cursor
+                                    with get_cursor() as cur:
+                                        profile_ids = self.profile_ids_override or []
+                                        for profile_id in profile_ids:
+                                            cur.execute("""
+                                                INSERT INTO paper_profile_scores
+                                                    (paper_id, profile_id, score, related, rationale, judge_model, date_scored)
+                                                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                                                ON CONFLICT (paper_id, profile_id)
+                                                DO UPDATE SET
+                                                    score = EXCLUDED.score,
+                                                    related = EXCLUDED.related,
+                                                    rationale = EXCLUDED.rationale,
+                                                    judge_model = EXCLUDED.judge_model,
+                                                    date_scored = CURRENT_TIMESTAMP
+                                            """, (
+                                                inserted_paper.id,
+                                                profile_id,
+                                                row['score'],
+                                                row['related'],
+                                                row['rationale'],
+                                                judge_model_name
+                                            ))
+                                except Exception as e:
+                                    if self.verbose:
+                                        print(f"Failed to save scores for paper {row['title']}: {e}")
+
                             # Extract and cache keywords
                             try:
                                 extractor = getattr(self, '_yake_extractor', None)
@@ -989,14 +1172,15 @@ Theseus Insight Team
                                 text_kw = f"{row['title']} {row['abstract']}"
                                 kw_scores = extractor.extract_keywords(text_kw)
                                 keywords = [w for w, _ in kw_scores]
-                                inserted_paper = PaperRepository.get_by_url(row['pdf_url'])
                                 if inserted_paper and keywords:
-                                    PaperRepository.update_keywords(inserted_paper['id'], keywords)
+                                    PaperRepository.update_keywords(inserted_paper.id, keywords)
                             except Exception:
                                 pass
                 
                 if self.verbose:
-                    print(f"Database update complete: {updated_count} papers updated with LLM scores, {new_count} new papers inserted")
+                    profile_count = len(self.profile_ids_override) if self.profile_ids_override else 0
+                    total_scores = (updated_count + new_count) * profile_count
+                    print(f"Database update complete: Saved {total_scores} scores ({updated_count} existing + {new_count} new papers × {profile_count} profiles) to paper_profile_scores")
        
             # Clean up partial checkpoint on success
             partial_checkpoint_path = os.path.join(self.checkpoint_dir, 'ranking_partial_checkpoint.pkl')
@@ -1133,6 +1317,7 @@ Theseus Insight Team
                 papers_list = []
                 for _, row in embedded_df.iterrows():
                     papers_list.append({
+                        'id': row.get('id'),  # Include database ID for multi-server scoring
                         'title': row['title'],
                         'abstract': row['abstract'],
                         'pdf_url': row['pdf_url'],
@@ -1198,6 +1383,7 @@ Theseus Insight Team
                 papers_list = []
                 for paper in papers_data:
                     papers_list.append({
+                        'id': paper.get('id'),  # Include database ID for multi-server scoring
                         'title': paper['title'],
                         'abstract': paper['abstract'],
                         'pdf_url': paper['url'],
@@ -1430,6 +1616,14 @@ Theseus Insight Team
         newsletter_content = None
         podcast_content = None
         
+        if self.verbose:
+            print(f"\n{'='*80}")
+            print(f"🚀 STARTING NEWSLETTER PIPELINE")
+            print(f"   Task ID: {self.task_id}")
+            print(f"   Use multi-server: {self.use_multi_server_judge}")
+            print(f"   Date range: {self.start_date} to {self.end_date}")
+            print(f"{'='*80}\n")
+        
         try:
             # Initialize checkpoint manager if using database checkpoints
             await self._init_checkpoint_manager()
@@ -1443,9 +1637,13 @@ Theseus Insight Team
             if not start_from:
                 # no stage specified, do we have an existing checkpoint for 'papers_downloaded'?
                 data_df = self._load_checkpoint('papers_downloaded')
-                if data_df is None:
-                    if self.verbose:
+                if self.verbose:
+                    if data_df is None:
                         print("No 'papers_downloaded' checkpoint. Starting fresh: downloading papers.")
+                    else:
+                        print(f"⚠️ DEBUG: Loaded 'papers_downloaded' checkpoint with {len(data_df) if hasattr(data_df, '__len__') else 'unknown'} papers")
+                
+                if data_df is None:
                     process_data = ArxivDataProcessor(start_date=self.start_date, end_date=self.end_date)
                     data_df = process_data.download_and_process_data()
                     
@@ -1540,6 +1738,7 @@ Theseus Insight Team
                                     if existing_paper:
                                         # Convert database row to expected format
                                         paper_data = {
+                                            'id': existing_paper.get('id'),  # Include database ID for multi-server scoring
                                             'title': existing_paper['title'],
                                             'abstract': existing_paper['abstract'],
                                             'pdf_url': existing_paper['url'],
@@ -1581,7 +1780,8 @@ Theseus Insight Team
                                     if self.verbose:
                                         print(f"Saving {len(new_papers_df)} papers to database (before filtering)...")
                                     saved_count = 0
-                                    for _, row in tqdm(new_papers_df.iterrows(), total=len(new_papers_df), 
+                                    paper_ids = []
+                                    for idx, row in tqdm(new_papers_df.iterrows(), total=len(new_papers_df), 
                                                       desc="Saving papers to DB", disable=not self.verbose):
                                         embedding = row['abstract_embedding']
                                         if hasattr(embedding, 'tolist'):
@@ -1606,9 +1806,20 @@ Theseus Insight Team
                                         was_inserted = PaperRepository.insert_paper(paper, skip_duplicates=True)
                                         if was_inserted:
                                             saved_count += 1
+                                        
+                                        # Get the paper ID from database (whether newly inserted or existing)
+                                        existing_paper = PaperRepository.get_by_url(row['pdf_url'])
+                                        if existing_paper:
+                                            paper_ids.append(existing_paper.id)
+                                        else:
+                                            paper_ids.append(None)
+                                    
+                                    # Add IDs to dataframe for multi-server scoring
+                                    new_papers_df['id'] = paper_ids
                                     
                                     if self.verbose:
                                         print(f"✅ Saved {saved_count} new papers to database")
+                                        print(f"✅ Retrieved {len([pid for pid in paper_ids if pid is not None])} paper IDs for scoring")
 
                                 # Filter by threshold for LLM scoring and newsletter generation
                                 filtered_df = new_papers_df[new_papers_df['cosine_similarity'] >= self.cosine_similarity_threshold]
@@ -1631,6 +1842,7 @@ Theseus Insight Team
                                         papers_list = []
                                         for paper in existing_papers:
                                             papers_list.append({
+                                                'id': paper.get('id'),  # Include database ID for multi-server scoring
                                                 'title': paper['title'],
                                                 'abstract': paper['abstract'],
                                                 'pdf_url': paper['url'],

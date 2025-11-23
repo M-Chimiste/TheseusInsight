@@ -5,31 +5,43 @@
     "max_new_tokens": null,
     "temperature": null,
     "num_ctx": null,
-    "trust_remote_code": true
+    "trust_remote_code": true,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "judge_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
-    "model_type": "ollama",
+    "model_name": "granite-4.0-h-micro",
+    "model_type": "lmstudio",
     "max_new_tokens": 512,
     "temperature": 0.1,
     "num_ctx": 131072,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "content_extraction_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
-    "model_type": "ollama",
+    "model_name": "granite-4.0-h-micro",
+    "model_type": "lmstudio",
     "max_new_tokens": 4096,
     "temperature": 0.1,
     "num_ctx": 131072,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "newsletter_sections_model": {
-    "model_name": "hf.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M",
-    "model_type": "ollama",
+    "model_name": "gemini-2.5-pro",
+    "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.2,
     "num_ctx": 128000,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "newsletter_intro_model": {
     "model_name": "gemini-2.5-pro",
@@ -37,7 +49,10 @@
     "max_new_tokens": 4096,
     "temperature": 0.2,
     "num_ctx": 128000,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "podcast_model": {
     "model_name": "gemini-2.5-flash",
@@ -45,7 +60,10 @@
     "max_new_tokens": 4096,
     "temperature": 0.2,
     "num_ctx": 131072,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "tts_model": {
     "tts_provider": "openai",
@@ -57,12 +75,15 @@
   },
   "research_agent_model_config": {
     "boss_model": {
-      "model_name": "hf.co/unsloth/Qwen3-30B-A3B-Thinking-2507-GGUF:Q4_K_M",
-      "model_type": "ollama",
+      "model_name": "gpt-4",
+      "model_type": "openai",
       "max_new_tokens": 4096,
-      "temperature": 0.2,
-      "num_ctx": 128000,
-      "trust_remote_code": null
+      "temperature": 0.1,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "worker_models": {
       "summary": {
@@ -71,7 +92,10 @@
         "max_new_tokens": 2048,
         "temperature": 0.1,
         "num_ctx": null,
-        "trust_remote_code": null
+        "trust_remote_code": null,
+        "host": null,
+        "context_length": null,
+        "gpu_offload": null
       },
       "analysis": {
         "model_name": "gpt-4",
@@ -79,7 +103,10 @@
         "max_new_tokens": 2048,
         "temperature": 0.1,
         "num_ctx": null,
-        "trust_remote_code": null
+        "trust_remote_code": null,
+        "host": null,
+        "context_length": null,
+        "gpu_offload": null
       },
       "search": {
         "model_name": "gpt-4",
@@ -87,7 +114,10 @@
         "max_new_tokens": 1024,
         "temperature": 0.1,
         "num_ctx": null,
-        "trust_remote_code": null
+        "trust_remote_code": null,
+        "host": null,
+        "context_length": null,
+        "gpu_offload": null
       }
     },
     "default_worker": "summary",
@@ -97,36 +127,48 @@
     "initial_rerank_top_k": 40,
     "max_research_loops": 3,
     "query_planner_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
-      "max_new_tokens": 4096,
-      "temperature": 0.2,
-      "num_ctx": 128000,
-      "trust_remote_code": null
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "max_new_tokens": 1024,
+      "temperature": 0.1,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "evidence_selector_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
-      "max_new_tokens": 4096,
-      "temperature": 0.2,
-      "num_ctx": 128000,
-      "trust_remote_code": null
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "max_new_tokens": 2048,
+      "temperature": 0.1,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "compression_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
+      "model_name": "gpt-4",
+      "model_type": "openai",
       "max_new_tokens": 4096,
-      "temperature": 0.2,
-      "num_ctx": 128000,
-      "trust_remote_code": null
+      "temperature": 0.1,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "answer_generator_model": {
-      "model_name": "gpt-oss:20b",
-      "model_type": "ollama",
+      "model_name": "gpt-4",
+      "model_type": "openai",
       "max_new_tokens": 4096,
-      "temperature": 0.2,
-      "num_ctx": 128000,
-      "trust_remote_code": null
+      "temperature": 0.3,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "arxiv_rate_limit": 3.0
   },
@@ -135,12 +177,15 @@
     "similarity_threshold": 0.3,
     "layout_algorithm": "force",
     "summarization_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
-      "max_new_tokens": 4096,
-      "temperature": 0.2,
-      "num_ctx": 128000,
-      "trust_remote_code": null
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "max_new_tokens": 1024,
+      "temperature": 0.3,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "expansion_order": 1,
     "max_nodes_per_order": 20

@@ -108,12 +108,14 @@ class TheseusInsight:
                  judge_server_ids=None,
                  newsletter_job_id=None,
                  judge_request_timeout_sec=None,
-                 judge_max_retries=None):
+                 judge_max_retries=None,
+                 progress_callback: Optional[Callable[[str, float, str], None]] = None):
         
         # Store task_id for logging
         self.task_id = task_id or f"theseus_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         self.verbose = verbose
+        self.progress_callback = progress_callback
         self.save_dialogue = save_dialogue
         self.checkpoint_dir = checkpoint_dir
         self.generate_email = generate_email
@@ -665,12 +667,13 @@ Theseus Insight Team
                     print(f"Failed to send 'no papers found' notification: {e}")
                 self._log_error(500, e)
 
-    def rank_papers_with_historical_scores(self, data_df, return_all_scored=False):
+    def rank_papers_with_historical_scores(self, data_df, return_all_scored=False, progress_callback=None):
         """Optimized ranking that uses existing scores when available, only ranking new papers.
 
         Args:
             data_df: DataFrame of papers to rank
             return_all_scored: If True, return tuple (top_n_df, all_scored_df) for profile scoring
+            progress_callback: Optional callback for progress updates
         """
         try:
             if self.verbose:
@@ -707,7 +710,7 @@ Theseus Insight Team
             if not unscored_papers_df.empty:
                 if self.verbose:
                     print(f"🧠 Running LLM judge on {len(unscored_papers_df)} unscored papers...")
-                newly_scored_df = self.rank_papers(unscored_papers_df)
+                newly_scored_df = self.rank_papers(unscored_papers_df, progress_callback=progress_callback)
             else:
                 newly_scored_df = pd.DataFrame()
 
@@ -757,7 +760,7 @@ Theseus Insight Team
             if self.verbose:
                 print(f"Error in optimized ranking: {e}")
             # Fallback to original ranking method
-            return self.rank_papers(data_df)
+            return self.rank_papers(data_df, progress_callback=progress_callback)
 
     async def rank_papers_async(self, data_df):
         """Async wrapper for rank_papers that supports both single and multi-server modes."""
@@ -790,9 +793,52 @@ Theseus Insight Team
         scorer = NewsletterScorer(self.orchestration_config)
 
         # Progress callback
-        def progress_callback(status, progress):
+        SCORING_STAGE_START = 20.0
+        SCORING_STAGE_END = 30.0
+
+        def progress_callback(status, progress, message=None, metadata=None):
+            status_for_callback = status
+            adjusted_progress = progress
+            metadata_payload = dict(metadata) if isinstance(metadata, dict) else metadata
+
+            if status == 'scoring':
+                status_for_callback = 'rank'
+                adjusted_progress = SCORING_STAGE_START + (progress / 100.0) * (SCORING_STAGE_END - SCORING_STAGE_START)
+
             if self.verbose:
-                print(f"Scoring progress: {status} - {progress*100:.1f}%")
+                print(
+                    f"Scoring progress: raw={progress:.1f}% "
+                    f"(overall {adjusted_progress:.1f}% between {SCORING_STAGE_START}-{SCORING_STAGE_END})"
+                )
+
+            if isinstance(metadata, dict):
+                metadata_payload = dict(metadata)
+                metadata_payload['scoring_progress_pct'] = progress
+                metadata_payload['overall_progress_pct'] = adjusted_progress
+
+            # Forward to main progress callback if available
+            print(f"[DEBUG] progress_callback called: status={status_for_callback}, progress={adjusted_progress}, has_callback={self.progress_callback is not None}")
+            if self.progress_callback:
+                print(f"[DEBUG] Calling self.progress_callback with metadata: {metadata_payload is not None}")
+                try:
+                    # If main callback accepts metadata
+                    self.progress_callback(status_for_callback, adjusted_progress, message, metadata_payload)
+                    print(f"[DEBUG] progress_callback succeeded")
+                except TypeError as e:
+                    # Fallback for simpler signature
+                    print(f"[DEBUG] TypeError in progress_callback, falling back to 2-arg signature: {e}")
+                    try:
+                        self.progress_callback(status_for_callback, adjusted_progress)
+                    except Exception as e2:
+                        print(f"[ERROR] Failed to call progress_callback with fallback: {type(e2).__name__}: {e2}")
+                        import traceback
+                        traceback.print_exc()
+                except Exception as e:
+                    print(f"[ERROR] Failed to call progress_callback: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[DEBUG] No self.progress_callback set!")
 
         # Score papers using multi-server worker pool
         # Uses profile-specific scoring like bulk judge, then aggregates across profiles
@@ -849,7 +895,7 @@ Theseus Insight Team
 
         return top_n_df
 
-    def rank_papers(self, data_df):
+    def rank_papers(self, data_df, progress_callback=None):
         """Given embedded papers, use judge model to score them (single-server mode)."""
         # If multi-server mode is enabled, delegate to async version
         if self.use_multi_server_judge:
@@ -871,9 +917,9 @@ Theseus Insight Team
                 
                 return loop.run_until_complete(self._rank_papers_multi_server(data_df))
         else:
-            return self._rank_papers_single_server(data_df)
+            return self._rank_papers_single_server(data_df, progress_callback=progress_callback)
 
-    def _rank_papers_single_server(self, data_df):
+    def _rank_papers_single_server(self, data_df, progress_callback=None):
         """Single-server sequential scoring (original implementation)."""
         try:
             abstracts = list(data_df['abstract'])
@@ -893,12 +939,28 @@ Theseus Insight Team
                 if self.verbose:
                     print(f"Resuming ranking from paper {start_index + 1}/{len(abstracts)}")
             
+            total_papers = len(abstracts)
+            
             for i, abstract in enumerate(tqdm(abstracts[start_index:], 
                                             disable=not self.verbose, 
                                             desc="Ranking papers",
                                             initial=start_index, 
                                             total=len(abstracts))):
                 actual_index = start_index + i
+                
+                # Progress update
+                if progress_callback:
+                    progress_pct = 20 + (actual_index / total_papers) * 30  # Map to 20-50% range
+                    metadata = {
+                        "papers_scored": actual_index,
+                        "papers_total": total_papers,
+                        "papers_failed": len(failed_papers)
+                    }
+                    try:
+                        progress_callback("rank", progress_pct, f"Ranking paper {actual_index+1}/{total_papers}", metadata)
+                    except TypeError:
+                        progress_callback("rank", progress_pct, f"Ranking paper {actual_index+1}/{total_papers}")
+
                 success = False
                 attempts = 0
                 max_attempts = 3
@@ -1080,7 +1142,7 @@ Theseus Insight Team
                                             judge_model = EXCLUDED.judge_model,
                                             date_scored = CURRENT_TIMESTAMP
                                     """, (
-                                        existing_paper.id,
+                                        existing_paper['id'],
                                         profile_id,
                                         row['score'],
                                         row['related'],
@@ -1594,6 +1656,8 @@ Theseus Insight Team
             progress_callback: Callable[[str, float, str], None]|None = None
            ):
         """Synchronous wrapper for the async run method."""
+        if progress_callback:
+            self.progress_callback = progress_callback
         return asyncio.run(self.run_async(start_from, progress_callback))
     
     async def run_async(self, 
@@ -1632,7 +1696,7 @@ Theseus Insight Team
             # Stage 1: Download Papers
             # -----------
             if progress_callback:
-                progress_callback("download", 0, "Starting paper download")
+                progress_callback("download", 0, "Starting paper download", {"papers_discovered": 0})
                 
             if not start_from:
                 # no stage specified, do we have an existing checkpoint for 'papers_downloaded'?
@@ -1671,14 +1735,11 @@ Theseus Insight Team
                         self._save_checkpoint('papers_downloaded', data_df)
 
             if progress_callback:
-                progress_callback("download", 10, "Paper download complete")
+                progress_callback("download", 10, "Paper download complete", {"papers_discovered": len(data_df)})
 
             # -----------
             # Stage 2: Embed Papers
             # -----------
-            if progress_callback:
-                progress_callback("embed", 11, "Starting paper embedding")
-                
             if start_from is None or start_from in ['papers_downloaded', 'papers_embedded']:
                 embedded_df = self._load_checkpoint('papers_embedded')
                 if embedded_df is None:
@@ -1697,6 +1758,9 @@ Theseus Insight Team
                         embedded_df['abstract_embedding'] = []
                         self._save_checkpoint('papers_embedded', embedded_df)
                     else:
+                        if progress_callback:
+                            progress_callback("embed", 11, "Starting paper embedding")
+                            
                         if self.verbose:
                             print("Embedding papers...")
 
@@ -1810,7 +1874,7 @@ Theseus Insight Team
                                         # Get the paper ID from database (whether newly inserted or existing)
                                         existing_paper = PaperRepository.get_by_url(row['pdf_url'])
                                         if existing_paper:
-                                            paper_ids.append(existing_paper.id)
+                                            paper_ids.append(existing_paper['id'])
                                         else:
                                             paper_ids.append(None)
                                     
@@ -2006,7 +2070,7 @@ Theseus Insight Team
                         else:
                             if self.verbose:
                                 print("Ranking papers...")
-                            top_n_df = self.rank_papers_with_historical_scores(embedded_df)
+                            top_n_df = self.rank_papers_with_historical_scores(embedded_df, progress_callback=progress_callback)
                     
                     await self._save_checkpoint_async('papers_ranked', top_n_df)
 

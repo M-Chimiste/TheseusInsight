@@ -363,6 +363,7 @@ class JudgeTaskQueueRepository:
                     COUNT(*) as total_tasks,
                     COUNT(*) FILTER (WHERE status = 'completed') as completed_tasks,
                     COUNT(*) FILTER (WHERE status = 'failed') as failed_tasks,
+                    COUNT(*) FILTER (WHERE status IN ('leased', 'in_progress')) as active_tasks,
                     AVG(attempts) as avg_attempts,
                     MAX(attempts) as max_attempts,
                     MIN(created_at) as first_task_at,
@@ -606,58 +607,30 @@ class JudgeTaskQueueRepository:
                 profile_interests[row['id']] = row['research_interests'] or ''
 
         # Create tasks for each (paper, profile) pair
+        # Always use dynamic pooling - don't pre-assign to servers
         with get_cursor() as cursor:
-            if server_urls:
-                # Distribute tasks round-robin across servers
-                values = []
-                task_index = 0
-                for paper in papers:
-                    for profile_id in profile_ids:
-                        server_url = server_urls[task_index % len(server_urls)]
-                        values.append((
-                            str(job_id),
-                            paper['id'],
-                            profile_id,
-                            'newsletter',  # job_type
-                            profile_interests.get(profile_id, ''),
-                            paper.get('title', ''),
-                            paper.get('abstract', ''),
-                            server_url
-                        ))
-                        task_index += 1
+            values = []
+            for paper in papers:
+                for profile_id in profile_ids:
+                    values.append((
+                        str(job_id),
+                        paper['id'],
+                        profile_id,
+                        'newsletter',  # job_type
+                        profile_interests.get(profile_id, ''),
+                        paper.get('title', ''),
+                        paper.get('abstract', '')
+                    ))
 
-                # Insert tasks - no ON CONFLICT needed since we're creating fresh tasks for each job
-                cursor.executemany("""
-                    INSERT INTO judge_task_queue (
-                        job_id, paper_id, profile_id, job_type,
-                        research_interests, paper_title, paper_abstract,
-                        assigned_server_url
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """, values)
-            else:
-                # Bulk insert without server assignment (dynamic pooling)
-                values = []
-                for paper in papers:
-                    for profile_id in profile_ids:
-                        values.append((
-                            str(job_id),
-                            paper['id'],
-                            profile_id,
-                            'newsletter',  # job_type
-                            profile_interests.get(profile_id, ''),
-                            paper.get('title', ''),
-                            paper.get('abstract', '')
-                        ))
-
-                # Insert tasks - no ON CONFLICT needed since we're creating fresh tasks for each job
-                cursor.executemany("""
-                    INSERT INTO judge_task_queue (
-                        job_id, paper_id, profile_id, job_type,
-                        research_interests, paper_title, paper_abstract
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, values)
+            # Insert tasks - no ON CONFLICT needed since we're creating fresh tasks for each job
+            # Don't assign to servers - let workers pull from queue dynamically
+            cursor.executemany("""
+                INSERT INTO judge_task_queue (
+                    job_id, paper_id, profile_id, job_type,
+                    research_interests, paper_title, paper_abstract
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, values)
 
             return cursor.rowcount
 

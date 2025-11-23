@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Callable
 from uuid import UUID
 
@@ -94,13 +95,13 @@ class NewsletterScorer:
 
             # 3. Enqueue scoring tasks (creates tasks for each paper-profile combination)
             logger.info(f"Enqueueing {len(papers)} papers × {len(profile_ids)} profiles = {total_tasks} scoring tasks")
-            server_urls = [s.url for s in enabled_servers]
 
+            # Don't pre-assign tasks to servers - use dynamic queue-based distribution
             task_count = JudgeTaskQueueRepository.enqueue_newsletter_tasks(
                 job_id=job_id,
                 papers=papers,
                 profile_ids=profile_ids,
-                server_urls=server_urls
+                server_urls=None  # Use dynamic pooling
             )
 
             logger.info(f"Enqueued {task_count} scoring tasks")
@@ -117,7 +118,10 @@ class NewsletterScorer:
             await self._monitor_scoring_progress(
                 job_id=job_id,
                 total_tasks=task_count,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                servers=enabled_servers,
+                paper_count=len(papers),
+                profile_count=len(profile_ids)
             )
 
             # 6. Retrieve results
@@ -248,8 +252,11 @@ class NewsletterScorer:
         self,
         job_id: UUID,
         total_tasks: int,
-        progress_callback: Optional[Callable[[str, float], None]] = None,
-        poll_interval_sec: int = 5
+        progress_callback: Optional[Callable[[str, float, str, Optional[Dict]], None]] = None,
+        poll_interval_sec: int = 5,
+        servers: Optional[List[Any]] = None,
+        paper_count: Optional[int] = None,
+        profile_count: Optional[int] = None
     ):
         """
         Monitor scoring job progress and broadcast updates.
@@ -265,6 +272,14 @@ class NewsletterScorer:
         max_wait_minutes = 60  # Maximum time to wait for completion
         max_iterations = (max_wait_minutes * 60) // poll_interval_sec
         iteration = 0
+
+        # Build lookup for server metadata (names/ids) by URL for richer UI display
+        server_lookup: Dict[str, Any] = {}
+        if servers:
+            for server in servers:
+                url = getattr(server, 'url', None)
+                if url:
+                    server_lookup[url] = server
 
         while iteration < max_iterations:
             try:
@@ -293,9 +308,143 @@ class NewsletterScorer:
                     papers_scored=completed
                 )
 
-                # Call progress callback
+                # NEW: Get per-server statistics
+                server_stats = NewsletterJobRepository.get_job_server_stats(job_id)
+
+                stats_by_url = {}
+                for stat in (server_stats or []):
+                    url = stat.get('assigned_server_url')
+                    if url:
+                        # Normalize URL for lookup (strip trailing slash)
+                        stats_by_url[url.rstrip('/')] = stat
+                        # Also keep original for exact matches
+                        stats_by_url[url] = stat
+
+                formatted_server_stats: List[Dict[str, Any]] = []
+                
+                def _calculate_stats(stat: Dict[str, Any]) -> Dict[str, Any]:
+                    completed_tasks = stat.get('completed_tasks', 0) or 0
+                    
+                    # Calculate throughput
+                    avg_latency = None
+                    throughput = 0.0
+                    
+                    first_task = stat.get('first_task_at')
+                    last_update = stat.get('last_update_at')
+                    
+                    if completed_tasks > 0 and first_task and last_update:
+                        # Ensure timezone awareness compatibility if needed
+                        if first_task.tzinfo is None:
+                            first_task = first_task.replace(tzinfo=timezone.utc)
+                        if last_update.tzinfo is None:
+                            last_update = last_update.replace(tzinfo=timezone.utc)
+                            
+                        duration = (last_update - first_task).total_seconds()
+                        if duration > 1.0:  # Avoid division by zero or tiny intervals
+                            avg_latency = duration / completed_tasks
+                            throughput = (completed_tasks / duration) * 60
+                    
+                    return avg_latency, throughput
+
+                if server_lookup:
+                    for url, server in server_lookup.items():
+                        stat = stats_by_url.get(url) or stats_by_url.get(url.rstrip('/'), {})
+                        
+                        total = stat.get('total_tasks', 0) or 0
+                        completed_tasks = stat.get('completed_tasks', 0) or 0
+                        failed_tasks = stat.get('failed_tasks', 0) or 0
+                        active_tasks = stat.get('active_tasks', 0) or 0
+                        
+                        avg_latency, throughput = _calculate_stats(stat)
+
+                        formatted_server_stats.append({
+                            'server_id': str(getattr(server, 'id', url)),
+                            'server_name': getattr(server, 'name', url),
+                            'server_url': url,
+                            'total': total,
+                            'completed': completed_tasks,
+                            'in_progress': active_tasks,
+                            'failed': failed_tasks,
+                            'papers_processed': completed_tasks,
+                            'papers_failed': failed_tasks,
+                            'avg_latency': avg_latency,
+                            'throughput': throughput,
+                            'last_completed_at': stat.get('last_completed_at').isoformat()
+                                if stat.get('last_completed_at') else None,
+                            'status': 'busy' if active_tasks > 0 else ('idle' if total > 0 else 'offline'),
+                        })
+                else:
+                    # Deduplicate stats if we're iterating blindly
+                    seen_urls = set()
+                    for stat in (server_stats or []):
+                        server_url = stat.get('assigned_server_url')
+                        if not server_url or server_url in seen_urls:
+                            continue
+                        seen_urls.add(server_url)
+                        
+                        server_info = server_lookup.get(server_url, {})
+                        total = stat.get('total_tasks', 0) or 0
+                        completed_tasks = stat.get('completed_tasks', 0) or 0
+                        failed_tasks = stat.get('failed_tasks', 0) or 0
+                        active_tasks = stat.get('active_tasks', 0) or 0
+
+                        avg_latency, throughput = _calculate_stats(stat)
+
+                        formatted_server_stats.append({
+                            'server_id': str(getattr(server_info, 'id', server_url)),
+                            'server_name': getattr(server_info, 'name', server_url),
+                            'server_url': server_url,
+                            'total': total,
+                            'completed': completed_tasks,
+                            'in_progress': active_tasks,
+                            'failed': failed_tasks,
+                            'papers_processed': completed_tasks,
+                            'papers_failed': failed_tasks,
+                            'avg_latency': avg_latency,
+                            'throughput': throughput,
+                            'last_completed_at': stat.get('last_completed_at').isoformat()
+                                if stat.get('last_completed_at') else None,
+                            'status': 'busy' if active_tasks > 0 else ('idle' if total > 0 else 'offline'),
+                        })
+
+                # NEW: Build structured metadata
+                summary = {
+                    'completed': completed,
+                    'failed': failed,
+                    'pending': pending,
+                    'in_progress': in_progress,
+                    'total': total_tasks,
+                    'pending_plus_in_progress': pending + in_progress
+                }
+
+                metadata = {
+                    'newsletter_job_id': str(job_id),
+                    'papers_discovered': paper_count,
+                    'papers_to_score': total_tasks,
+                    'papers_scored': completed,
+                    'papers_failed': failed,
+                    'papers_pending': pending,
+                    'papers_in_progress': in_progress,
+                    'profile_count': profile_count,
+                    'server_stats': formatted_server_stats,
+                    'avg_task_duration': progress.get('avg_task_duration_seconds'),
+                    'estimated_time_remaining': progress.get('estimated_time_remaining_seconds')
+                }
+                metadata['scoring_summary'] = summary
+
+                # Call progress callback with metadata
                 if progress_callback:
-                    progress_callback('scoring', progress_pct / 100.0)
+                    message = f"Scoring papers: {completed}/{total_tasks} completed"
+                    if formatted_server_stats:
+                        active_servers = sum(1 for s in formatted_server_stats if s.get('in_progress', 0) > 0)
+                        message += f" ({active_servers} servers active)"
+                    
+                    # Pass message and metadata
+                    try:
+                        progress_callback('scoring', progress_pct, message, metadata)
+                    except TypeError:
+                        # Fallback for old callback signature
+                        progress_callback('scoring', progress_pct)
 
                 # Check if all tasks are finished
                 if finished >= total_tasks:

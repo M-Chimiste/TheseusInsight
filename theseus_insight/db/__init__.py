@@ -11,6 +11,9 @@ from __future__ import annotations
 import os
 import logging
 from contextlib import contextmanager
+import asyncpg
+import asyncio
+from typing import Optional, AsyncGenerator
 
 import psycopg
 from psycopg.rows import dict_row
@@ -119,6 +122,28 @@ async def get_connection_pool() -> asyncpg.Pool:
         asyncpg.Pool: The connection pool
     """
     global _async_pool
+    
+    # Check if we have a cached pool and if it belongs to the current loop
+    current_loop = asyncio.get_running_loop()
+    
+    if _async_pool is not None:
+        # Check if the pool is closed or belongs to a different loop
+        if _async_pool._loop is not current_loop:
+            # We are in a different loop (e.g. running in a thread), create a new pool for this loop
+            # We don't overwrite the global _async_pool as that might be used by the main loop
+            # Instead, we just return a new pool for this context
+            # Note: This new pool won't be cached globally, which is fine for one-off tasks
+            new_pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=5,
+                max_size=20,
+                max_queries=50000,
+                max_inactive_connection_lifetime=300.0,
+                command_timeout=60.0,
+            )
+            logger.info(f"Initialized new async connection pool for separate thread/loop")
+            return new_pool
+            
     if _async_pool is None:
         # Configure pool with proper limits for multi-worker scenarios
         # Default max_size=10 is too low for multiple workers

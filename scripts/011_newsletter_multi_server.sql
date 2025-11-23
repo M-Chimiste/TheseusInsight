@@ -166,6 +166,11 @@ ORDER BY nj.id DESC, jt.assigned_server_url;
 COMMENT ON VIEW newsletter_server_stats IS
     'Per-server performance statistics for newsletter multi-server scoring jobs';
 
+-- Add metadata column to tasks table for enhanced UI display (e.g., server stats)
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS metadata JSONB;
+
+COMMENT ON COLUMN tasks.metadata IS 'Structured data for enhanced UI display (e.g., server stats for newsletter scoring)';
+
 -- Migration verification and reporting
 DO $$
 DECLARE
@@ -186,4 +191,5 @@ BEGIN
     RAISE NOTICE '  - Bulk judge tasks: %', bulk_tasks_count;
     RAISE NOTICE 'Unique constraints updated for dual job type support';
     RAISE NOTICE 'Views created: newsletter_scoring_progress, newsletter_server_stats';
+    RAISE NOTICE 'Tasks table extended with metadata column';
 END $$;

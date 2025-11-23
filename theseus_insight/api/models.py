@@ -175,6 +175,7 @@ class RunStatus(BaseModel):
     message: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 # Settings for ArXiv
 class ArxivCategoriesConfig(BaseModel):

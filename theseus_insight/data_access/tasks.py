@@ -62,6 +62,7 @@ class TaskRepository:
         error: str | None = None,
         result_json: Dict[str, Any] | None = None,
         end_time: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> None:
         fields = ["status = %s"]
         params: List[Any] = [status]
@@ -83,6 +84,9 @@ class TaskRepository:
         if end_time is not None:
             fields.append("end_time = %s")
             params.append(end_time)
+        if metadata is not None:
+            fields.append("metadata = %s")
+            params.append(json.dumps(metadata))
         params.append(task_id)
         sql = f"UPDATE tasks SET {', '.join(fields)} WHERE task_id = %s"
         with get_cursor() as cur:
@@ -183,8 +187,9 @@ class TaskRepository:
         error: str | None = None,
         result_json: Dict[str, Any] | None = None,
         end_time: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> None:
-        TaskRepository.update_status(task_id, status, progress=progress, current_step=current_step, message=message, error=error, result_json=result_json, end_time=end_time)
+        TaskRepository.update_status(task_id, status, progress=progress, current_step=current_step, message=message, error=error, result_json=result_json, end_time=end_time, metadata=metadata)
 
     @staticmethod
     def get_task(task_id: str) -> Dict[str, Any] | None:

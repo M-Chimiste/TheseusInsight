@@ -221,6 +221,7 @@ class TaskManager:
         error: str | None = None,
         current_step: str | None = None,
         result: dict | None = None,
+        metadata: dict | None = None,
     ) -> None:
         """Update task status and notify subscribers."""
         # Check if task exists in database (run in thread to avoid blocking event loop)
@@ -237,6 +238,21 @@ class TaskManager:
         
         # Calculate final progress based on status
         final_progress = progress if status == TaskStatus.PROCESSING else (100 if status == TaskStatus.COMPLETED else 0)
+
+        # If metadata is not provided, preserve existing metadata from the task
+        if metadata is None:
+            existing_metadata = task.get('metadata')
+            if existing_metadata:
+                if isinstance(existing_metadata, str):
+                    try:
+                        metadata = json.loads(existing_metadata)
+                    except json.JSONDecodeError:
+                        # If it's a string but not valid JSON, use as is or ignore? 
+                        # Ideally it should be a dict. Let's assume it might be a raw string or ignore.
+                        print(f"[WARNING] Could not parse existing metadata for task {task_id}: {existing_metadata}")
+                        metadata = {}
+                elif isinstance(existing_metadata, dict):
+                    metadata = existing_metadata
         
         # Update task in database using repository (run in thread to avoid blocking event loop)
         end_time = datetime.now().isoformat() if status in [TaskStatus.COMPLETED, TaskStatus.FAILED] else None
@@ -249,7 +265,8 @@ class TaskManager:
             message=message,
             error=error,
             result_json=result,
-            end_time=end_time
+            end_time=end_time,
+            metadata=metadata
         )
         
         # Create status update for WebSocket clients
@@ -271,6 +288,7 @@ class TaskManager:
             message=message,
             result=result,
             error=error,
+            metadata=metadata,
         )
         
                 # Log to the logs table as well

@@ -208,6 +208,61 @@ async def _cleanup_stuck_jobs_in_database():
             except (ValueError, IndexError):
                 logger.warning(f"Could not parse tasks UPDATE result: {tasks_result}")
             
+            # Clean up newsletter jobs
+            newsletter_jobs = await conn.fetch(
+                """
+                SELECT id, status, created_at 
+                FROM newsletter_jobs 
+                WHERE status IN ('pending', 'scoring', 'generating')
+                """
+            )
+            
+            if newsletter_jobs:
+                print(f"🔍 Found {len(newsletter_jobs)} stuck newsletter jobs:")
+                logger.warning(f"Found {len(newsletter_jobs)} stuck newsletter jobs to clean up")
+                for job in newsletter_jobs:
+                    print(f"   - Newsletter Job (ID: {job['id']}, Status: {job['status']}, Created: {job['created_at']})")
+                    logger.warning(f"Stuck newsletter job: ID: {job['id']}, Status: {job['status']}, Created: {job['created_at']}")
+            
+            # Mark stuck newsletter jobs as failed
+            newsletter_result = await conn.execute(
+                """
+                UPDATE newsletter_jobs
+                SET status = 'failed',
+                    error_message = 'Job terminated on server restart',
+                    completed_at = NOW()
+                WHERE status IN ('pending', 'scoring', 'generating')
+                """
+            )
+            
+            try:
+                newsletter_jobs_cleaned = int(newsletter_result.split()[-1]) if newsletter_result and newsletter_result.startswith('UPDATE') else 0
+                if newsletter_jobs_cleaned > 0:
+                    print(f"🧹 Marked {newsletter_jobs_cleaned} stuck newsletter jobs as failed")
+                    logger.info(f"Marked {newsletter_jobs_cleaned} stuck newsletter jobs as failed")
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse newsletter UPDATE result: {newsletter_result}")
+            
+            # Clean up tasks for failed newsletter jobs
+            newsletter_task_cleanup = await conn.execute(
+                """
+                DELETE FROM judge_task_queue
+                WHERE job_type = 'newsletter'
+                  AND job_id IN (
+                    SELECT id FROM newsletter_jobs
+                    WHERE status IN ('failed', 'canceled')
+                  )
+                """
+            )
+            
+            try:
+                newsletter_tasks_cleaned = int(newsletter_task_cleanup.split()[-1]) if newsletter_task_cleanup and newsletter_task_cleanup.startswith('DELETE') else 0
+                if newsletter_tasks_cleaned > 0:
+                    print(f"🧹 Cleaned up {newsletter_tasks_cleaned} tasks from failed newsletter jobs")
+                    logger.info(f"Cleaned up {newsletter_tasks_cleaned} tasks from failed newsletter jobs")
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse newsletter task cleanup result: {newsletter_task_cleanup}")
+            
         print("✅ Database state cleaned up")
         logger.info("Database state cleanup completed successfully")
         

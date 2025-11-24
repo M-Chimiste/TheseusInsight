@@ -253,6 +253,8 @@ if ($Environment -eq "docker") {
     $ScheduledTasksFile = "C:\app\sql\007_add_scheduled_tasks.sql"
     $MultiOllamaFile = "C:\app\sql\008_add_multi_ollama_support.sql"
     $LMStudioMultiServerFile = "C:\app\sql\009_add_lmstudio_multi_server.sql"
+    $PerServerModelConfigFile = "C:\app\sql\010_add_per_server_model_config.sql"
+    $NewsletterMultiServerFile = "C:\app\sql\011_newsletter_multi_server.sql"
     $CreateMigrationTrackingFile = "C:\app\sql\create_migration_tracking.sql"
 }
 else {
@@ -265,6 +267,8 @@ else {
     $ScheduledTasksFile = "$PSScriptRoot\007_add_scheduled_tasks.sql"
     $MultiOllamaFile = "$PSScriptRoot\008_add_multi_ollama_support.sql"
     $LMStudioMultiServerFile = "$PSScriptRoot\009_add_lmstudio_multi_server.sql"
+    $PerServerModelConfigFile = "$PSScriptRoot\010_add_per_server_model_config.sql"
+    $NewsletterMultiServerFile = "$PSScriptRoot\011_newsletter_multi_server.sql"
     $CreateMigrationTrackingFile = "$PSScriptRoot\create_migration_tracking.sql"
 }
 
@@ -434,6 +438,48 @@ if (Test-Path $LMStudioMultiServerFile) {
 else {
     Write-Warning "⚠️  Warning: LMStudio multi-server migration file not found at $LMStudioMultiServerFile"
     Write-Host "   LMStudio provider features may not be available"
+}
+
+# Apply per-server model config migration
+if (Test-Path $PerServerModelConfigFile) {
+    Write-Status "📋 Applying per-server model config migration from: $PerServerModelConfigFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $PerServerModelConfigFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply per-server model config migration from $PerServerModelConfigFile"
+            exit 1
+        }
+        Write-Success "✅ Per-server model config migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply per-server model config migration from $PerServerModelConfigFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Per-server model config migration file not found at $PerServerModelConfigFile"
+    Write-Host "   Per-server model configuration may not be available"
+}
+
+# Apply newsletter multi-server support migration
+if (Test-Path $NewsletterMultiServerFile) {
+    Write-Status "📋 Applying newsletter multi-server migration from: $NewsletterMultiServerFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $NewsletterMultiServerFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply newsletter multi-server migration from $NewsletterMultiServerFile"
+            exit 1
+        }
+        Write-Success "✅ Newsletter multi-server migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply newsletter multi-server migration from $NewsletterMultiServerFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Newsletter multi-server migration file not found at $NewsletterMultiServerFile"
+    Write-Host "   Newsletter multi-server features may not be available"
 }
 
 Write-Host ""

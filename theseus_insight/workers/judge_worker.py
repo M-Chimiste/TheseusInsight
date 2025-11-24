@@ -94,37 +94,53 @@ class JudgeWorker:
         self.profile_cache = {}
         
         # Load judge model config from database settings
-        judge_config = self._load_judge_config()
-        model_name = judge_config.get('model_name', 'phi4-mini:3.8b-q8_0')
-        max_new_tokens = judge_config.get('max_new_tokens', 512)
-        temperature = judge_config.get('temperature', 0.1)
-        num_ctx = judge_config.get('num_ctx', 4096)
+        self.judge_model_config = self._load_judge_config()
+        
+        # Apply per-server overrides if provided
+        model_name = server_model_name or self.judge_model_config.get('model_name', 'phi4-mini:3.8b-q8_0')
+        max_new_tokens = self.judge_model_config.get('max_new_tokens', 512)
+        temperature = self.judge_model_config.get('temperature', 0.1)
+        num_ctx = self.judge_model_config.get('num_ctx', 4096)
+        
+        # Apply server_model_config overrides if provided
+        if server_model_config:
+            max_new_tokens = server_model_config.get('max_new_tokens', max_new_tokens)
+            temperature = server_model_config.get('temperature', temperature)
+            num_ctx = server_model_config.get('num_ctx', num_ctx)
         
         logger.info(f"Loaded judge model config: {model_name}")
         
-        # Initialize Ollama client once
-        from ..inference.llm import OllamaInference
-        self.ollama_client = OllamaInference(
-            model_name=model_name,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            num_ctx=num_ctx,
-            url=server_url,
-            request_timeout=timeout
-        )
-        logger.info(f"Using judge model: {self.judge_model_config.get('model_name')} (type: {self.judge_model_config.get('model_type')})")
+        # Initialize inference client based on provider using LLMFactory pattern
+        if provider == "ollama":
+            from LLMFactory.providers import OllamaInference
+            self.inference_client = OllamaInference(
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                num_ctx=num_ctx,
+                url=server_url,
+                request_timeout=timeout
+            )
+        elif provider == "lmstudio":
+            from LLMFactory import LLMModelFactory
+            # Extract host from server_url (e.g., http://localhost:1234 -> localhost:1234)
+            host = server_url.replace('http://', '').replace('https://', '')
+            kwargs = {
+                'model_type': 'lmstudio',
+                'model_name': model_name,
+                'max_new_tokens': max_new_tokens,
+                'temperature': temperature,
+                'host': host
+            }
+            if num_ctx is not None:
+                kwargs['context_length'] = num_ctx
+            self.inference_client = LLMModelFactory.create_model(**kwargs)
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
+        
+        logger.info(f"Using judge model: {model_name} (provider: {provider})")
         if server_model_name or server_model_config:
             logger.info(f"Per-server model override active: model_name={server_model_name}, custom_params={bool(server_model_config)}")
-
-        # Initialize inference client based on provider
-        # Use the merged config which includes per-server overrides
-        self.inference_client = self._create_inference_client(
-            self.judge_model_config,
-            server_url,
-            provider,
-            self.config_json,
-            timeout
-        )
 
         # Add file handler for this specific worker
         log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'logs')
@@ -425,12 +441,12 @@ class JudgeWorker:
             return 0
 
     def _process_task(self, task):
-        """Process a single task."""
+        """Process a single task (supports both bulk_judge and newsletter job types)."""
         cur = None
         try:
             # Create a fresh cursor for this task
             cur = self.conn.cursor(row_factory=psycopg.rows.dict_row)
-            
+
             # Mark task as in progress
             cur.execute("""
                 UPDATE judge_task_queue
@@ -439,63 +455,83 @@ class JudgeWorker:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND status = 'leased'
             """, (self.worker_id, task['id']))
-            
+
             if cur.rowcount == 0:
                 logger.warning(f"Failed to mark task {task['id']} as in progress")
                 cur.close()
                 return
-            
-            # Get paper
-            cur.execute("SELECT * FROM papers WHERE id = %s", (task['paper_id'],))
-            paper_row = cur.fetchone()
-            paper = dict(paper_row) if paper_row else None
-            if not paper:
-                raise ValueError(f"Paper {task['paper_id']} not found")
-            
-            # Get profile (with caching)
-            profile_id = task['profile_id']
-            if profile_id in self.profile_cache:
-                profile = self.profile_cache[profile_id]
+
+            # Detect job type
+            job_type = task.get('job_type', 'bulk_judge')
+
+            if job_type == 'newsletter':
+                # Newsletter mode: use cached data from task
+                paper = {
+                    'id': task['paper_id'],
+                    'title': task.get('paper_title', ''),
+                    'abstract': task.get('paper_abstract', '')
+                }
+                research_interests = task.get('research_interests', '')
+                profile_id = None
+                profile_name = 'newsletter'
+
+                logger.info(f"Processing newsletter task for paper {task['paper_id']}")
             else:
-                cur.execute("SELECT * FROM research_profiles WHERE id = %s", (profile_id,))
-                profile_row = cur.fetchone()
-                profile = dict(profile_row) if profile_row else None
-                if not profile:
-                    raise ValueError(f"Profile {profile_id} not found")
-                self.profile_cache[profile_id] = profile
-            
-            # Get research interests (with caching)
-            if profile_id in self.interests_cache:
-                research_interests = self.interests_cache[profile_id]
-            else:
-                cur.execute(
-                    "SELECT interest_text FROM profile_research_interests WHERE profile_id = %s",
-                    (profile_id,)
-                )
-                interests_rows = cur.fetchall()
-                if not interests_rows:
-                    raise ValueError(f"No interests for profile {profile_id}")
-                research_interests = " ".join([row['interest_text'] for row in interests_rows])
-                self.interests_cache[profile_id] = research_interests
-            
+                # Bulk judge mode: load paper and profile from database
+                # Get paper
+                cur.execute("SELECT * FROM papers WHERE id = %s", (task['paper_id'],))
+                paper_row = cur.fetchone()
+                paper = dict(paper_row) if paper_row else None
+                if not paper:
+                    raise ValueError(f"Paper {task['paper_id']} not found")
+
+                # Get profile (with caching)
+                profile_id = task['profile_id']
+                if profile_id in self.profile_cache:
+                    profile = self.profile_cache[profile_id]
+                else:
+                    cur.execute("SELECT * FROM research_profiles WHERE id = %s", (profile_id,))
+                    profile_row = cur.fetchone()
+                    profile = dict(profile_row) if profile_row else None
+                    if not profile:
+                        raise ValueError(f"Profile {profile_id} not found")
+                    self.profile_cache[profile_id] = profile
+
+                profile_name = profile['name']
+
+                # Get research interests (with caching)
+                if profile_id in self.interests_cache:
+                    research_interests = self.interests_cache[profile_id]
+                else:
+                    cur.execute(
+                        "SELECT interest_text FROM profile_research_interests WHERE profile_id = %s",
+                        (profile_id,)
+                    )
+                    interests_rows = cur.fetchall()
+                    if not interests_rows:
+                        raise ValueError(f"No interests for profile {profile_id}")
+                    research_interests = " ".join([row['interest_text'] for row in interests_rows])
+                    self.interests_cache[profile_id] = research_interests
+
             # Close cursor to free resources
             # With autocommit mode, transaction already committed
             cur.close()
             cur = None
-            
+
             # Perform LLM scoring (this happens outside any transaction)
-            logger.info(f"Scoring paper for profile {profile['name']}")
+            logger.info(f"Scoring paper for {profile_name}")
             try:
                 score_data = self._score_paper(paper, research_interests)
             except Exception as e:
                 # If LLM fails, mark the task as failed and continue
                 logger.error(f"LLM scoring failed: {e}")
                 raise Exception(f"LLM inference failed: {e}")
-            
+
             # Create a new cursor for saving results
             cur = self.conn.cursor(row_factory=psycopg.rows.dict_row)
-            
-            # Save the score
+
+            # Save score to paper_profile_scores (used for both bulk judge and newsletter)
+            # Both job types now use profile-specific scoring for persistence and aggregation
             cur.execute("""
                 INSERT INTO paper_profile_scores (paper_id, profile_id, score, related, rationale, judge_model)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -508,13 +544,13 @@ class JudgeWorker:
                     date_scored = CURRENT_TIMESTAMP
             """, (
                 task['paper_id'],
-                task['profile_id'],
+                profile_id,
                 score_data['score'],
                 score_data['related'],
                 score_data['rationale'],
                 self.inference_client.model_name
             ))
-            
+
             # Mark task as completed
             cur.execute("""
                 UPDATE judge_task_queue
@@ -522,21 +558,21 @@ class JudgeWorker:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (task['id'],))
-            
+
             # Close cursor to free resources
             # With autocommit mode, transaction already committed
             cur.close()
             cur = None
-            
+
             self.tasks_processed += 1
-            logger.info(f"Completed task with score {score_data['score']} (total: {self.tasks_processed})")
-            
+            logger.info(f"Completed {job_type} task with score {score_data['score']} (total: {self.tasks_processed})")
+
         except Exception as e:
             logger.error(f"Task {task['id']} failed: {e}")
-            
+
             # Increment consecutive failures for circuit breaker
             self.consecutive_failures += 1
-            
+
             # Mark task as failed using a fresh cursor
             try:
                 if cur:
@@ -709,6 +745,7 @@ def main():
     parser = argparse.ArgumentParser(description='Theseus Judge Worker')
     parser.add_argument('--server-url', help='Ollama server URL to process')
     parser.add_argument('--job-id', help='Specific job ID to process')
+    parser.add_argument('--provider', default='ollama', help='LLM provider type (ollama, lmstudio, openai, etc.)')
     parser.add_argument('--all-enabled', action='store_true', help='Process all enabled servers')
     parser.add_argument('--max-retries', type=int, default=3, help='Max retries per task')
     parser.add_argument('--timeout', type=int, default=30, help='Request timeout in seconds')
@@ -740,9 +777,9 @@ def main():
     elif args.server_url:
         # Single server mode - use CLI arguments for model overrides
         servers_to_process = [
-            (args.server_url, "ollama", {}, args.job_id, args.server_model_name, server_model_config)
+            (args.server_url, args.provider, {}, args.job_id, args.server_model_name, server_model_config)
         ]
-        logger.info(f"Processing single server: {args.server_url}")
+        logger.info(f"Processing single server: {args.server_url} (provider: {args.provider})")
     else:
         logger.error("Must specify either --server-url or --all-enabled")
         sys.exit(1)

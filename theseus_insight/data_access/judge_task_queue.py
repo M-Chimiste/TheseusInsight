@@ -112,14 +112,17 @@ class JudgeTaskQueueRepository:
             return cursor.rowcount
 
     @staticmethod
-    def lease_next_task(server_url: str, worker_id: str, lease_duration_minutes: int = 5) -> Optional[JudgeTask]:
+    def lease_next_task(server_url: str, worker_id: str, lease_duration_minutes: int = 5) -> Optional[Dict[str, Any]]:
         """Lease the next available task using SKIP LOCKED for concurrency safety.
         Dynamic pooling: do not restrict to assigned_server_url; any pending task is eligible.
+
+        Returns a dict instead of JudgeTask to support both bulk_judge and newsletter job types.
         """
         leased_until = datetime.now() + timedelta(minutes=lease_duration_minutes)
 
         with get_cursor() as cursor:
             # Use SKIP LOCKED to prevent multiple workers from getting the same task
+            # Include job_type and newsletter-specific fields for newsletter tasks
             cursor.execute("""
                 UPDATE judge_task_queue
                 SET status = 'leased',
@@ -136,11 +139,12 @@ class JudgeTaskQueueRepository:
                 )
                 RETURNING id, job_id, paper_id, profile_id, status, attempts,
                           last_error, assigned_server_url, leased_until,
-                          leased_by_worker, created_at, updated_at
+                          leased_by_worker, created_at, updated_at,
+                          job_type, research_interests, paper_title, paper_abstract
             """, (server_url, leased_until, worker_id))
 
             row = cursor.fetchone()
-            return JudgeTask.from_dict(dict(row)) if row else None
+            return dict(row) if row else None
 
     @staticmethod
     def get_expired_leases() -> List[JudgeTask]:
@@ -359,6 +363,7 @@ class JudgeTaskQueueRepository:
                     COUNT(*) as total_tasks,
                     COUNT(*) FILTER (WHERE status = 'completed') as completed_tasks,
                     COUNT(*) FILTER (WHERE status = 'failed') as failed_tasks,
+                    COUNT(*) FILTER (WHERE status IN ('leased', 'in_progress')) as active_tasks,
                     AVG(attempts) as avg_attempts,
                     MAX(attempts) as max_attempts,
                     MIN(created_at) as first_task_at,
@@ -556,3 +561,140 @@ class JudgeTaskQueueRepository:
                 })
 
             return jobs
+
+    # ========================================================================
+    # Newsletter-specific task queue operations
+    # ========================================================================
+
+    @staticmethod
+    def enqueue_newsletter_tasks(
+        job_id: UUID,
+        papers: List[Dict[str, Any]],
+        profile_ids: List[int],
+        server_urls: Optional[List[str]] = None
+    ) -> int:
+        """Enqueue paper scoring tasks for newsletter generation.
+
+        Creates tasks for each (paper, profile) combination, similar to bulk judge.
+        Scores are stored in paper_profile_scores table for persistence and aggregation.
+
+        Args:
+            job_id: Newsletter job UUID
+            papers: List of paper dicts with id, title, abstract
+            profile_ids: List of profile IDs to score against
+            server_urls: Optional list of server URLs for round-robin distribution
+
+        Returns:
+            Count of tasks enqueued
+        """
+        if not papers or not profile_ids:
+            return 0
+
+        # Get research interests for each profile (cached in task for performance)
+        # Research interests are stored in profile_research_interests table, need to join and concatenate
+        profile_interests = {}
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    rp.id,
+                    STRING_AGG(pri.interest_text, ' ' ORDER BY pri.id) as research_interests
+                FROM research_profiles rp
+                LEFT JOIN profile_research_interests pri ON rp.id = pri.profile_id
+                WHERE rp.id = ANY(%s)
+                GROUP BY rp.id
+            """, (profile_ids,))
+            for row in cursor.fetchall():
+                profile_interests[row['id']] = row['research_interests'] or ''
+
+        # Create tasks for each (paper, profile) pair
+        # Always use dynamic pooling - don't pre-assign to servers
+        with get_cursor() as cursor:
+            values = []
+            for paper in papers:
+                for profile_id in profile_ids:
+                    values.append((
+                        str(job_id),
+                        paper['id'],
+                        profile_id,
+                        'newsletter',  # job_type
+                        profile_interests.get(profile_id, ''),
+                        paper.get('title', ''),
+                        paper.get('abstract', '')
+                    ))
+
+            # Insert tasks - no ON CONFLICT needed since we're creating fresh tasks for each job
+            # Don't assign to servers - let workers pull from queue dynamically
+            cursor.executemany("""
+                INSERT INTO judge_task_queue (
+                    job_id, paper_id, profile_id, job_type,
+                    research_interests, paper_title, paper_abstract
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, values)
+
+            return cursor.rowcount
+
+    @staticmethod
+    def get_newsletter_results(job_id: UUID) -> List[Dict[str, Any]]:
+        """Get completed scoring results for a newsletter job.
+
+        Aggregates scores from paper_profile_scores across all profiles in the newsletter job.
+        Uses average score across profiles, but marks as related if ANY profile finds it related.
+
+        Returns list of scored papers with aggregated judge results.
+        """
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    jt.paper_id,
+                    jt.paper_title,
+                    jt.paper_abstract,
+                    AVG(pps.score)::REAL as score,
+                    BOOL_OR(pps.related) as related,
+                    STRING_AGG(DISTINCT pps.rationale, ' | ') as rationale,
+                    MAX(jt.updated_at) as scored_at,
+                    COUNT(DISTINCT jt.profile_id) as profile_count,
+                    COUNT(DISTINCT jt.assigned_server_url) as server_count
+                FROM judge_task_queue jt
+                INNER JOIN paper_profile_scores pps
+                    ON jt.paper_id = pps.paper_id
+                    AND jt.profile_id = pps.profile_id
+                WHERE jt.job_id = %s
+                    AND jt.job_type = 'newsletter'
+                    AND jt.status = 'completed'
+                GROUP BY jt.paper_id, jt.paper_title, jt.paper_abstract
+                ORDER BY score DESC NULLS LAST, jt.paper_id ASC
+            """, (str(job_id),))
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'paper_id': row['paper_id'],
+                    'title': row['paper_title'],
+                    'abstract': row['paper_abstract'],
+                    'score': row['score'],
+                    'related': row['related'],
+                    'rationale': row['rationale'],
+                    'profile_count': row['profile_count'],
+                    'server_count': row['server_count'],
+                    'scored_at': row['scored_at'].isoformat() if row['scored_at'] else None
+                })
+
+            return results
+
+    @staticmethod
+    def get_newsletter_task_by_id(task_id: int) -> Optional[Dict[str, Any]]:
+        """Get a newsletter task by ID with all cached data."""
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    id, job_id, paper_id, job_type, status, attempts,
+                    last_error, assigned_server_url, leased_until, leased_by_worker,
+                    research_interests, paper_title, paper_abstract,
+                    created_at, updated_at
+                FROM judge_task_queue
+                WHERE id = %s AND job_type = 'newsletter'
+            """, (task_id,))
+
+            row = cursor.fetchone()
+            return dict(row) if row else None

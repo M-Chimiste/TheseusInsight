@@ -130,7 +130,12 @@ async def run_newsletter_pipeline_endpoint(
     run_db_path = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
     loop = asyncio.get_event_loop()
 
-    def pipeline_progress_callback(stage: str, progress_val: float, message: str):
+    def pipeline_progress_callback(
+        stage: str, 
+        progress_val: float, 
+        message: str = "",
+        metadata: Optional[Dict[str, Any]] = None
+    ):
         """
         Updates the task status with the current pipeline progress.
 
@@ -141,6 +146,7 @@ async def run_newsletter_pipeline_endpoint(
             stage (str): The current stage of the pipeline.
             progress_val (float): The progress percentage of the current stage.
             message (str): A message describing the current progress.
+            metadata (dict, optional): Structured data for enhanced UI display.
         """
         status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
         overall_status_for_tm = TaskStatus.PROCESSING
@@ -159,21 +165,26 @@ async def run_newsletter_pipeline_endpoint(
                 overall_status_for_tm,
                 message=status_detail,
                 progress=progress_val,
-                current_step=stage,            )
+                current_step=stage,
+                metadata=metadata
+            )
 
-        if loop.is_running():
-            # Running from a background thread -> use thread-safe scheduling
-            asyncio.run_coroutine_threadsafe(update_status_async(), loop)
+        # Check if we are in the same loop
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is loop:
+            # If we are in the main event loop, create_task is the correct way
+            asyncio.create_task(update_status_async())
         else:
-            # Fallback if no running loop was found
-            try:
-                asyncio.create_task(update_status_async())
-            except RuntimeError as e:
-                print(
-                    "RuntimeError creating task for status update (loop might not be running or accessible): "
-                    f"{e}"
-                )
-                # Consider logging this to a file or a more robust system if it occurs
+            # If we are in a different thread/loop (e.g. the background thread's loop),
+            # use run_coroutine_threadsafe with the captured main loop
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(update_status_async(), loop)
+            else:
+                print("Error: Main event loop is not running, cannot update task status")
 
     async def background_pipeline_run():
         """
@@ -251,6 +262,31 @@ async def run_newsletter_pipeline_endpoint(
                 # Fallback to config file if not in database
                 orchestration_config = "config/orchestration.json"
 
+            # Create newsletter job if using multi-server judge
+            newsletter_job_id = None
+            if params.use_multi_server_judge:
+                from ...data_access.newsletters import NewsletterJobRepository
+
+                # Validate server IDs if provided
+                judge_servers = None
+                if params.judge_server_ids:
+                    from ...data_access.inference_servers import InferenceServersRepository
+                    servers = InferenceServersRepository.get_by_ids(params.judge_server_ids)
+                    enabled_servers = [s for s in servers if s.enabled]
+                    if not enabled_servers:
+                        raise HTTPException(status_code=400, detail="No enabled servers found in selection")
+                    judge_servers = enabled_servers
+
+                # Create newsletter job record
+                newsletter_job_id = NewsletterJobRepository.create_job(
+                    profile_ids=resolved_profile_ids or [],
+                    use_multi_server=True,
+                    server_ids=params.judge_server_ids,
+                    research_interests=params.research_interests,
+                    date_range_start=params.start_date,
+                    date_range_end=params.end_date
+                )
+
             ti_instance = TheseusInsight(
                 research_interests_override=params.research_interests,
                 start_date_override=params.start_date,
@@ -259,14 +295,21 @@ async def run_newsletter_pipeline_endpoint(
                 profile_ids_override=resolved_profile_ids,
                 orchestration_config=orchestration_config,  # Pass config from database
                 generate_podcast=params.generate_podcast_run,
-                db_saving=True, 
+                db_saving=True,
                 data_path=run_db_path,
                 verbose=True,
-                task_id=task_id
+                task_id=task_id,
+                # Multi-server judge parameters
+                use_multi_server_judge=params.use_multi_server_judge,
+                judge_server_ids=[s.id for s in judge_servers] if judge_servers else None,
+                newsletter_job_id=newsletter_job_id,
+                judge_request_timeout_sec=params.judge_request_timeout_sec,
+                judge_max_retries=params.judge_max_retries
             )
-            # Call run_async directly since we're already in an async context
-            # Using asyncio.to_thread with run() causes nested event loops and connection conflicts
-            await ti_instance.run_async(
+            # Run in a separate thread to avoid blocking the main event loop
+            # The run() method uses asyncio.run() internally to create a new loop for the pipeline
+            await asyncio.to_thread(
+                ti_instance.run,
                 progress_callback=pipeline_progress_callback,
             )
             

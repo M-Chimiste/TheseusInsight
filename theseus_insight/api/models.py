@@ -175,6 +175,7 @@ class RunStatus(BaseModel):
     message: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 # Settings for ArXiv
 class ArxivCategoriesConfig(BaseModel):
@@ -280,6 +281,12 @@ class NewsletterRunParams(BaseModel):
     profile_tag: Optional[str] = Field(None, description="Generate newsletter for profiles with specific tag")
     profile_tags: Optional[List[str]] = Field(None, description="Generate newsletter for profiles with any of the tags")
     use_profile_recipients: bool = Field(False, description="Use profile-specific email recipients instead of email_recipients")
+
+    # Multi-server judge configuration
+    use_multi_server_judge: bool = Field(False, description="Use multi-server worker pool for LLM judge scoring")
+    judge_server_ids: Optional[List[int]] = Field(None, description="List of inference server IDs to use for multi-server judge scoring")
+    judge_request_timeout_sec: Optional[int] = Field(None, description="Timeout in seconds for judge LLM requests")
+    judge_max_retries: Optional[int] = Field(None, description="Maximum number of retries for failed judge tasks")
 
 # --- Pydantic Model for Profile-Specific Newsletter Generation ---
 class ProfileNewsletterRequest(BaseModel):

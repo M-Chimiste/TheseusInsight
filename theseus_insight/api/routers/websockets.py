@@ -167,6 +167,7 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
                     message=current_task.get("message", ""),
                     result=current_task.get("result"),
                     error=current_task.get("error"),
+                    metadata=current_task.get("metadata"),  # Include metadata in snapshot
                 )
                 # Push snapshot to the front of the queue so it will be sent first
                 await status_queue.put(snapshot_status)

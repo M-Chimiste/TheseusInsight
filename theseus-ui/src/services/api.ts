@@ -67,6 +67,27 @@ export interface GetResearchInterestPapersParams {
     sort_by?: 'similarity' | 'score' | 'date';
 }
 
+// Newsletter Run Parameters
+export interface NewsletterRunParams {
+  start_date: string;
+  end_date: string;
+  email_recipients?: string[];
+  research_interests: string;
+  topic_id?: number;
+  generate_podcast_run?: boolean;
+  // Profile filtering
+  profile_id?: number;
+  profile_ids?: number[];
+  profile_tag?: string;
+  profile_tags?: string[];
+  use_profile_recipients?: boolean;
+  // Multi-server judge configuration
+  use_multi_server_judge?: boolean;
+  judge_server_ids?: number[];
+  judge_request_timeout_sec?: number;
+  judge_max_retries?: number;
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -90,7 +111,7 @@ export const settingsApi = {
   updateCredentials: (data: any) => api.put('/settings/credentials', data),
   getModelProviders: () => api.get('/model-providers'),
   getModels: () => api.get('/models'),
-  runNewsletterPipeline: (params: any) => api.post('/actions/run-newsletter-pipeline', params),
+  runNewsletterPipeline: (params: NewsletterRunParams) => api.post('/actions/run-newsletter-pipeline', params),
   abortTask: (taskId: string) => api.post(`/tasks/${taskId}/abort`),
   exportDatabase: (onProgress?: (percent: number) => void) =>
     api.get('/settings/database/export', {

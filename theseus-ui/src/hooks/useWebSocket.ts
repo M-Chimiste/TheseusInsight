@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import type { TaskMetadata } from '../components/newsletter/types';
 
 export const WebSocketReadyState = {
   CONNECTING: 0,
@@ -30,6 +31,7 @@ export interface RunStatusPayload {
   message?: string | null;
   result?: Record<string, any> | null;
   error?: string | null;
+  metadata?: TaskMetadata | null;
 }
 
 export interface NodeStatusPayload {
@@ -75,7 +77,7 @@ export const useWebSocket = (
     try {
       const storedMessage = sessionStorage.getItem(`ws_last_message_${taskId}`);
       const storedTimestamp = sessionStorage.getItem(`ws_last_message_timestamp_${taskId}`);
-      
+
       if (storedMessage && storedTimestamp) {
         const timestamp = parseInt(storedTimestamp);
         const now = Date.now();
@@ -135,12 +137,12 @@ export const useWebSocket = (
       setReadyState(WebSocketReadyState.OPEN);
       setError(null);
       retryCountRef.current = 0; // Reset retry count on successful connection
-      
+
       // Try to restore last message from sessionStorage for reconnection
       if (taskId && !taskId.includes('dummy')) {
         restoreLastMessage(taskId);
       }
-      
+
       if (options?.onOpen) options.onOpen(event);
     };
 
@@ -158,9 +160,9 @@ export const useWebSocket = (
           hasNodes: !!(parsedData?.nodes),
           nodeCount: parsedData?.nodes?.length || 0
         });
-        
+
         setLastMessage(parsedData as RunStatusPayload); // Assume it's RunStatusPayload
-        
+
         // Store latest message in sessionStorage for reconnection
         if (taskId && !taskId.includes('dummy')) {
           try {
@@ -170,7 +172,7 @@ export const useWebSocket = (
             // Handle quota exceeded errors silently
           }
         }
-        
+
         if (options?.onMessage) options.onMessage(event);
       } catch (e) {
         console.error('useWebSocket: Failed to parse message data:', e);
@@ -197,7 +199,7 @@ export const useWebSocket = (
       // Don't automatically set to CLOSED if it was an error, onerror handles that.
       // Only set to closed if it wasn't an error that triggered the closure or if it's a clean close.
       if (readyState !== WebSocketReadyState.CLOSED) { // Avoid setting state if already handled by error
-          setReadyState(WebSocketReadyState.CLOSED);
+        setReadyState(WebSocketReadyState.CLOSED);
       }
       if (webSocketRef.current === ws) { // Ensure we are acting on the current WebSocket instance
         webSocketRef.current = null;
@@ -234,7 +236,7 @@ export const useWebSocket = (
       // console.log('useWebSocket: Cleaning up WebSocket connection.');
       disconnect();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, type]); // Reconnect if taskId or type changes
 
   return { lastMessage, readyState, error, sendMessage, connect, disconnect };

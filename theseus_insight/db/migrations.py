@@ -51,6 +51,7 @@ class MigrationRunner:
             (8, "008_add_multi_ollama_support.sql", "Add multi-Ollama server support for bulk judge operations"),
             (9, "009_add_lmstudio_multi_server.sql", "Add LMStudio multi-server support and rename to inference_servers"),
             (10, "010_add_per_server_model_config.sql", "Add per-server model name and config overrides for non-homogeneous deployments"),
+            (11, "011_newsletter_multi_server.sql", "Add newsletter multi-server judge support"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:
@@ -146,7 +147,8 @@ class MigrationRunner:
             "scheduled_task_runs",
             "inference_servers",  # Renamed from ollama_servers in migration 009
             "judge_task_queue",
-            "worker_heartbeats"
+            "worker_heartbeats",
+            "newsletter_jobs"  # Added in migration 011
         ]
         
         missing_tables = []

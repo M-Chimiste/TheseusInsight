@@ -995,10 +995,15 @@ class ProfileScoreRepository:
             
             if values:
                 try:
-                    cur.executemany("""
+                    # Use execute_values from psycopg.extras for efficient batch insert with ON CONFLICT
+                    from psycopg.extras import execute_values
+                    
+                    execute_values(
+                        cur,
+                        """
                         INSERT INTO paper_profile_scores 
                         (paper_id, profile_id, score, related, rationale, judge_model, date_scored)
-                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                        VALUES %s
                         ON CONFLICT (paper_id, profile_id) 
                         DO UPDATE SET 
                             score = EXCLUDED.score,
@@ -1006,8 +1011,11 @@ class ProfileScoreRepository:
                             rationale = EXCLUDED.rationale,
                             judge_model = EXCLUDED.judge_model,
                             date_scored = NOW()
-                    """, values)
-                    successful = cur.rowcount
+                        """,
+                        values,
+                        template="(%s, %s, %s, %s, %s, %s, NOW())"
+                    )
+                    successful = len(values)
                 except Exception as e:
                     failed += len(values)
                     raise

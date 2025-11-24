@@ -313,13 +313,13 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                           }}
                         />
                       }
-                      label="Use multiple Ollama servers for distributed processing"
+                      label="Use multiple servers for distributed processing"
                     />
 
                     {useMultiServer && (
                       <Box sx={{ mt: 2, ml: 4 }}>
                         <Typography variant="subtitle2" gutterBottom>
-                          Select Ollama Servers
+                          Select Servers
                         </Typography>
                         <Autocomplete
                           multiple
@@ -336,7 +336,7 @@ const BulkOperations: React.FC<BulkOperationsProps> = () => {
                             <TextField
                               {...params}
                               label="Select Servers"
-                              placeholder="Choose Ollama servers for processing"
+                              placeholder="Choose servers for processing"
                               helperText={
                                 `${selectedServers.length} server(s) selected (all servers are selected by default, remove any you don't want to use)`
                               }

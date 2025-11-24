@@ -249,4 +249,60 @@ async def check_and_apply_migrations() -> None:
         print(f"[MIGRATION] WARNING: {len(issues)} issues during migration")
         # In production, you might want to send these to monitoring
     
+    # Post-migration checks and fixes
+    _ensure_paper_profile_scores_constraint()
+    
     print(f"[MIGRATION] Database migration check complete")
+
+
+def _ensure_paper_profile_scores_constraint() -> None:
+    """Ensure the unique constraint exists on paper_profile_scores.
+    
+    This is a defensive check added after discovering some databases
+    had the table created without the constraint. This ensures
+    ON CONFLICT clauses work correctly in bulk operations.
+    """
+    try:
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                # Check if constraint exists
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'paper_profile_scores_paper_id_profile_id_key'
+                          AND conrelid = 'paper_profile_scores'::regclass
+                    ) as exists
+                """)
+                result = cur.fetchone()
+                
+                if not result or not result[0]:
+                    print("[MIGRATION] Adding missing unique constraint to paper_profile_scores...")
+                    
+                    # Remove any duplicate rows before adding constraint
+                    cur.execute("""
+                        DELETE FROM paper_profile_scores a USING (
+                            SELECT MIN(id) as id, paper_id, profile_id
+                            FROM paper_profile_scores 
+                            GROUP BY paper_id, profile_id
+                            HAVING COUNT(*) > 1
+                        ) b
+                        WHERE a.paper_id = b.paper_id 
+                          AND a.profile_id = b.profile_id 
+                          AND a.id != b.id
+                    """)
+                    
+                    # Add the unique constraint
+                    cur.execute("""
+                        ALTER TABLE paper_profile_scores 
+                        ADD CONSTRAINT paper_profile_scores_paper_id_profile_id_key 
+                        UNIQUE (paper_id, profile_id)
+                    """)
+                    
+                    conn.commit()
+                    print("[MIGRATION] ✓ Added unique constraint to paper_profile_scores")
+                else:
+                    print("[MIGRATION] ✓ Unique constraint on paper_profile_scores verified")
+                    
+    except Exception as e:
+        print(f"[MIGRATION] ⚠ Warning: Could not verify/add constraint: {e}")
+        # Don't fail startup, just log the warning

@@ -97,7 +97,8 @@ class JudgeTaskQueueRepository:
                 cursor.executemany("""
                     INSERT INTO judge_task_queue (job_id, paper_id, profile_id, assigned_server_url)
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (job_id, paper_id, profile_id) DO NOTHING
+                    ON CONFLICT (job_id, paper_id, profile_id) WHERE job_type = 'bulk_judge'
+                    DO NOTHING
                 """, values)
             else:
                 # Use bulk insert for efficiency without server assignment
@@ -106,7 +107,8 @@ class JudgeTaskQueueRepository:
                 cursor.executemany("""
                     INSERT INTO judge_task_queue (job_id, paper_id, profile_id)
                     VALUES (%s, %s, %s)
-                    ON CONFLICT (job_id, paper_id, profile_id) DO NOTHING
+                    ON CONFLICT (job_id, paper_id, profile_id) WHERE job_type = 'bulk_judge'
+                    DO NOTHING
                 """, values)
 
             return cursor.rowcount

@@ -636,12 +636,16 @@ class JudgeWorker:
         
         response = result[0]
         
-        import json_repair
-        response_json = json_repair.loads(response)
+        # Parse response - handle various formats robustly
+        response_json = self._parse_llm_response(response)
         
         score = response_json.get('score', 5)
         if not isinstance(score, (int, float)):
-            score = 5
+            # Try to extract numeric value from string
+            try:
+                score = int(str(score).strip())
+            except (ValueError, TypeError):
+                score = 5
         score = max(1, min(10, int(score)))
         
         return {
@@ -649,6 +653,132 @@ class JudgeWorker:
             'related': bool(response_json.get('related', False)),
             'rationale': str(response_json.get('rationale', ''))
         }
+
+    def _parse_llm_response(self, response) -> dict:
+        """Parse LLM response into a dictionary, handling various formats robustly."""
+        import re
+        import json_repair
+        
+        # If response is already a dict, return it
+        if isinstance(response, dict):
+            return response
+        
+        # If response is not a string, convert it
+        if not isinstance(response, str):
+            try:
+                # Could be a Pydantic model or similar
+                if hasattr(response, 'model_dump'):
+                    return response.model_dump()
+                elif hasattr(response, 'dict'):
+                    return response.dict()
+                elif hasattr(response, '__dict__'):
+                    return response.__dict__
+            except Exception:
+                pass
+            response = str(response)
+        
+        response = response.strip()
+        
+        # Try json_repair first
+        try:
+            parsed = json_repair.loads(response)
+            if isinstance(parsed, dict):
+                return parsed
+            # If json_repair returned a string, continue to fallback methods
+        except Exception:
+            pass
+        
+        # Try standard JSON parsing
+        try:
+            import json
+            parsed = json.loads(response)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        
+        # Try to extract JSON from markdown code blocks
+        json_block_pattern = r'```(?:json)?\s*(\{[\s\S]*?\})\s*```'
+        json_match = re.search(json_block_pattern, response)
+        if json_match:
+            try:
+                parsed = json_repair.loads(json_match.group(1))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        
+        # Try to find a JSON object in the response
+        json_obj_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        json_matches = re.findall(json_obj_pattern, response)
+        for match in json_matches:
+            try:
+                parsed = json_repair.loads(match)
+                if isinstance(parsed, dict) and ('score' in parsed or 'related' in parsed):
+                    return parsed
+            except Exception:
+                continue
+        
+        # Fallback: try to extract values using regex
+        extracted = {}
+        
+        # Extract score (look for patterns like "score": 7, score: 7, Score: 7, etc.)
+        score_patterns = [
+            r'"?score"?\s*[:=]\s*(\d+)',
+            r'(?:Score|SCORE|rating|Rating)\s*[:=]?\s*(\d+)',
+            r'(\d+)\s*(?:/\s*10|out of 10)',
+        ]
+        for pattern in score_patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                try:
+                    extracted['score'] = int(match.group(1))
+                    break
+                except ValueError:
+                    continue
+        
+        # Extract related (look for true/false patterns)
+        related_patterns = [
+            r'"?related"?\s*[:=]\s*(true|false)',
+            r'(?:is\s+)?related\s*[:=]?\s*(yes|no|true|false)',
+            r'(?:relevant|relevance)\s*[:=]?\s*(yes|no|true|false|high|low)',
+        ]
+        for pattern in related_patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                value = match.group(1).lower()
+                extracted['related'] = value in ('true', 'yes', 'high')
+                break
+        
+        # Extract rationale (take a reasonable chunk of text)
+        rationale_patterns = [
+            r'"?rationale"?\s*[:=]\s*"([^"]+)"',
+            r'"?rationale"?\s*[:=]\s*\'([^\']+)\'',
+            r'(?:rationale|reason|explanation)\s*[:=]?\s*(.+?)(?:\n|$)',
+        ]
+        for pattern in rationale_patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                extracted['rationale'] = match.group(1).strip()[:500]  # Limit length
+                break
+        
+        # If we couldn't extract a rationale, use part of the response
+        if 'rationale' not in extracted and response:
+            # Clean up and truncate
+            clean_response = re.sub(r'\s+', ' ', response).strip()
+            extracted['rationale'] = clean_response[:300] if clean_response else 'No rationale provided'
+        
+        # Set defaults for missing values
+        if 'score' not in extracted:
+            extracted['score'] = 5  # Default middle score
+        if 'related' not in extracted:
+            # Infer from score
+            extracted['related'] = extracted.get('score', 5) >= 6
+        if 'rationale' not in extracted:
+            extracted['rationale'] = 'Unable to parse structured response'
+        
+        logger.debug(f"Fallback parsing extracted: {extracted}")
+        return extracted
 
     def _send_heartbeat(self):
         """Send worker heartbeat."""

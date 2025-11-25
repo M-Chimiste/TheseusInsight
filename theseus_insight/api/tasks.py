@@ -1371,8 +1371,13 @@ class TaskManager:
             embedding_config = orchestration_config.get("embedding_model", {})
             
             # Create embedding model
+            # Normalize model_type: handle both "sentence-transformers" and "sentence-transformer"
+            embedding_model_type = embedding_config.get("model_type", "sentence-transformer")
+            if embedding_model_type == "sentence-transformers":
+                embedding_model_type = "sentence-transformer"
+            
             embedding_model = LLMModelFactory.create_model(
-                model_type=embedding_config.get("model_type", "sentence-transformer"),
+                model_type=embedding_model_type,
                 model_name=embedding_config.get("model_name", "Alibaba-NLP/gte-large-en-v1.5"),
                 **{k: v for k, v in embedding_config.items() if k not in ["model_type", "model_name"]}
             )
@@ -1637,8 +1642,13 @@ class TaskManager:
             if embedding_config:
                 try:
                     from LLMFactory import LLMModelFactory
+                    # Normalize model_type: handle both "sentence-transformers" and "sentence-transformer"
+                    embedding_model_type = embedding_config.get("model_type", "sentence-transformer")
+                    if embedding_model_type == "sentence-transformers":
+                        embedding_model_type = "sentence-transformer"
+                    
                     embedding_model = LLMModelFactory.create_model(
-                        model_type=embedding_config.get("model_type", "sentence-transformer"),
+                        model_type=embedding_model_type,
                         model_name=embedding_config.get("model_name", "Alibaba-NLP/gte-large-en-v1.5"),
                         **{k: v for k, v in embedding_config.items() if k not in ["model_type", "model_name"]}
                     )

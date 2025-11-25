@@ -12,6 +12,7 @@ import json_repair
 from tqdm import tqdm
 import asyncio
 
+from LLMFactory import LLMModelFactory
 from LLMFactory.providers import OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
 from ..prompt import RESEARCH_INTERESTS_SYSTEM_PROMPT, research_prompt
 from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository
@@ -48,9 +49,11 @@ class BulkJudgeRunner:
         self.embedding_model = embedding_model
         self.checkpoint_manager = checkpoint_manager
         
-        # Initialize optimized scorer if requested and using Ollama
+        # Initialize optimized scorer if requested and using a local inference server
+        # (Ollama, LMStudio - these can't be parallelized, so optimizations help)
         self.optimized_scorer = None
-        if use_optimized_scorer and judge_model_config.get('model_type', '').lower() == 'ollama':
+        local_model_types = {'ollama', 'lmstudio'}
+        if use_optimized_scorer and judge_model_config.get('model_type', '').lower() in local_model_types:
             self.optimized_scorer = OptimizedOllamaScorer(
                 judge_inference=self.judge_inference,
                 embedding_model=embedding_model,
@@ -90,6 +93,23 @@ class BulkJudgeRunner:
                 max_new_tokens=max_new_tokens,
                 temperature=temperature
             )
+        elif model_type == 'lmstudio':
+            import os
+            # LMStudio needs host parameter instead of url
+            # Use host from config if provided, otherwise use env var or default
+            host = model_config.get('host')
+            if not host:
+                host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+            kwargs = {
+                'model_type': 'lmstudio',
+                'model_name': model_name,
+                'max_new_tokens': max_new_tokens,
+                'temperature': temperature,
+                'host': host
+            }
+            if num_ctx is not None:
+                kwargs['context_length'] = num_ctx
+            return LLMModelFactory.create_model(**kwargs)
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
     

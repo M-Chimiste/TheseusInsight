@@ -50,10 +50,19 @@ class ValidationError(Exception):
 class ProfileMapper:
     """Handles mapping of profile IDs during import."""
 
-    def __init__(self, db_path: str):
-        """Initialize the profile mapper."""
+    def __init__(self, db_path: str, merge_interests: bool = True):
+        """
+        Initialize the profile mapper.
+        
+        Args:
+            db_path: Database connection string
+            merge_interests: Whether to merge research interests when profiles match
+        """
         self.db_path = db_path
         self.id_mappings = {}  # {source_id: target_id}
+        self.merge_interests = merge_interests
+        self.interests_to_merge = {}  # {target_profile_id: [interest_texts_from_source]}
+        self.profile_merge_log = []  # Track what happened during merge for reporting
 
     def _safe_deserialize_json(self, value, default=None):
         """
@@ -105,54 +114,144 @@ class ProfileMapper:
         # Convert dict/list to JSON string
         return json.dumps(value)
 
-    def _compare_profiles(self, profile1: Dict, profile2: Dict) -> bool:
+    def _get_profile_research_interests(self, profile_id: int) -> List[str]:
+        """
+        Get all research interests for a profile.
+        
+        Args:
+            profile_id: Profile ID to get interests for
+            
+        Returns:
+            List of interest text strings
+        """
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT interest_text FROM profile_research_interests 
+                WHERE profile_id = %s ORDER BY id
+            """, (profile_id,))
+            return [row['interest_text'] for row in cursor.fetchall()]
+
+    def _normalize_interest(self, text: str) -> str:
+        """Normalize interest text for comparison."""
+        return text.lower().strip()
+
+    def _compare_profiles(
+        self, 
+        profile1: Dict, 
+        profile2: Dict, 
+        source_interests: List[str] = None,
+        target_profile_id: int = None,
+        include_interests: bool = True
+    ) -> Tuple[bool, Dict[str, Any]]:
         """
         Compare two profiles to determine if they are substantially the same.
         
-        Compares: arxiv_filters, tags, email_recipients
+        Compares: arxiv_filters, tags, email_recipients, and optionally research interests.
         
         Args:
-            profile1: First profile data dictionary
-            profile2: Second profile data dictionary
+            profile1: First (source) profile data dictionary
+            profile2: Second (target) profile data dictionary (from database)
+            source_interests: List of interest texts from source profile
+            target_profile_id: ID of target profile for fetching interests
+            include_interests: Whether to include research interests in comparison
             
         Returns:
-            True if profiles are substantially the same, False otherwise
+            Tuple of (profiles_match: bool, comparison_details: dict)
         """
+        comparison = {
+            "arxiv_filters_match": True,
+            "tags_match": True,
+            "email_recipients_match": True,
+            "interests_match": True,
+            "new_interests": [],
+            "existing_interests": [],
+            "missing_interests": []
+        }
+        
         # Compare arxiv_filters
-        filters1 = profile1.get("arxiv_filters", {})
-        filters2 = profile2.get("arxiv_filters", {})
+        filters1 = self._safe_deserialize_json(profile1.get("arxiv_filters"), {})
+        filters2 = self._safe_deserialize_json(profile2.get("arxiv_filters"), {})
         if filters1 != filters2:
             logger.info(f"Profiles differ in arxiv_filters: {filters1} vs {filters2}")
-            return False
+            comparison["arxiv_filters_match"] = False
         
         # Compare tags
-        tags1 = set(profile1.get("tags", []))
-        tags2 = set(profile2.get("tags", []))
+        tags1 = set(self._safe_deserialize_json(profile1.get("tags"), []) or [])
+        tags2 = set(self._safe_deserialize_json(profile2.get("tags"), []) or [])
         if tags1 != tags2:
             logger.info(f"Profiles differ in tags: {tags1} vs {tags2}")
-            return False
+            comparison["tags_match"] = False
         
         # Compare email_recipients
-        recipients1 = set(profile1.get("email_recipients", []))
-        recipients2 = set(profile2.get("email_recipients", []))
+        recipients1 = set(self._safe_deserialize_json(profile1.get("email_recipients"), []) or [])
+        recipients2 = set(self._safe_deserialize_json(profile2.get("email_recipients"), []) or [])
         if recipients1 != recipients2:
             logger.info(f"Profiles differ in email_recipients")
-            return False
+            comparison["email_recipients_match"] = False
         
-        return True
+        # Compare research interests if enabled
+        if include_interests and target_profile_id is not None:
+            target_interests = self._get_profile_research_interests(target_profile_id)
+            target_interests_normalized = {self._normalize_interest(i) for i in target_interests}
+            
+            if source_interests:
+                source_interests_normalized = {self._normalize_interest(i) for i in source_interests}
+                
+                # Find interests that exist in both (by normalized text)
+                common = source_interests_normalized & target_interests_normalized
+                comparison["existing_interests"] = list(common)
+                
+                # Find interests only in source (new interests to potentially add)
+                new_in_source = source_interests_normalized - target_interests_normalized
+                comparison["new_interests"] = [
+                    i for i in source_interests 
+                    if self._normalize_interest(i) in new_in_source
+                ]
+                
+                # Find interests only in target (would be lost if we replaced)
+                missing_from_source = target_interests_normalized - source_interests_normalized
+                comparison["missing_interests"] = [
+                    i for i in target_interests 
+                    if self._normalize_interest(i) in missing_from_source
+                ]
+                
+                # Interests match if there's significant overlap or source has no interests
+                if len(source_interests) > 0:
+                    overlap_ratio = len(common) / max(len(source_interests), len(target_interests)) if target_interests else 0
+                    # Consider a match if at least 50% overlap, or if differences are only additions
+                    comparison["interests_match"] = (
+                        overlap_ratio >= 0.5 or 
+                        (len(comparison["missing_interests"]) == 0 and len(target_interests) > 0)
+                    )
+                    logger.info(f"Interest comparison: {len(common)} common, {len(comparison['new_interests'])} new, "
+                               f"{len(comparison['missing_interests'])} missing, overlap ratio: {overlap_ratio:.2%}")
+        
+        # Overall match: all core fields must match
+        # For Default profiles, we're more lenient - we consider them matching if core config matches,
+        # even if interests differ (interests can be merged)
+        profiles_match = (
+            comparison["arxiv_filters_match"] and 
+            comparison["tags_match"] and 
+            comparison["email_recipients_match"]
+        )
+        
+        return profiles_match, comparison
 
     def map_profile(
         self,
         source_profile: Dict,
         strategy: str = "auto",
         target_profile_id: int = None,
-        create_new_profile_name: str = None
+        create_new_profile_name: str = None,
+        source_interests: List[str] = None
     ) -> int:
         """
         Map source profile to target profile ID.
 
         Strategies:
         - "auto": Match by name, create if not exists. For Default profiles, compares content.
+                  If merge_interests is enabled, new interests from source are queued for merge.
+        - "smart_merge": Like auto, but always merges interests and updates profile config
         - "create_new": Always create new profile
         - "merge_to": Merge into specified target profile
         - "match_by_name": Must match existing profile by name
@@ -162,6 +261,7 @@ class ProfileMapper:
             strategy: Mapping strategy
             target_profile_id: For merge_to strategy
             create_new_profile_name: Override profile name for create_new strategy
+            source_interests: List of interest texts from source profile
 
         Returns:
             target_profile_id
@@ -183,6 +283,11 @@ class ProfileMapper:
                     raise ValueError(f"Target profile {target_profile_id} not found")
 
                 self.id_mappings[source_id] = target_profile_id
+                
+                # Queue interests for merging if enabled
+                if self.merge_interests and source_interests:
+                    self._queue_interests_for_merge(target_profile_id, source_interests)
+                
                 return target_profile_id
 
             elif strategy == "create_new":
@@ -223,7 +328,16 @@ class ProfileMapper:
                     raise ValueError(f"No profile found with name: {source_profile['name']}")
 
                 self.id_mappings[source_id] = result['id']
+                
+                # Queue interests for merging if enabled
+                if self.merge_interests and source_interests:
+                    self._queue_interests_for_merge(result['id'], source_interests)
+                
                 return result['id']
+
+            elif strategy == "smart_merge":
+                # Smart merge: always try to merge with existing profile, updating config and interests
+                return self._smart_merge_profile(source_profile, source_interests)
 
             else:  # "auto" strategy
                 # Special handling for Default profile
@@ -237,20 +351,42 @@ class ProfileMapper:
                     result = cursor.fetchone()
                     
                     if result:
-                        # Compare the profiles to see if they're the same
+                        target_id = result['id']
                         existing_profile = {
-                            "arxiv_filters": self._safe_deserialize_json(result["arxiv_filters"], {}),
-                            "tags": self._safe_deserialize_json(result["tags"], []),
-                            "email_recipients": self._safe_deserialize_json(result["email_recipients"], [])
+                            "arxiv_filters": result["arxiv_filters"],
+                            "tags": result["tags"],
+                            "email_recipients": result["email_recipients"]
                         }
                         
-                        if self._compare_profiles(source_profile, existing_profile):
-                            # Profiles are the same, use existing default
-                            logger.info(f"Default profiles match - mapping source profile {source_id} to existing Default profile {result['id']}")
-                            self.id_mappings[source_id] = result['id']
-                            return result['id']
+                        # Enhanced comparison including interests
+                        profiles_match, comparison = self._compare_profiles(
+                            source_profile, 
+                            existing_profile,
+                            source_interests=source_interests,
+                            target_profile_id=target_id,
+                            include_interests=True
+                        )
+                        
+                        if profiles_match:
+                            # Profiles match (core config is same), use existing default
+                            logger.info(f"Default profiles match - mapping source profile {source_id} to existing Default profile {target_id}")
+                            self.id_mappings[source_id] = target_id
+                            
+                            # Queue new interests for merging if enabled
+                            if self.merge_interests and comparison.get("new_interests"):
+                                self._queue_interests_for_merge(target_id, comparison["new_interests"])
+                                self.profile_merge_log.append({
+                                    "source_profile_id": source_id,
+                                    "source_profile_name": source_profile.get("name"),
+                                    "target_profile_id": target_id,
+                                    "action": "merged_interests",
+                                    "new_interests_count": len(comparison["new_interests"]),
+                                    "existing_interests_count": len(comparison["existing_interests"])
+                                })
+                            
+                            return target_id
                         else:
-                            # Profiles are different, create a new profile
+                            # Core config differs - create a new profile
                             logger.info(f"Default profiles differ - creating new profile 'Default (Imported)'")
                             profile_name = "Default (Imported)"
                             
@@ -274,19 +410,47 @@ class ProfileMapper:
 
                             new_id = cursor.fetchone()['id']
                             self.id_mappings[source_id] = new_id
+                            
+                            self.profile_merge_log.append({
+                                "source_profile_id": source_id,
+                                "source_profile_name": source_profile.get("name"),
+                                "target_profile_id": new_id,
+                                "action": "created_new",
+                                "reason": "profiles_differ"
+                            })
+                            
                             return new_id
                 
                 # Try to match by name for non-default profiles
                 cursor.execute(
-                    "SELECT id FROM research_profiles WHERE name = %s",
+                    "SELECT id, tags, email_recipients, arxiv_filters FROM research_profiles WHERE name = %s",
                     (source_profile['name'],)
                 )
                 result = cursor.fetchone()
 
                 if result:
                     # Profile exists, use it
-                    self.id_mappings[source_id] = result['id']
-                    return result['id']
+                    target_id = result['id']
+                    self.id_mappings[source_id] = target_id
+                    
+                    # Queue interests for merging if enabled
+                    if self.merge_interests and source_interests:
+                        existing_profile = {
+                            "arxiv_filters": result["arxiv_filters"],
+                            "tags": result["tags"],
+                            "email_recipients": result["email_recipients"]
+                        }
+                        _, comparison = self._compare_profiles(
+                            source_profile, 
+                            existing_profile,
+                            source_interests=source_interests,
+                            target_profile_id=target_id,
+                            include_interests=True
+                        )
+                        if comparison.get("new_interests"):
+                            self._queue_interests_for_merge(target_id, comparison["new_interests"])
+                    
+                    return target_id
                 else:
                     # Create new profile
                     cursor.execute("""
@@ -311,9 +475,165 @@ class ProfileMapper:
                     self.id_mappings[source_id] = new_id
                     return new_id
 
+    def _queue_interests_for_merge(self, target_profile_id: int, interests: List[str]):
+        """Queue interests to be merged into a target profile."""
+        if target_profile_id not in self.interests_to_merge:
+            self.interests_to_merge[target_profile_id] = []
+        
+        # Get existing interests for this profile to avoid duplicates
+        existing_interests = self._get_profile_research_interests(target_profile_id)
+        existing_normalized = {self._normalize_interest(i) for i in existing_interests}
+        
+        for interest in interests:
+            if self._normalize_interest(interest) not in existing_normalized:
+                self.interests_to_merge[target_profile_id].append(interest)
+                existing_normalized.add(self._normalize_interest(interest))
+        
+        if self.interests_to_merge[target_profile_id]:
+            logger.info(f"Queued {len(self.interests_to_merge[target_profile_id])} new interests for profile {target_profile_id}")
+
+    def _smart_merge_profile(self, source_profile: Dict, source_interests: List[str] = None) -> int:
+        """
+        Smart merge: merge source profile into existing profile with same name,
+        updating configuration and merging interests.
+        """
+        with get_cursor() as cursor:
+            source_id = source_profile['id']
+            profile_name = source_profile.get('name', 'Unknown')
+            
+            # For Default profile, look for existing default
+            if source_profile.get("is_default", False) or profile_name == "Default":
+                cursor.execute("""
+                    SELECT id, name, description, color, tags, email_recipients, 
+                           arxiv_filters, is_active, is_default 
+                    FROM research_profiles 
+                    WHERE is_default = true
+                """)
+            else:
+                cursor.execute("""
+                    SELECT id, name, description, color, tags, email_recipients, 
+                           arxiv_filters, is_active, is_default 
+                    FROM research_profiles 
+                    WHERE name = %s
+                """, (profile_name,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                target_id = result['id']
+                
+                # Update the profile configuration (smart merge updates config)
+                # Merge tags and email_recipients rather than replacing
+                existing_tags = set(self._safe_deserialize_json(result['tags'], []) or [])
+                new_tags = set(self._safe_deserialize_json(source_profile.get('tags'), []) or [])
+                merged_tags = list(existing_tags | new_tags)
+                
+                existing_recipients = set(self._safe_deserialize_json(result['email_recipients'], []) or [])
+                new_recipients = set(self._safe_deserialize_json(source_profile.get('email_recipients'), []) or [])
+                merged_recipients = list(existing_recipients | new_recipients)
+                
+                # For arxiv_filters, prefer the source if it has any, otherwise keep existing
+                source_filters = self._safe_deserialize_json(source_profile.get('arxiv_filters'), {})
+                existing_filters = self._safe_deserialize_json(result['arxiv_filters'], {})
+                merged_filters = source_filters if source_filters else existing_filters
+                
+                # Update the profile
+                cursor.execute("""
+                    UPDATE research_profiles 
+                    SET tags = %s, email_recipients = %s, arxiv_filters = %s, updated_at = NOW()
+                    WHERE id = %s
+                """, (
+                    self._safe_serialize_json(merged_tags),
+                    self._safe_serialize_json(merged_recipients),
+                    self._safe_serialize_json(merged_filters),
+                    target_id
+                ))
+                
+                self.id_mappings[source_id] = target_id
+                
+                # Queue interests for merging
+                if source_interests:
+                    self._queue_interests_for_merge(target_id, source_interests)
+                
+                self.profile_merge_log.append({
+                    "source_profile_id": source_id,
+                    "source_profile_name": profile_name,
+                    "target_profile_id": target_id,
+                    "action": "smart_merged",
+                    "tags_merged": len(merged_tags),
+                    "recipients_merged": len(merged_recipients)
+                })
+                
+                return target_id
+            else:
+                # No existing profile, create new one
+                cursor.execute("""
+                    INSERT INTO research_profiles (
+                        name, description, color, tags, email_recipients,
+                        arxiv_filters, is_active, is_default
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    profile_name,
+                    source_profile.get('description'),
+                    source_profile.get('color'),
+                    self._safe_serialize_json(source_profile.get('tags', [])),
+                    self._safe_serialize_json(source_profile.get('email_recipients', [])),
+                    self._safe_serialize_json(source_profile.get('arxiv_filters', {})),
+                    source_profile.get('is_active', True),
+                    False  # Never set imported profile as default
+                ))
+
+                new_id = cursor.fetchone()['id']
+                self.id_mappings[source_id] = new_id
+                return new_id
+
+    def apply_queued_interest_merges(self) -> Dict[str, int]:
+        """
+        Apply all queued interest merges to the database.
+        
+        Returns:
+            Dictionary with merge statistics
+        """
+        stats = {"profiles_updated": 0, "interests_added": 0, "errors": 0}
+        
+        for profile_id, interests in self.interests_to_merge.items():
+            if not interests:
+                continue
+                
+            try:
+                with get_cursor() as cursor:
+                    for interest_text in interests:
+                        try:
+                            cursor.execute("""
+                                INSERT INTO profile_research_interests (profile_id, interest_text, created_at, updated_at)
+                                VALUES (%s, %s, NOW(), NOW())
+                                ON CONFLICT (profile_id, interest_text) DO NOTHING
+                            """, (profile_id, interest_text))
+                            
+                            if cursor.rowcount > 0:
+                                stats["interests_added"] += 1
+                        except Exception as e:
+                            logger.warning(f"Could not add interest to profile {profile_id}: {e}")
+                            stats["errors"] += 1
+                
+                stats["profiles_updated"] += 1
+                logger.info(f"Merged {len(interests)} interests into profile {profile_id}")
+                
+            except Exception as e:
+                logger.error(f"Error merging interests for profile {profile_id}: {e}")
+                stats["errors"] += 1
+        
+        return stats
+
     def get_mapping(self, source_id: int) -> Optional[int]:
         """Get the target ID for a source ID."""
         return self.id_mappings.get(source_id)
+    
+    def get_merge_log(self) -> List[Dict[str, Any]]:
+        """Get the log of profile merge operations."""
+        return self.profile_merge_log
 
 
 class ForeignKeyRemapper:
@@ -1819,50 +2139,92 @@ class DatabaseImporter:
         # Convert dict/list to JSON string
         return json.dumps(value)
     
-    def _compare_profiles(self, profile1: Dict, profile2: Dict) -> bool:
+    def _compare_profiles(self, profile1: Dict, profile2: Dict, check_interests: bool = True) -> Tuple[bool, Dict[str, Any]]:
         """
         Compare two profiles to determine if they are substantially the same.
         
-        Compares: arxiv_filters, tags, email_recipients
+        Compares: arxiv_filters, tags, email_recipients, and optionally research interests.
         
         Args:
-            profile1: First profile data dictionary
-            profile2: Second profile data dictionary
+            profile1: First (source) profile data dictionary
+            profile2: Second (target) profile data dictionary
+            check_interests: Whether to check research interests as well
             
         Returns:
-            True if profiles are substantially the same, False otherwise
+            Tuple of (profiles_match: bool, comparison_details: dict)
         """
+        comparison = {
+            "arxiv_filters_match": True,
+            "tags_match": True,
+            "email_recipients_match": True,
+            "interests_match": True,
+            "new_interests": [],
+            "existing_interests": [],
+        }
+        
         # Compare arxiv_filters
-        filters1 = profile1.get("arxiv_filters", {})
-        filters2 = profile2.get("arxiv_filters", {})
+        filters1 = self._safe_deserialize_json(profile1.get("arxiv_filters"), {})
+        filters2 = self._safe_deserialize_json(profile2.get("arxiv_filters"), {})
         if filters1 != filters2:
             logger.info(f"Profiles differ in arxiv_filters: {filters1} vs {filters2}")
-            return False
+            comparison["arxiv_filters_match"] = False
         
         # Compare tags
-        tags1 = set(profile1.get("tags", []))
-        tags2 = set(profile2.get("tags", []))
+        tags1 = set(self._safe_deserialize_json(profile1.get("tags"), []) or [])
+        tags2 = set(self._safe_deserialize_json(profile2.get("tags"), []) or [])
         if tags1 != tags2:
             logger.info(f"Profiles differ in tags: {tags1} vs {tags2}")
-            return False
+            comparison["tags_match"] = False
         
         # Compare email_recipients
-        recipients1 = set(profile1.get("email_recipients", []))
-        recipients2 = set(profile2.get("email_recipients", []))
+        recipients1 = set(self._safe_deserialize_json(profile1.get("email_recipients"), []) or [])
+        recipients2 = set(self._safe_deserialize_json(profile2.get("email_recipients"), []) or [])
         if recipients1 != recipients2:
             logger.info(f"Profiles differ in email_recipients")
-            return False
+            comparison["email_recipients_match"] = False
         
-        return True
+        # For backwards compatibility, also check interests if we have them
+        if check_interests:
+            source_interests = profile1.get("_interests", [])
+            target_interests = profile2.get("_interests", [])
+            
+            if source_interests or target_interests:
+                source_normalized = {i.lower().strip() for i in source_interests}
+                target_normalized = {i.lower().strip() for i in target_interests}
+                
+                new_in_source = source_normalized - target_normalized
+                comparison["new_interests"] = list(new_in_source)
+                comparison["existing_interests"] = list(source_normalized & target_normalized)
+                
+                # Interests don't need to match for profiles to be considered "same"
+                # but we track them for potential merging
+        
+        # Core match: arxiv_filters, tags, email_recipients must all match
+        profiles_match = (
+            comparison["arxiv_filters_match"] and 
+            comparison["tags_match"] and 
+            comparison["email_recipients_match"]
+        )
+        
+        return profiles_match, comparison
     
-    def import_research_profiles(self, profiles_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+    def import_research_profiles(
+        self, 
+        profiles_file: str, 
+        skip_duplicates: bool = True, 
+        progress_callback=None,
+        merge_interests: bool = True,
+        interests_data: List[Dict] = None
+    ) -> Dict[str, int]:
         """
-        Import research profiles from JSON file.
+        Import research profiles from JSON file with smart interest merging.
         
         Args:
             profiles_file: Path to research_profiles.json file
             skip_duplicates: Whether to skip profiles that already exist (by name)
             progress_callback: Optional callback function(current, total, message)
+            merge_interests: Whether to merge research interests from matched profiles
+            interests_data: Pre-loaded interests data (optional, for interest merging)
             
         Returns:
             Dictionary with import statistics
@@ -1872,15 +2234,36 @@ class DatabaseImporter:
         with open(profiles_file, 'r', encoding='utf-8') as f:
             profiles_data = json.load(f)
         
-        stats = {"total": len(profiles_data), "imported": 0, "skipped": 0, "errors": 0}
+        stats = {
+            "total": len(profiles_data), 
+            "imported": 0, 
+            "skipped": 0, 
+            "merged": 0,
+            "interests_merged": 0,
+            "errors": 0
+        }
         
         # Store mapping of old profile IDs to new ones for later use
         if not hasattr(self, 'profile_id_mapping'):
             self.profile_id_mapping = {}
         
+        # Track interests to be merged
+        if not hasattr(self, 'interests_to_merge'):
+            self.interests_to_merge = {}
+        
+        # Build a lookup of interests by profile ID if interests_data is provided
+        interests_by_profile = {}
+        if interests_data:
+            for interest in interests_data:
+                pid = interest.get("profile_id")
+                if pid not in interests_by_profile:
+                    interests_by_profile[pid] = []
+                interests_by_profile[pid].append(interest.get("interest_text", ""))
+        
         for i, profile_data in enumerate(profiles_data):
             try:
                 old_profile_id = profile_data.get("id")
+                source_interests = interests_by_profile.get(old_profile_id, [])
                 
                 # Special handling for Default profile
                 if profile_data.get("is_default", False) or profile_data["name"] == "Default":
@@ -1894,19 +2277,40 @@ class DatabaseImporter:
                         """)
                         result = cursor.fetchone()
                         if result and skip_duplicates:
-                            # Compare the profiles to see if they're the same
+                            target_id = result["id"]
                             existing_profile = {
-                                "arxiv_filters": self._safe_deserialize_json(result["arxiv_filters"], {}),
-                                "tags": self._safe_deserialize_json(result["tags"], []),
-                                "email_recipients": self._safe_deserialize_json(result["email_recipients"], [])
+                                "arxiv_filters": result["arxiv_filters"],
+                                "tags": result["tags"],
+                                "email_recipients": result["email_recipients"]
                             }
                             
-                            if self._compare_profiles(profile_data, existing_profile):
-                                # Profiles are the same, map IDs and skip import
+                            # Get existing interests for comparison
+                            cursor.execute("""
+                                SELECT interest_text FROM profile_research_interests 
+                                WHERE profile_id = %s
+                            """, (target_id,))
+                            existing_interests = [row['interest_text'] for row in cursor.fetchall()]
+                            existing_profile["_interests"] = existing_interests
+                            profile_data["_interests"] = source_interests
+                            
+                            profiles_match, comparison = self._compare_profiles(profile_data, existing_profile)
+                            
+                            if profiles_match:
+                                # Profiles core config matches, map IDs
                                 if old_profile_id:
-                                    self.profile_id_mapping[old_profile_id] = result["id"]
-                                stats["skipped"] += 1
-                                logger.info(f"Default profiles match - mapping source profile {old_profile_id} to existing Default profile {result['id']}")
+                                    self.profile_id_mapping[old_profile_id] = target_id
+                                
+                                # Queue new interests for merging if enabled
+                                if merge_interests and comparison.get("new_interests"):
+                                    if target_id not in self.interests_to_merge:
+                                        self.interests_to_merge[target_id] = []
+                                    self.interests_to_merge[target_id].extend(comparison["new_interests"])
+                                    stats["merged"] += 1
+                                    logger.info(f"Default profile matched - will merge {len(comparison['new_interests'])} new interests")
+                                else:
+                                    stats["skipped"] += 1
+                                
+                                logger.info(f"Default profiles match - mapping source profile {old_profile_id} to existing Default profile {target_id}")
                                 continue
                             else:
                                 # Profiles are different, import as a new profile
@@ -1944,13 +2348,42 @@ class DatabaseImporter:
                 # Check for duplicates if requested (for non-Default profiles)
                 if skip_duplicates:
                     with get_cursor() as cursor:
-                        cursor.execute("SELECT id FROM research_profiles WHERE name = %s", (profile_data["name"],))
+                        cursor.execute("""
+                            SELECT id, tags, email_recipients, arxiv_filters 
+                            FROM research_profiles WHERE name = %s
+                        """, (profile_data["name"],))
                         result = cursor.fetchone()
                         if result:
+                            target_id = result["id"]
                             # Map old profile ID to existing profile ID
                             if old_profile_id:
-                                self.profile_id_mapping[old_profile_id] = result["id"]
-                            stats["skipped"] += 1
+                                self.profile_id_mapping[old_profile_id] = target_id
+                            
+                            # Queue interests for merging if enabled
+                            if merge_interests and source_interests:
+                                # Get existing interests
+                                cursor.execute("""
+                                    SELECT interest_text FROM profile_research_interests 
+                                    WHERE profile_id = %s
+                                """, (target_id,))
+                                existing_interests = {row['interest_text'].lower().strip() for row in cursor.fetchall()}
+                                
+                                # Find new interests
+                                new_interests = [
+                                    i for i in source_interests 
+                                    if i.lower().strip() not in existing_interests
+                                ]
+                                
+                                if new_interests:
+                                    if target_id not in self.interests_to_merge:
+                                        self.interests_to_merge[target_id] = []
+                                    self.interests_to_merge[target_id].extend(new_interests)
+                                    stats["merged"] += 1
+                                    logger.info(f"Profile '{profile_data['name']}' matched - will merge {len(new_interests)} new interests")
+                                else:
+                                    stats["skipped"] += 1
+                            else:
+                                stats["skipped"] += 1
                             continue
                 
                 # Insert profile
@@ -1982,13 +2415,64 @@ class DatabaseImporter:
                 
             except Exception as e:
                 print(f"Error importing profile '{profile_data.get('name', 'Unknown')}': {e}")
+                import traceback
+                traceback.print_exc()
                 stats["errors"] += 1
             
             # Report progress
             if progress_callback:
                 progress_callback(i + 1, len(profiles_data), f"Importing profiles: {i + 1}/{len(profiles_data)}")
         
-        print(f"Profiles import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        # Apply queued interest merges
+        if self.interests_to_merge:
+            print(f"Applying interest merges to {len(self.interests_to_merge)} profiles...")
+            merge_stats = self._apply_interest_merges()
+            stats["interests_merged"] = merge_stats.get("interests_added", 0)
+            print(f"Merged {stats['interests_merged']} interests")
+        
+        print(f"Profiles import completed: {stats['imported']} imported, {stats['skipped']} skipped, "
+              f"{stats['merged']} merged, {stats['interests_merged']} interests merged, {stats['errors']} errors")
+        return stats
+    
+    def _apply_interest_merges(self) -> Dict[str, int]:
+        """Apply all queued interest merges."""
+        stats = {"profiles_updated": 0, "interests_added": 0, "errors": 0}
+        
+        for profile_id, interests in self.interests_to_merge.items():
+            if not interests:
+                continue
+                
+            try:
+                with get_cursor() as cursor:
+                    for interest_text in interests:
+                        try:
+                            # Check if already exists (case-insensitive)
+                            cursor.execute("""
+                                SELECT 1 FROM profile_research_interests 
+                                WHERE profile_id = %s AND LOWER(interest_text) = LOWER(%s)
+                            """, (profile_id, interest_text))
+                            
+                            if not cursor.fetchone():
+                                cursor.execute("""
+                                    INSERT INTO profile_research_interests 
+                                    (profile_id, interest_text, created_at, updated_at)
+                                    VALUES (%s, %s, NOW(), NOW())
+                                """, (profile_id, interest_text))
+                                stats["interests_added"] += 1
+                        except Exception as e:
+                            logger.warning(f"Could not add interest to profile {profile_id}: {e}")
+                            stats["errors"] += 1
+                
+                stats["profiles_updated"] += 1
+                logger.info(f"Merged interests into profile {profile_id}")
+                
+            except Exception as e:
+                logger.error(f"Error merging interests for profile {profile_id}: {e}")
+                stats["errors"] += 1
+        
+        # Clear the queue
+        self.interests_to_merge = {}
+        
         return stats
     
     def import_profile_research_interests(self, interests_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
@@ -2710,7 +3194,8 @@ class DatabaseImporter:
         progress_callback=None,
         mapping_strategy: str = "auto",
         merge_to_profile_id: int = None,
-        create_new_profile_name: str = None
+        create_new_profile_name: str = None,
+        merge_interests: bool = True
     ) -> Dict[str, Any]:
         """
         Import all data from a directory containing JSON files.
@@ -2722,6 +3207,7 @@ class DatabaseImporter:
             mapping_strategy: Profile mapping strategy for profile-scoped imports
             merge_to_profile_id: Target profile ID for merge_to strategy
             create_new_profile_name: Override profile name for create_new strategy
+            merge_interests: Whether to merge research interests when profiles match
 
         Returns:
             Dictionary with import results
@@ -2748,8 +3234,8 @@ class DatabaseImporter:
                     print(f"Detected profile-scoped export (version {metadata.get('export_version', 'unknown')})")
                     print(f"Mapping strategy: {mapping_strategy}")
 
-                    # Initialize profile mapper
-                    profile_mapper = ProfileMapper(self.db_path)
+                    # Initialize profile mapper with merge_interests setting
+                    profile_mapper = ProfileMapper(self.db_path, merge_interests=merge_interests)
 
             # Check for required migrations
             migration_info = self.validation_results.get("migration_required")
@@ -2798,6 +3284,17 @@ class DatabaseImporter:
         
         total_steps = len(available_files)
         
+        # Pre-load interests data for smart profile merging
+        interests_data = None
+        interests_file = input_path / "profile_research_interests.json"
+        if interests_file.exists() and merge_interests:
+            try:
+                with open(interests_file, 'r') as f:
+                    interests_data = json.load(f)
+                print(f"Pre-loaded {len(interests_data)} research interests for smart merging")
+            except Exception as e:
+                print(f"Warning: Could not pre-load interests data: {e}")
+        
         # Helper function to create progress callback for each import
         def create_progress_callback(step_index, table_name):
             def table_progress_callback(current, total, message):
@@ -2823,25 +3320,47 @@ class DatabaseImporter:
                         with open(file_path, 'r') as f:
                             profiles_data = json.load(f)
 
-                        # Map each profile
+                        # Build interests lookup by profile ID
+                        interests_by_profile = {}
+                        if interests_data:
+                            for interest in interests_data:
+                                pid = interest.get("profile_id")
+                                if pid not in interests_by_profile:
+                                    interests_by_profile[pid] = []
+                                interests_by_profile[pid].append(interest.get("interest_text", ""))
+
+                        # Map each profile with its interests
                         for profile in profiles_data:
+                            source_interests = interests_by_profile.get(profile['id'], [])
                             target_id = profile_mapper.map_profile(
                                 profile,
                                 strategy=mapping_strategy,
                                 target_profile_id=merge_to_profile_id,
-                                create_new_profile_name=create_new_profile_name
+                                create_new_profile_name=create_new_profile_name,
+                                source_interests=source_interests
                             )
                             fk_remapper.add_mapping("research_profiles", profile['id'], target_id)
                             print(f"Mapped profile '{profile['name']}' (ID {profile['id']}) → Target ID {target_id}")
 
+                        # Apply queued interest merges
+                        if profile_mapper.interests_to_merge:
+                            merge_stats = profile_mapper.apply_queued_interest_merges()
+                            results["interests_merged"] = merge_stats
+
                         results[table_name] = {
                             "imported": len(profiles_data),
                             "skipped": 0,
-                            "mapped": True
+                            "mapped": True,
+                            "merge_log": profile_mapper.get_merge_log()
                         }
                     else:
+                        # Non-profile-scoped import with smart interest merging
                         results[table_name] = self.import_research_profiles(
-                            str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                            str(file_path), 
+                            skip_duplicates, 
+                            create_progress_callback(i, table_name),
+                            merge_interests=merge_interests,
+                            interests_data=interests_data
                         )
                 elif table_name == "papers":
                     # Track paper ID mappings for foreign key remapping
@@ -2997,7 +3516,13 @@ class DatabaseImporter:
 
         return results
 
-    def import_from_archive(self, archive_path: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, Any]:
+    def import_from_archive(
+        self, 
+        archive_path: str, 
+        skip_duplicates: bool = True, 
+        progress_callback=None,
+        merge_interests: bool = True
+    ) -> Dict[str, Any]:
         """
         Import all data from a tar.gz archive.
         
@@ -3005,6 +3530,7 @@ class DatabaseImporter:
             archive_path: Path to the tar.gz archive
             skip_duplicates: Whether to skip duplicate entries
             progress_callback: Optional callback function(current, total, message)
+            merge_interests: Whether to merge research interests when profiles match
             
         Returns:
             Dictionary with import results
@@ -3023,7 +3549,12 @@ class DatabaseImporter:
                     adjusted_progress = 10 + int((current / total) * 90)
                     progress_callback(adjusted_progress, 100, message)
             
-            return self.import_from_directory(extract_dir, skip_duplicates, adjusted_progress_callback)
+            return self.import_from_directory(
+                extract_dir, 
+                skip_duplicates, 
+                adjusted_progress_callback,
+                merge_interests=merge_interests
+            )
     
     def import_tables_parallel(
         self,
@@ -3146,7 +3677,8 @@ class DatabaseImporter:
         max_workers: int = 4,
         mapping_strategy: str = "auto",
         merge_to_profile_id: int = None,
-        create_new_profile_name: str = None
+        create_new_profile_name: str = None,
+        merge_interests: bool = True
     ) -> Dict[str, Any]:
         """
         Import data from either a directory or archive.
@@ -3159,6 +3691,7 @@ class DatabaseImporter:
             mapping_strategy: Profile mapping strategy for profile-scoped imports
             merge_to_profile_id: Target profile ID for merge_to strategy
             create_new_profile_name: Override profile name for create_new strategy
+            merge_interests: Whether to merge research interests when profiles match
 
         Returns:
             Dictionary with import results
@@ -3187,7 +3720,8 @@ class DatabaseImporter:
                     skip_duplicates,
                     mapping_strategy=mapping_strategy,
                     merge_to_profile_id=merge_to_profile_id,
-                    create_new_profile_name=create_new_profile_name
+                    create_new_profile_name=create_new_profile_name,
+                    merge_interests=merge_interests
                 )
         elif input_path_obj.suffix == ".gz" and input_path_obj.name.endswith(".tar.gz"):
             print(f"Importing from archive: {input_path}")
@@ -3203,7 +3737,8 @@ class DatabaseImporter:
                         skip_duplicates,
                         mapping_strategy=mapping_strategy,
                         merge_to_profile_id=merge_to_profile_id,
-                        create_new_profile_name=create_new_profile_name
+                        create_new_profile_name=create_new_profile_name,
+                        merge_interests=merge_interests
                     )
         else:
             raise ValueError(f"Input path must be a directory or .tar.gz archive: {input_path}")

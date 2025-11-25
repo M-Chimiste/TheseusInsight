@@ -573,22 +573,48 @@ class JudgeWorker:
             # Increment consecutive failures for circuit breaker
             self.consecutive_failures += 1
 
-            # Mark task as failed using a fresh cursor
+            # Mark task as failed with retry logic
             try:
                 if cur:
                     cur.close()
                 with self.conn.cursor() as err_cur:
-                    err_cur.execute("""
-                        UPDATE judge_task_queue
-                        SET status = 'failed',
-                            last_error = %s,
-                            attempts = attempts + 1,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    """, (str(e), task['id']))
+                    # Get current attempts count
+                    err_cur.execute("SELECT attempts FROM judge_task_queue WHERE id = %s", (task['id'],))
+                    result = err_cur.fetchone()
+                    current_attempts = result[0] if result else 0
+                    new_attempts = current_attempts + 1
+                    
+                    # Use max_retries from config (default 3)
+                    max_retries = getattr(self, 'max_retries', 3)
+                    
+                    if new_attempts < max_retries:
+                        # Task has retries left - requeue as pending for another worker to try
+                        err_cur.execute("""
+                            UPDATE judge_task_queue
+                            SET status = 'pending',
+                                last_error = %s,
+                                attempts = %s,
+                                assigned_server_url = NULL,
+                                leased_until = NULL,
+                                leased_by_worker = NULL,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """, (str(e), new_attempts, task['id']))
+                        logger.info(f"Task {task['id']} requeued for retry (attempt {new_attempts}/{max_retries})")
+                    else:
+                        # Max retries exceeded - mark as permanently failed
+                        err_cur.execute("""
+                            UPDATE judge_task_queue
+                            SET status = 'failed',
+                                last_error = %s,
+                                attempts = %s,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """, (str(e), new_attempts, task['id']))
+                        logger.warning(f"Task {task['id']} permanently failed after {new_attempts} attempts")
                     # With autocommit mode, already committed
-            except:
-                pass
+            except Exception as retry_err:
+                logger.error(f"Failed to update task status: {retry_err}")
         finally:
             # Ensure cursor is closed
             if cur:
@@ -638,6 +664,11 @@ class JudgeWorker:
         
         # Parse response - handle various formats robustly
         response_json = self._parse_llm_response(response)
+        
+        # Defensive check - ensure we have a dict
+        if not isinstance(response_json, dict):
+            logger.warning(f"_parse_llm_response returned non-dict: {type(response_json)}, using defaults")
+            response_json = {'score': 5, 'related': False, 'rationale': str(response_json)[:300]}
         
         score = response_json.get('score', 5)
         if not isinstance(score, (int, float)):

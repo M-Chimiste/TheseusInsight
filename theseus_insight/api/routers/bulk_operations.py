@@ -53,7 +53,7 @@ class BulkJudgeRequest(BaseModel):
     use_profile_arxiv_filters: bool = Field(True, description="Use arXiv category filters from selected profiles (if available)")
 
     # Multi-server configuration
-    use_multi_server: bool = Field(False, description="Use multiple servers for distributed processing")
+    use_multi_server: bool = Field(False, description="Use multiple Ollama servers for distributed processing")
     server_ids: Optional[List[int]] = Field(None, description="Specific server IDs to use (if not provided, uses all enabled servers)")
     request_timeout_sec: Optional[int] = Field(None, description="Request timeout in seconds (uses global default if not provided)")
     max_retries: Optional[int] = Field(None, description="Max retries per error type (uses global default if not provided)")
@@ -592,7 +592,7 @@ async def _launch_single_worker(
     import os
     import json
 
-    print(f"🚀 Launching single worker for job {job_id} on {server_url}")
+    print(f"🚀 Launching single worker for job {job_id} on {server_url} (provider: {provider})")
 
     # Get the current conda environment
     conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'base')
@@ -603,9 +603,9 @@ async def _launch_single_worker(
             'conda', 'run', '-n', conda_env, 'python', '-m', 'theseus_insight.workers.judge_worker',
             '--job-id', str(job_id),
             '--server-url', server_url,
+            '--provider', provider,  # Use the server's configured provider (ollama/lmstudio)
             '--timeout', str(request_timeout_sec),
-            '--max-retries', str(max_retries),
-            '--provider', provider or "ollama"
+            '--max-retries', str(max_retries)
         ]
 
         # Add per-server model overrides if specified
@@ -667,9 +667,9 @@ async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeo
                     sys.executable, "-m", "theseus_insight.workers.judge_worker",
                     "--job-id", str(job_id),
                     "--server-url", server.url,
+                    "--provider", server.provider,  # Use the server's configured provider (ollama/lmstudio)
                     "--timeout", str(request_timeout_sec),
-                    "--max-retries", str(max_retries),
-                    "--provider", (server.provider or "ollama")
+                    "--max-retries", str(max_retries)
                 ]
 
                 # Add per-server model overrides if specified
@@ -772,13 +772,19 @@ async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: Checkpoint
 
                 # Check if job is complete
                 completed = progress.get('completed_tasks', 0)
+                failed = progress.get('failed_tasks', 0)
                 total = progress.get('total_tasks', 0)
                 pending = progress.get('pending_tasks', 0)
                 in_prog = progress.get('in_progress_tasks', 0)
+                leased = progress.get('leased_tasks', 0)
                 
-                logger.info(f"📊 Job {job_id} progress: {completed}/{total} completed, {pending} pending, {in_prog} in-progress")
+                logger.info(f"📊 Job {job_id} progress: {completed}/{total} completed, {failed} failed, {pending} pending, {in_prog} in-progress")
                 
-                if completed >= total and total > 0:
+                # Job is complete when all tasks are in terminal states (completed, failed, or canceled)
+                # OR when completed tasks equal total (for backwards compatibility)
+                all_processed = (completed + failed >= total) and pending == 0 and in_prog == 0 and leased == 0
+                
+                if (completed >= total or all_processed) and total > 0:
                     # Mark job as complete and terminate workers
                     logger.info(f"✅ Job {job_id} COMPLETE: {completed}/{total} tasks finished")
                     if progress['failed_tasks'] > 0:
@@ -894,7 +900,7 @@ async def _start_bulk_judge_operation(
     conflict_data = await _check_job_conflicts()
     if conflict_data["has_conflicts"]:
         # Smart conflict detection:
-        # - Allow multi-server bulk judge jobs to run concurrently (different servers)
+        # - Allow multi-server bulk judge jobs to run concurrently (different Ollama servers)
         # - Block if single-server bulk judge is running (same resources)
         # - Block if other resource-intensive jobs are running (newsletters, mindmaps, podcasts)
         
@@ -946,7 +952,7 @@ async def _start_bulk_judge_operation(
                         # This creates a potential conflict
                         raise HTTPException(
                             status_code=409,
-                            detail=f"A multi-server bulk judge job is already using all available servers. "
+                            detail=f"A multi-server bulk judge job is already using all available Ollama servers. "
                                    f"Job: {running_job['job_type']} ({running_job['description']}). "
                                    f"Recommendation: Wait for it to complete, or ensure it has specific servers assigned."
                         )
@@ -968,7 +974,7 @@ async def _start_bulk_judge_operation(
                     if overlap:
                         raise HTTPException(
                             status_code=409,
-                            detail=f"Server conflict: The following servers are already in use by another bulk judge job: {sorted(overlap)}. "
+                            detail=f"Server conflict: The following Ollama servers are already in use by another bulk judge job: {sorted(overlap)}. "
                                    f"Running job: {running_job['job_type']} ({running_job['description']}). "
                                    f"Recommendation: Use different server_ids that don't overlap, or wait for the job to complete."
                         )
@@ -984,7 +990,7 @@ async def _start_bulk_judge_operation(
         if not available_servers:
             raise HTTPException(
                 status_code=400,
-                detail="Multi-server mode requested but no enabled servers found. Please configure and enable servers in Settings."
+                detail="Multi-server mode requested but no enabled Ollama servers found. Please configure and enable servers in Settings."
             )
 
         if request.server_ids:
@@ -1012,7 +1018,7 @@ async def _start_bulk_judge_operation(
                 detail="No valid servers available for multi-server processing"
             )
         
-        # Validate that judge model is Ollama or LMStudio (multi-server only supports these types)
+        # Validate that judge model is Ollama-compatible (multi-server supports Ollama and LMStudio)
         from ...data_access import SettingsRepository
         import json
         
@@ -1022,14 +1028,18 @@ async def _start_bulk_judge_operation(
             judge_config = orch_config.get('judge_model', {})
             model_type = judge_config.get('model_type', '').lower()
             
-            if model_type not in ['ollama', 'lmstudio']:
+            # LMStudio uses the same OpenAI-compatible API as Ollama
+            # Also allow empty model_type if servers are already configured (backwards compatibility)
+            valid_model_types = {'ollama', 'lmstudio', ''}
+            if model_type not in valid_model_types:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Multi-server mode only supports Ollama and LMStudio models. Current judge model type: {model_type}. "
+                    detail=f"Multi-server mode only supports Ollama/LMStudio models. Current judge model type: {model_type}. "
                            f"Please switch to an Ollama or LMStudio model in Settings → Orchestration Config or disable multi-server mode."
                 )
             
-            print(f"✅ Validated judge model type ({model_type}): {judge_config.get('model_name', 'unknown')}")
+            effective_type = model_type if model_type else 'ollama-compatible'
+            print(f"✅ Validated judge model is {effective_type}: {judge_config.get('model_name', 'unknown')}")
 
     # Suspend scheduled tasks if requested
     suspended_tasks_snapshot = []
@@ -1425,7 +1435,7 @@ async def resume_job(
                 if not selected_servers:
                     raise HTTPException(
                         status_code=400,
-                        detail="No enabled servers found. Please enable servers in Settings before resuming."
+                        detail="No enabled Ollama servers found. Please enable servers in Settings before resuming."
                     )
                 
                 logger.info(f"📋 Using {len(selected_servers)} enabled servers as fallback")
@@ -1877,7 +1887,7 @@ async def restart_failed_workers(job_id: UUID) -> Dict[str, Any]:
                 )
                 
                 if success:
-                    # Look up server to get per-server model config
+                    # Look up server to get per-server model config and provider
                     server = InferenceServersRepository.get_by_url(worker.server_url)
                     model_name = server.model_name if server else None
                     model_config = server.model_config if server else None
@@ -2405,10 +2415,11 @@ async def retry_failed_worker(
         if not success:
             raise HTTPException(status_code=500, detail="Failed to reset worker status")
 
-        # Look up server to get per-server model config
+        # Look up server to get per-server model config and provider
         server = InferenceServersRepository.get_by_url(server_url)
         model_name = server.model_name if server else None
         model_config = server.model_config if server else None
+        provider = server.provider if server else "ollama"
 
         # Launch new worker process
         await _launch_single_worker(
@@ -2418,7 +2429,7 @@ async def retry_failed_worker(
             3,   # Default retries
             model_name=model_name,
             model_config=model_config,
-            provider=server.provider if server else "ollama"
+            provider=provider
         )
         
         return {

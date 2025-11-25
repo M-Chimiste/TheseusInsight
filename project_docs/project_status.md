@@ -62,6 +62,24 @@
 - **Issue**: Server stats aggregation still depended on per-server payloads, so card counts didn’t move until throughput data was available.
 - **Fix**: The backend now bundles a `scoring_summary` block inside every progress callback (`completed`, `failed`, `pending`, `in_progress`, `total`). The UI prefers these authoritative totals and only falls back to server aggregates if the summary is missing, so the Papers Scored / Pending cards advance with each queue poll.
 
+### 2025-11-24 - Fix LMStudio Provider Not Being Passed to Workers
+- **Issue**: Workers were failing immediately with `1 validation error for ChatResponse - message: Field required` and hitting `/api/chat` (Ollama endpoint) instead of `/v1/chat/completions` (LMStudio endpoint).
+- **Root Cause**: `_launch_worker_processes` and `_launch_single_worker` were not passing the `--provider` argument when launching workers. Workers defaulted to `ollama` provider even though servers were configured as `lmstudio`.
+- **Fix**: Updated both functions to pass `--provider server.provider` to the worker command, and updated all call sites to include the provider parameter.
+- **Also Fixed**: Model type validation now accepts both `'ollama'` and `'lmstudio'` (and empty string for backwards compatibility) for multi-server mode.
+
+### 2025-11-24 - Fix Bulk Processing Job Completion Detection & Retry Logic
+- **Issue**: Bulk processing jobs would show as "running" even after all tasks were processed (with 830+ failures). Workers would all stop simultaneously near the end, and the job wouldn't be marked as complete.
+- **Root Causes**:
+  1. **Missing retry logic**: The worker's `_process_task` method marked failed tasks directly as 'failed' without checking if retries were available. This bypassed the proper retry logic in `JudgeTaskQueueRepository.mark_task_failed()`.
+  2. **Incomplete completion detection**: The monitor only checked if `completed >= total`, but "completed" doesn't include failed tasks. Jobs with many failures would never trigger completion.
+  3. **Parse errors**: LLM responses sometimes couldn't be parsed (`'str' object has no attribute 'get'`), causing tasks to fail.
+- **Fixes Applied**:
+  1. **Worker retry logic** (`judge_worker.py`): Modified `_process_task` to check current attempts and requeue tasks as 'pending' if retries remain, only marking as 'failed' after max_retries (default 3) exhausted.
+  2. **Monitor completion check** (`bulk_operations.py`): Updated `_monitor_multi_server_job` to detect completion when all tasks are in terminal states (`completed + failed >= total` AND `pending == 0` AND `in_progress == 0` AND `leased == 0`).
+  3. **Defensive parsing** (`judge_worker.py`): Added check to ensure `_parse_llm_response` returns a dict, falling back to defaults if it returns a string.
+- **Impact**: Jobs with failures will now properly complete and be marked with appropriate status messages. Failed tasks get retried before being permanently marked as failed, improving overall success rate.
+
 ## Analysis & Reflections
 
 The newsletter scoring system has evolved from a simple round-robin distribution to a more sophisticated queue-based architecture. This change addresses the fundamental issue where pre-assigning tasks to servers could lead to inefficiencies - slower servers would accumulate backlogs while faster servers sat idle.

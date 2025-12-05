@@ -218,18 +218,24 @@ async def download_exported_database(task_id: str):
 async def import_database(
     background_tasks: BackgroundTasks,
     backup_file: UploadFile = File(...),
-    import_mode: str = Form("merge", description="Import mode: 'merge' (default) or 'overwrite'")
+    import_mode: str = Form("merge", description="Import mode: 'merge' (default) or 'overwrite'"),
+    merge_interests: bool = Form(True, description="Merge research interests when profiles match (default: True)")
 ):
     """
     Imports a database from a compressed backup file using background task with progress updates.
 
     This endpoint accepts a compressed backup file and imports it into the database.
     It creates a background task to track the import progress.
+    
+    When merge_interests is True (default), if a Default profile in the import matches the 
+    existing Default profile, any new research interests from the import will be merged 
+    into the existing profile rather than being discarded.
 
     Args:
         background_tasks (BackgroundTasks): An instance of BackgroundTasks for managing background tasks.
         backup_file (UploadFile): The compressed backup file to import.
         import_mode (str): The import mode: 'merge' (default) or 'overwrite'.
+        merge_interests (bool): Whether to merge research interests when profiles match.
 
     Returns:
         dict: A dictionary containing the task ID and a message for tracking the import progress.
@@ -266,7 +272,8 @@ async def import_database(
         task_config = {
             "archive_path": temp_file_path,
             "import_mode": import_mode,
-            "filename": backup_file.filename
+            "filename": backup_file.filename,
+            "merge_interests": merge_interests
         }
         
         await task_manager.create_task(

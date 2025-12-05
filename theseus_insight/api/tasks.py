@@ -994,15 +994,19 @@ class TaskManager:
                     current_step="starting_import",
                 )
             
-            # Import the data
-            print(f"DEBUG: Starting import from archive, skip_duplicates: {skip_duplicates}")
+            # Import the data with smart interest merging enabled
+            # merge_interests=True ensures that when Default profiles match, any new
+            # research interests from the import are merged into the existing profile
+            merge_interests = task_config.get("merge_interests", True)
+            print(f"DEBUG: Starting import from archive, skip_duplicates: {skip_duplicates}, merge_interests: {merge_interests}")
             print(f"DEBUG: About to call importer.import_from_archive with args: {archive_path}, {skip_duplicates}")
             try:
                 results = await asyncio.to_thread(
                     importer.import_from_archive,
                     archive_path,
                     skip_duplicates,
-                    import_progress_callback
+                    import_progress_callback,
+                    merge_interests
                 )
                 print(f"DEBUG: Import completed with results: {results}")
             except Exception as import_error:

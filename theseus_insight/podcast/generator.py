@@ -115,7 +115,14 @@ class PodcastGenerator:
             if "gpu_offload" in self.text_model_config:
                 model_params["gpu_offload"] = self.text_model_config["gpu_offload"]
 
-        self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
+        # Use cached LMStudio client to avoid singleton error
+        if model_type == "lmstudio":
+            from theseus_insight.utils.lmstudio_client import get_lmstudio_client
+            import os
+            host = model_params.pop("host", None) or os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+            self.text_inference = get_lmstudio_client(host=host, **model_params)
+        else:
+            self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
 
         # Initialize TTS models based on provider
        

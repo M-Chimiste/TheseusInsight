@@ -119,11 +119,21 @@ class ModelClient:
                 self.logger.info(f"Custom-OAI using resolved base_url: {resolved_host}")
 
         # Create the actual model client
-        self._client = LLMModelFactory.create_model(
-            model_type=provider,
-            model_name=model_name,
-            **config
-        )
+        # Use cached LMStudio client to avoid singleton error
+        if provider.lower() == 'lmstudio':
+            from theseus_insight.utils.lmstudio_client import get_lmstudio_client
+            host = config.pop('host', resolved_host or 'localhost:1234')
+            self._client = get_lmstudio_client(
+                model_name=model_name,
+                host=host,
+                **config
+            )
+        else:
+            self._client = LLMModelFactory.create_model(
+                model_type=provider,
+                model_name=model_name,
+                **config
+            )
 
         # Determine if this is a local model that needs rate limiting
         self.is_local_model = provider.lower() in ['ollama', 'llamacpp', 'local', 'lmstudio']

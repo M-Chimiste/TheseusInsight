@@ -357,20 +357,17 @@ class TheseusInsight:
                 return OllamaInference(**kwargs)
 
             elif model_type == "lmstudio":
-                from LLMFactory import LLMModelFactory
+                from theseus_insight.utils.lmstudio_client import get_lmstudio_client
                 # LMStudio needs host parameter instead of url
                 # Default to localhost:1234 if not set in environment
                 lmstudio_host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
-                kwargs = {
-                    'model_type': 'lmstudio',
-                    'model_name': model_name,
-                    'max_new_tokens': max_new_tokens,
-                    'temperature': temperature,
-                    'host': lmstudio_host
-                }
-                if num_ctx is not None:
-                    kwargs['context_length'] = num_ctx
-                return LLMModelFactory.create_model(**kwargs)
+                return get_lmstudio_client(
+                    model_name=model_name,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    host=lmstudio_host,
+                    context_length=num_ctx
+                )
 
             else:
                 raise ValueError(f"Invalid model type: {model_type}")
@@ -380,7 +377,18 @@ class TheseusInsight:
 
     def _log_error(self, status_code: int, error: Exception):
         """Helper to log errors to the database and optionally send an email."""
+        import traceback
         error_msg = f"{type(error).__name__}: {str(error)}"
+        
+        # Log the full stack trace to console for debugging
+        if self.verbose:
+            print(f"\n{'='*60}")
+            print(f"ERROR {status_code}: {error_msg}")
+            print(f"{'='*60}")
+            print("Full stack trace:")
+            traceback.print_exc()
+            print(f"{'='*60}\n")
+        
         LogsRepository.upsert(
             task_id=self.task_id, 
             status=f"ERROR_{status_code}",
@@ -2311,18 +2319,50 @@ Theseus Insight Team
                         intro_prompt = newsletter_intro_prompt(joined_sections)
                         messages = [{"role": "user", "content": intro_prompt}]
 
-                        # Model call for the newsletter's intro
-                        if self.newsletter_intro_inference.provider == "ollama":
-                            resp = self.newsletter_intro_inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                schema=NewsletterPromptData
-                            )
-                        else:
-                            resp = self.newsletter_intro_inference.invoke(
-                                messages=messages,
-                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                            )
+                        # Model call for the newsletter's intro with retry logic
+                        # Gemini API can throw 504 Deadline Exceeded errors on long requests
+                        max_retries = 3
+                        retry_delay = 5  # seconds
+                        resp = None
+                        last_error = None
+                        
+                        for attempt in range(max_retries):
+                            try:
+                                if attempt > 0:
+                                    if self.verbose:
+                                        print(f"Retrying newsletter intro generation (attempt {attempt + 1}/{max_retries}) after {retry_delay}s...")
+                                    await asyncio.sleep(retry_delay)
+                                    retry_delay *= 2  # Exponential backoff
+                                
+                                if self.newsletter_intro_inference.provider == "ollama":
+                                    resp = self.newsletter_intro_inference.invoke(
+                                        messages=messages,
+                                        system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                        schema=NewsletterPromptData
+                                    )
+                                else:
+                                    resp = self.newsletter_intro_inference.invoke(
+                                        messages=messages,
+                                        system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                                    )
+                                break  # Success, exit retry loop
+                                
+                            except Exception as invoke_error:
+                                last_error = invoke_error
+                                error_str = str(invoke_error)
+                                # Check if this is a retryable error (timeout, deadline exceeded, etc.)
+                                is_retryable = any(term in error_str.lower() for term in 
+                                    ['deadline', 'timeout', '504', '503', '502', 'unavailable', 'overloaded'])
+                                
+                                if self.verbose:
+                                    print(f"Newsletter intro generation failed (attempt {attempt + 1}/{max_retries}): {error_str}")
+                                
+                                if not is_retryable or attempt == max_retries - 1:
+                                    # Non-retryable error or last attempt - re-raise
+                                    raise
+                        
+                        if resp is None:
+                            raise last_error or RuntimeError("Newsletter intro generation failed with no response")
 
                         try:
                             resp_json = json_repair.loads(resp)
@@ -2343,7 +2383,7 @@ Theseus Insight Team
                                 print(f"Raw response: {resp[:200]}...")
                             intro_text = resp
 
-                                                 # Final newsletter
+                        # Final newsletter
                         newsletter_content = intro_text + "\n\n" + joined_sections
                     await self._save_checkpoint_async('newsletter_content', newsletter_content)
 

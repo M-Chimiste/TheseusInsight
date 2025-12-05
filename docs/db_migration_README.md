@@ -241,31 +241,81 @@ Research profiles have special handling during import, particularly for the Defa
 
 When importing a Default profile, the system compares it with the existing Default profile in the target database:
 
-- **Profiles Match**: If `arxiv_filters`, `tags`, and `email_recipients` are identical, the import skips the Default profile and maps all associated papers/scores to the existing Default profile
-- **Profiles Differ**: If any of these fields differ, a new profile named "Default (Imported)" is created, and all papers/scores are imported into this new profile
+- **Profiles Match**: If `arxiv_filters`, `tags`, and `email_recipients` are identical:
+  - The import maps the source profile ID to the existing Default profile
+  - All associated papers/scores are imported to the existing Default profile
+  - **NEW:** Any research interests in the source that don't exist in the target are automatically merged
 
-This ensures data integrity and prevents loss of papers when importing databases with different research interests.
+- **Profiles Differ**: If any of these fields differ:
+  - A new profile named "Default (Imported)" is created
+  - All papers/scores and research interests are imported into this new profile
+
+#### Research Interest Merging (New Feature)
+
+By default (`merge_interests=True`), when profiles match:
+
+1. The system detects research interests in the source that don't exist in the target (case-insensitive comparison)
+2. These new interests are automatically added to the existing profile
+3. Existing interests are preserved - no interests are ever removed during merge
+
+This ensures that when you import a backup from another machine where you've added new research interests, those interests are properly merged into your existing profile rather than being lost.
+
+**Example:**
+```
+Source DB Default Profile:
+  - arxiv_filters: ["cs.AI"]
+  - interests: ["neural networks", "transformers", "vision models"]
+
+Target DB Default Profile:
+  - arxiv_filters: ["cs.AI"]  
+  - interests: ["neural networks", "language models"]
+
+Result (merge_interests=True):
+  - Profile matched (same arxiv_filters)
+  - New interests "transformers" and "vision models" merged
+  - Final interests: ["neural networks", "language models", "transformers", "vision models"]
+```
+
+#### API Parameter
+
+When using the import API, you can control this behavior:
+
+```bash
+# Default: merge interests when profiles match
+curl -X POST "/api/settings/database/import" \
+  -F "backup_file=@backup.tar.gz" \
+  -F "import_mode=merge" \
+  -F "merge_interests=true"
+
+# Disable interest merging (older behavior)
+curl -X POST "/api/settings/database/import" \
+  -F "backup_file=@backup.tar.gz" \
+  -F "import_mode=merge" \
+  -F "merge_interests=false"
+```
 
 #### Example Scenarios
 
-**Scenario 1 - Matching Profiles:**
+**Scenario 1 - Matching Profiles with Interest Merge:**
 ```
-Source DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"]
-Target DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"]
-Result: Papers imported to existing Default profile
+Source DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"], 5 research interests
+Target DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"], 3 research interests
+Result: Papers imported to existing Default profile, 2 new interests merged
 ```
 
 **Scenario 2 - Different Profiles:**
 ```
 Source DB: Default profile with arxiv_filters: ["cs.AI", "cs.LG"], 700k papers
 Target DB: Default profile with arxiv_filters: ["cs.CV", "cs.RO"]
-Result: New "Default (Imported)" profile created, all 700k papers imported there
+Result: New "Default (Imported)" profile created, all 700k papers and interests imported there
 ```
 
 #### Non-Default Profiles
 
 Non-Default profiles are matched by name:
-- If a profile with the same name exists, papers are mapped to the existing profile
+- If a profile with the same name exists:
+  - Papers are mapped to the existing profile
+  - Research interests are merged (if `merge_interests=True`)
 - If no match exists, a new profile is created
 
 See [Database Import Profile Handling](database_import_profile_handling.md) for detailed documentation.

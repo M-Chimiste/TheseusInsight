@@ -1,93 +1,102 @@
-# Project Status
+# Theseus Insight Project Status
 
-## Implemented Features
-- [x] Newsletter pipeline bug fix: 'dict' object has no attribute 'id' in checkpoint manager/data processing.
-- [x] Newsletter pipeline bug fix: `cannot adapt type 'InferenceServer'` in multi-server scoring.
-- [x] Newsletter pipeline bug fix: `AttributeError: 'TheseusInsight' object has no attribute 'progress_callback'`.
-- [x] Newsletter pipeline bug fix: Progress percentage calculation > 100% and missing UI metadata.
-- [x] Newsletter pipeline bug fix: KeyError 'active' in server stats monitoring.
-- [x] Newsletter pipeline improvement: Changed from pre-assigned round-robin to dynamic queue-based task distribution.
-- [x] UI improvement: Changed server activity display from progress bars to throughput metrics.
+## Last Updated: November 25, 2025
 
-## Next Steps
-- [ ] Refactor `theseus_insight/theseus_insight.py` to split the large file into smaller modules.
-- [ ] Verify newsletter pipeline execution with new queue-based distribution.
-- [ ] Consider adding real-time server health monitoring.
+---
+
+## Recent Changes
+
+### Database Import Profile Merging Fix (2025-11-25)
+
+**Problem:** Database imports involving the Default profile weren't properly migrating research interests. When importing a database backup where the Default profile matched the existing one, the comparison logic only checked `arxiv_filters`, `tags`, and `email_recipients` - ignoring the most important data: research interests.
+
+**Root Cause:**
+1. Profile comparison (`_compare_profiles`) did not include research interests
+2. When profiles "matched", interests were simply skipped rather than merged
+3. No mechanism to detect and merge new interests from source into existing profiles
+
+**Solution Implemented:**
+
+#### 1. Enhanced Profile Comparison (`ProfileMapper._compare_profiles`)
+- Now compares research interests in addition to arxiv_filters, tags, and email_recipients
+- Returns detailed comparison results including:
+  - `new_interests`: Interests in source but not in target
+  - `existing_interests`: Interests common to both
+  - `missing_interests`: Interests in target but not in source
+
+#### 2. Smart Interest Merging
+- Added `merge_interests` parameter (default: True) throughout the import pipeline
+- When profiles match on core config (arxiv_filters, tags, email_recipients):
+  - Profile ID is mapped to existing profile
+  - New interests from source are queued for merging
+  - Interests are merged using case-insensitive duplicate detection
+
+#### 3. New `ProfileMapper` Capabilities
+- `interests_to_merge`: Queue for interests to be merged after profile mapping
+- `apply_queued_interest_merges()`: Method to apply all queued interest merges
+- `profile_merge_log`: Tracks what happened during merge for reporting
+- Support for `smart_merge` strategy that updates profile config and merges interests
+
+#### 4. Updated API
+- `/api/settings/database/import` endpoint now accepts `merge_interests` parameter
+- Default behavior merges interests when profiles match
+
+**Files Modified:**
+- `theseus_insight/utils/db_migration/db_import.py` - Core import logic with interest merging
+- `theseus_insight/api/routers/database.py` - API endpoint with new parameter
+- `theseus_insight/api/tasks.py` - Task manager passes merge_interests to importer
+
+---
+
+## What Needs to Be Implemented Next
+
+### Short Term
+1. **UI Update**: Add toggle in Settings/Database import UI to control `merge_interests` behavior
+2. **Import Preview**: Show user what interests will be merged before confirming import
+3. **Logging**: Add more detailed logging about profile/interest merge decisions
+
+### Medium Term
+1. **Interest Similarity Detection**: Use embeddings to detect semantically similar interests (not just exact text match)
+2. **Merge Conflict Resolution UI**: When profiles differ significantly, show user options
+3. **Profile Version History**: Track changes to profiles over time
+
+---
 
 ## Debug Log
-### 2025-11-20 - Fix AttributeError in Newsletter Pipeline
-- **Issue**: `AttributeError: 'dict' object has no attribute 'id'` when saving papers to DB.
-- **Cause**: `PaperRepository.get_by_url` returns a dictionary, but the code was accessing it as an object (`existing_paper.id`).
-- **Fix**: Changed `existing_paper.id` to `existing_paper['id']` in `theseus_insight/theseus_insight.py`. Also fixed another occurrence in `Saving LLM judge scores` section.
 
-### 2025-11-20 - Fix Multi-Server Scoring Type Error
-- **Issue**: `psycopg.ProgrammingError: cannot adapt type 'InferenceServer'` in multi-server scoring.
-- **Cause**: Passing `InferenceServer` objects instead of their IDs to the TheseusInsight constructor.
-- **Fix**: Changed to extract IDs from server objects: `judge_server_ids=[s.id for s in judge_servers] if judge_servers else None`.
+### 2025-11-25: Database Import Investigation
+- Traced through `db_import.py` to understand profile mapping flow
+- Found `_compare_profiles` only compared 3 fields, not interests
+- Identified that `import_profile_research_interests` relied on `profile_id_mapping` but didn't handle merge case
+- Implemented comprehensive fix with smart interest merging
+- Updated API to expose merge_interests option
+- No linting errors after changes
 
-### 2025-11-21 - Fix Progress Callback and UI Metadata
-- **Issue**: Progress callback not initialized, UI not receiving metadata.
-- **Cause**: TheseusInsight not storing progress_callback in __init__, callback signature mismatch.
-- **Fix**: Added progress_callback to __init__, updated run() to store callback, fixed callback signatures.
+---
 
-### 2025-11-21 - Fix Server Stats KeyError
-- **Issue**: `Error monitoring progress... 'active'` in newsletter scoring.
-- **Cause**: Code was accessing `server_stat['active']` but the view column is named `active_tasks`.
-- **Fix**: Updated to use `stat.get('active_tasks', 0)` in newsletter_scorer.py.
+## Architecture Notes
 
-### 2025-11-21 - Improve Task Distribution Architecture
-- **Issue**: Tasks were pre-assigned to servers using round-robin, causing uneven distribution.
-- **Changes**:
-  1. Removed server_urls parameter from task enqueueing - all tasks go to general queue
-  2. Workers now pull tasks dynamically on a first-come-first-serve basis
-  3. Updated UI to show throughput (papers/min) instead of progress bars
-  4. Added server status indicators and real-time metrics
-- **Benefits**: Better load balancing, more efficient use of faster servers, clearer performance visibility.
+### Profile Import Flow
+```
+1. import_from_archive() extracts tar.gz
+2. import_from_directory() orchestrates import
+3. Pre-loads interests data for smart merging
+4. For each profile:
+   a. ProfileMapper.map_profile() compares with existing
+   b. If profiles match: map ID + queue new interests for merge
+   c. If profiles differ: create new profile
+5. apply_queued_interest_merges() adds new interests to matched profiles
+6. import_profile_research_interests() handles remaining interests with ID mapping
+```
 
-### 2025-11-21 - Fix Scoring Progress Reset & Metadata Regression
-- **Issue**: When the scoring stage started, total progress snapped back to 0% and the dashboard cards reverted to zero values.
-- **Cause**: The multi-server callback emitted raw 0-100 scoring percentages under a new `scoring` stage label, so task progress overwrote the global pipeline progress. Subsequent metadata frames also lacked `papers_discovered`, so the UI lost previously discovered counts.
-- **Fix**: Scaled scoring progress into the existing 20-30% rank window, normalized the stage label back to `rank`, and enriched every progress frame with `papers_discovered`, `profile_count`, and the raw scoring percentage for debugging. Updated the UI to treat `scoring` as part of the Rank stage so the stage cards remain in order.
+### Profile Matching Logic
+```
+Profiles "match" if ALL of these are equal:
+- arxiv_filters (JSON object)
+- tags (JSON array)
+- email_recipients (JSON array)
 
-### 2025-11-21 - Fix Pending/Scored Dashboard Counters
-- **Issue**: The stats cards stayed at `Pending=1840` / `Scored=0` even while the queue reported progress.
-- **Cause**: The UI only displayed raw `papers_pending`/`papers_scored` fields, so any missing or delayed metadata kept the cards stuck at their initial values.
-- **Fix**: Added defensive derivations on the front-end so `Scored`/`Pending` can be computed from any combination of `papers_to_score`, `papers_pending`, `papers_in_progress`, and `papers_failed`. Pending now reflects both pending and in-progress work, so the card tracks real outstanding work even if the backend omits one of the counters.
+Note: Research interests differences do NOT prevent a match.
+Instead, new interests are merged into the existing profile.
+```
 
-### 2025-11-21 - Derive Stats From Per-Server Data
-- **Issue**: Even after enabling richer metadata, the dashboard cards still lagged because `papers_scored` and `papers_failed` only update when the global queue snapshot refreshes.
-- **Fix**: The UI now falls back to summing the per-server `completed`, `failed`, and `in_progress` values that arrive with every progress callback. This keeps the “Scored” and “Pending” cards in sync with the multi-server activity bars, even if the queue view is momentarily stale.
-
-### 2025-11-21 - Send Dedicated Scoring Summary Metadata
-- **Issue**: Server stats aggregation still depended on per-server payloads, so card counts didn’t move until throughput data was available.
-- **Fix**: The backend now bundles a `scoring_summary` block inside every progress callback (`completed`, `failed`, `pending`, `in_progress`, `total`). The UI prefers these authoritative totals and only falls back to server aggregates if the summary is missing, so the Papers Scored / Pending cards advance with each queue poll.
-
-### 2025-11-24 - Fix LMStudio Provider Not Being Passed to Workers
-- **Issue**: Workers were failing immediately with `1 validation error for ChatResponse - message: Field required` and hitting `/api/chat` (Ollama endpoint) instead of `/v1/chat/completions` (LMStudio endpoint).
-- **Root Cause**: `_launch_worker_processes` and `_launch_single_worker` were not passing the `--provider` argument when launching workers. Workers defaulted to `ollama` provider even though servers were configured as `lmstudio`.
-- **Fix**: Updated both functions to pass `--provider server.provider` to the worker command, and updated all call sites to include the provider parameter.
-- **Also Fixed**: Model type validation now accepts both `'ollama'` and `'lmstudio'` (and empty string for backwards compatibility) for multi-server mode.
-
-### 2025-11-24 - Fix Bulk Processing Job Completion Detection & Retry Logic
-- **Issue**: Bulk processing jobs would show as "running" even after all tasks were processed (with 830+ failures). Workers would all stop simultaneously near the end, and the job wouldn't be marked as complete.
-- **Root Causes**:
-  1. **Missing retry logic**: The worker's `_process_task` method marked failed tasks directly as 'failed' without checking if retries were available. This bypassed the proper retry logic in `JudgeTaskQueueRepository.mark_task_failed()`.
-  2. **Incomplete completion detection**: The monitor only checked if `completed >= total`, but "completed" doesn't include failed tasks. Jobs with many failures would never trigger completion.
-  3. **Parse errors**: LLM responses sometimes couldn't be parsed (`'str' object has no attribute 'get'`), causing tasks to fail.
-- **Fixes Applied**:
-  1. **Worker retry logic** (`judge_worker.py`): Modified `_process_task` to check current attempts and requeue tasks as 'pending' if retries remain, only marking as 'failed' after max_retries (default 3) exhausted.
-  2. **Monitor completion check** (`bulk_operations.py`): Updated `_monitor_multi_server_job` to detect completion when all tasks are in terminal states (`completed + failed >= total` AND `pending == 0` AND `in_progress == 0` AND `leased == 0`).
-  3. **Defensive parsing** (`judge_worker.py`): Added check to ensure `_parse_llm_response` returns a dict, falling back to defaults if it returns a string.
-- **Impact**: Jobs with failures will now properly complete and be marked with appropriate status messages. Failed tasks get retried before being permanently marked as failed, improving overall success rate.
-
-## Analysis & Reflections
-
-The newsletter scoring system has evolved from a simple round-robin distribution to a more sophisticated queue-based architecture. This change addresses the fundamental issue where pre-assigning tasks to servers could lead to inefficiencies - slower servers would accumulate backlogs while faster servers sat idle.
-
-The shift to throughput-based UI metrics provides better operational visibility. Progress bars were misleading when servers process at different rates. The new metrics (papers/minute, average latency, active status) give operators real-time insight into server performance and help identify bottlenecks.
-
-### Future Improvements
-1. **Health Monitoring**: Add periodic health checks for inference servers to detect failures early
-2. **Smart Routing**: Consider implementing affinity-based routing where certain paper types go to specialized servers
-3. **Autoscaling**: Monitor queue depth and automatically scale workers based on load
-4. **Metrics Dashboard**: Create a dedicated monitoring dashboard with historical performance data

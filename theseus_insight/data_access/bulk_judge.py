@@ -95,21 +95,19 @@ class BulkJudgeRunner:
             )
         elif model_type == 'lmstudio':
             import os
+            from ..utils.lmstudio_client import get_lmstudio_client
             # LMStudio needs host parameter instead of url
             # Use host from config if provided, otherwise use env var or default
             host = model_config.get('host')
             if not host:
                 host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
-            kwargs = {
-                'model_type': 'lmstudio',
-                'model_name': model_name,
-                'max_new_tokens': max_new_tokens,
-                'temperature': temperature,
-                'host': host
-            }
-            if num_ctx is not None:
-                kwargs['context_length'] = num_ctx
-            return LLMModelFactory.create_model(**kwargs)
+            return get_lmstudio_client(
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                host=host,
+                context_length=num_ctx
+            )
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
     

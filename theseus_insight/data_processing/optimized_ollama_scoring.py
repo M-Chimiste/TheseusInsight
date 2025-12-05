@@ -229,8 +229,29 @@ class OptimizedOllamaScorer:
                 filtered_papers.append(paper)
                 continue
             
-            # Calculate similarity
-            paper_embedding = np.array(paper['embedding'])
+            # Parse and convert embedding to numpy array
+            # Handle different storage formats: string (from pgvector), list, or already numpy
+            raw_embedding = paper['embedding']
+            try:
+                if isinstance(raw_embedding, str):
+                    # pgvector returns embeddings as string like '[0.1, 0.2, ...]'
+                    paper_embedding = np.array(json.loads(raw_embedding), dtype=np.float32)
+                elif isinstance(raw_embedding, (list, tuple)):
+                    paper_embedding = np.array(raw_embedding, dtype=np.float32)
+                elif hasattr(raw_embedding, 'tolist'):
+                    # Already a numpy array or similar
+                    paper_embedding = np.asarray(raw_embedding, dtype=np.float32)
+                else:
+                    # Unknown format, skip prefiltering for this paper
+                    filtered_papers.append(paper)
+                    continue
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                # If parsing fails, include the paper without filtering
+                if self.verbose:
+                    print(f"Warning: Could not parse embedding for paper {paper.get('id')}: {e}")
+                filtered_papers.append(paper)
+                continue
+            
             similarity = self._cosine_similarity(paper_embedding, research_embedding)
             
             if similarity >= threshold:

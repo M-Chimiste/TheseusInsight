@@ -122,19 +122,16 @@ class JudgeWorker:
                 request_timeout=timeout
             )
         elif provider == "lmstudio":
-            from LLMFactory import LLMModelFactory
+            from theseus_insight.utils.lmstudio_client import get_lmstudio_client
             # Extract host from server_url (e.g., http://localhost:1234 -> localhost:1234)
             host = server_url.replace('http://', '').replace('https://', '')
-            kwargs = {
-                'model_type': 'lmstudio',
-                'model_name': model_name,
-                'max_new_tokens': max_new_tokens,
-                'temperature': temperature,
-                'host': host
-            }
-            if num_ctx is not None:
-                kwargs['context_length'] = num_ctx
-            self.inference_client = LLMModelFactory.create_model(**kwargs)
+            self.inference_client = get_lmstudio_client(
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                host=host,
+                context_length=num_ctx
+            )
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         

@@ -108,6 +108,12 @@ class JudgeWorker:
             temperature = server_model_config.get('temperature', temperature)
             num_ctx = server_model_config.get('num_ctx', num_ctx)
         
+        # Store model config for potential client reinitialization (LM Studio auto-unload recovery)
+        self._model_name = model_name
+        self._max_new_tokens = max_new_tokens
+        self._temperature = temperature
+        self._num_ctx = num_ctx
+        
         logger.info(f"Loaded judge model config: {model_name}")
         
         # Initialize inference client based on provider using LLMFactory pattern
@@ -125,6 +131,7 @@ class JudgeWorker:
             from theseus_insight.utils.lmstudio_client import get_lmstudio_client
             # Extract host from server_url (e.g., http://localhost:1234 -> localhost:1234)
             host = server_url.replace('http://', '').replace('https://', '')
+            self._lmstudio_host = host  # Store for reinitialization
             self.inference_client = get_lmstudio_client(
                 model_name=model_name,
                 max_new_tokens=max_new_tokens,
@@ -183,6 +190,37 @@ class JudgeWorker:
             'temperature': 0.1,
             'num_ctx': 4096
         }
+
+    def _reinitialize_lmstudio_client(self):
+        """
+        Reinitialize the LM Studio client to trigger model reload.
+        
+        LM Studio may auto-unload models after extended periods of operation.
+        This method clears the cached client and creates a new one, which can
+        help trigger the model to be reloaded.
+        """
+        if self.provider != "lmstudio":
+            return
+        
+        logger.info(f"Reinitializing LM Studio client for {self._model_name}...")
+        
+        try:
+            # Clear the cached client to force recreation
+            from theseus_insight.utils.lmstudio_client import clear_lmstudio_cache, get_lmstudio_client
+            clear_lmstudio_cache()
+            
+            # Create a new client - this may trigger model reload
+            self.inference_client = get_lmstudio_client(
+                model_name=self._model_name,
+                max_new_tokens=self._max_new_tokens,
+                temperature=self._temperature,
+                host=self._lmstudio_host,
+                context_length=self._num_ctx
+            )
+            logger.info(f"LM Studio client reinitialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to reinitialize LM Studio client: {e}")
+            # Don't raise - let the caller handle retry logic
 
     def start(self):
         """Start the worker process."""
@@ -629,35 +667,63 @@ class JudgeWorker:
             {"role": "user", "content": research_prompt(research_interests, paper['abstract'])}
         ]
         
-        # Use a timeout wrapper to prevent hanging
-        result = [None]
-        exception = [None]
+        # Retry configuration for transient LM Studio errors (model unloaded, etc.)
+        max_llm_retries = 3
+        retry_delay = 5  # seconds
         
-        def _invoke_with_timeout():
-            try:
-                result[0] = self.inference_client.invoke(
-                    messages=messages,
-                    system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
-                    schema=ResearchInterestsPromptData
-                )
-            except Exception as e:
-                exception[0] = e
-        
-        thread = threading.Thread(target=_invoke_with_timeout, daemon=True)
-        thread.start()
-        thread.join(timeout=self.timeout + 5)  # Timeout + 5 second buffer
-        
-        if thread.is_alive():
-            # Thread is still running - LLM call hung
-            raise TimeoutError(f"LLM inference exceeded {self.timeout + 5}s timeout")
-        
-        if exception[0]:
-            raise exception[0]
-        
-        if result[0] is None:
-            raise RuntimeError("LLM inference failed without exception")
-        
-        response = result[0]
+        for llm_attempt in range(max_llm_retries):
+            # Use a timeout wrapper to prevent hanging
+            result = [None]
+            exception = [None]
+            
+            def _invoke_with_timeout():
+                try:
+                    result[0] = self.inference_client.invoke(
+                        messages=messages,
+                        system_prompt=RESEARCH_INTERESTS_SYSTEM_PROMPT,
+                        schema=ResearchInterestsPromptData
+                    )
+                except Exception as e:
+                    exception[0] = e
+            
+            thread = threading.Thread(target=_invoke_with_timeout, daemon=True)
+            thread.start()
+            thread.join(timeout=self.timeout + 5)  # Timeout + 5 second buffer
+            
+            if thread.is_alive():
+                # Thread is still running - LLM call hung
+                raise TimeoutError(f"LLM inference exceeded {self.timeout + 5}s timeout")
+            
+            if exception[0]:
+                error_str = str(exception[0]).lower()
+                # Check if this is a retryable LM Studio error (model unloaded)
+                is_model_unloaded = any(term in error_str for term in [
+                    'no model found', 'nomodelmatchingquery', 'totalloadedmodels', 
+                    'model not loaded', 'model unavailable'
+                ])
+                
+                if is_model_unloaded and llm_attempt < max_llm_retries - 1:
+                    logger.warning(
+                        f"LM Studio model appears unloaded (attempt {llm_attempt + 1}/{max_llm_retries}). "
+                        f"Waiting {retry_delay}s for potential auto-reload..."
+                    )
+                    # Try to reinitialize the client to trigger model reload
+                    self._reinitialize_lmstudio_client()
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    raise exception[0]
+            
+            if result[0] is None:
+                raise RuntimeError("LLM inference failed without exception")
+            
+            # Success - break out of retry loop
+            response = result[0]
+            break
+        else:
+            # All retries exhausted
+            raise RuntimeError(f"LLM inference failed after {max_llm_retries} attempts")
         
         # Parse response - handle various formats robustly
         response_json = self._parse_llm_response(response)

@@ -128,3 +128,53 @@ def get_configured_host() -> Optional[str]:
     """Get the currently configured LMStudio host, if any."""
     return _configured_host
 
+
+def verify_model_loaded(host: str = "localhost:1234", model_name: Optional[str] = None) -> bool:
+    """
+    Verify that the LM Studio server has models loaded.
+    
+    This can help detect when LM Studio has auto-unloaded models after
+    extended periods of inactivity.
+    
+    Args:
+        host: LM Studio server host
+        model_name: Optional specific model name to check for
+        
+    Returns:
+        True if models are loaded (and optionally the specific model), False otherwise
+    """
+    import requests
+    
+    try:
+        # LM Studio's API endpoint to list models
+        url = f"http://{host}/v1/models"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code != 200:
+            logger.warning(f"LM Studio models endpoint returned status {response.status_code}")
+            return False
+        
+        data = response.json()
+        models = data.get('data', [])
+        
+        if not models:
+            logger.warning("LM Studio reports no models loaded (totalLoadedModels: 0)")
+            return False
+        
+        if model_name:
+            # Check if the specific model is loaded
+            loaded_model_ids = [m.get('id', '') for m in models]
+            if model_name not in loaded_model_ids:
+                logger.warning(f"Model '{model_name}' not found in loaded models: {loaded_model_ids}")
+                return False
+        
+        logger.debug(f"LM Studio has {len(models)} model(s) loaded")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Failed to verify LM Studio models: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking LM Studio models: {e}")
+        return False
+

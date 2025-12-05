@@ -32,6 +32,7 @@ from theseus_insight.data_model.papers import Paper
 from theseus_insight.data_processing.arxiv import ArxivDataProcessor
 from theseus_insight.data_processing.checkpoint_manager import CheckpointManager
 from theseus_insight.inference import SentenceTransformerInference
+from LLMFactory import LLMModelFactory
 from LLMFactory.providers import (
     OllamaInference, OpenAIInference, AnthropicInference, GeminiInference
 )
@@ -218,6 +219,21 @@ def load_inference_model(cfg: Dict[str, Any], verbose: bool = True):
         return AnthropicInference(model_name, max_new_tokens, temperature)
     if model_type == "gemini":
         return GeminiInference(model_name, max_new_tokens, temperature)
+    if model_type == "lmstudio":
+        # LMStudio needs host parameter instead of url
+        host = cfg.get('host')
+        if not host:
+            host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+        kwargs = {
+            'model_type': 'lmstudio',
+            'model_name': model_name,
+            'max_new_tokens': max_new_tokens,
+            'temperature': temperature,
+            'host': host
+        }
+        if num_ctx is not None:
+            kwargs['context_length'] = num_ctx
+        return LLMModelFactory.create_model(**kwargs)
     raise ValueError(f"Unsupported model type: {model_type}")
 
 

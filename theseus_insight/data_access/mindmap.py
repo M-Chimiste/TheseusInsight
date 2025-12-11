@@ -119,11 +119,38 @@ class MindmapReportRepository:
             cur.execute("UPDATE mindmap_reports SET description = %s WHERE id = %s", (new_description, report_id))
 
     @staticmethod
-    def update_data(report_id: int, mindmap_data: Dict[str, Any], parameters: Dict[str, Any], statistics: Dict[str, Any] | None = None):
+    def update_data(
+        report_id: int,
+        mindmap_data: Dict[str, Any],
+        parameters: Dict[str, Any],
+        statistics: Dict[str, Any] | None = None,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> bool:
         with get_cursor() as cur:
+            # Build dynamic SET clause based on provided fields
+            set_parts = [
+                "mindmap_data_json = %s",
+                "parameters_json = %s",
+                "statistics_json = %s",
+            ]
+            values: list = [
+                json.dumps(mindmap_data),
+                json.dumps(parameters),
+                json.dumps(statistics) if statistics else None,
+            ]
+
+            if title is not None:
+                set_parts.append("title = %s")
+                values.append(title)
+            if description is not None:
+                set_parts.append("description = %s")
+                values.append(description)
+
+            values.append(report_id)
+
             cur.execute(
-                """
-                UPDATE mindmap_reports SET mindmap_data_json = %s, parameters_json = %s, statistics_json = %s WHERE id = %s
-                """,
-                (json.dumps(mindmap_data), json.dumps(parameters), json.dumps(statistics) if statistics else None, report_id),
-            ) 
+                f"UPDATE mindmap_reports SET {', '.join(set_parts)} WHERE id = %s",
+                tuple(values),
+            )
+            return cur.rowcount > 0 

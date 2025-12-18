@@ -11,26 +11,14 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Quickstart](#quickstart)
 - [Features](#features)
 - [LLM Inference Architecture](#llm-inference-architecture)
-- [Architecture and Modules](#architecture-and-modules)
-- [Installation](#installation)
 - [Database Setup](#database-setup)
 - [Environment Variables](#environment-variables)
-- [Running the API](#running-the-api)
-- [Running the Frontend](#running-the-frontend)
 - [Custom Data Storage Location](#custom-data-storage-location)
 - [Key Endpoints](#key-endpoints)
-  - [PDF Uploads](#pdf-uploads)
-  - [Podcast Generation](#podcast-generation)
-  - [Script Management](#script-management)
-  - [Visualizer Generation](#visualizer-generation)
-  - [Similarity Search](#similarity-search)
-  - [Mind-Map Explorer](#mind-map-explorer)
   - [Topic Evolution & Trend-Forecast Dashboard](#topic-evolution--trend-forecast-dashboard)
+  - [Research Agent System](#research-agent-system)
   - [Profile Management](#profile-management)
-  - [Theseus Insight Run Orchestration](#theseus-insight-run-orchestration)
-- [Using Theseus Insight as a Library](#using-theseus-insight-as-a-library)
 - [Database Migration](#database-migration)
-- [License](#license)
 - [Credits](#credits)
 
 ---
@@ -57,21 +45,21 @@ The system introduces the **Mind-Map Explorer**, an interactive visualization sy
    cd TheseusInsight
    ```
 
-2. **Set up PostgreSQL database** (see [Database Setup](#database-setup) for details)
-   > **📋 Note:** Theseus Insight now requires PostgreSQL with pgvector. SQLite is no longer supported in the latest version.
-
-3. **Create a `.env` file** with your PostgreSQL connection and API keys (see [Environment Variables](#environment-variables)):
+2. **Create a `.env` file** with your API keys (see [Environment Variables](#environment-variables)):
    ```bash
-   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/theseus
    OPENAI_API_KEY=your_key_here
-   # ... other variables
+   ANTHROPIC_API_KEY=your_key_here
+   # ... other variables as needed
    ```
+   > **⚠️ Important:** Do NOT set `DATABASE_URL` in your `.env` file when using Docker Compose. The `docker-compose.yml` automatically configures the correct database connection. Setting it manually will cause connection failures.
 
-4. **Start the stack with Docker** (includes PostgreSQL)
+3. **Start the stack with Docker** (includes PostgreSQL with pgvector)
    ```bash
    docker compose up --build
    ```
    The API and built React frontend will be available on <http://localhost:8000>.
+
+> **📋 Note:** Theseus Insight requires PostgreSQL with pgvector. SQLite is no longer supported. For local PostgreSQL installations (without Docker), see [Database Setup](#database-setup).
 
 During development you can run the React interface separately:
 ```bash
@@ -136,6 +124,11 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **Default Profile System**: Designate default profiles for streamlined workflows with automatic population of settings for new profiles.
   - **Visual Organization**: Color-coded profiles with custom descriptions and tag-based organization for easy identification.
 - **Unified LLM Interface via LLMFactory**: Powered by [LLMFactory](https://github.com/M-Chimiste/LLMFactory.git), providing a consistent interface across multiple inference providers including OpenAI, Anthropic, Gemini, Ollama, LM Studio, and LlamaCPP with support for streaming, structured output, and multimodal capabilities.
+- **Multi-Server Inference**: Distribute LLM workloads across multiple Ollama or LM Studio servers for parallel processing.
+  - **Bulk Judge Operations**: Score large paper collections using distributed worker pools
+  - **Newsletter Multi-Server Scoring**: Accelerate newsletter paper scoring with parallel inference across servers
+  - **Per-Server Model Configuration**: Configure different models and parameters for each server in non-homogeneous deployments
+  - **Real-Time Progress Tracking**: WebSocket-powered updates with per-server statistics and task breakdown
 - **Flexible TTS providers** including OpenAI, Amazon Polly, and KokoroTTS.
 - **Encrypted credential storage** with a UI for managing API keys in Settings.
 - **Dockerfile and Compose setup** to run the entire application in containers with PostgreSQL.
@@ -330,6 +323,36 @@ POST /api/settings/inference-servers/{server_id}/validate-model
 }
 ```
 
+#### Newsletter Multi-Server Scoring
+
+Newsletter generation now supports multi-server LLM judge scoring for faster paper relevance evaluation. When generating newsletters with large paper sets, the scoring workload can be distributed across multiple inference servers.
+
+**Enable via API:**
+```json
+POST /api/actions/run-newsletter-pipeline
+{
+  "start_date": "2024-01-01",
+  "end_date": "2024-01-07",
+  "research_interests": "machine learning, NLP",
+  "use_multi_server_judge": true,
+  "judge_server_ids": [1, 2, 3],
+  "judge_request_timeout_sec": 120,
+  "judge_max_retries": 3
+}
+```
+
+**Features:**
+- **Parallel Scoring**: Papers are scored concurrently across selected inference servers
+- **Profile-Specific Scoring**: Each paper is scored against each selected profile's research interests
+- **Progress Tracking**: Real-time WebSocket updates with per-server statistics and task breakdown
+- **Dynamic Load Balancing**: Tasks are distributed via a queue-based system for optimal server utilization
+- **Aggregated Scores**: Final paper rankings aggregate scores across all selected profiles
+
+**Monitoring Views:**
+The system provides PostgreSQL views for monitoring multi-server newsletter jobs:
+- `newsletter_scoring_progress`: Overall job progress with task status breakdown
+- `newsletter_server_stats`: Per-server performance metrics (tasks completed, avg duration)
+
 For more details on LLMFactory capabilities, visit the [LLMFactory GitHub repository](https://github.com/M-Chimiste/LLMFactory.git).
 
 ---
@@ -428,7 +451,7 @@ DATABASE_URL=postgresql://username:password@hostname:5432/database_name
 If you prefer to install manually or the automated scripts don't work for your environment:
 
 #### Prerequisites
-- **Python 3.8+** - Download from [python.org](https://www.python.org/downloads/)
+- **Python 3.10+** - Download from [python.org](https://www.python.org/downloads/)
 - **Node.js 16+** - Download from [nodejs.org](https://nodejs.org/)
 - **PostgreSQL 14+** - See [Database Setup](#database-setup) for installation options
 

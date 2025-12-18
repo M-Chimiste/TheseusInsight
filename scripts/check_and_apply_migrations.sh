@@ -23,7 +23,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Detect environment
-if [ -f "/app/sql/init_schema_postgres.sql" ]; then
+if [ -f "/app/sql/001_init_schema_postgres.sql" ]; then
     MIGRATION_DIR="/app/sql"
     ENVIRONMENT="docker"
 else

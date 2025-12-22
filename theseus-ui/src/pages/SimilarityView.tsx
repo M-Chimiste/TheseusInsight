@@ -17,7 +17,6 @@ import { papersApi } from '../services/api';
 import type { PaperApiResponse, SimilarPapersResponse } from '../services/api';
 import PaperRowCard from './PaperRowCard';
 import ReferencePaperCard from './ReferencePaperCard';
-import { useProfile } from '../contexts/ProfileContext';
 import { useLayout } from '../contexts/LayoutContext';
 
 interface SimilarityViewProps {
@@ -31,10 +30,8 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState<number>(10);
   
-  // Get profile and layout context
-  const { selectedProfileIds } = useProfile();
+  // Get layout context
   const { headerHeight } = useLayout();
-  const hasProfilesSelected = selectedProfileIds.length > 0;
 
 
   const fetchSimilarPapers = useCallback(async (selectedLimit: number) => {
@@ -189,8 +186,8 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
                 </Box>
                 <PaperRowCard 
                   paper={paper} 
-                  hasProfilesSelected={hasProfilesSelected}
-                  selectedProfileIds={selectedProfileIds}
+                  hideRelevanceChip={true}
+                  hideScoreChip={true}
                 />
               </Box>
             ))}

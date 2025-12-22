@@ -31,6 +31,8 @@ interface PaperRowCardProps {
   hasProfilesSelected?: boolean;
   onPaperUpdated?: (paper: PaperApiResponse) => void;
   selectedProfileIds?: number[];
+  hideRelevanceChip?: boolean;
+  hideScoreChip?: boolean;
 }
 
 const TruncatedTypography = styled(Typography)(() => ({
@@ -43,7 +45,7 @@ const TruncatedTypography = styled(Typography)(() => ({
   lineHeight: '1.5em' 
 }));
 
-const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, hasProfilesSelected = false, onPaperUpdated, selectedProfileIds }) => {
+const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpenMindMap, onTopicClick, hasProfilesSelected = false, onPaperUpdated, selectedProfileIds, hideRelevanceChip = false, hideScoreChip = false }) => {
   const [expanded, setExpanded] = useState(false);
   const [localScore, setLocalScore] = useState<number>(paper.score ?? paper.profile_score ?? 0);
   const [localRelated, setLocalRelated] = useState<boolean>(paper.related ?? false);
@@ -86,32 +88,43 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
           </TruncatedTypography>
         </Box>
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: '120px', width: '240px' }}>
-          <Chip 
-            label={
-              hasProfilesSelected && paper.profile_score != null 
-                ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
-                : typeof paper.score === 'number' && paper.score != null
-                ? `Score: ${paper.score.toFixed(2)}`
-                : '—'
-            } 
-            size="small" 
-            color="primary" 
-            variant="outlined" 
-            sx={{ 
-              mb: 1,
-              borderColor: theme => theme.palette.mode === 'dark' ? theme.palette.primary.main : undefined,
-              color: theme => theme.palette.mode === 'dark' ? theme.palette.common.white : theme.palette.primary.main,
-            }} 
-          />
-          {/* Related status visual */}
-          {hasProfilesSelected ? (
-            paper.related != null ? (
-              <Chip 
-                label={paper.related ? "Relevant" : "Not Relevant"} 
-                color={paper.related ? "success" : "default"} 
-                size="small"
-                sx={{mb: 1, width: '100%'}}
-              />
+          {!hideScoreChip && (
+            <Chip 
+              label={
+                hasProfilesSelected && paper.profile_score != null 
+                  ? `Profile Score: ${paper.profile_score.toFixed(2)}` 
+                  : typeof paper.score === 'number' && paper.score != null
+                  ? `Score: ${paper.score.toFixed(2)}`
+                  : '—'
+              } 
+              size="small" 
+              color="primary" 
+              variant="outlined" 
+              sx={{ 
+                mb: 1,
+                borderColor: theme => theme.palette.mode === 'dark' ? theme.palette.primary.main : undefined,
+                color: theme => theme.palette.mode === 'dark' ? theme.palette.common.white : theme.palette.primary.main,
+              }} 
+            />
+          )}
+          {/* Related status visual - hidden in similarity view */}
+          {!hideRelevanceChip && (
+            hasProfilesSelected ? (
+              paper.related != null ? (
+                <Chip 
+                  label={paper.related ? "Relevant" : "Not Relevant"} 
+                  color={paper.related ? "success" : "default"} 
+                  size="small"
+                  sx={{mb: 1, width: '100%'}}
+                />
+              ) : (
+                <Chip 
+                  label="Not Applicable" 
+                  color="default" 
+                  size="small"
+                  sx={{mb: 1, width: '100%'}}
+                />
+              )
             ) : (
               <Chip 
                 label="Not Applicable" 
@@ -120,16 +133,9 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
                 sx={{mb: 1, width: '100%'}}
               />
             )
-          ) : (
-            <Chip 
-              label="Not Applicable" 
-              color="default" 
-              size="small"
-              sx={{mb: 1, width: '100%'}}
-            />
           )}
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1}}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
               {paper.date}
             </Typography>
             {!editing ? (

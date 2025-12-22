@@ -8,11 +8,14 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Tooltip,
+  Button
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
+import DownloadIcon from '@mui/icons-material/Download';
 import { papersApi } from '../services/api';
 import type { PaperApiResponse, SimilarPapersResponse } from '../services/api';
 import PaperRowCard from './PaperRowCard';
@@ -75,6 +78,78 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
     // fetchSimilarPapers will be called automatically due to the useEffect dependency on limit
   };
 
+  // Export similar papers to CSV
+  const handleExportCSV = () => {
+    // Helper to escape CSV values (handle commas, quotes, newlines)
+    const escapeCSV = (value: string): string => {
+      if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    };
+
+    // Format date for display
+    const formatDate = (dateStr: string): string => {
+      try {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+      } catch {
+        return dateStr;
+      }
+    };
+
+    // Build CSV content
+    const headers = ['Title', 'Published Date', 'URL', 'Similarity Score'];
+    const rows: string[][] = [];
+
+    // Add seed paper as first row
+    rows.push([
+      escapeCSV(referencePaper.title),
+      escapeCSV(formatDate(referencePaper.date)),
+      referencePaper.url,
+      'Seed Paper'
+    ]);
+
+    // Add similar papers
+    similarPapers.forEach((paper) => {
+      const similarityPercent = `${((paper.similarity_score ?? 0) * 100).toFixed(1)}%`;
+      rows.push([
+        escapeCSV(paper.title),
+        escapeCSV(formatDate(paper.date)),
+        paper.url,
+        similarityPercent
+      ]);
+    });
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Create filename from reference paper title (sanitized)
+    const sanitizedTitle = referencePaper.title
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .replace(/\s+/g, '_')
+      .substring(0, 50);
+    link.download = `similar_papers_${sanitizedTitle}.csv`;
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   if (loading && similarPapers.length === 0) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
@@ -122,6 +197,18 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
               <MenuItem value={200}>200</MenuItem>
             </Select>
           </FormControl>
+          <Tooltip title="Export to CSV">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<DownloadIcon />}
+              onClick={handleExportCSV}
+              disabled={loading || similarPapers.length === 0}
+              sx={{ textTransform: 'none' }}
+            >
+              Export
+            </Button>
+          </Tooltip>
           <Box sx={{ display: 'flex' }}>
             <IconButton onClick={onClose} aria-label="back to papers" size="small">
               <ArrowBackIcon />

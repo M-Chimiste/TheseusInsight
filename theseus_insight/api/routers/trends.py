@@ -25,7 +25,8 @@ from ..models import (
     TrendsValidateAccuracyRequest, SystemInfoResponse, PerformanceConfig,
     ResearchInterestApiResponse, ResearchInterestsListResponse, ResearchInterestsSearchResponse,
     ResearchInterestDetailResponse, ResearchInterestMetricResponse, ResearchInterestRecomputeResponse,
-    ResearchInterestPapersResponse
+    ResearchInterestPapersResponse,
+    TimelineDataResponse, TopicTimelineData, TimelinePeriodData, TimelineKeyPaper
 )
 from ...data_access import (
     TopicsRepository, TopicMetricsRepository, PaperTopicsRepository, 
@@ -241,6 +242,153 @@ async def search_topics(
 
 
 
+
+
+@router.get("/timeline-data", response_model=TimelineDataResponse)
+async def get_timeline_data(
+    topic_ids: Optional[str] = Query(None, description="Comma-separated topic IDs (None = top topics)"),
+    period_type: str = Query("month", description="Period granularity: week, month, quarter, year"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    include_key_papers: bool = Query(True, description="Include key papers per period"),
+    key_papers_limit: int = Query(3, ge=1, le=10, description="Max key papers per period"),
+    limit: int = Query(10, ge=1, le=50, description="Max topics to return if topic_ids not specified")
+):
+    """
+    Get timeline data for research timeline visualization.
+
+    Returns timeline metrics with growth phases and optional key papers per period,
+    optimized for horizontal timeline visualization with semantic zoom levels.
+    """
+    try:
+        # Validate period_type
+        valid_period_types = ["week", "month", "quarter", "year"]
+        if period_type not in valid_period_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid period_type. Must be one of: {', '.join(valid_period_types)}"
+            )
+
+        # Parse topic_ids if provided
+        parsed_topic_ids: Optional[List[int]] = None
+        if topic_ids:
+            try:
+                parsed_topic_ids = [int(tid.strip()) for tid in topic_ids.split(",") if tid.strip()]
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid topic_ids format. Use comma-separated integers.")
+
+        # If no topic_ids specified, get top trending topics
+        if not parsed_topic_ids:
+            trending = TopicMetricsRepository.get_trending_topics(
+                period_type=period_type if period_type != "year" else "quarter",
+                limit=limit,
+                min_doc_count=1
+            )
+            parsed_topic_ids = [t["topic_id"] for t in trending]
+
+        # Parse dates
+        parsed_start_date: Optional[date] = None
+        parsed_end_date: Optional[date] = None
+
+        if start_date:
+            try:
+                parsed_start_date = date.fromisoformat(start_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD.")
+
+        if end_date:
+            try:
+                parsed_end_date = date.fromisoformat(end_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD.")
+
+        # Get timeline data with papers
+        # Note: "year" period_type uses quarterly data aggregated in frontend
+        effective_period_type = period_type if period_type != "year" else "quarter"
+
+        timeline_data = TopicMetricsRepository.get_timeline_with_papers(
+            topic_ids=parsed_topic_ids,
+            period_type=effective_period_type,
+            start_date=parsed_start_date,
+            end_date=parsed_end_date,
+            key_papers_limit=key_papers_limit,
+            include_key_papers=include_key_papers
+        )
+
+        if not timeline_data:
+            return TimelineDataResponse(
+                topics=[],
+                date_range={"start": start_date or "", "end": end_date or ""},
+                period_type=period_type,
+                available_zoom_levels=["year", "quarter", "month", "week"],
+                total_topics=0
+            )
+
+        # Build response
+        topic_timelines: List[TopicTimelineData] = []
+        all_dates: List[str] = []
+
+        for topic_id, topic_data in timeline_data.items():
+            periods: List[TimelinePeriodData] = []
+
+            for period in topic_data["periods"]:
+                all_dates.append(period["period_start"])
+                all_dates.append(period["period_end"])
+
+                key_papers: Optional[List[TimelineKeyPaper]] = None
+                if period.get("key_papers"):
+                    key_papers = [
+                        TimelineKeyPaper(
+                            id=p["id"],
+                            title=p["title"],
+                            date=p["date"],
+                            score=p.get("score"),
+                            relevance_score=p.get("relevance_score")
+                        )
+                        for p in period["key_papers"]
+                    ]
+
+                periods.append(TimelinePeriodData(
+                    period_start=period["period_start"],
+                    period_end=period["period_end"],
+                    period_type=period["period_type"],
+                    doc_count=period["doc_count"],
+                    growth_rate=period.get("growth_rate"),
+                    phase=period["phase"],
+                    key_papers=key_papers,
+                    forecast_1m=period.get("forecast_1m"),
+                    forecast_3m=period.get("forecast_3m"),
+                    forecast_6m=period.get("forecast_6m"),
+                    is_forecast=period.get("is_forecast", False)
+                ))
+
+            topic_timelines.append(TopicTimelineData(
+                topic_id=topic_id,
+                topic_label=topic_data["label"],
+                keywords=topic_data["keywords"],
+                total_papers=topic_data["total_papers"],
+                periods=periods
+            ))
+
+        # Calculate actual date range from data
+        actual_date_range = {
+            "start": min(all_dates) if all_dates else "",
+            "end": max(all_dates) if all_dates else ""
+        }
+
+        return TimelineDataResponse(
+            topics=topic_timelines,
+            date_range=actual_date_range,
+            period_type=period_type,
+            available_zoom_levels=["year", "quarter", "month", "week"],
+            total_topics=len(topic_timelines)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get timeline data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get timeline data: {str(e)}")
 
 
 # Topic detail route moved after research interests to fix routing conflict

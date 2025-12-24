@@ -1590,6 +1590,19 @@ export const researchInterestsApi = {
     if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
     return api.get(`/trends/research-interests/${interestId}/papers`, { params: searchParams });
   },
+
+  getTimelineData: async (params?: GetTimelineDataParams): Promise<AxiosResponse<TimelineDataResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.topic_ids) searchParams.append('topic_ids', params.topic_ids);
+    if (params?.period_type) searchParams.append('period_type', params.period_type);
+    if (params?.start_date) searchParams.append('start_date', params.start_date);
+    if (params?.end_date) searchParams.append('end_date', params.end_date);
+    if (params?.include_key_papers !== undefined) searchParams.append('include_key_papers', params.include_key_papers.toString());
+    if (params?.key_papers_limit) searchParams.append('key_papers_limit', params.key_papers_limit.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+
+    return api.get(`/trends/timeline-data?${searchParams.toString()}`);
+  },
 };
 
 // === Research Interest Clustering API Interfaces ===
@@ -1635,6 +1648,56 @@ export interface ResearchInterestDetailResponse {
 
 // Union type for detail responses to handle both topics and research interests
 export type EntityDetailResponse = TopicDetailResponse | ResearchInterestDetailResponse;
+
+// === Research Timeline Visualization Types ===
+
+export interface TimelineKeyPaper {
+  id: number;
+  title: string;
+  date: string;
+  score?: number;
+  relevance_score?: number;
+}
+
+export interface TimelinePeriodData {
+  period_start: string;
+  period_end: string;
+  period_type: string;
+  doc_count: number;
+  growth_rate?: number;
+  phase: 'emerging' | 'growth' | 'stable' | 'declining';
+  key_papers?: TimelineKeyPaper[];
+  forecast_1m?: number;
+  forecast_3m?: number;
+  forecast_6m?: number;
+  is_forecast: boolean;
+}
+
+export interface TopicTimelineData {
+  topic_id: number;
+  topic_label: string;
+  keywords: string[];
+  total_papers: number;
+  periods: TimelinePeriodData[];
+}
+
+export interface TimelineDataResponse {
+  topics: TopicTimelineData[];
+  date_range: { start: string; end: string };
+  period_type: string;
+  available_zoom_levels: string[];
+  total_topics: number;
+}
+
+export interface GetTimelineDataParams {
+  topic_ids?: string;
+  period_type?: 'week' | 'month' | 'quarter' | 'year';
+  start_date?: string;
+  end_date?: string;
+  include_key_papers?: boolean;
+  key_papers_limit?: number;
+  limit?: number;
+}
 
 // Type guards to differentiate between topic and research interest responses
 export function isTopicDetailResponse(response: EntityDetailResponse): response is TopicDetailResponse {

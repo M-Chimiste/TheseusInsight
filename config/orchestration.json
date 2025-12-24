@@ -22,7 +22,7 @@
     "gpu_offload": null
   },
   "content_extraction_model": {
-    "model_name": "gemini-2.5-pro",
+    "model_name": "gemini-3-flash-preview",
     "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.2,
@@ -33,7 +33,7 @@
     "gpu_offload": null
   },
   "newsletter_sections_model": {
-    "model_name": "gemini-2.5-pro",
+    "model_name": "gemini-3-flash-preview",
     "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.2,
@@ -44,7 +44,7 @@
     "gpu_offload": null
   },
   "newsletter_intro_model": {
-    "model_name": "gemini-2.5-pro",
+    "model_name": "gemini-3-flash-preview",
     "model_type": "gemini",
     "max_new_tokens": 4096,
     "temperature": 0.2,
@@ -187,7 +187,7 @@
       "context_length": null,
       "gpu_offload": null
     },
-    "expansion_order": 1,
+    "expansion_order": 2,
     "max_nodes_per_order": 20
   }
 }

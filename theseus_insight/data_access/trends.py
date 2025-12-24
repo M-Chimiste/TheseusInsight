@@ -361,6 +361,163 @@ class TopicMetricsRepository:
             )
             return cur.fetchone() is not None
 
+    @staticmethod
+    def get_timeline_with_papers(
+        topic_ids: List[int] | None = None,
+        period_type: str = "month",
+        start_date: date | None = None,
+        end_date: date | None = None,
+        key_papers_limit: int = 3,
+        include_key_papers: bool = True
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Get timeline metrics for multiple topics with key papers per period.
+
+        Returns a dict keyed by topic_id containing:
+        - topic info (label, keywords, total_papers)
+        - periods: list of period data with optional key_papers
+        """
+        result: Dict[int, Dict[str, Any]] = {}
+
+        with get_cursor() as cur:
+            # Build the query for topic metrics
+            topic_filter = ""
+            params: List[Any] = [period_type]
+
+            if topic_ids:
+                placeholders = ','.join(['%s'] * len(topic_ids))
+                topic_filter = f"AND t.id IN ({placeholders})"
+                params.extend(topic_ids)
+
+            date_filter = ""
+            if start_date:
+                date_filter += " AND tm.period_start >= %s"
+                params.append(start_date)
+            if end_date:
+                date_filter += " AND tm.period_end <= %s"
+                params.append(end_date)
+
+            # Get topics and their metrics
+            cur.execute(
+                f"""
+                SELECT
+                    t.id as topic_id,
+                    t.label,
+                    t.keywords,
+                    tm.id as metric_id,
+                    tm.period_start,
+                    tm.period_end,
+                    tm.period_type,
+                    tm.doc_count,
+                    tm.avg_score,
+                    tm.growth_rate,
+                    tm.forecast_1m,
+                    tm.forecast_3m,
+                    tm.forecast_6m,
+                    tm.created_at,
+                    (SELECT COUNT(*) FROM paper_topics WHERE topic_id = t.id) as total_papers
+                FROM topics t
+                JOIN topic_metrics tm ON t.id = tm.topic_id
+                WHERE tm.period_type = %s {topic_filter} {date_filter}
+                ORDER BY t.id, tm.period_start ASC
+                """,
+                params
+            )
+            metrics_rows = cur.fetchall()
+
+            # Build result structure
+            for row in metrics_rows:
+                topic_id = row["topic_id"]
+
+                if topic_id not in result:
+                    result[topic_id] = {
+                        "topic_id": topic_id,
+                        "label": row["label"],
+                        "keywords": row["keywords"] or [],
+                        "total_papers": row["total_papers"] or 0,
+                        "periods": []
+                    }
+
+                # Calculate phase based on growth_rate and doc_count
+                growth_rate = row["growth_rate"]
+                doc_count = row["doc_count"]
+                phase = TopicMetricsRepository._calculate_phase(growth_rate, doc_count)
+
+                period_data = {
+                    "period_start": row["period_start"].isoformat() if isinstance(row["period_start"], date) else str(row["period_start"]),
+                    "period_end": row["period_end"].isoformat() if isinstance(row["period_end"], date) else str(row["period_end"]),
+                    "period_type": row["period_type"],
+                    "doc_count": doc_count,
+                    "growth_rate": growth_rate,
+                    "phase": phase,
+                    "forecast_1m": row["forecast_1m"],
+                    "forecast_3m": row["forecast_3m"],
+                    "forecast_6m": row["forecast_6m"],
+                    "is_forecast": False,
+                    "key_papers": None
+                }
+
+                result[topic_id]["periods"].append(period_data)
+
+            # Get key papers for each period if requested
+            if include_key_papers and result:
+                for topic_id, topic_data in result.items():
+                    for period in topic_data["periods"]:
+                        period_start = period["period_start"]
+                        period_end = period["period_end"]
+
+                        cur.execute(
+                            """
+                            SELECT
+                                p.id, p.title, p.date, p.score, pt.relevance_score
+                            FROM papers p
+                            JOIN paper_topics pt ON p.id = pt.paper_id
+                            WHERE pt.topic_id = %s
+                                AND p.date >= %s
+                                AND p.date <= %s
+                            ORDER BY pt.relevance_score DESC, p.score DESC NULLS LAST
+                            LIMIT %s
+                            """,
+                            (topic_id, period_start, period_end, key_papers_limit)
+                        )
+                        papers = cur.fetchall()
+
+                        period["key_papers"] = [
+                            {
+                                "id": p["id"],
+                                "title": p["title"],
+                                "date": p["date"].isoformat() if isinstance(p["date"], date) else str(p["date"]),
+                                "score": p["score"],
+                                "relevance_score": p["relevance_score"]
+                            }
+                            for p in papers
+                        ]
+
+        return result
+
+    @staticmethod
+    def _calculate_phase(growth_rate: float | None, doc_count: int) -> str:
+        """
+        Calculate the growth phase based on growth rate and doc count.
+
+        Phases:
+        - emerging: High growth (>50%) with relatively low volume
+        - growth: Positive growth (>10%)
+        - stable: Near-zero growth (-10% to 10%)
+        - declining: Negative growth (<-10%)
+        """
+        if growth_rate is None:
+            return "stable"
+
+        if growth_rate > 0.5:  # >50% growth
+            return "emerging"
+        elif growth_rate > 0.1:  # >10% growth
+            return "growth"
+        elif growth_rate >= -0.1:  # -10% to 10%
+            return "stable"
+        else:  # <-10% growth
+            return "declining"
+
 
 class PaperTopicsRepository:
     """CRUD operations for the paper_topics junction table."""

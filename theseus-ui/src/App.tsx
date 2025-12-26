@@ -20,7 +20,6 @@ const ResearchAgent = React.lazy(() => import('./pages/ResearchAgent'));
 const ResearchLibrary = React.lazy(() => import('./pages/ResearchLibrary'));
 const ModelCatalog = React.lazy(() => import('./pages/ModelCatalog'));
 const MindMapReports = React.lazy(() => import('./pages/MindMapReports'));
-const Trends = React.lazy(() => import('./pages/Trends'));
 const ResearchTimeline = React.lazy(() => import('./pages/ResearchTimeline'));
 const ProfileManagement = React.lazy(() => import('./pages/ProfileManagement'));
 const BulkOperations = React.lazy(() => import('./pages/BulkOperations'));
@@ -58,7 +57,6 @@ function App() {
                     <Route path="/research-library" element={<ResearchLibrary />} />
                     <Route path="/model-catalog" element={<ModelCatalog />} />
                     <Route path="/mindmap-reports" element={<MindMapReports />} />
-                    <Route path="/trends" element={<Trends />} />
                     <Route path="/timeline" element={<ResearchTimeline />} />
                     <Route path="/profile-management" element={<ProfileManagement />} />
                     <Route path="/bulk-operations" element={<BulkOperations />} />

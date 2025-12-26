@@ -409,7 +409,6 @@ async def get_scheduler_status():
         scheduler_status = scheduler.get_job_status()
         
         # Add additional diagnostic information
-        from .data_processing.trends import TrendsProcessor
         from .data_access import PaperRepository, TopicMetricsRepository
         
         # Check recent papers count
@@ -438,20 +437,6 @@ async def get_scheduler_status():
         }
     except Exception as e:
         return {"error": f"Failed to get scheduler status: {str(e)}"}
-
-@app.post("/api/scheduler/run-trends-now")
-async def run_trends_now(background_tasks: BackgroundTasks):
-    """Manually trigger the trends recomputation job."""
-    try:
-        # Run the trends recomputation manually
-        background_tasks.add_task(scheduler._run_nightly_trends_recomputation)
-        
-        return {
-            "message": "Trends recomputation started manually", 
-            "status": "running"
-        }
-    except Exception as e:
-        return {"error": f"Failed to run trends manually: {str(e)}"}
 
 @app.get("/api/scheduler/logs")
 async def get_scheduler_logs():
@@ -535,8 +520,8 @@ async def get_scheduler_diagnostics():
             recommendations.append("Check if paper harvesting is working correctly")
         
         if len(papers_needing_topics) > 100:
-            issues.append(f"Many papers without topics: {len(papers_needing_topics)} papers need topic assignment")
-            recommendations.append("Consider running manual trends recomputation")
+            issues.append(f"Many papers without topics: {len(papers_needing_topics)} papers need research interest classification")
+            recommendations.append("Run research interest classification to assign papers to your interests")
         
         if not orchestration_config:
             issues.append("Missing orchestration configuration")
@@ -547,8 +532,8 @@ async def get_scheduler_diagnostics():
             recommendations.append("Configure research interests via /api/settings")
         
         if latest_weekly_metrics is None:
-            issues.append("No weekly metrics found - trends system may never have run")
-            recommendations.append("Run manual trends recomputation to initialize the system")
+            issues.append("No weekly metrics found - research interest classification may not have run")
+            recommendations.append("Run research interest classification via /api/trends/research-interests/recompute")
         
         if error_logs:
             issues.append(f"Recent errors detected: {len(error_logs)} error logs found")
@@ -593,8 +578,7 @@ async def get_scheduler_diagnostics():
             "next_steps": [
                 "Check /api/scheduler/status for job scheduling details",
                 "Review /api/scheduler/logs for scheduler-specific logs",
-                "Test scheduler with /api/scheduler/test",
-                "Run manual trends with /api/scheduler/run-trends-now if needed"
+                "Test scheduler with /api/scheduler/test"
             ]
         }
     except Exception as e:

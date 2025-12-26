@@ -42,6 +42,7 @@ async def get_papers(
     to_date: Optional[str] = None,
     page_size: int = Query(10, gt=0, le=100),
     topic_id: Optional[int] = Query(None, description="Filter papers by topic ID"),
+    profile_interest_id: Optional[int] = Query(None, description="Filter papers by profile research interest ID"),
     profile_id: Optional[int] = Query(None, description="Filter papers by profile ID"),
     profile_ids: Optional[str] = Query(None, description="Filter papers by multiple profile IDs (comma-separated)"),
     profile_tag: Optional[str] = Query(None, description="Filter papers by profiles with specific tag"),
@@ -129,8 +130,109 @@ async def get_papers(
         if profile_related_only:
             profile_filter_params['profile_related_only'] = True
 
+        # Handle profile interest filtering (profile-specific research interests from timeline)
+        if profile_interest_id is not None:
+            from ...data_access import ProfilePaperInterestsRepository
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # Parse date filters to pass to repository for efficiency
+            start_date_parsed = datetime.strptime(from_date, '%Y-%m-%d').date() if from_date else None
+            end_date_parsed = datetime.strptime(to_date, '%Y-%m-%d').date() if to_date else None
+
+            logger.info(f"[DEBUG] Fetching papers for profile_interest_id={profile_interest_id}, dates={start_date_parsed} to {end_date_parsed}")
+
+            # Get papers associated with this profile interest
+            # Use high limit since we'll paginate in-memory after filtering
+            all_interest_papers = ProfilePaperInterestsRepository.get_papers_for_interest(
+                profile_interest_id,
+                limit=10000,  # High limit to get all papers for the interest
+                min_similarity=0.0,
+                start_date=start_date_parsed,
+                end_date=end_date_parsed
+            )
+
+            # Debug: Check if papers have profile scores
+            if all_interest_papers:
+                sample = all_interest_papers[0]
+                logger.info(f"[DEBUG] Found {len(all_interest_papers)} papers. Sample paper profile_score={sample.get('profile_score')}, score={sample.get('score')}, profile_related={sample.get('profile_related')}")
+
+            # Apply additional filters if provided
+            filtered_papers = []
+            for paper in all_interest_papers:
+                # Apply score filters
+                if score is not None and paper.get('score', 0) < score:
+                    continue
+                if max_score is not None and paper.get('score', 0) > max_score:
+                    continue
+
+                # Apply date filters
+                if from_date is not None:
+                    paper_date = paper.get('date')
+                    if isinstance(paper_date, str):
+                        paper_date = datetime.strptime(paper_date, '%Y-%m-%d').date()
+                    elif isinstance(paper_date, datetime):
+                        paper_date = paper_date.date()
+
+                    if paper_date and paper_date < datetime.strptime(from_date, '%Y-%m-%d').date():
+                        continue
+
+                if to_date is not None:
+                    paper_date = paper.get('date')
+                    if isinstance(paper_date, str):
+                        paper_date = datetime.strptime(paper_date, '%Y-%m-%d').date()
+                    elif isinstance(paper_date, datetime):
+                        paper_date = paper_date.date()
+
+                    if paper_date and paper_date > datetime.strptime(to_date, '%Y-%m-%d').date():
+                        continue
+
+                # Apply search filter
+                if search is not None:
+                    search_lower = search.lower()
+                    title = paper.get('title', '').lower()
+                    abstract = paper.get('abstract', '').lower()
+                    if search_lower not in title and search_lower not in abstract:
+                        continue
+
+                filtered_papers.append(paper)
+
+            # Apply sorting
+            if sort_field == 'date':
+                filtered_papers.sort(
+                    key=lambda x: x.get('date', ''),
+                    reverse=(sort_direction == 'desc')
+                )
+            elif sort_field == 'score':
+                filtered_papers.sort(
+                    key=lambda x: x.get('score', 0),
+                    reverse=(sort_direction == 'desc')
+                )
+            else:
+                # Default sort by similarity_score (highest first)
+                filtered_papers.sort(
+                    key=lambda x: x.get('similarity_score', 0),
+                    reverse=True
+                )
+
+            # Apply pagination
+            total_items = len(filtered_papers)
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated_papers = filtered_papers[start_idx:end_idx]
+
+            # Calculate pagination metadata
+            total_pages = (total_items + page_size - 1) // page_size
+            has_next_page = page < total_pages
+
+            papers_data = {
+                'items': paginated_papers,
+                'total_items': total_items,
+                'total_pages': total_pages,
+                'has_next_page': has_next_page
+            }
         # Handle topic filtering vs regular pagination
-        if topic_id is not None:
+        elif topic_id is not None:
             # Import repositories for filtering (both topics and research interests)
             from ...data_access import (
                 PaperTopicsRepository, TopicsRepository,

@@ -16,10 +16,7 @@ unidecode
 # Embeddings & Vector Search
 sentence-transformers
 
-# Topic Modeling & Trend Analysis
-bertopic>=0.16.0
-hdbscan>=0.8.33
-prophet>=1.1.5
+# Scheduler
 apscheduler>=3.10.4
 
 # Research Agent Dependencies

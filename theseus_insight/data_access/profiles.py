@@ -692,24 +692,92 @@ class ProfileInterestsRepository:
     def get_interests_text_by_profile(profile_id: int) -> str:
         """
         Get all research interests for a profile concatenated as a single text string.
-        
+
         Args:
             profile_id: ID of the profile
-            
+
         Returns:
             Concatenated research interests text, newline-separated
         """
         with get_cursor() as cur:
             cur.execute("""
-                SELECT interest_text 
-                FROM profile_research_interests 
-                WHERE profile_id = %s 
+                SELECT interest_text
+                FROM profile_research_interests
+                WHERE profile_id = %s
                 ORDER BY id
             """, (profile_id,))
-            
+
             rows = cur.fetchall()
             interests = [row['interest_text'] for row in rows]
             return '\n'.join(interests)
+
+    @staticmethod
+    def update_short_label(interest_id: int, short_label: str) -> Optional[Dict[str, Any]]:
+        """
+        Update the short_label for a research interest.
+
+        Args:
+            interest_id: ID of the interest
+            short_label: The short 2-5 word label
+
+        Returns:
+            Updated interest record or None if not found
+        """
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                UPDATE profile_research_interests
+                SET short_label = %s, updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (short_label, datetime.now(), interest_id)
+            )
+            return cur.fetchone()
+
+    @staticmethod
+    def get_interests_without_short_labels(
+        profile_ids: Optional[List[int]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all interests that don't have short labels.
+
+        Args:
+            profile_ids: Optional list of profile IDs to filter by
+
+        Returns:
+            List of interests without short labels
+        """
+        with get_cursor() as cur:
+            if profile_ids:
+                placeholders = ', '.join(['%s'] * len(profile_ids))
+                cur.execute(f"""
+                    SELECT pri.*, rp.name as profile_name
+                    FROM profile_research_interests pri
+                    JOIN research_profiles rp ON pri.profile_id = rp.id
+                    WHERE (pri.short_label IS NULL OR pri.short_label = '')
+                      AND pri.profile_id IN ({placeholders})
+                    ORDER BY pri.profile_id, pri.id
+                """, profile_ids)
+            else:
+                cur.execute("""
+                    SELECT pri.*, rp.name as profile_name
+                    FROM profile_research_interests pri
+                    JOIN research_profiles rp ON pri.profile_id = rp.id
+                    WHERE pri.short_label IS NULL OR pri.short_label = ''
+                    ORDER BY pri.profile_id, pri.id
+                """)
+            return cur.fetchall()
+
+    @staticmethod
+    def get_by_id(interest_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single research interest by ID."""
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT * FROM profile_research_interests WHERE id = %s",
+                (interest_id,)
+            )
+            return cur.fetchone()
 
 
 class ProfileScoreRepository:

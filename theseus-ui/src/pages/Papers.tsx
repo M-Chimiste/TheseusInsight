@@ -76,6 +76,7 @@ interface FilterState {
   toDate: Date | null;
   search: string;
   topicId: number | null;
+  profileInterestId: number | null;  // For timeline navigation
   // Profile-aware filters (only available when profiles are selected)
   minProfileScore: number;
   maxProfileScore: number;
@@ -264,12 +265,13 @@ const Papers: React.FC = () => {
   // Initialize filters from URL parameters
   const getInitialFilters = useCallback((): FilterState => {
     const topicId = searchParams.get('topic_id');
+    const profileInterestId = searchParams.get('profile_interest_id');
     const search = searchParams.get('search');
     const minScore = searchParams.get('min_score');
     const maxScore = searchParams.get('max_score');
     const fromDate = searchParams.get('from_date');
     const toDate = searchParams.get('to_date');
-    
+
     return {
       minScore: minScore ? parseFloat(minScore) : 0,
       maxScore: maxScore ? parseFloat(maxScore) : 10,
@@ -277,6 +279,7 @@ const Papers: React.FC = () => {
       toDate: toDate ? new Date(toDate) : null,
       search: search || '',
       topicId: topicId ? parseInt(topicId) : null,
+      profileInterestId: profileInterestId ? parseInt(profileInterestId) : null,
       // Profile-aware filters - defaults
       minProfileScore: 0,
       maxProfileScore: 10,
@@ -298,13 +301,14 @@ const Papers: React.FC = () => {
 
   // Show filters panel if URL parameters are present
   useEffect(() => {
-    const hasUrlParams = searchParams.get('topic_id') || 
-                        searchParams.get('search') || 
-                        searchParams.get('min_score') || 
-                        searchParams.get('max_score') || 
-                        searchParams.get('from_date') || 
+    const hasUrlParams = searchParams.get('topic_id') ||
+                        searchParams.get('profile_interest_id') ||
+                        searchParams.get('search') ||
+                        searchParams.get('min_score') ||
+                        searchParams.get('max_score') ||
+                        searchParams.get('from_date') ||
                         searchParams.get('to_date');
-    
+
     if (hasUrlParams) {
       setShowFilters(true);
     }
@@ -362,8 +366,8 @@ const Papers: React.FC = () => {
       } else {
         // Use regular search/filtering
         data = await papersApi.getPapers(
-          page, 
-          size, 
+          page,
+          size,
           sortField,
           sortDirection,
           appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
@@ -377,7 +381,9 @@ const Papers: React.FC = () => {
           selectedProfileIds.length > 0 && appliedFilters.minProfileScore > 0 ? appliedFilters.minProfileScore : undefined,
           selectedProfileIds.length > 0 && appliedFilters.maxProfileScore < 10 ? appliedFilters.maxProfileScore : undefined,
           // Fixed profile relevance filtering logic
-          selectedProfileIds.length > 0 && appliedFilters.relevanceFilter === 'relevant' ? true : undefined
+          selectedProfileIds.length > 0 && appliedFilters.relevanceFilter === 'relevant' ? true : undefined,
+          // Profile interest ID (from timeline navigation)
+          appliedFilters.profileInterestId || undefined
         );
       }
       setAllPapers(prevPapers => isInitialLoad ? data.items : [...prevPapers, ...data.items]);
@@ -588,6 +594,7 @@ const Papers: React.FC = () => {
       toDate: null,
       search: '',
       topicId: null,
+      profileInterestId: null,
       // Profile-aware filters - defaults
       minProfileScore: 0,
       maxProfileScore: 10,
@@ -628,6 +635,9 @@ const Papers: React.FC = () => {
     }
     if (appliedFilters.topicId) {
       chips.push(`Filtered by Topic/Interest: ${appliedFilters.topicId}`);
+    }
+    if (appliedFilters.profileInterestId) {
+      chips.push(`Profile Interest: ${appliedFilters.profileInterestId}`);
     }
     if (appliedFilters.minProfileScore > 0) {
       chips.push(`Min Profile Score: ${appliedFilters.minProfileScore}`);

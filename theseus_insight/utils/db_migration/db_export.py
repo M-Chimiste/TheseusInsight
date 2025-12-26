@@ -1072,7 +1072,69 @@ class DatabaseExporter:
         
         print(f"Exported {len(relationships)} paper-research interest relationships to {output_file}")
         return str(output_file)
-    
+
+    def export_profile_paper_interests(self) -> str:
+        """Export all profile paper-interest relationships to JSON file."""
+        print("Exporting profile paper-interest relationships...")
+
+        relationships = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, paper_id, profile_interest_id, similarity_score, created_at
+                FROM profile_paper_interests ORDER BY paper_id, profile_interest_id
+            """)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                relationships.append({
+                    'id': row['id'],
+                    'paper_id': row['paper_id'],
+                    'profile_interest_id': row['profile_interest_id'],
+                    'similarity_score': row['similarity_score'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+
+        output_file = self.output_dir / "profile_paper_interests.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(relationships, f, indent=2, ensure_ascii=False)
+
+        print(f"Exported {len(relationships)} profile paper-interest relationships to {output_file}")
+        return str(output_file)
+
+    def export_profile_interest_metrics(self) -> str:
+        """Export all profile interest metrics to JSON file."""
+        print("Exporting profile interest metrics...")
+
+        metrics = []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, profile_interest_id, period_start, period_end, period_type,
+                       doc_count, avg_relevance_score, avg_paper_score, growth_rate, created_at
+                FROM profile_interest_metrics ORDER BY profile_interest_id, period_start DESC
+            """)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                metrics.append({
+                    'id': row['id'],
+                    'profile_interest_id': row['profile_interest_id'],
+                    'period_start': row['period_start'].isoformat() if row['period_start'] else None,
+                    'period_end': row['period_end'].isoformat() if row['period_end'] else None,
+                    'period_type': row['period_type'],
+                    'doc_count': row['doc_count'],
+                    'avg_relevance_score': row['avg_relevance_score'],
+                    'avg_paper_score': row['avg_paper_score'],
+                    'growth_rate': row['growth_rate'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+
+        output_file = self.output_dir / "profile_interest_metrics.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False)
+
+        print(f"Exported {len(metrics)} profile interest metrics to {output_file}")
+        return str(output_file)
+
     def export_label_summaries(self) -> str:
         """Export all label summaries to JSON file."""
         print("Exporting label summaries...")
@@ -1207,11 +1269,11 @@ class DatabaseExporter:
             "tables_exported": [
                 "papers", "podcasts", "newsletters", "literature_reviews",
                 "research_profiles", "profile_research_interests", "paper_profile_scores",
-                "research_runs", "research_agent_state", "paper_fulltext", 
+                "research_runs", "research_agent_state", "paper_fulltext",
                 "mindmap_reports", "model_catalog", "topics", "topic_metrics",
                 "paper_topics", "research_interests", "research_interest_metrics",
-                "paper_research_interests", "label_summaries", "scheduled_tasks",
-                "scheduled_task_runs"
+                "paper_research_interests", "profile_paper_interests", "profile_interest_metrics",
+                "label_summaries", "scheduled_tasks", "scheduled_task_runs"
             ],
             "description": "Theseus Insight database export with Research Profiles, Trends, Research Interests, and full feature set",
             "backwards_compatible": True,
@@ -1221,8 +1283,8 @@ class DatabaseExporter:
                 "research_runs", "research_agent_state", "paper_fulltext",
                 "mindmap_reports", "model_catalog", "topics", "topic_metrics",
                 "paper_topics", "research_interests", "research_interest_metrics",
-                "paper_research_interests", "label_summaries", "scheduled_tasks",
-                "scheduled_task_runs"
+                "paper_research_interests", "profile_paper_interests", "profile_interest_metrics",
+                "label_summaries", "scheduled_tasks", "scheduled_task_runs"
             ]
         }
         
@@ -2069,11 +2131,27 @@ class DatabaseExporter:
             try:
                 paper_research_interests_file = self.export_paper_research_interests()
                 if progress_callback:
-                    progress_callback(96, "paper_research_interests_exported")
+                    progress_callback(94, "paper_research_interests_exported")
                 result["files"]["paper_research_interests"] = paper_research_interests_file
             except Exception as e:
                 print(f"Warning: Could not export paper research interests: {e}")
-            
+
+            try:
+                profile_paper_interests_file = self.export_profile_paper_interests()
+                if progress_callback:
+                    progress_callback(95, "profile_paper_interests_exported")
+                result["files"]["profile_paper_interests"] = profile_paper_interests_file
+            except Exception as e:
+                print(f"Warning: Could not export profile paper interests: {e}")
+
+            try:
+                profile_interest_metrics_file = self.export_profile_interest_metrics()
+                if progress_callback:
+                    progress_callback(96, "profile_interest_metrics_exported")
+                result["files"]["profile_interest_metrics"] = profile_interest_metrics_file
+            except Exception as e:
+                print(f"Warning: Could not export profile interest metrics: {e}")
+
             try:
                 label_summaries_file = self.export_label_summaries()
                 if progress_callback:

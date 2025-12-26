@@ -1,12 +1,12 @@
 """
-API router for Topic Evolution & Trend-Forecast Dashboard.
+API router for Research Timeline & Topic Analytics.
 
 Provides endpoints for:
-- Listing trending topics
-- Getting topic details and timeline
-- Searching topics
-- Recomputing trends
-- Getting papers for a topic
+- Timeline data visualization (research interests or topics)
+- Listing trending topics and research interests
+- Getting topic/interest details and timeline
+- Searching topics and research interests
+- Getting papers for a topic or research interest
 """
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Body
 from typing import Optional, List, Dict, Any
@@ -19,22 +19,21 @@ import re
 
 from ..models import (
     TopicApiResponse, TopicDetailResponse, TopicMetricResponse,
-    TrendsListRequest, TrendsListResponse, TrendsSearchRequest, TrendsSearchResponse,
-    TrendsRecomputeRequest, TrendsRecomputeResponse,
-    TopicPapersRequest, TopicPapersResponse, PaperApiResponse,
-    TrendsValidateAccuracyRequest, SystemInfoResponse, PerformanceConfig,
-    ResearchInterestApiResponse, ResearchInterestsListResponse, ResearchInterestsSearchResponse,
-    ResearchInterestDetailResponse, ResearchInterestMetricResponse, ResearchInterestRecomputeResponse,
-    ResearchInterestPapersResponse,
+    TrendsListResponse, TrendsSearchResponse,
+    TopicPapersResponse, PaperApiResponse,
+    SystemInfoResponse, PerformanceConfig,
+    ResearchInterestApiResponse, ResearchInterestsSearchResponse,
+    ResearchInterestDetailResponse, ResearchInterestMetricResponse,
+    ResearchInterestPapersResponse, ResearchInterestRecomputeResponse,
     TimelineDataResponse, TopicTimelineData, TimelinePeriodData, TimelineKeyPaper
 )
 from ...data_access import (
-    TopicsRepository, TopicMetricsRepository, PaperTopicsRepository, 
+    TopicsRepository, TopicMetricsRepository, PaperTopicsRepository,
     TrendsRepository, PaperRepository, SettingsRepository,
     ResearchInterestTrendsRepository, ResearchInterestsRepository, ResearchInterestMetricsRepository,
-    PaperResearchInterestsRepository, LabelSummariesRepository, ProfileRepository
+    PaperResearchInterestsRepository, LabelSummariesRepository, ProfileRepository,
+    ProfilePaperInterestsRepository, ProfileInterestMetricsRepository, ProfileInterestsRepository
 )
-from ...data_processing.trends import TrendsProcessor
 from ..tasks import task_manager, TaskStatus
 from ...prompt.system_prompts import TRENDS_LEGEND_LABEL_SYSTEM_PROMPT
 from LLMFactory import LLMModelFactory
@@ -42,6 +41,29 @@ from LLMFactory import LLMModelFactory
 router = APIRouter(prefix="/api/trends", tags=["trends"])
 
 logger = logging.getLogger(__name__)
+
+
+def _get_profile_timeline_data(
+    interest_ids: List[int] | None = None,
+    period_type: str = "week",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    key_papers_limit: int = 3,
+    include_key_papers: bool = True
+) -> Dict[int, Dict[str, Any]]:
+    """
+    Helper to get timeline data for profile-specific research interests.
+
+    Wraps ProfileInterestMetricsRepository.get_timeline_with_papers for the API.
+    """
+    return ProfileInterestMetricsRepository.get_timeline_with_papers(
+        interest_ids=interest_ids,
+        period_type=period_type,
+        start_date=start_date,
+        end_date=end_date,
+        key_papers_limit=key_papers_limit,
+        include_key_papers=include_key_papers
+    )
 
 
 def _convert_timestamps(data: dict) -> dict:
@@ -246,21 +268,36 @@ async def search_topics(
 
 @router.get("/timeline-data", response_model=TimelineDataResponse)
 async def get_timeline_data(
-    topic_ids: Optional[str] = Query(None, description="Comma-separated topic IDs (None = top topics)"),
+    topic_ids: Optional[str] = Query(None, description="Comma-separated topic/interest IDs (None = top items)"),
+    profile_ids: Optional[str] = Query(None, description="Comma-separated profile IDs for profile-based interests"),
     period_type: str = Query("month", description="Period granularity: week, month, quarter, year"),
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     include_key_papers: bool = Query(True, description="Include key papers per period"),
     key_papers_limit: int = Query(3, ge=1, le=10, description="Max key papers per period"),
-    limit: int = Query(10, ge=1, le=50, description="Max topics to return if topic_ids not specified")
+    limit: int = Query(10, ge=1, le=50, description="Max topics to return if topic_ids not specified"),
+    source: str = Query("research_interests", description="Data source: research_interests (default), profile_interests, or topics")
 ):
     """
     Get timeline data for research timeline visualization.
 
     Returns timeline metrics with growth phases and optional key papers per period,
     optimized for horizontal timeline visualization with semantic zoom levels.
+
+    Sources:
+    - profile_interests: Profile-specific interests (use with profile_ids parameter)
+    - research_interests: Legacy global research interests
+    - topics: Legacy BERTopic-based topics
     """
     try:
+        # Validate source
+        valid_sources = ["research_interests", "profile_interests", "topics"]
+        if source not in valid_sources:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid source. Must be one of: {', '.join(valid_sources)}"
+            )
+
         # Validate period_type
         valid_period_types = ["week", "month", "quarter", "year"]
         if period_type not in valid_period_types:
@@ -269,22 +306,43 @@ async def get_timeline_data(
                 detail=f"Invalid period_type. Must be one of: {', '.join(valid_period_types)}"
             )
 
+        # Parse profile_ids if provided
+        parsed_profile_ids: Optional[List[int]] = None
+        if profile_ids:
+            try:
+                parsed_profile_ids = [int(pid.strip()) for pid in profile_ids.split(",") if pid.strip()]
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid profile_ids format. Use comma-separated integers.")
+
         # Parse topic_ids if provided
-        parsed_topic_ids: Optional[List[int]] = None
+        parsed_ids: Optional[List[int]] = None
         if topic_ids:
             try:
-                parsed_topic_ids = [int(tid.strip()) for tid in topic_ids.split(",") if tid.strip()]
+                parsed_ids = [int(tid.strip()) for tid in topic_ids.split(",") if tid.strip()]
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid topic_ids format. Use comma-separated integers.")
 
-        # If no topic_ids specified, get top trending topics
-        if not parsed_topic_ids:
-            trending = TopicMetricsRepository.get_trending_topics(
-                period_type=period_type if period_type != "year" else "quarter",
-                limit=limit,
-                min_doc_count=1
-            )
-            parsed_topic_ids = [t["topic_id"] for t in trending]
+        # If no IDs specified, get top trending items based on source
+        if not parsed_ids:
+            if source == "profile_interests" and parsed_profile_ids:
+                # Get interests from profile_interest_metrics for specified profiles
+                dashboard_data = ProfileInterestMetricsRepository.get_dashboard_data(
+                    profile_ids=parsed_profile_ids,
+                    limit=limit,
+                    period_type=period_type if period_type != "year" else "quarter"
+                )
+                parsed_ids = [i["profile_interest_id"] for i in dashboard_data.get("trending_interests", [])]
+            elif source == "research_interests":
+                # Get all research interests (they're user-defined, so return all)
+                interests = ResearchInterestsRepository.get_all()
+                parsed_ids = [i["id"] for i in interests[:limit]]
+            else:
+                trending = TopicMetricsRepository.get_trending_topics(
+                    period_type=period_type if period_type != "year" else "quarter",
+                    limit=limit,
+                    min_doc_count=1
+                )
+                parsed_ids = [t["topic_id"] for t in trending]
 
         # Parse dates
         parsed_start_date: Optional[date] = None
@@ -306,14 +364,35 @@ async def get_timeline_data(
         # Note: "year" period_type uses quarterly data aggregated in frontend
         effective_period_type = period_type if period_type != "year" else "quarter"
 
-        timeline_data = TopicMetricsRepository.get_timeline_with_papers(
-            topic_ids=parsed_topic_ids,
-            period_type=effective_period_type,
-            start_date=parsed_start_date,
-            end_date=parsed_end_date,
-            key_papers_limit=key_papers_limit,
-            include_key_papers=include_key_papers
-        )
+        # Use appropriate repository based on source
+        if source == "profile_interests":
+            # Use new profile-aware metrics
+            timeline_data = _get_profile_timeline_data(
+                interest_ids=parsed_ids,
+                period_type=effective_period_type,
+                start_date=parsed_start_date,
+                end_date=parsed_end_date,
+                key_papers_limit=key_papers_limit,
+                include_key_papers=include_key_papers
+            )
+        elif source == "research_interests":
+            timeline_data = ResearchInterestMetricsRepository.get_timeline_with_papers(
+                interest_ids=parsed_ids,
+                period_type=effective_period_type,
+                start_date=parsed_start_date,
+                end_date=parsed_end_date,
+                key_papers_limit=key_papers_limit,
+                include_key_papers=include_key_papers
+            )
+        else:
+            timeline_data = TopicMetricsRepository.get_timeline_with_papers(
+                topic_ids=parsed_ids,
+                period_type=effective_period_type,
+                start_date=parsed_start_date,
+                end_date=parsed_end_date,
+                key_papers_limit=key_papers_limit,
+                include_key_papers=include_key_papers
+            )
 
         if not timeline_data:
             return TimelineDataResponse(
@@ -362,10 +441,13 @@ async def get_timeline_data(
                     is_forecast=period.get("is_forecast", False)
                 ))
 
+            # Handle both research_interests (topic_label) and topics (label) field names
+            label = topic_data.get("topic_label") or topic_data.get("label", "Unknown")
+
             topic_timelines.append(TopicTimelineData(
-                topic_id=topic_id,
-                topic_label=topic_data["label"],
-                keywords=topic_data["keywords"],
+                topic_id=topic_data.get("topic_id", topic_id),
+                topic_label=label,
+                keywords=topic_data.get("keywords", []),
                 total_papers=topic_data["total_papers"],
                 periods=periods
             ))
@@ -392,89 +474,6 @@ async def get_timeline_data(
 
 
 # Topic detail route moved after research interests to fix routing conflict
-
-
-@router.post("/recompute", response_model=TrendsRecomputeResponse)
-async def recompute_trends(
-    request: TrendsRecomputeRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    Trigger recomputation of trends using incremental weekly-first analysis.
-    
-    By default, this uses incremental processing to only analyze new papers and
-    recent time periods, preserving historical data. Set force_full_recalc=true
-    to force complete recalculation of all data. This is a potentially expensive 
-    operation that runs in the background.
-    """
-    try:
-        # Generate task ID
-        task_id = str(uuid.uuid4())
-        
-        # Create task
-        await task_manager.create_task(
-            task_id=task_id,
-            task_type="trends_recompute",
-            config=request.dict()
-        )
-        
-        # Enqueue background task
-        await task_manager.enqueue_task(
-            run_trends_task,
-            task_id
-        )
-        
-        # Estimate duration based on parameters (incremental is much faster)
-        if request.force_full_recalc:
-            estimated_minutes = max(8, request.lookback_months // 3)
-            processing_type = "full recalculation"
-        else:
-            estimated_minutes = max(2, request.lookback_months // 12)  # Much faster for incremental
-            processing_type = "incremental processing"
-        
-        # Nuclear option gets special handling
-        if request.clear_all_data:
-            estimated_minutes = max(10, request.lookback_months // 2)  # Takes longer due to complete rebuild
-            processing_type = "nuclear recalculation (clearing all data)"
-        
-        return TrendsRecomputeResponse(
-            task_id=task_id,
-            message=f"Trends recomputation started ({processing_type}, {request.duration_months}M duration)",
-            estimated_duration_minutes=estimated_minutes
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start trends recomputation: {str(e)}")
-
-
-@router.post("/validate-accuracy", response_model=Dict[str, Any])
-async def validate_forecast_accuracy(
-    request: TrendsValidateAccuracyRequest = Body(...),
-    background_tasks: BackgroundTasks = BackgroundTasks()
-) -> Dict[str, Any]:
-    """Validate forecast accuracy for a specific period type."""
-    try:
-        # Create a new processor instance with default settings
-        processor = TrendsProcessor(verbose=True)
-        
-        # Run validation in background task
-        task_id = str(uuid.uuid4())
-        background_tasks.add_task(
-            run_forecast_validation_task,
-            task_id,
-            request.period_type,
-            processor
-        )
-        
-        return {
-            "status": "started",
-            "message": f"Forecast accuracy validation started for {request.period_type} periods",
-            "task_id": task_id,
-            "estimated_time_minutes": 5
-        }
-    except Exception as e:
-        logger.error(f"Error starting forecast validation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/system-info", response_model=SystemInfoResponse)
@@ -848,61 +847,6 @@ async def get_research_interest_detail(
         raise HTTPException(status_code=500, detail=f"Failed to get research interest detail: {str(e)}")
 
 
-@router.post("/research-interests/recompute")
-async def recompute_research_interests(
-    request: Dict[str, Any] = Body(...),
-    background_tasks: BackgroundTasks = BackgroundTasks()
-):
-    """
-    Trigger recomputation of research interest clustering based on current research interests in settings.
-    
-    This will:
-    1. Retrieve research interests from settings 
-    2. Split by newline and embed each research interest
-    3. Cluster papers against these embedded research interests
-    4. Calculate temporal metrics and generate forecasts
-    """
-    try:
-        # Parse request with defaults
-        lookback_months = request.get('lookback_months', 24)
-        duration_months = request.get('duration_months', 6)
-        min_papers = request.get('min_papers', 100)
-        similarity_threshold = request.get('similarity_threshold', 0.3)
-        clear_all_data = request.get('clear_all_data', False)
-        
-        # Generate task ID
-        task_id = str(uuid.uuid4())
-        
-        # Create task
-        await task_manager.create_task(
-            task_id=task_id,
-            task_type="research_interest_recompute",
-            config=request
-        )
-        
-        # Enqueue background task
-        await task_manager.enqueue_task(
-            run_research_interest_task,
-            task_id
-        )
-        
-        # Estimate duration
-        estimated_minutes = max(5, lookback_months // 6)  # Generally faster than BERTopic
-        if clear_all_data:
-            estimated_minutes = max(8, lookback_months // 4)
-        
-        processing_type = "nuclear recalculation (clearing all data)" if clear_all_data else "research interest clustering"
-        
-        return ResearchInterestRecomputeResponse(
-            task_id=task_id,
-            message=f"Research interest clustering started ({processing_type}, {duration_months}M duration)",
-            estimated_duration_minutes=estimated_minutes
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start research interest recomputation: {str(e)}")
-
-
 @router.get("/research-interests/{interest_id}/papers")
 async def get_research_interest_papers(
     interest_id: int,
@@ -951,6 +895,69 @@ async def get_research_interest_papers(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get research interest papers: {str(e)}")
+
+
+@router.post("/research-interests/recompute")
+async def recompute_research_interests(
+    request: Dict[str, Any] = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """
+    Trigger recomputation of profile-based research interest clustering.
+
+    This will:
+    1. Get research interests from the specified profile(s)
+    2. Embed interests that don't have embeddings yet
+    3. Cluster papers against profile interests using similarity
+    4. Calculate temporal metrics for the timeline
+
+    Request body:
+    - profile_ids: List of profile IDs to process (required)
+    - lookback_months: How far back to analyze (default: 24)
+    - min_papers: Minimum papers required (default: 10)
+    - similarity_threshold: Minimum similarity for matching (default: 0.3)
+    - clear_existing: Clear existing data for profiles first (default: false)
+    """
+    try:
+        # Parse request
+        profile_ids = request.get('profile_ids', [])
+        if not profile_ids:
+            raise HTTPException(status_code=400, detail="profile_ids is required")
+
+        lookback_months = request.get('lookback_months', 24)
+        min_papers = request.get('min_papers', 10)
+        similarity_threshold = request.get('similarity_threshold', 0.3)
+        clear_existing = request.get('clear_existing', False)
+
+        # Generate task ID
+        task_id = str(uuid.uuid4())
+
+        # Create task with config
+        await task_manager.create_task(
+            task_id=task_id,
+            task_type="profile_interest_clustering",
+            config=request
+        )
+
+        # Enqueue background task
+        await task_manager.enqueue_task(
+            run_profile_interest_task,
+            task_id
+        )
+
+        # Estimate duration based on number of profiles
+        estimated_minutes = max(3, len(profile_ids) * 2 + lookback_months // 12)
+
+        return ResearchInterestRecomputeResponse(
+            task_id=task_id,
+            message=f"Profile interest clustering started for {len(profile_ids)} profile(s)",
+            estimated_duration_minutes=estimated_minutes
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start interest clustering: {str(e)}")
 
 
 @router.get("/{topic_id}", response_model=TopicDetailResponse)
@@ -1113,7 +1120,7 @@ async def clear_label_cache(older_than_days: Optional[int] = Query(None, descrip
         message = f"Cleared {cleared_count} cached summaries"
         if older_than_days:
             message += f" older than {older_than_days} days"
-        
+
         return {
             "status": "success",
             "message": message,
@@ -1124,189 +1131,166 @@ async def clear_label_cache(older_than_days: Optional[int] = Query(None, descrip
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def run_trends_task(task_id: str):
-    """Background task for trends recomputation with performance optimization."""
+@router.post("/generate-short-labels", response_model=Dict[str, Any])
+async def generate_short_labels(
+    request: Dict[str, Any] = Body(default={}),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """
+    Generate short 2-5 word labels for research interests using the judge model.
+
+    This endpoint processes interests that don't have short labels yet.
+    The short labels are stored in the database for reuse.
+
+    Request body:
+    - profile_ids: Optional list of profile IDs to process (if not provided, process all)
+    """
     try:
+        profile_ids = request.get('profile_ids')
+
+        # Parse profile_ids if it's a string
+        if isinstance(profile_ids, str):
+            profile_ids = [int(pid.strip()) for pid in profile_ids.split(',') if pid.strip()]
+
+        # Get interests without short labels
+        interests = ProfileInterestsRepository.get_interests_without_short_labels(profile_ids)
+
+        if not interests:
+            return {
+                "status": "success",
+                "message": "All interests already have short labels",
+                "processed": 0
+            }
+
+        # Load judge model config
+        config_json = SettingsRepository.get('orchestration')
+        if not config_json:
+            raise HTTPException(status_code=500, detail="Orchestration config not found in settings.")
+
+        orchestration_config = json.loads(config_json)
+
+        if not orchestration_config or not orchestration_config.get('judge_model'):
+            raise HTTPException(status_code=500, detail="Judge model is not configured in settings.")
+
+        model_config = orchestration_config['judge_model']
+        llm = LLMModelFactory.create_model(**model_config)
+
+        # Process each interest
+        processed_count = 0
+        errors = []
+
+        for interest in interests:
+            try:
+                interest_text = interest['interest_text']
+
+                # Generate short label using LLM
+                prompt = f"""Summarize this research interest into a short label of 2-5 words.
+The label should be concise but capture the core topic.
+Only respond with the short label, nothing else.
+
+Research interest: {interest_text}
+
+Short label:"""
+
+                response = llm.invoke(
+                    messages=[{"role": "user", "content": prompt}],
+                    system_prompt="You are a helpful assistant that creates concise topic labels. Respond with only the short label (2-5 words), no explanation or punctuation."
+                )
+
+                # Clean up the response
+                short_label = response.strip().strip('"').strip("'").strip()
+                # Limit to 100 chars
+                short_label = short_label[:100]
+
+                if short_label:
+                    ProfileInterestsRepository.update_short_label(interest['id'], short_label)
+                    processed_count += 1
+                    logger.info(f"Generated short label for interest {interest['id']}: '{short_label}'")
+
+            except Exception as e:
+                error_msg = f"Failed to process interest {interest['id']}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+
+        result = {
+            "status": "success" if processed_count > 0 else "partial",
+            "message": f"Generated {processed_count} short labels",
+            "processed": processed_count,
+            "total_interests": len(interests)
+        }
+
+        if errors:
+            result["errors"] = errors[:5]  # Only include first 5 errors
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating short labels: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate short labels: {str(e)}")
+
+
+async def run_profile_interest_task(task_id: str):
+    """Background task for profile-based research interest clustering."""
+    try:
+        from ...data_processing.trends import ProfileInterestProcessor
+
         # Get task configuration from database
         task_data = task_manager.get_task_status(task_id)
         if not task_data:
             raise ValueError(f"Task {task_id} not found")
-        
-        # Parse request from stored config
-        config = task_data.get('config_json', {})
-        request = TrendsRecomputeRequest(
-            lookback_months=config.get('lookback_months', 24),
-            duration_months=config.get('duration_months', 6),
-            min_papers=config.get('min_papers', 100),
-            force_full_recalc=config.get('force_full_recalc', False),
-            clear_all_data=config.get('clear_all_data', False)
-        )
-        
-        # Get performance configuration
-        try:
-            config_json = SettingsRepository.get("performance_config")
-            if config_json:
-                performance_config = json.loads(config_json)
-            else:
-                # Use system-recommended defaults
-                system_info = await get_system_info()
-                performance_config = system_info.recommended_config.dict()
-        except Exception as e:
-            logger.warning(f"Could not load performance config, using defaults: {e}")
-            performance_config = {}
-        
-        await task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 
-                               "Initializing performance-optimized trends processor", 5)
-        
-        # Initialize processor with performance configuration
-        processor = TrendsProcessor(
-            verbose=True,
-            performance_config=performance_config
-        )
-        
-        await task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 
-                               "Starting trends analysis pipeline", 10)
-        
-        def progress_callback(stage: str, progress: int, message: str):
-            # Note: Can't await in sync callback, processor handles this internally
-            task_manager.update_task_status_sync(task_id, TaskStatus.PROCESSING, 
-                                   f"[{stage}] {message}", progress)
-        
-        # Run the pipeline based on request parameters
-        if hasattr(request, 'clear_all_data') and request.clear_all_data:
-            # Nuclear option - use full pipeline with clearing
-            results = processor.run_incremental_pipeline(
-                lookback_months=request.lookback_months,
-                duration_months=request.duration_months,
-                min_papers=request.min_papers,
-                force_full_recalc=True,
-                clear_all_data=True,
-                progress_callback=progress_callback,
-                validate_accuracy=True
-            )
-            await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 
-                                   f"🚨 Nuclear recalculation completed: {results.get('total_papers_processed', 0):,} papers", 100)
-        elif hasattr(request, 'force_full_recalc') and request.force_full_recalc:
-            # Force full recalculation
-            results = processor.run_incremental_pipeline(
-                lookback_months=request.lookback_months,
-                duration_months=request.duration_months,
-                min_papers=request.min_papers,
-                force_full_recalc=True,
-                clear_all_data=False,
-                progress_callback=progress_callback,
-                validate_accuracy=True
-            )
-            await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 
-                                   f"Full recalculation completed: {results.get('total_papers_processed', 0):,} papers", 100)
-        else:
-            # Incremental processing (default)
-            results = processor.run_incremental_pipeline(
-                lookback_months=request.lookback_months,
-                duration_months=request.duration_months,
-                min_papers=request.min_papers,
-                force_full_recalc=False,
-                clear_all_data=False,
-                progress_callback=progress_callback,
-                validate_accuracy=True
-            )
-            await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 
-                                   f"Incremental processing completed: {results.get('total_papers_processed', 0):,} papers", 100)
-        
-    except Exception as e:
-        logger.error(f"Error in trends task {task_id}: {e}")
-        await task_manager.update_task_status(task_id, TaskStatus.FAILED, f"Error: {str(e)}", 0)
 
-
-async def run_forecast_validation_task(task_id: str, period_type: str, processor):
-    """Background task for forecast accuracy validation."""
-    try:
-        await task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 
-                               f"Starting forecast validation for {period_type} periods", 10)
-        
-        def progress_callback(stage: str, progress: int, message: str):
-            task_manager.update_task_status_sync(task_id, TaskStatus.PROCESSING, 
-                                   f"[{stage}] {message}", progress)
-        
-        validation_results = processor.validate_forecast_accuracy(
-            period_type=period_type,
-            run_id=task_id,
-            progress_callback=progress_callback
-        )
-        
-        message = (f"Validation completed: {validation_results['total_topics_checked']} topics checked, "
-                  f"{validation_results['topics_with_accuracy_data']} had sufficient data")
-        await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, message, 100)
-        
-    except Exception as e:
-        logger.error(f"Error in forecast validation task {task_id}: {e}")
-        await task_manager.update_task_status(task_id, TaskStatus.FAILED, f"Error: {str(e)}", 0)
-
-
-async def run_research_interest_task(task_id: str):
-    """Background task for research interest clustering pipeline."""
-    try:
-        from ...data_processing.trends import ResearchInterestProcessor
-        from ...data_access import ResearchInterestTrendsRepository
-        
-        # Get task configuration from database
-        task_data = task_manager.get_task_status(task_id)
-        if not task_data:
-            raise ValueError(f"Task {task_id} not found")
-        
         # Extract parameters from stored config
         config = task_data.get('config_json', {})
+        profile_ids = config.get('profile_ids', [])
         lookback_months = config.get('lookback_months', 24)
-        duration_months = config.get('duration_months', 6)
-        min_papers = config.get('min_papers', 100)
+        min_papers = config.get('min_papers', 10)
         similarity_threshold = config.get('similarity_threshold', 0.3)
-        clear_all_data = config.get('clear_all_data', False)
-        
-        await task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 
-                               "Initializing research interest clustering processor", 5)
-        
-        # Handle nuclear option first
-        if clear_all_data:
-            await task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 
-                               "NUCLEAR OPTION: Clearing all research interest data", 10)
-            
-            deleted_counts = ResearchInterestTrendsRepository.nuclear_cleanup_all_data()
-            logger.warning(f"NUCLEAR OPTION ACTIVATED: Cleared research interest data: {deleted_counts}")
-        
+        clear_existing = config.get('clear_existing', False)
+
+        if not profile_ids:
+            await task_manager.update_task_status(task_id, TaskStatus.FAILED,
+                               "No profile IDs provided", 0)
+            return
+
+        await task_manager.update_task_status(task_id, TaskStatus.PROCESSING,
+                               f"Initializing processor for {len(profile_ids)} profile(s)", 5)
+
         # Initialize processor
-        processor = ResearchInterestProcessor(
+        processor = ProfileInterestProcessor(
             similarity_threshold=similarity_threshold,
             verbose=True
         )
-        
-        await task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 
-                               "Starting research interest clustering pipeline", 15)
-        
+
         def progress_callback(stage: str, progress: int, message: str):
-            task_manager.update_task_status_sync(task_id, TaskStatus.PROCESSING, 
+            task_manager.update_task_status_sync(task_id, TaskStatus.PROCESSING,
                                    f"[{stage}] {message}", progress)
-        
-        # Run the research interest clustering pipeline
-        results = processor.run_full_pipeline(
+
+        # Run the profile interest clustering pipeline
+        results = processor.run_for_profiles(
+            profile_ids=profile_ids,
             lookback_months=lookback_months,
-            duration_months=duration_months,
             min_papers=min_papers,
             similarity_threshold=similarity_threshold,
+            clear_existing=clear_existing,
             progress_callback=progress_callback
         )
-        
+
         if results.get('success'):
-            summary = (f"✅ Research interest clustering completed: "
-                      f"{results.get('research_interests_processed', 0)} interests, "
-                      f"{results.get('papers_processed', 0):,} papers, "
-                      f"{results.get('relationships_created', 0):,} relationships")
+            summary = (f"Profile interest clustering completed: "
+                      f"{results.get('profiles_processed', 0)} profiles, "
+                      f"{results.get('total_interests', 0)} interests, "
+                      f"{results.get('total_papers', 0):,} papers, "
+                      f"{results.get('total_relationships', 0):,} relationships")
             await task_manager.update_task_status(task_id, TaskStatus.COMPLETED, summary, 100)
         else:
-            error_msg = f"Research interest clustering failed: {results.get('errors', ['Unknown error'])}"
+            error_msg = f"Profile interest clustering failed: {results.get('errors', ['Unknown error'])}"
             await task_manager.update_task_status(task_id, TaskStatus.FAILED, error_msg, 0)
-        
+
     except Exception as e:
-        logger.error(f"Error in research interest task {task_id}: {e}")
+        logger.error(f"Error in profile interest task {task_id}: {e}")
         await task_manager.update_task_status(task_id, TaskStatus.FAILED, f"Error: {str(e)}", 0)
+
 
 # Performance Configuration Endpoints (moved above parameterized routes) 

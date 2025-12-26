@@ -13,7 +13,8 @@ from .lit_reviews import LitReviewRepository
 from .trends import (
     TopicsRepository, TopicMetricsRepository, PaperTopicsRepository, TrendsRepository,
     ResearchInterestTrendsRepository, ResearchInterestsRepository, ResearchInterestMetricsRepository,
-    PaperResearchInterestsRepository
+    PaperResearchInterestsRepository,
+    ProfilePaperInterestsRepository, ProfileInterestMetricsRepository
 )
 from .label_summaries import LabelSummariesRepository
 from .profiles import ProfileRepository, ProfileInterestsRepository, ProfileScoreRepository

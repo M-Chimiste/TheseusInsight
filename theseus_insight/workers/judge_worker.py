@@ -193,33 +193,46 @@ class JudgeWorker:
 
     def _reinitialize_lmstudio_client(self):
         """
-        Reinitialize the LM Studio client to trigger model reload.
+        Verify LM Studio connection and trigger model reload if needed.
         
         LM Studio may auto-unload models after extended periods of operation.
-        This method clears the cached client and creates a new one, which can
-        help trigger the model to be reloaded.
+        The LMStudio SDK uses a singleton pattern that can't be reset within
+        a process, so we verify the connection and reuse the existing client.
         """
         if self.provider != "lmstudio":
             return
         
-        logger.info(f"Reinitializing LM Studio client for {self._model_name}...")
+        logger.info(f"Verifying LM Studio connection for {self._model_name}...")
         
         try:
-            # Clear the cached client to force recreation
-            from theseus_insight.utils.lmstudio_client import clear_lmstudio_cache, get_lmstudio_client
-            clear_lmstudio_cache()
+            # Verify that LM Studio has models loaded
+            from theseus_insight.utils.lmstudio_client import verify_model_loaded, get_lmstudio_client
             
-            # Create a new client - this may trigger model reload
-            self.inference_client = get_lmstudio_client(
+            if not verify_model_loaded(host=self._lmstudio_host, model_name=self._model_name):
+                logger.warning(f"LM Studio model {self._model_name} may not be loaded, waiting 5s...")
+                time.sleep(5)
+                # Check again
+                if not verify_model_loaded(host=self._lmstudio_host, model_name=self._model_name):
+                    logger.warning(f"Model still not detected - user may need to load it in LM Studio")
+            
+            # The existing client should still work - just reuse it from cache
+            # Don't clear cache or try to recreate (SDK singleton limitation)
+            cached_client = get_lmstudio_client(
                 model_name=self._model_name,
                 max_new_tokens=self._max_new_tokens,
                 temperature=self._temperature,
                 host=self._lmstudio_host,
                 context_length=self._num_ctx
             )
-            logger.info(f"LM Studio client reinitialized successfully")
+            
+            if cached_client:
+                self.inference_client = cached_client
+                logger.info(f"LM Studio client verified and ready")
+            else:
+                logger.warning(f"Could not get LM Studio client from cache")
+                
         except Exception as e:
-            logger.error(f"Failed to reinitialize LM Studio client: {e}")
+            logger.error(f"Failed to verify LM Studio client: {e}")
             # Don't raise - let the caller handle retry logic
 
     def start(self):

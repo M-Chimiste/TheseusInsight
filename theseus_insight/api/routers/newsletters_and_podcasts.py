@@ -264,11 +264,11 @@ async def run_newsletter_pipeline_endpoint(
 
             # Create newsletter job if using multi-server judge
             newsletter_job_id = None
+            judge_servers = None
             if params.use_multi_server_judge:
                 from ...data_access.newsletters import NewsletterJobRepository
 
                 # Validate server IDs if provided
-                judge_servers = None
                 if params.judge_server_ids:
                     from ...data_access.inference_servers import InferenceServersRepository
                     servers = InferenceServersRepository.get_by_ids(params.judge_server_ids)

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { Box, Paper, Typography, List, ListItem, ListItemText, Chip, Link } from '@mui/material';
+import { Box, Paper, Typography, List, ListItem, ListItemText, Chip } from '@mui/material';
 import * as d3 from 'd3';
 import type { TimelineDataResponse, TimelinePeriodData, TimelineKeyPaper } from '../../services/api';
 
@@ -46,6 +46,8 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const isHoveringTooltipRef = useRef(false);
 
   // Tooltip state
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
@@ -82,18 +84,47 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
     setHoveredTopicId(null);
   }, [clearHideTimeout]);
 
-  // Start hide timeout
+  // Start hide timeout - checks if hovering tooltip before hiding
   const startHideTimeout = useCallback(() => {
     clearHideTimeout();
     hideTimeoutRef.current = setTimeout(() => {
-      setTooltipPosition(null);
-      setTooltipData(null);
-    }, 300); // Shorter timeout - 300ms
+      // Don't hide if mouse moved to tooltip
+      if (!isHoveringTooltipRef.current) {
+        setTooltipPosition(null);
+        setTooltipData(null);
+      }
+    }, 150); // Short timeout
   }, [clearHideTimeout]);
 
   useEffect(() => {
     return () => clearHideTimeout();
   }, [clearHideTimeout]);
+
+  // DEBUG: Window-level click listener to verify events are registering
+  useEffect(() => {
+    const handleWindowClick = (e: MouseEvent) => {
+      console.log('Window click detected:', e.target);
+    };
+    window.addEventListener('click', handleWindowClick);
+    console.log('TimelineCanvas mounted, click listener attached');
+    return () => window.removeEventListener('click', handleWindowClick);
+  }, []);
+
+  // Global click handler to dismiss tooltip (but not when clicking on SVG - let D3 handle that)
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      // Don't dismiss if clicking on tooltip or SVG (let D3 click handler work)
+      if (tooltipRef.current?.contains(target)) return;
+      if (svgRef.current?.contains(target)) return;
+      hideTooltip();
+    };
+
+    if (tooltipPosition) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [tooltipPosition, hideTooltip]);
 
   // Calculate dimensions
   const margin = { top: 60, right: 40, bottom: 60, left: 40 };
@@ -222,6 +253,7 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
       .attr('stroke-width', 0.5)
       .attr('opacity', 0.85)
       .style('cursor', 'pointer')
+      .style('pointer-events', 'all')
       .style('transition', 'opacity 0.3s ease, filter 0.3s ease')
       .on('mouseenter', function(event, d) {
         const topicId = parseInt(d.key);
@@ -278,7 +310,7 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
           }
         });
 
-        setTooltipPosition({ x: event.clientX, y: event.clientY });
+        // Only update period data, NOT position (so tooltip doesn't flee)
         setTooltipData(prev => prev ? {
           ...prev,
           period: closestPeriod,
@@ -291,12 +323,16 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
         startHideTimeout();
       })
       .on('click', function(event, d) {
+        console.log('Stream clicked!', d.key);
         const topicId = parseInt(d.key);
         const [mouseX] = d3.pointer(event, g.node());
         const dateAtMouse = xScale.invert(mouseX);
 
         const topic = data.topics.find(t => t.topic_id === topicId);
-        if (!topic) return;
+        if (!topic) {
+          console.log('Topic not found for id:', topicId);
+          return;
+        }
 
         let closestPeriod = topic.periods[0];
         let minDist = Infinity;
@@ -309,6 +345,7 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
           }
         });
 
+        console.log('Calling onPeriodClick:', topicId, closestPeriod.period_start, closestPeriod.period_end);
         onPeriodClick(topicId, closestPeriod.period_start, closestPeriod.period_end);
       });
 
@@ -352,12 +389,56 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
 
     // Legend is now rendered as React component below the SVG for better text handling
 
+    // Add mouseleave on SVG to hide tooltip when leaving graph area
+    svg.on('mouseleave', () => {
+      if (!isHoveringTooltipRef.current) {
+        // Reset stream visuals
+        streams.attr('opacity', 0.85).style('filter', 'none');
+        // Hide tooltip
+        setTooltipPosition(null);
+        setTooltipData(null);
+        setHoveredTopicId(null);
+      }
+    });
+
   }, [data, zoomLevel, isDarkMode, height, margin, topicColors, clearHideTimeout, startHideTimeout, onPeriodClick]);
 
   const showTooltip = tooltipPosition !== null && tooltipData !== null;
 
+  // Handle click on container using event delegation
+  const handleContainerClick = useCallback((event: React.MouseEvent) => {
+    const target = event.target as SVGElement;
+    console.log('Container clicked!', target.tagName, target.classList);
+
+    // Check if clicked on a stream path
+    if (target.tagName === 'path' && target.classList.contains('stream')) {
+      const streamElement = d3.select(target);
+      const d = streamElement.datum() as d3.SeriesPoint<StreamDataPoint>[];
+
+      if (d && d.length > 0 && 'key' in (d as unknown as { key: string })) {
+        const key = ((d as unknown) as { key: string }).key;
+        console.log('Stream path clicked, key:', key);
+
+        const topicId = parseInt(key);
+        const topic = data.topics.find(t => t.topic_id === topicId);
+
+        if (topic && topic.periods.length > 0) {
+          // Use the middle period as a default
+          const middleIndex = Math.floor(topic.periods.length / 2);
+          const period = topic.periods[middleIndex];
+          console.log('Navigating with:', topicId, period.period_start, period.period_end);
+          onPeriodClick(topicId, period.period_start, period.period_end);
+        }
+      }
+    }
+  }, [data.topics, onPeriodClick]);
+
   return (
-    <Box ref={containerRef} sx={{ width: '100%', overflowX: 'auto', position: 'relative' }}>
+    <Box
+      ref={containerRef}
+      sx={{ width: '100%', overflowX: 'auto', position: 'relative' }}
+      onClick={handleContainerClick}
+    >
       {/* Topic Legend */}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mb: 2, px: 1 }}>
         {data.topics.map((topic) => (
@@ -408,14 +489,47 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
         ))}
       </Box>
 
-      <svg ref={svgRef} />
+      <svg
+        ref={svgRef}
+        style={{ pointerEvents: 'all' }}
+        onMouseDown={(e) => {
+          console.log('SVG mousedown!', e.target);
+          console.log('defaultPrevented:', e.defaultPrevented);
+        }}
+        onMouseUp={(e) => {
+          console.log('SVG mouseup!', e.target);
+          // Manually trigger navigation on mouseup since click isn't firing
+          const target = e.target as SVGPathElement;
+          if (target.classList?.contains('stream')) {
+            const streamData = d3.select(target).datum() as any;
+            if (streamData && streamData.key) {
+              const topicId = parseInt(streamData.key);
+              const topic = data.topics.find(t => t.topic_id === topicId);
+              if (topic && topic.periods.length > 0) {
+                const middleIndex = Math.floor(topic.periods.length / 2);
+                const period = topic.periods[middleIndex];
+                console.log('Navigating from mouseup:', topicId, period.period_start, period.period_end);
+                onPeriodClick(topicId, period.period_start, period.period_end);
+              }
+            }
+          }
+        }}
+        onClick={(e) => console.log('SVG native click!', e.target)}
+      />
 
       {/* Mouse-following tooltip */}
       {showTooltip && tooltipData && tooltipPosition && (
         <Paper
+          ref={tooltipRef}
           elevation={8}
-          onMouseEnter={clearHideTimeout}
-          onMouseLeave={hideTooltip}
+          onMouseEnter={() => {
+            isHoveringTooltipRef.current = true;
+            clearHideTimeout();
+          }}
+          onMouseLeave={() => {
+            isHoveringTooltipRef.current = false;
+            hideTooltip();
+          }}
           sx={{
             position: 'fixed',
             // Position left of cursor if near right edge (within 400px of right side)
@@ -484,17 +598,9 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
             </>
           )}
 
-          <Link
-            component="button"
-            variant="caption"
-            onClick={() => {
-              onPeriodClick(tooltipData.topicId, tooltipData.period.period_start, tooltipData.period.period_end);
-              hideTooltip();
-            }}
-            sx={{ mt: 1, display: 'block', cursor: 'pointer' }}
-          >
-            Click to view all papers →
-          </Link>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
+            Click stream to view papers
+          </Typography>
         </Paper>
       )}
     </Box>

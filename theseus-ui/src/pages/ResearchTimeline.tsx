@@ -151,6 +151,7 @@ const ResearchTimeline: React.FC = () => {
 
   // Navigate to papers page with filters
   const handleViewPapers = (profileInterestId: number, startDate: string, endDate: string) => {
+    console.log('handleViewPapers called:', profileInterestId, startDate, endDate);
     navigate(`/papers?profile_interest_id=${profileInterestId}&from_date=${startDate}&to_date=${endDate}`);
   };
 

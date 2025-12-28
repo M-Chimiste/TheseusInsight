@@ -15,7 +15,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Environment Variables](#environment-variables)
 - [Custom Data Storage Location](#custom-data-storage-location)
 - [Key Endpoints](#key-endpoints)
-  - [Topic Evolution & Trend-Forecast Dashboard](#topic-evolution--trend-forecast-dashboard)
+  - [Research Timeline](#research-timeline)
   - [Research Agent System](#research-agent-system)
   - [Profile Management](#profile-management)
 - [Database Migration](#database-migration)
@@ -33,7 +33,7 @@ Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or pro
 
 The system introduces the **Mind-Map Explorer**, an interactive visualization system for exploring multi-order research paper relationships through configurable network graphs, enabling researchers to discover both direct and indirect connections in the academic literature.
 
-**NEW: Topic Evolution & Trend-Forecast Dashboard** - An automated analytics platform that surfaces emerging machine learning topics, tracks their evolution over time, and provides short-term forecasts to help researchers identify trending areas and strategic research opportunities.
+**NEW: Research Timeline** - An interactive stream graph visualization that tracks how your research interests evolve over time, with profile integration, multi-level zoom, key paper discovery, and phase classification to help researchers understand trends in their areas of focus.
 
 ---
 
@@ -106,16 +106,15 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **Real-Time Progress Tracking**: WebSocket-powered progress updates with detailed step information during generation.
   - **Save & Share Reports**: Save mind-map configurations and results for future reference and collaboration.
   - **Seamless Integration**: Launch from any paper in the research library or similarity search results.
-- **Topic Evolution & Trend-Forecast Dashboard**: Automated trend analysis and forecasting for machine learning research.
-  - **Automated Topic Discovery**: Uses BERTopic with HDBSCAN clustering to identify emerging research topics from paper embeddings.
-  - **Temporal Analysis**: Tracks topic popularity over weekly, monthly, and quarterly periods with growth rate calculations.
-  - **Forecasting Engine**: Prophet-based time series forecasting with 1, 3, and 6-month predictions and accuracy validation.
-  - **Interactive Visualizations**: D3.js-powered timeline charts, topic heatmaps, and growth rate visualizations.
-  - **Smart Label Summarization**: AI-generated concise topic labels using configured LLM models with database caching.
-  - **Research Interest Analysis**: Alternative clustering mode based on user-configured research interests rather than automatic discovery.
-  - **Cross-Feature Integration**: Generate mind-maps and newsletters directly from trending topics.
-  - **Performance Optimization**: Configurable processing parameters with system hardware detection and recommendations.
-  - **Scheduled Automation**: Nightly recomputation with incremental processing and comprehensive accuracy tracking.
+- **Research Timeline**: Interactive stream graph visualization for tracking research interest evolution over time.
+  - **Stream Graph Visualization**: Beautiful D3.js-powered flowing stream graphs showing how your research interests evolve over time with vibrant color-coded streams.
+  - **Profile-Integrated Tracking**: Automatically tracks your profile's research interests with configurable interest selection and multi-profile support.
+  - **Multi-Level Zoom**: Explore at year, quarter, month, or week granularity with smooth transitions between zoom levels.
+  - **Key Paper Discovery**: Hover over any time period to see the most influential papers for each research interest during that period.
+  - **Phase Indicators**: Visual phase classification (Emerging, Growth, Stable, Declining) based on growth rate analysis with color-coded legend.
+  - **AI Short Labels**: One-click generation of concise AI-summarized labels for long research interest descriptions.
+  - **Click-Through Navigation**: Click any point on the timeline to navigate directly to filtered paper results for that research interest and time period.
+  - **Export to Papers**: Seamless integration with the paper library for deep-diving into specific time periods and interests.
 - **Comprehensive Profile Management System**: Create and manage multiple research profiles with individual configurations.
   - **Smart Profile Selection**: Visual profile chips with individual remove buttons and system-wide Smart Selection Bar for easy multi-profile workflows.
   - **Profile-Specific Configurations**: Each profile maintains its own email recipients, research interests, ArXiv category filters, tags, and visual styling.
@@ -581,73 +580,57 @@ Theseus Insight features advanced hybrid search capabilities that combine the pr
 
 ## Key Endpoints
 
-### Topic Evolution & Trend-Forecast Dashboard
+### Research Timeline
 
-The trends system provides comprehensive API endpoints for topic discovery, analysis, and forecasting:
+The Research Timeline provides an interactive stream graph visualization for tracking how your research interests evolve over time. This feature integrates with the profile system to provide personalized tracking of research areas.
 
-#### Core Topic Endpoints
+#### Core Timeline Endpoints
 
-**`GET /api/trends`** - List trending topics with metrics
-- **Parameters**: `limit`, `period_type` (week/month/quarter), `duration_months`, `min_doc_count`, `sort_by`
-- **Returns**: Trending topics with growth rates, document counts, and forecasts
-- **Example**: `/api/trends?period_type=month&duration_months=6&sort_by=growth_rate`
+**`GET /api/trends/timeline-data`** - Get timeline data for stream graph visualization
+- **Parameters**: 
+  - `topic_ids` - Comma-separated list of research interest IDs to include
+  - `profile_ids` - Comma-separated list of profile IDs to filter by
+  - `period_type` - Time granularity (week/month/quarter)
+  - `start_date`, `end_date` - Optional date range filters
+  - `include_key_papers` - Include influential papers for each period (default: true)
+  - `key_papers_limit` - Number of key papers per topic per period
+  - `limit` - Maximum number of topics to return
+  - `source` - Data source (`profile_interests` for profile-specific interests)
+- **Returns**: Timeline data with topics, periods, paper counts, growth rates, and key papers
+- **Features**: Phase classification (emerging/growth/stable/declining), period-by-period metrics
 
-**`GET /api/trends/{topic_id}`** - Get detailed topic information
-- **Parameters**: `period_type`, `timeline_limit`, `papers_limit`
-- **Returns**: Topic details, timeline data, representative papers, and forecasts
-- **Features**: Interactive timeline data for visualizations
+**`POST /api/trends/generate-short-labels`** - Generate AI-summarized short labels
+- **Parameters**: `profile_ids` - Optional list of profile IDs to generate labels for
+- **Returns**: Processing status with count of labels generated
+- **Features**: Uses configured LLM model, caches results in database
 
-**`GET /api/trends/search`** - Search topics by keywords
-- **Parameters**: `query`, `limit`
-- **Returns**: Topics matching search criteria with relevance scoring
+**`GET /api/profiles/{profile_id}/research-interests`** - Get research interests for timeline
+- **Returns**: Profile's research interests with metadata for timeline selection
+- **Features**: Returns interest descriptions, similarity thresholds, and associated paper counts
 
-**`GET /api/trends/{topic_id}/papers`** - Get papers for a specific topic
-- **Parameters**: `limit`, `min_relevance`, `sort_by` (relevance/score/date)
-- **Returns**: Papers associated with the topic, sorted by relevance or other criteria
+#### Timeline Visualization Features
 
-#### Administrative Endpoints
+**Stream Graph Design**:
+- **Flowing Streams**: Each research interest is rendered as a smooth, flowing stream whose height represents paper count over time
+- **Color Coding**: Vibrant, distinct colors for each research interest (up to 10 unique colors with automatic cycling)
+- **Stacked Layout**: D3.js stack layout with wiggle offset for aesthetically pleasing flow
 
-**`POST /api/trends/recompute`** - Trigger trends recomputation
-- **Parameters**: `lookback_months`, `duration_months`, `min_papers`, `force_full_recalc`, `clear_all_data`
-- **Returns**: Task ID for background processing with WebSocket progress tracking
-- **Features**: Incremental processing, nuclear option for complete recalculation
+**Interactivity**:
+- **Hover Tooltips**: Detailed information including paper count, growth rate, phase, and key papers
+- **Click Navigation**: Click any point to navigate to filtered paper results
+- **Zoom Controls**: Switch between year/quarter/month/week views
+- **Topic Selection**: Multi-select dropdown to filter which interests to display
 
-**`POST /api/trends/validate-accuracy`** - Validate forecast accuracy
-- **Parameters**: `period_type`
-- **Returns**: Accuracy metrics (MAE, MSE, RMSE, MAPE, R²) with automated alerting
+**Phase Classification**:
+- **Emerging** (>50% growth): High-growth areas marked in green
+- **Growth** (>10% growth): Growing areas marked in blue  
+- **Stable** (±10%): Stable areas marked in gray
+- **Declining** (<-10% growth): Declining areas marked in red
 
-**`GET /api/trends/system-info`** - Get system hardware information
-- **Returns**: CPU, memory, GPU info with recommended performance configuration
-
-#### Research Interest Endpoints
-
-**`GET /api/trends/research-interests`** - Analyze trends based on configured research interests
-- **Parameters**: Similar to main trends endpoint
-- **Returns**: Trends clustered against user's research interests rather than automatic topic discovery
-
-**`POST /api/trends/research-interests/recompute`** - Recompute research interest clustering
-- **Parameters**: `similarity_threshold`, `lookback_months`, `duration_months`
-- **Features**: Alternative to BERTopic using explicit research interest matching
-
-#### Label Summarization
-
-**`POST /api/trends/summarize-labels`** - Generate AI summaries for topic labels
-- **Parameters**: List of topic labels
-- **Returns**: Concise, AI-generated summaries using configured LLM
-- **Features**: Database caching, configurable model selection
-
-**`GET /api/trends/label-cache/stats`** - View label cache statistics
-**`DELETE /api/trends/label-cache`** - Clear cached label summaries
-
-#### Integration with Other Features
-
-The trends system integrates seamlessly with existing Theseus Insight features:
-
-- **Papers API**: Enhanced with `?topic_id=` parameter for topic-based filtering
-- **Mind-Map API**: Enhanced with `topic_id` support for topic-seeded mind-map generation
-- **Newsletter API**: Enhanced with `topic_id` support for topic-focused newsletter generation
-
-📖 **[Complete Trends API Documentation](docs/trends_api_spec.md)** - Detailed API specification with examples and response schemas.
+**Key Paper Integration**:
+- Each time period shows the most relevant papers for that research interest
+- Papers are ranked by similarity score to the research interest
+- Direct links to paper details from the tooltip
 
 ### Research Agent System
 

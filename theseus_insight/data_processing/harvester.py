@@ -393,8 +393,10 @@ class ArxivOAIHarvester:
             "metadataPrefix": "arXiv",
             "from": self.date_from,
             "until": self.date_until,
-            "set": self.set,
         }
+        # Only add set parameter if category is specified
+        if self.set is not None:
+            params["set"] = self.set
         self._debug_log(f"Initial harvest parameters: {params}")
 
         page_count = 0

@@ -7,17 +7,18 @@ import os
 import pathlib
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from .api.routers import all_routers, websocket_manager
-from .api.dependencies import db, CREDENTIAL_KEYS
+from .api.dependencies import CREDENTIAL_KEYS
 from .api.tasks import task_manager
+from .scheduler import scheduler
 from .api.models import ModelConfig, TTSModelConfig, OrchestrationConfig
+from .data_access import SettingsRepository
 
 from pydantic import BaseModel, Field, ValidationError
 from typing import List
 
-from .data_model.data_handling import PaperDatabase
 from .api.models import (
     Model, ModelCreate, Paper, Run, PaginatedResponse,
     NewsletterConfig, RunStatus, OrchestrationConfig,
@@ -62,14 +63,19 @@ async def lifespan(app_instance: FastAPI):
     # Startup logic
     print("INFO:     Starting up Theseus Insight API...")
     try:
+        # Check and apply database migrations
+        from .db.migrations import check_and_apply_migrations
+        print("INFO:     Checking database migrations...")
+        await check_and_apply_migrations()
+        
         # Directory structure is now created during database initialization
 
         # Load credentials from DB (encrypted) and apply to environment
         for key in CREDENTIAL_KEYS:
             if key == "OLLAMA_URL":
-                val = db.get_setting(key)
+                val = SettingsRepository.get(key)
             else:
-                val = db.get_secret_setting(key)
+                val = SettingsRepository.get_secret_setting(key)  # Use encrypted secrets from repository
             if val:
                 os.environ[key] = val
                 if hasattr(ti_module, key):
@@ -105,7 +111,14 @@ async def lifespan(app_instance: FastAPI):
         if missing_vars:
             print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
 
-        if db.get_setting("orchestration") is None:
+        # Initialize model providers
+        from .data_access import ModelProviderRepository
+        try:
+            ModelProviderRepository.ensure_providers_exist()
+        except Exception as e:
+            print(f"ERROR:    Failed to initialize model providers: {e}")
+
+        if SettingsRepository.get("orchestration") is None:
             print("INFO:     Orchestration settings not found in DB. Populating from JSON file...")
             orchestration_json_path = get_config_path('orchestration.json')
             if config_file_exists('orchestration.json'):
@@ -128,7 +141,7 @@ async def lifespan(app_instance: FastAPI):
                         podcast_model=ModelConfig(**default_orchestration_data.get('podcast_model', default_podcast_model.dict())) if default_orchestration_data.get('podcast_model') else default_podcast_model,
                         tts_model=TTSModelConfig(**default_orchestration_data.get('tts_model', default_tts_model.dict())) if default_orchestration_data.get('tts_model') else default_tts_model
                     )
-                    db.set_setting("orchestration", orchestration_config.json())
+                    SettingsRepository.set("orchestration", orchestration_config.json())
                     print("INFO:     Successfully populated orchestration settings into DB.")
                 except Exception as e:
                     print(f"ERROR: Failed to load or parse orchestration.json for DB pre-population: {e}")
@@ -136,14 +149,14 @@ async def lifespan(app_instance: FastAPI):
                 print(f"Warning: orchestration.json not found at {orchestration_json_path}.")
         else:
             print("INFO:     Orchestration settings found in DB. Skipping pre-population.")
-        if db.get_setting("research_interests") is None:
+        if SettingsRepository.get("research_interests") is None:
             print("INFO:     Research interests not found in DB. Populating from TXT file...")
             research_txt_path = get_config_path('research_interests.txt')
             if config_file_exists('research_interests.txt'):
                 try:
                     with open(research_txt_path, 'r') as f:
                         default_interests = f.read().strip()
-                    db.set_setting("research_interests", default_interests)
+                    SettingsRepository.set("research_interests", default_interests)
                     print("INFO:     Successfully populated research interests into DB.")
                 except Exception as e:
                     print(f"ERROR: Failed to load research_interests.txt for DB pre-population: {e}")
@@ -169,6 +182,22 @@ async def lifespan(app_instance: FastAPI):
         except Exception as e:
             print(f"Warning: Media file cleanup encountered an error: {e}")
             # Continue startup even if cleanup fails
+        
+        # Clean up any orphaned worker processes from previous runs
+        print("INFO:     Running startup cleanup (stuck jobs and orphaned processes)...")
+        try:
+            from .startup_cleanup import cleanup_stuck_jobs_and_processes
+            await cleanup_stuck_jobs_and_processes()
+        except Exception as e:
+            print(f"Warning: Startup cleanup failed: {e}")
+        
+        # Start scheduler for nightly jobs
+        print("INFO:     Starting scheduler for nightly jobs...")
+        try:
+            await scheduler.start()
+            print("INFO:     Scheduler started successfully.")
+        except Exception as e:
+            print(f"Error starting scheduler: {e}")
             
     except Exception as e:
         print(f"Error during startup: {e}")
@@ -177,6 +206,18 @@ async def lifespan(app_instance: FastAPI):
     # Shutdown logic
     print("INFO:     Shutting down Theseus Insight API...")
     try:
+        # Clean up any running worker processes on shutdown
+        print("INFO:     Cleaning up worker processes...")
+        try:
+            from .startup_cleanup import cleanup_stuck_jobs_and_processes
+            await cleanup_stuck_jobs_and_processes()
+        except Exception as e:
+            print(f"Warning: Worker process cleanup failed: {e}")
+        
+        # Stop scheduler
+        await scheduler.stop()
+        print("INFO:     Scheduler stopped.")
+        
         # Clean up TaskManager resources
         await task_manager.cleanup()
         print("INFO:     TaskManager cleanup completed.")
@@ -357,4 +398,188 @@ def cleanup_old_media_files(max_age_days: int = 30):
             
     except Exception as e:
         print(f"ERROR: Failed to run media file cleanup: {e}")
-        # Don't raise the error - we don't want cleanup failure to prevent API startup 
+        # Don't raise the error - we don't want cleanup failure to prevent API startup
+
+# Scheduler diagnostic endpoints
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    """Get the current status of the scheduler and its jobs."""
+    try:
+        # Get basic scheduler status
+        scheduler_status = scheduler.get_job_status()
+        
+        # Add additional diagnostic information
+        from .data_access import PaperRepository, TopicMetricsRepository
+        
+        # Check recent papers count
+        cutoff_date = (datetime.now() - timedelta(days=30)).date()
+        recent_papers_count = len(PaperRepository.get_papers_with_embeddings(limit=10000))
+        
+        # Check if we have any topic metrics
+        latest_period_end = TopicMetricsRepository.get_latest_period_end("week")
+        
+        # Get recent logs for scheduler-related tasks
+        from .data_access import LogsRepository
+        recent_logs = LogsRepository.recent(limit=10)
+        scheduler_logs = [log for log in recent_logs if 'trend' in log.get('task_id', '').lower()]
+        
+        return {
+            "scheduler_status": scheduler_status,
+            "diagnostics": {
+                "recent_papers_count": recent_papers_count,
+                "latest_metric_period": latest_period_end.isoformat() if latest_period_end else None,
+                "recent_scheduler_logs": scheduler_logs,
+                "next_scheduled_run": None,  # Will be filled if scheduler is running
+                "minimum_papers_required": 100,
+                "server_time": datetime.now().isoformat(),
+                "timezone": "UTC"
+            }
+        }
+    except Exception as e:
+        return {"error": f"Failed to get scheduler status: {str(e)}"}
+
+@app.get("/api/scheduler/logs")
+async def get_scheduler_logs():
+    """Get recent scheduler-related logs."""
+    try:
+        from .data_access import LogsRepository
+        all_logs = LogsRepository.recent(limit=50)
+        
+        # Filter for scheduler-related logs
+        scheduler_logs = [
+            log for log in all_logs 
+            if any(keyword in log.get('task_id', '').lower() or keyword in log.get('status', '').lower() 
+                   for keyword in ['trend', 'schedule', 'nightly', 'cleanup'])
+        ]
+        
+        return {"logs": scheduler_logs}
+    except Exception as e:
+        return {"error": f"Failed to get scheduler logs: {str(e)}"}
+
+@app.post("/api/scheduler/test")
+async def test_scheduler():
+    """Test the scheduler by running a simple test job."""
+    try:
+        result = scheduler.schedule_test_job()
+        return result
+    except Exception as e:
+        return {"error": f"Failed to schedule test job: {str(e)}"}
+
+@app.get("/api/scheduler/diagnostics")
+async def get_scheduler_diagnostics():
+    """Get comprehensive diagnostics to understand why scheduler might not be processing."""
+    try:
+        from .data_access import (
+            PaperRepository, TopicMetricsRepository, 
+            PaperTopicsRepository, TrendsRepository,
+            SettingsRepository
+        )
+        
+        # Check papers data
+        cutoff_date_30 = (datetime.now() - timedelta(days=30)).date()
+        cutoff_date_7 = (datetime.now() - timedelta(days=7)).date()
+        
+        # Get papers with embeddings
+        all_papers = PaperRepository.get_papers_with_embeddings(limit=10000)
+        
+        # Count papers by date ranges
+        recent_papers_30d = [p for p in all_papers if p.get('date') and 
+                            (isinstance(p['date'], date) and p['date'] >= cutoff_date_30 or
+                             isinstance(p['date'], str) and datetime.strptime(p['date'], '%Y-%m-%d').date() >= cutoff_date_30)]
+        
+        recent_papers_7d = [p for p in all_papers if p.get('date') and 
+                           (isinstance(p['date'], date) and p['date'] >= cutoff_date_7 or
+                            isinstance(p['date'], str) and datetime.strptime(p['date'], '%Y-%m-%d').date() >= cutoff_date_7)]
+        
+        # Check topic assignments
+        papers_needing_topics = PaperTopicsRepository.get_papers_needing_topic_assignment()
+        
+        # Check latest metrics
+        latest_weekly_metrics = TopicMetricsRepository.get_latest_period_end("week")
+        latest_monthly_metrics = TopicMetricsRepository.get_latest_period_end("month")
+        
+        # Check configuration
+        orchestration_config = SettingsRepository.get("orchestration")
+        research_interests = SettingsRepository.get("research_interests")
+        
+        # Check for errors in recent logs
+        from .data_access import LogsRepository
+        recent_logs = LogsRepository.recent(limit=100)
+        error_logs = [log for log in recent_logs if 'error' in log.get('status', '').lower() or 'failed' in log.get('status', '').lower()]
+        
+        # Analyze potential issues
+        issues = []
+        recommendations = []
+        
+        if len(recent_papers_30d) < 100:
+            issues.append(f"Low paper count: Only {len(recent_papers_30d)} papers in last 30 days (minimum required: 100)")
+            recommendations.append("Consider reducing the minimum papers threshold or harvesting more papers")
+        
+        if len(recent_papers_7d) < 10:
+            issues.append(f"Very low recent activity: Only {len(recent_papers_7d)} papers in last 7 days")
+            recommendations.append("Check if paper harvesting is working correctly")
+        
+        if len(papers_needing_topics) > 100:
+            issues.append(f"Many papers without topics: {len(papers_needing_topics)} papers need research interest classification")
+            recommendations.append("Run research interest classification to assign papers to your interests")
+        
+        if not orchestration_config:
+            issues.append("Missing orchestration configuration")
+            recommendations.append("Configure orchestration settings via /api/settings")
+        
+        if not research_interests:
+            issues.append("Missing research interests configuration")
+            recommendations.append("Configure research interests via /api/settings")
+        
+        if latest_weekly_metrics is None:
+            issues.append("No weekly metrics found - research interest classification may not have run")
+            recommendations.append("Run research interest classification via /api/trends/research-interests/recompute")
+        
+        if error_logs:
+            issues.append(f"Recent errors detected: {len(error_logs)} error logs found")
+            recommendations.append("Check error logs for detailed failure information")
+        
+        # Status assessment
+        if len(issues) == 0:
+            status = "healthy"
+        elif len(issues) <= 2:
+            status = "warning"
+        else:
+            status = "critical"
+        
+        return {
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+            "paper_data": {
+                "total_papers_with_embeddings": len(all_papers),
+                "papers_last_30_days": len(recent_papers_30d),
+                "papers_last_7_days": len(recent_papers_7d),
+                "papers_needing_topics": len(papers_needing_topics),
+                "minimum_required_for_processing": 100
+            },
+            "metrics_data": {
+                "latest_weekly_metrics": latest_weekly_metrics.isoformat() if latest_weekly_metrics else None,
+                "latest_monthly_metrics": latest_monthly_metrics.isoformat() if latest_monthly_metrics else None,
+                "has_historical_data": latest_weekly_metrics is not None
+            },
+            "configuration": {
+                "has_orchestration_config": orchestration_config is not None,
+                "has_research_interests": research_interests is not None,
+                "orchestration_config_length": len(orchestration_config) if orchestration_config else 0,
+                "research_interests_length": len(research_interests) if research_interests else 0
+            },
+            "recent_activity": {
+                "total_recent_logs": len(recent_logs),
+                "error_logs": len(error_logs),
+                "recent_errors": error_logs[:5]  # Show first 5 errors
+            },
+            "issues": issues,
+            "recommendations": recommendations,
+            "next_steps": [
+                "Check /api/scheduler/status for job scheduling details",
+                "Review /api/scheduler/logs for scheduler-specific logs",
+                "Test scheduler with /api/scheduler/test"
+            ]
+        }
+    except Exception as e:
+        return {"error": f"Failed to get scheduler diagnostics: {str(e)}"} 

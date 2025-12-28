@@ -1,14 +1,26 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import tempfile
 import uuid
 import os
 from datetime import datetime
+from typing import Dict, Any, Optional, List
 
-from ..dependencies import db, DB_URL
 from ..tasks import task_manager
+from ...db import get_pool_stats
 
 router = APIRouter(prefix="/api/settings/database", tags=["database"])
+
+class ExportRequest(BaseModel):
+    """Request model for database export with incremental options."""
+    incremental: bool = False
+    since_timestamp: Optional[str] = None  # ISO format timestamp
+    tables: Optional[List[str]] = None
+    batch_size: int = 1000
+    streaming: bool = False
+    parallel: bool = False
+    max_workers: int = 4
 
 @router.get("/export")
 async def export_database(background_tasks: BackgroundTasks):
@@ -35,6 +47,9 @@ async def export_database(background_tasks: BackgroundTasks):
         
         # Create timestamp for filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Get database URL from environment
+        DB_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
         
         # Create a temporary directory for the export files
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -104,25 +119,44 @@ async def export_database(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=f"Database export failed: {str(e)}")
 
 @router.post("/export-task")
-async def start_database_export():
+async def start_database_export(request: ExportRequest = ExportRequest()):
     """
-    Initiates a background database export task.
+    Initiates a background database export task with optional incremental support.
 
     This endpoint initiates a new task for exporting the database to a compressed archive file.
-    It returns a task ID and a message for tracking the export progress.
+    Supports both full and incremental exports with configurable options.
+
+    Args:
+        request: Export request with incremental options
 
     Returns:
         dict: A dictionary containing the task ID and a message for tracking the export progress.
     """
+    import asyncio
+    
     task_id = str(uuid.uuid4())
+
+    # Prepare configuration for the export task
+    config = {
+        "incremental": request.incremental,
+        "since_timestamp": request.since_timestamp,
+        "tables": request.tables,
+        "batch_size": request.batch_size,
+        "streaming": request.streaming,
+        "parallel": request.parallel,
+        "max_workers": request.max_workers
+    }
 
     await task_manager.create_task(
         task_id=task_id,
         task_type="database_export",
-        config={},
+        config=config,
     )
 
     await task_manager.enqueue_task(task_manager.run_database_export_task, task_id)
+    
+    # Add a small delay to ensure task is fully initialized
+    await asyncio.sleep(0.1)
 
     return {
         "task_id": task_id,
@@ -155,9 +189,17 @@ async def download_exported_database(task_id: str):
     if task["status"] != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail=f"Task is not completed (current status: {task['status']})")
 
-    result = task.get("result", {})
+    result = task.get("result_json", {})
     archive_path = result.get("archive_path")
+    
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Task result: {result}")
+    logger.info(f"Archive path from result: {archive_path}")
+    
     if not archive_path or not os.path.exists(archive_path):
+        logger.error(f"Archive path not found. Result: {result}, Path exists: {os.path.exists(archive_path) if archive_path else 'No path'}")
         raise HTTPException(status_code=404, detail="Export file not available")
 
     return FileResponse(
@@ -176,18 +218,24 @@ async def download_exported_database(task_id: str):
 async def import_database(
     background_tasks: BackgroundTasks,
     backup_file: UploadFile = File(...),
-    import_mode: str = Form("merge", description="Import mode: 'merge' (default) or 'overwrite'")
+    import_mode: str = Form("merge", description="Import mode: 'merge' (default) or 'overwrite'"),
+    merge_interests: bool = Form(True, description="Merge research interests when profiles match (default: True)")
 ):
     """
     Imports a database from a compressed backup file using background task with progress updates.
 
     This endpoint accepts a compressed backup file and imports it into the database.
     It creates a background task to track the import progress.
+    
+    When merge_interests is True (default), if a Default profile in the import matches the 
+    existing Default profile, any new research interests from the import will be merged 
+    into the existing profile rather than being discarded.
 
     Args:
         background_tasks (BackgroundTasks): An instance of BackgroundTasks for managing background tasks.
         backup_file (UploadFile): The compressed backup file to import.
         import_mode (str): The import mode: 'merge' (default) or 'overwrite'.
+        merge_interests (bool): Whether to merge research interests when profiles match.
 
     Returns:
         dict: A dictionary containing the task ID and a message for tracking the import progress.
@@ -224,7 +272,8 @@ async def import_database(
         task_config = {
             "archive_path": temp_file_path,
             "import_mode": import_mode,
-            "filename": backup_file.filename
+            "filename": backup_file.filename,
+            "merge_interests": merge_interests
         }
         
         await task_manager.create_task(
@@ -243,4 +292,41 @@ async def import_database(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
+
+
+@router.get("/pool-stats")
+async def get_database_pool_stats() -> Dict[str, Any]:
+    """
+    Get connection pool statistics.
+    
+    Returns statistics about the database connection pool including:
+    - Pool size and available connections
+    - Connection reuse ratio
+    - Average wait times
+    - Error counts
+    
+    Returns:
+        dict: Connection pool statistics or message if pooling is disabled
+    """
+    stats = get_pool_stats()
+    
+    if stats is None:
+        return {
+            "enabled": False,
+            "message": "Connection pooling is disabled. Set DB_USE_POOL=true to enable."
+        }
+    
+    return {
+        "enabled": True,
+        "pool_size": stats.get("pool_size", "N/A"),
+        "pool_available": stats.get("pool_available", "N/A"),
+        "connections_created": stats.get("connections_created", 0),
+        "connections_reused": stats.get("connections_reused", 0),
+        "reuse_ratio": f"{stats.get('reuse_ratio', 0):.1%}",
+        "avg_wait_time_ms": round(stats.get("avg_wait_time", 0) * 1000, 2),
+        "timeouts": stats.get("timeouts", 0),
+        "errors": stats.get("errors", 0),
+        "requests_queued": stats.get("requests_queued", 0),
+        "last_reset": stats.get("last_reset", "N/A")
+    } 

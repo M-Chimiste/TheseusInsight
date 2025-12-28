@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional, List
 import logging
+from datetime import datetime
 
 from ..models import (
     ModelCatalogEntry,
@@ -9,36 +10,37 @@ from ..models import (
     ModelCatalogSearchRequest,
     ModelCatalogSearchResponse
 )
-from ..dependencies import db
+from ...data_access import ModelCatalogRepository
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/model-catalog", tags=["model-catalog"])
 
+
+def _convert_model_timestamps(model_dict: dict) -> dict:
+    """Convert PostgreSQL datetime objects to ISO strings for Pydantic models."""
+    model_copy = model_dict.copy()
+    
+    # Handle datetime fields - PostgreSQL returns datetime objects directly
+    for field in ['created_at', 'updated_at']:
+        if model_copy.get(field):
+            if isinstance(model_copy[field], datetime):
+                model_copy[field] = model_copy[field].isoformat()
+    
+    return model_copy
+
 @router.post("/", response_model=ModelCatalogEntry)
 async def create_model(model_data: ModelCatalogCreateRequest):
     """Create a new model catalog entry."""
     try:
-        model_id = db.create_model_catalog_entry(
-            alias=model_data.alias,
-            model_string=model_data.model_string,
-            provider_name=model_data.provider_name,
-            model_type=model_data.model_type,
-            description=model_data.description,
-            max_new_tokens=model_data.max_new_tokens,
-            temperature=model_data.temperature,
-            num_ctx=model_data.num_ctx,
-            trust_remote_code=model_data.trust_remote_code,
-            tags=model_data.tags,
-            is_favorite=model_data.is_favorite
-        )
+        model_id = ModelCatalogRepository.insert(model_data.dict())
         
         # Return the created model
-        created_model = db.get_model_catalog_entry(model_id)
+        created_model = ModelCatalogRepository.get(model_id)
         if not created_model:
             raise HTTPException(status_code=500, detail="Failed to retrieve created model")
         
-        return ModelCatalogEntry(**created_model)
+        return ModelCatalogEntry(**_convert_model_timestamps(created_model))
     
     except Exception as e:
         logger.error(f"Error creating model catalog entry: {e}")
@@ -48,11 +50,11 @@ async def create_model(model_data: ModelCatalogCreateRequest):
 async def get_model(model_id: int):
     """Get a model catalog entry by ID."""
     try:
-        model = db.get_model_catalog_entry(model_id)
+        model = ModelCatalogRepository.get(model_id)
         if not model:
             raise HTTPException(status_code=404, detail="Model not found")
         
-        return ModelCatalogEntry(**model)
+        return ModelCatalogEntry(**_convert_model_timestamps(model))
     
     except HTTPException:
         raise
@@ -65,7 +67,7 @@ async def update_model(model_id: int, model_data: ModelCatalogUpdateRequest):
     """Update a model catalog entry."""
     try:
         # Check if model exists
-        existing_model = db.get_model_catalog_entry(model_id)
+        existing_model = ModelCatalogRepository.get(model_id)
         if not existing_model:
             raise HTTPException(status_code=404, detail="Model not found")
         
@@ -77,19 +79,17 @@ async def update_model(model_id: int, model_data: ModelCatalogUpdateRequest):
         
         if not update_data:
             # No fields to update, return existing model
-            return ModelCatalogEntry(**existing_model)
+            return ModelCatalogEntry(**_convert_model_timestamps(existing_model))
         
         # Update the model
-        success = db.update_model_catalog_entry(model_id, **update_data)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to update model")
+        ModelCatalogRepository.update(model_id, update_data)
         
         # Return updated model
-        updated_model = db.get_model_catalog_entry(model_id)
+        updated_model = ModelCatalogRepository.get(model_id)
         if not updated_model:
             raise HTTPException(status_code=500, detail="Failed to retrieve updated model")
         
-        return ModelCatalogEntry(**updated_model)
+        return ModelCatalogEntry(**_convert_model_timestamps(updated_model))
     
     except HTTPException:
         raise
@@ -102,14 +102,12 @@ async def delete_model(model_id: int):
     """Delete a model catalog entry."""
     try:
         # Check if model exists
-        existing_model = db.get_model_catalog_entry(model_id)
+        existing_model = ModelCatalogRepository.get(model_id)
         if not existing_model:
             raise HTTPException(status_code=404, detail="Model not found")
         
         # Delete the model
-        success = db.delete_model_catalog_entry(model_id)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to delete model")
+        ModelCatalogRepository.delete(model_id)
         
         return {"message": "Model deleted successfully"}
     
@@ -131,7 +129,7 @@ async def search_models(
 ):
     """Search model catalog with filters and pagination."""
     try:
-        result = db.search_model_catalog(
+        result = ModelCatalogRepository.search(
             search=search,
             provider=provider,
             model_type=model_type,
@@ -142,7 +140,7 @@ async def search_models(
         )
         
         # Convert models to Pydantic models
-        models = [ModelCatalogEntry(**model) for model in result['models']]
+        models = [ModelCatalogEntry(**_convert_model_timestamps(model)) for model in result['models']]
         
         return ModelCatalogSearchResponse(
             models=models,
@@ -161,21 +159,19 @@ async def toggle_favorite(model_id: int):
     """Toggle the favorite status of a model."""
     try:
         # Check if model exists
-        existing_model = db.get_model_catalog_entry(model_id)
+        existing_model = ModelCatalogRepository.get(model_id)
         if not existing_model:
             raise HTTPException(status_code=404, detail="Model not found")
         
         # Toggle favorite status
-        success = db.toggle_model_favorite(model_id)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to toggle favorite status")
+        ModelCatalogRepository.toggle_favorite(model_id)
         
         # Return updated model
-        updated_model = db.get_model_catalog_entry(model_id)
+        updated_model = ModelCatalogRepository.get(model_id)
         if not updated_model:
             raise HTTPException(status_code=500, detail="Failed to retrieve updated model")
         
-        return ModelCatalogEntry(**updated_model)
+        return ModelCatalogEntry(**_convert_model_timestamps(updated_model))
     
     except HTTPException:
         raise

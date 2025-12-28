@@ -1,6 +1,7 @@
 import React from 'react';
 import { Grid, Card, CardActionArea, CardContent, Typography, Box } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useLayout } from '../contexts/LayoutContext';
 import SettingsIcon from '@mui/icons-material/Settings';
 import EmailIcon from '@mui/icons-material/Email';
 import MicIcon from '@mui/icons-material/Mic';
@@ -12,6 +13,9 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import StorageIcon from '@mui/icons-material/Storage';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import PeopleIcon from '@mui/icons-material/People';
+import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
 
 interface NavCardItem {
   title: string;
@@ -44,6 +48,24 @@ const navItems: NavCardItem[] = [
     description: 'View and edit your saved mind-map report library.',
     icon: <AccountTreeIcon fontSize="large" color="primary" />,
     path: '/mindmap-reports',
+  },
+  {
+    title: 'Research Timeline',
+    description: 'Visualize research interest trends and paper activity over time.',
+    icon: <TrendingUpIcon fontSize="large" color="primary" />,
+    path: '/research-timeline',
+  },
+  {
+    title: 'Profile Management',
+    description: 'Create and manage research profiles with custom filters and interests.',
+    icon: <PeopleIcon fontSize="large" color="primary" />,
+    path: '/profile-management',
+  },
+  {
+    title: 'Bulk Operations',
+    description: 'Perform bulk paper ingestion and embedding for large-scale data processing.',
+    icon: <WorkOutlineIcon fontSize="large" color="primary" />,
+    path: '/bulk-operations',
   },
   {
     title: 'Audio Visualizer',
@@ -91,13 +113,14 @@ const navItems: NavCardItem[] = [
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { headerHeight } = useLayout(); // Get dynamic header height
 
   const handleCardClick = (path: string) => {
     navigate(path);
   };
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
       <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
         Dashboard
       </Typography>

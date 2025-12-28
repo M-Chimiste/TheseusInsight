@@ -8,44 +8,48 @@ import os
 import sys
 import json
 import torch
+import asyncio
 from typing import Optional
 from tqdm import tqdm
+from uuid import UUID
 
 # Add the project root to the path so we can import theseus_insight modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from theseus_insight.data_model.data_handling import PaperDatabase
+from theseus_insight.data_access import PaperRepository, SettingsRepository
 from theseus_insight.inference import SentenceTransformerInference
+from theseus_insight.data_processing.optimized_embeddings import OptimizedEmbeddingPipeline, optimize_embedding_batch_size
+from theseus_insight.data_processing.checkpoint_manager import CheckpointManager
 
 
-def backfill_embeddings(
-    db_url: str,
+async def backfill_embeddings(
     embedding_model_name: Optional[str] = None,
     trust_remote_code: bool = True,
     batch_size: int = 256,
     dry_run: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    use_optimized_pipeline: bool = True,
+    use_database_checkpoints: bool = True
 ):
     """
     Backfill embeddings for papers that don't have them.
     
     Args:
-        db_url: Database connection URL
         embedding_model_name: Name of the embedding model to use. If None, tries to get from orchestration config.
         trust_remote_code: Whether to trust remote code for the embedding model
         batch_size: How many papers to process at once (1 = no batching, higher = more efficient)
         dry_run: If True, only shows what would be done without making changes
         verbose: If True, prints detailed progress information
+        use_optimized_pipeline: If True, uses the optimized parallel pipeline
     """
     if verbose:
-        print(f"Connecting to database: {db_url}")
-    db = PaperDatabase(db_url)
+        print("Connecting to database using repository pattern...")
     
     # Get embedding model configuration
     if embedding_model_name is None:
         if verbose:
             print("No embedding model specified, trying to get from orchestration config...")
-        orchestration_json = db.get_setting("orchestration")
+        orchestration_json = SettingsRepository.get("orchestration")
         if not orchestration_json:
             raise ValueError("No orchestration config found in database and no embedding model specified")
         
@@ -59,19 +63,12 @@ def backfill_embeddings(
         if verbose:
             print(f"Using embedding model from config: {embedding_model_name}")
     
-    # Get papers without embeddings
-    papers_without_embeddings = db.get_papers_without_embeddings()
-    if verbose:
-        print(f"Found {len(papers_without_embeddings)} papers without embeddings")
-        if batch_size > 1:
-            print(f"⚡ Using batch processing with batch size: {batch_size}")
-    
-    if len(papers_without_embeddings) == 0:
-        if verbose:
-            print("All papers already have embeddings!")
-        return
-    
+    # Check if we need to process any papers
     if dry_run:
+        papers_without_embeddings = PaperRepository.get_papers_without_embeddings()
+        if len(papers_without_embeddings) == 0:
+            print("All papers already have embeddings!")
+            return
         print(f"DRY RUN: Would process {len(papers_without_embeddings)} papers")
         for paper in papers_without_embeddings[:5]:  # Show first 5 as examples
             print(f"  - Paper ID {paper['id']}: {paper['title'][:100]}...")
@@ -104,6 +101,50 @@ def backfill_embeddings(
         device=device
     )
     
+    # Use optimized pipeline if requested
+    if use_optimized_pipeline:
+        if verbose:
+            print("🚀 Using optimized embedding pipeline with I/O overlap")
+            
+        # Optionally find optimal batch size
+        if batch_size == 256:  # Default value - auto-optimize
+            optimal_batch_size = optimize_embedding_batch_size(embedding_model, verbose=verbose)
+            batch_size = optimal_batch_size
+        
+        # Run optimized pipeline
+        pipeline = OptimizedEmbeddingPipeline(
+            embedding_model=embedding_model,
+            batch_size=batch_size,
+            prefetch_size=2
+        )
+        
+        stats = pipeline.process_papers_without_embeddings(
+            use_bulk_operations=True,
+            verbose=verbose
+        )
+        
+        if verbose:
+            print(f"\nBackfill complete!")
+            print(f"Successfully processed: {stats['papers_processed']} papers")
+            if stats.get('errors', 0) > 0:
+                print(f"Errors encountered: {stats['errors']} papers")
+            print(f"⚡ Rate: {stats.get('papers_per_second', 0):.1f} papers/second")
+        
+        return
+    
+    # Fall back to original implementation
+    # Get papers without embeddings
+    papers_without_embeddings = PaperRepository.get_papers_without_embeddings()
+    if verbose:
+        print(f"Found {len(papers_without_embeddings)} papers without embeddings")
+        if batch_size > 1:
+            print(f"⚡ Using batch processing with batch size: {batch_size}")
+    
+    if len(papers_without_embeddings) == 0:
+        if verbose:
+            print("All papers already have embeddings!")
+        return
+    
     # Process papers in batches
     processed_count = 0
     error_count = 0
@@ -122,7 +163,7 @@ def backfill_embeddings(
                     embedding = list(embedding)
                 
                 # Update the paper with the new embedding
-                db.update_paper_embedding(paper['id'], embedding)
+                PaperRepository.update_embedding(paper['id'], embedding)
                 processed_count += 1
                 
             except Exception as e:
@@ -167,7 +208,7 @@ def backfill_embeddings(
                         embedding = list(embedding)
                     
                     # Update the paper with the new embedding
-                    db.update_paper_embedding(paper['id'], embedding)
+                    PaperRepository.update_embedding(paper['id'], embedding)
                     processed_count += 1
                     
                 except Exception as e:
@@ -191,14 +232,13 @@ def backfill_embeddings(
                     elif not isinstance(embedding, list):
                         embedding = list(embedding)
                     
-                    db.update_paper_embedding(paper['id'], embedding)
+                    PaperRepository.update_embedding(paper['id'], embedding)
                     processed_count += 1
                     
                 except Exception as e2:
                     if verbose:
                         print(f"\nError processing paper ID {paper['id']} individually: {e2}")
                     error_count += 1
-                    continue
     
     if verbose:
         print(f"\nBackfill complete!")
@@ -213,11 +253,6 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Backfill embeddings for papers without them")
-    parser.add_argument(
-        "--db-url", 
-        default=os.getenv("DATABASE_URL", "data/theseus.db"),
-        help="Database connection URL (default: from DATABASE_URL env var)"
-    )
     parser.add_argument(
         "--embedding-model", 
         help="Embedding model name (default: from orchestration config)"
@@ -250,6 +285,18 @@ def main():
         action="store_true",
         help="Disable verbose output"
     )
+    parser.add_argument(
+        "--use-optimized-pipeline",
+        action="store_true",
+        default=True,
+        help="Use optimized pipeline with I/O overlap (default: True)"
+    )
+    parser.add_argument(
+        "--no-optimized-pipeline",
+        action="store_false",
+        dest="use_optimized_pipeline",
+        help="Disable optimized pipeline and use original implementation"
+    )
     
     args = parser.parse_args()
     
@@ -257,14 +304,14 @@ def main():
     verbose = args.verbose and not args.quiet
     
     try:
-        backfill_embeddings(
-            db_url=args.db_url,
+        asyncio.run(backfill_embeddings(
             embedding_model_name=args.embedding_model,
             trust_remote_code=args.trust_remote_code,
             batch_size=args.batch_size,
             dry_run=args.dry_run,
-            verbose=verbose
-        )
+            verbose=verbose,
+            use_optimized_pipeline=args.use_optimized_pipeline
+        ))
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

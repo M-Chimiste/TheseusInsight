@@ -9,7 +9,8 @@ import logging
 from typing import Dict, Any
 
 from ..state import MindMapState, Message
-from ...inference.llm import LLMModelFactory
+from LLMFactory import LLMModelFactory
+from ...data_access import PaperRepository
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,9 @@ class EmbedSeedNode:
     using the configured embedding model.
     """
     
-    def __init__(self, db):
-        """
-        Initialize the Embed Seed Node.
-        
-        Args:
-            db: Database instance (PaperDatabase)
-        """
-        self.db = db
+    def __init__(self):
+        """Initialize the Embed Seed Node."""
+        pass
         
     def __call__(self, state: MindMapState) -> Dict[str, Any]:
         """
@@ -55,7 +51,7 @@ class EmbedSeedNode:
             logger.info(f"Checking embedding for seed paper ID: {seed_paper_id}")
             
             # Check if paper already has embedding in database
-            paper_data = self.db.get_paper_by_id(seed_paper_id)
+            paper_data = PaperRepository.get_paper_by_id(seed_paper_id)
             has_embedding = paper_data and paper_data.get('embedding') is not None
             
             if has_embedding:
@@ -108,7 +104,7 @@ class EmbedSeedNode:
                 )
                 
                 # Update paper in database with embedding
-                self.db.update_paper_embedding(seed_paper_id, embedding)
+                PaperRepository.update_paper_embedding(seed_paper_id, embedding)
                 
                 logger.info(f"Successfully generated and saved embedding for seed paper {seed_paper_id}")
                 
@@ -144,14 +140,11 @@ class EmbedSeedNode:
         }
 
 
-def create_embed_seed_node(db) -> EmbedSeedNode:
+def create_embed_seed_node() -> EmbedSeedNode:
     """
     Factory function to create an EmbedSeedNode.
-    
-    Args:
-        db: Database instance
         
     Returns:
         Configured EmbedSeedNode instance
     """
-    return EmbedSeedNode(db) 
+    return EmbedSeedNode() 

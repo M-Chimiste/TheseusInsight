@@ -108,12 +108,12 @@ SECTION {{ loop.index }} END
 INSTRUCTIONS:
 
 Format:
-- Begin exactly with "Dear Reader,\n"
+- Begin exactly with "Dear Reader,\n" You want to make sure there is a new line after the Dear Reader line.
 - Sign off exactly with "\n~Theseus Insight"
 - Return a JSON object with a single key, "draft", containing your full introduction
 
 Content:
-- Summarize the main takeaways from all sections into one coherent overview of this week’s research
+- Summarize the main takeaways from all sections into one coherent overview of this week's research
 - Write an engaging hook that draws the reader in
 - Use only information provided; do not add or invent details
 - Avoid repetition

@@ -1,7 +1,8 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from uuid import UUID
 
 # Basic domain entities
 class Model(BaseModel):
@@ -66,11 +67,26 @@ class VisualizerSettings(BaseModel):
 
 class ModelConfig(BaseModel):
     model_name: str
-    model_type: str # This refers to the provider name e.g., "ollama", "openai"
+    model_type: str # This refers to the provider name e.g., "ollama", "lmstudio", "openai"
     max_new_tokens: Optional[int] = Field(None, example=2048)
     temperature: Optional[float] = Field(None, example=0.7)
     num_ctx: Optional[int] = Field(None, example=4096) # Context window size
     trust_remote_code: Optional[bool] = Field(None, example=False)
+
+    # Host configuration (supports Ollama, LMStudio, Custom-OAI)
+    host: Optional[str] = Field(
+        None,
+        example="athena.local:11434",
+        description="Custom host for Ollama, LMStudio, or Custom-OAI providers. "
+                   "Format: 'host:port' or 'http://host:port'. "
+                   "Priority: configured host > env variable > provider default. "
+                   "Leave empty to use OLLAMA_URL, LMSTUDIO_HOST, or provider defaults."
+    )
+
+    # LMStudio-specific fields
+    context_length: Optional[int] = Field(None, example=32768, description="Context window for LMStudio")
+    gpu_offload: Optional[str] = Field(None, example="max", description="GPU offload: 'max', 'off', or ratio 0-1")
+
     # Any other model-specific parameters can be added here or in a Dict[str, Any]
 
 class TTSModelConfig(BaseModel):
@@ -159,6 +175,7 @@ class RunStatus(BaseModel):
     message: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 # Settings for ArXiv
 class ArxivCategoriesConfig(BaseModel):
@@ -177,6 +194,7 @@ class NewsletterConfig(BaseModel):
     max_papers_to_select: int = Field(10, gt=0)
     min_score_threshold: float = Field(0.5, ge=0, le=1)
     search_query: Optional[str] = None
+    topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers")
     send_email: bool = False
     intro_music_path: Optional[str] = None # Path to intro music file if any
 
@@ -189,12 +207,6 @@ class EmailRecipients(BaseModel):
 class ResearchInterests(BaseModel):
     interests: str = Field(..., example="Large language models, reinforcement learning, and generative AI.")
 
-# Ensure this is at the end or handled correctly if models refer to each other.
-# This is a placeholder for now, actual model definitions will be used from above.
-# Model.update_forward_refs()
-# ModelConfig.update_forward_refs()
-# OrchestrationConfig.update_forward_refs()
-# NewsletterConfig.update_forward_refs()
 
 # --- Podcast Generation Specific Models --- #
 
@@ -260,7 +272,37 @@ class NewsletterRunParams(BaseModel):
     end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
     email_recipients: List[str] = Field(default_factory=list, example=["test@example.com"])
     research_interests: str = Field(..., example="AI in healthcare")
+    topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers (overrides research_interests filtering)")
     generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
+    
+    # Profile filtering parameters
+    profile_id: Optional[int] = Field(None, description="Generate newsletter for specific profile")
+    profile_ids: Optional[List[int]] = Field(None, description="Generate newsletter for multiple profiles")
+    profile_tag: Optional[str] = Field(None, description="Generate newsletter for profiles with specific tag")
+    profile_tags: Optional[List[str]] = Field(None, description="Generate newsletter for profiles with any of the tags")
+    use_profile_recipients: bool = Field(False, description="Use profile-specific email recipients instead of email_recipients")
+
+    # Multi-server judge configuration
+    use_multi_server_judge: bool = Field(False, description="Use multi-server worker pool for LLM judge scoring")
+    judge_server_ids: Optional[List[int]] = Field(None, description="List of inference server IDs to use for multi-server judge scoring")
+    judge_request_timeout_sec: Optional[int] = Field(None, description="Timeout in seconds for judge LLM requests")
+    judge_max_retries: Optional[int] = Field(None, description="Maximum number of retries for failed judge tasks")
+
+# --- Pydantic Model for Profile-Specific Newsletter Generation ---
+class ProfileNewsletterRequest(BaseModel):
+    start_date: str = Field(..., example=date.today().strftime("%Y-%m-%d"))
+    end_date: str = Field(..., example=(date.today() - timedelta(days=6)).strftime("%Y-%m-%d"))
+    email_recipients: Optional[List[str]] = Field(default=None, example=["test@example.com"], description="Email recipients (if not provided, uses profile's configured recipients)")
+    research_interests: Optional[str] = Field(None, example="AI in healthcare", description="Research interests (if not provided, uses profile's research interests)")
+    topic_id: Optional[int] = Field(None, description="Generate newsletter from specific topic papers (overrides research_interests filtering)")
+    generate_podcast_run: bool = Field(False, description="Whether to generate a podcast as part of this run.")
+    use_profile_recipients: bool = Field(True, description="Use profile-specific email recipients (default: true for profile-specific requests)")
+
+class ProfileNewsletterResponse(BaseModel):
+    task_id: str = Field(..., description="Task ID for tracking newsletter generation progress")
+    message: str = Field(..., description="Success message")
+    profile_id: int = Field(..., description="Profile ID for which newsletter is being generated")
+    profile_name: str = Field(..., description="Name of the profile")
 
 # Models for Papers Page
 class PaperApiResponse(BaseModel):
@@ -269,14 +311,15 @@ class PaperApiResponse(BaseModel):
     abstract: str
     date: str
     date_run: str
-    score: float # Or int, needs to match db/model
-    rationale: str
-    related: bool
-    cosine_similarity: float
+    score: Optional[float] = Field(default=None, description="Legacy paper score (use profile_score for profile-specific scores)")
+    rationale: Optional[str] = Field(default=None, description="Legacy rationale (use profile rationale for profile-specific rationales)")
+    related: Optional[bool] = Field(default=False, description="Legacy related flag")
+    cosine_similarity: Optional[float] = Field(default=None, description="Cosine similarity score")
     url: str
     embedding_model: str
     keywords: Optional[List[str]] = Field(default=None, description="Top keywords extracted from title/abstract")
     similarity_score: Optional[float] = Field(default=None, description="Semantic similarity score when returned from similarity search")
+    profile_score: Optional[float] = Field(default=None, description="Profile-specific relevance score")
     semantic_score: Optional[float] = Field(default=None, description="Semantic similarity score in hybrid search")
     keyword_score: Optional[float] = Field(default=None, description="Keyword matching score in hybrid search")
     hybrid_score: Optional[float] = Field(default=None, description="Combined hybrid search score")
@@ -289,6 +332,12 @@ class SimilaritySearchResponse(BaseModel):
     query_text: str
     results: List[PaperApiResponse]
     total_results: int
+
+class PaperUpdateRequest(BaseModel):
+    """Request payload for updating a paper's editable fields."""
+    score: Optional[float] = Field(default=None, ge=0.0, le=10.0, description="New score (0-10)")
+    related: Optional[bool] = Field(default=None, description="Whether the paper is considered relevant")
+    profile_ids: Optional[List[int]] = Field(default=None, description="If provided, update profile-specific score/related for these profiles instead of base paper")
 
 class SimilaritySearchRequest(BaseModel):
     query_text: str = Field(..., description="Text to search for semantically similar papers")
@@ -515,13 +564,30 @@ class MindMapData(BaseModel):
 
 class MindMapExpandRequest(BaseModel):
     """Request model for expanding a mind-map."""
-    paper_id: str = Field(..., description="Seed paper ID")
+    paper_id: Optional[str] = Field(None, description="Seed paper ID (required if topic_id not provided)")
+    topic_id: Optional[int] = Field(None, description="Seed from topic's representative papers (required if paper_id not provided)")
     k: int = Field(15, ge=1, le=50, description="Number of similar papers to retrieve")
     similarity_threshold: float = Field(0.3, ge=0.0, le=1.0, description="Minimum similarity threshold")
     layout_algorithm: str = Field("force", description="Layout algorithm: force, circular, hierarchical")
     model_config_override: Optional[ModelConfig] = Field(None, description="Override default summarization model")
     expansion_order: int = Field(1, ge=1, le=5, description="Order of expansion (1-5). Higher orders expand from each retrieved paper.")
     max_nodes_per_order: int = Field(20, ge=5, le=50, description="Maximum number of nodes to expand from each paper in multi-order expansion")
+    # Profile filtering parameters
+    profile_id: Optional[int] = Field(None, description="Filter papers to specific profile ID")
+    profile_ids: Optional[List[int]] = Field(None, description="Filter papers to multiple profile IDs")
+    profile_tag: Optional[str] = Field(None, description="Filter papers to profiles with specific tag")
+    profile_tags: Optional[List[str]] = Field(None, description="Filter papers to profiles with any of these tags")
+    
+    @model_validator(mode='after')
+    def validate_seed_input(self):
+        """Ensure either paper_id or topic_id is provided, but not both."""
+        if not self.paper_id and not self.topic_id:
+            raise ValueError('Either paper_id or topic_id must be provided')
+        
+        if self.paper_id and self.topic_id:
+            raise ValueError('Cannot specify both paper_id and topic_id - choose one')
+        
+        return self
 
 class MindMapExpandResponse(BaseModel):
     """Response model for mind-map expansion."""
@@ -579,3 +645,481 @@ class MindMapReportSaveResponse(BaseModel):
     id: int = Field(..., description="Saved report ID")
     title: str = Field(..., description="Report title")
     message: str = Field(..., description="Success message")
+
+# === Topic Evolution & Trends Models ===
+
+class TopicApiResponse(BaseModel):
+    """API response model for a topic."""
+    id: int = Field(..., description="Topic ID")
+    label: str = Field(..., description="Topic label")
+    keywords: List[str] = Field(..., description="Top keywords for the topic")
+    embedding_model: Optional[str] = Field(None, description="Embedding model used")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+    
+    # Latest metrics (if available)
+    latest_doc_count: Optional[int] = Field(None, description="Most recent document count")
+    latest_growth_rate: Optional[float] = Field(None, description="Most recent growth rate")
+    total_papers: Optional[int] = Field(None, description="Total papers associated with topic")
+    
+    # Forecasts (if available)
+    forecast_1m: Optional[int] = Field(None, description="1-month forecast")
+    forecast_3m: Optional[int] = Field(None, description="3-month forecast")
+    forecast_6m: Optional[int] = Field(None, description="6-month forecast")
+
+class TopicMetricResponse(BaseModel):
+    """API response model for topic metrics over time."""
+    id: int = Field(..., description="Metric ID")
+    topic_id: int = Field(..., description="Topic ID")
+    period_start: str = Field(..., description="Period start date")
+    period_end: str = Field(..., description="Period end date")
+    period_type: str = Field(..., description="Period type (week/month/quarter)")
+    doc_count: int = Field(..., description="Number of documents in this period")
+    avg_score: Optional[float] = Field(None, description="Average score of papers")
+    growth_rate: Optional[float] = Field(None, description="Growth rate compared to previous period")
+    forecast_1m: Optional[int] = Field(None, description="1-month forecast")
+    forecast_3m: Optional[int] = Field(None, description="3-month forecast")
+    forecast_6m: Optional[int] = Field(None, description="6-month forecast")
+    created_at: str = Field(..., description="Creation timestamp")
+
+class TopicDetailResponse(BaseModel):
+    """Detailed response for a specific topic including timeline and papers."""
+    topic: TopicApiResponse = Field(..., description="Topic information")
+    timeline: List[TopicMetricResponse] = Field(..., description="Historical metrics")
+    representative_papers: List[PaperApiResponse] = Field(..., description="Most relevant papers")
+    total_papers: int = Field(..., description="Total papers for this topic")
+
+class TrendsListRequest(BaseModel):
+    """Request model for listing trending topics."""
+    limit: int = Field(20, ge=1, le=100, description="Maximum number of topics to return")
+    period_type: str = Field("month", description="Display granularity: week, month, quarter")
+    duration_months: int = Field(6, ge=1, le=24, description="Duration to analyze: 1, 3, 6, 12, 24 months")
+    min_doc_count: int = Field(5, ge=1, description="Minimum document count filter")
+    sort_by: str = Field("growth_rate", description="Sort by: growth_rate, doc_count, forecast_3m")
+
+class TrendsListResponse(BaseModel):
+    """Response model for trending topics list."""
+    topics: List[TopicApiResponse] = Field(..., description="List of trending topics")
+    total_topics: int = Field(..., description="Total number of topics in system")
+    total_papers_with_topics: int = Field(..., description="Total papers with topic assignments")
+    period_type: str = Field(..., description="Display granularity used")
+    duration_months: int = Field(..., description="Duration analyzed")
+
+class TrendsSearchRequest(BaseModel):
+    """Request model for searching topics."""
+    query: str = Field(..., min_length=1, description="Search query")
+    limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
+
+class TrendsSearchResponse(BaseModel):
+    """Response model for topic search."""
+    query: str = Field(..., description="Search query used")
+    topics: List[TopicApiResponse] = Field(..., description="Matching topics")
+    total_results: int = Field(..., description="Total number of results")
+
+class TrendsRecomputeRequest(BaseModel):
+    """Request model for trends recomputation with weekly-first analysis."""
+    lookback_months: int = Field(24, ge=1, le=48, description="Months of historical data to analyze")
+    duration_months: int = Field(6, ge=1, le=24, description="Duration for analysis views (1, 3, 6, 12, 24 months)")
+    min_papers: int = Field(100, ge=10, description="Minimum papers required to run analysis")
+    validate_accuracy: bool = Field(True, description="Whether to validate forecast accuracy")
+    force_full_recalc: bool = Field(False, description="Force full recalculation instead of incremental processing")
+    clear_all_data: bool = Field(False, description="NUCLEAR OPTION: Clear all topics, metrics, and relationships before recalculation (for development/testing)")
+
+class TrendsRecomputeResponse(BaseModel):
+    """Response model for trends recomputation."""
+    task_id: str = Field(..., description="Task ID for tracking progress")
+    message: str = Field(..., description="Status message")
+    estimated_duration_minutes: int = Field(..., description="Estimated processing time")
+
+class TopicPapersRequest(BaseModel):
+    """Request model for getting papers for a topic."""
+    limit: int = Field(50, ge=1, le=200, description="Maximum number of papers")
+    min_relevance: float = Field(0.1, ge=0.0, le=1.0, description="Minimum relevance score")
+    sort_by: str = Field("relevance", description="Sort by: relevance, score, date")
+
+class TopicPapersResponse(BaseModel):
+    """Response model for topic papers."""
+    topic_id: int = Field(..., description="Topic ID")
+    topic_label: str = Field(..., description="Topic label")
+    papers: List[PaperApiResponse] = Field(..., description="Papers for this topic")
+    total_papers: int = Field(..., description="Total papers for this topic")
+
+class TrendsValidateAccuracyRequest(BaseModel):
+    """Request model for forecast accuracy validation."""
+    period_type: str = Field(default="month", description="Period type for validation")
+
+# Performance Configuration Models
+class PerformanceConfig(BaseModel):
+    """Performance configuration for computationally intensive operations."""
+    
+    # Hardware Resources
+    max_cores: int = Field(default=4, ge=1, le=128, description="Maximum CPU cores to use")
+    max_memory_gb: int = Field(default=16, ge=4, le=2048, description="Maximum memory in GB")
+    
+    # HDBSCAN Clustering Optimization
+    hdbscan_n_jobs: int = Field(default=-1, ge=-1, le=128, description="HDBSCAN parallel jobs (-1 = use all cores)")
+    clustering_batch_size: int = Field(default=50000, ge=1000, le=1000000, description="Batch size for clustering operations")
+    
+    # Embedding & Vector Operations
+    embedding_batch_size: int = Field(default=512, ge=32, le=2048, description="Embedding batch size")
+    vector_processing_workers: int = Field(default=8, ge=1, le=64, description="Workers for vector processing")
+    
+    # Memory Management
+    enable_memory_mapping: bool = Field(default=True, description="Use memory mapping for large datasets")
+    cache_embeddings: bool = Field(default=True, description="Cache embeddings in memory")
+    aggressive_garbage_collection: bool = Field(default=False, description="Force garbage collection between stages")
+    
+    # Development vs Production Mode
+    development_mode: bool = Field(default=False, description="Enable development optimizations (smaller datasets, faster iterations)")
+    development_max_papers: int = Field(default=5000, ge=100, le=50000, description="Max papers in development mode")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "max_cores": 16,
+                "max_memory_gb": 128,
+                "hdbscan_n_jobs": -1,
+                "clustering_batch_size": 100000,
+                "embedding_batch_size": 1024,
+                "vector_processing_workers": 16,
+                "enable_memory_mapping": True,
+                "cache_embeddings": True,
+                "aggressive_garbage_collection": False,
+                "development_mode": False,
+                "development_max_papers": 5000
+            }
+        }
+
+class SystemInfoResponse(BaseModel):
+    """System hardware information for performance configuration."""
+    cpu_count_physical: int = Field(description="Physical CPU cores")
+    cpu_count_logical: int = Field(description="Logical CPU cores (with hyperthreading)")
+    memory_total_gb: float = Field(description="Total system memory in GB")
+    memory_available_gb: float = Field(description="Available system memory in GB")
+    gpu_available: bool = Field(description="GPU acceleration available")
+    gpu_name: Optional[str] = Field(default=None, description="GPU name if available")
+    recommended_config: PerformanceConfig = Field(description="Recommended performance configuration")
+
+# === Research Interest Clustering API Models ===
+# Separate from automatic topic discovery, these handle research interest based analysis
+
+class ResearchInterestApiResponse(BaseModel):
+    """Response model for research interest data."""
+    id: int
+    interest_text: str
+    embedding_model: Optional[str] = None
+    created_at: str
+    updated_at: Optional[str] = None
+    latest_doc_count: Optional[int] = 0
+    latest_growth_rate: Optional[float] = None
+    total_papers: int = 0
+    latest_avg_relevance: Optional[float] = None
+    latest_avg_score: Optional[float] = None
+    forecast_1m: Optional[int] = None
+    forecast_3m: Optional[int] = None
+    forecast_6m: Optional[int] = None
+
+
+class ResearchInterestMetricResponse(BaseModel):
+    """Response model for research interest metrics."""
+    id: int
+    research_interest_id: int
+    period_start: str
+    period_end: str
+    period_type: str
+    doc_count: int
+    avg_relevance_score: Optional[float] = None
+    avg_paper_score: Optional[float] = None
+    growth_rate: Optional[float] = None
+    forecast_1m: Optional[int] = None
+    forecast_3m: Optional[int] = None
+    forecast_6m: Optional[int] = None
+    created_at: str
+
+
+class ResearchInterestDetailResponse(BaseModel):
+    """Response model for detailed research interest information."""
+    interest: ResearchInterestApiResponse
+    timeline: List[ResearchInterestMetricResponse]
+    representative_papers: List[PaperApiResponse]
+    total_papers: int
+
+
+class ResearchInterestsListRequest(BaseModel):
+    """Request model for listing research interests."""
+    limit: int = Field(20, ge=1, le=100, description="Maximum number of interests to return")
+    period_type: str = Field("week", description="Display granularity: week, month, quarter")
+    duration_months: int = Field(6, ge=1, le=24, description="Duration to analyze: 1, 3, 6, 12, 24 months")
+    min_doc_count: int = Field(1, ge=1, description="Minimum document count filter")
+    sort_by: str = Field("growth_rate", description="Sort by: growth_rate, doc_count, avg_relevance, forecast_3m")
+
+
+class ResearchInterestsListResponse(BaseModel):
+    """Response model for research interests list."""
+    interests: List[ResearchInterestApiResponse]
+    total_interests: int
+    total_papers_with_interests: int
+    period_type: str
+    duration_months: int
+
+
+class ResearchInterestsSearchRequest(BaseModel):
+    """Request model for searching research interests."""
+    query: str = Field(..., min_length=1, description="Search query")
+    limit: int = Field(10, ge=1, le=50, description="Maximum number of results")
+
+
+class ResearchInterestsSearchResponse(BaseModel):
+    """Response model for research interest search results."""
+    query: str
+    interests: List[ResearchInterestApiResponse]
+    total_results: int
+
+
+class ResearchInterestRecomputeRequest(BaseModel):
+    """Request model for research interest recomputation."""
+    lookback_months: int = Field(24, ge=1, le=60, description="Historical data window (months)")
+    duration_months: int = Field(6, ge=1, le=24, description="Analysis duration (1, 3, 6, 12, 24 months)")
+    min_papers: int = Field(100, ge=50, le=10000, description="Minimum papers required")
+    similarity_threshold: float = Field(0.3, ge=0.1, le=1.0, description="Minimum similarity threshold")
+    clear_all_data: bool = Field(False, description="NUCLEAR: Clear all research interest data")
+
+
+class ResearchInterestRecomputeResponse(BaseModel):
+    """Response model for research interest recomputation."""
+    task_id: str
+    message: str
+    estimated_duration_minutes: int
+
+
+class ResearchInterestPapersRequest(BaseModel):
+    """Request model for getting papers for a research interest."""
+    limit: int = Field(50, ge=1, le=200, description="Maximum number of papers")
+    min_similarity: float = Field(0.1, ge=0.0, le=1.0, description="Minimum similarity score")
+    sort_by: str = Field("similarity", description="Sort by: similarity, score, date")
+
+
+class ResearchInterestPapersResponse(BaseModel):
+    """Response model for research interest papers."""
+    research_interest_id: int
+    interest_text: str
+    papers: List[PaperApiResponse]
+    total_papers: int
+
+
+# =====================================================================
+# Research Profiles Models
+# =====================================================================
+
+class ProfileResponse(BaseModel):
+    """Response model for research profiles."""
+    id: int = Field(..., description="Profile ID")
+    name: str = Field(..., description="Profile name")
+    description: Optional[str] = Field(None, description="Profile description")
+    color: Optional[str] = Field(None, description="UI color coding")
+    tags: Optional[List[str]] = Field(None, description="Organization tags")
+    email_recipients: Optional[List[str]] = Field(None, description="Email distribution list")
+    arxiv_filters: Optional[Dict[str, Any]] = Field(None, description="ArXiv category filters")
+    is_active: bool = Field(True, description="Whether profile is active")
+    is_default: bool = Field(False, description="Whether this is the default profile")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+    total_papers: Optional[int] = Field(None, description="Total papers scored for this profile")
+
+
+class ProfileWithStatsResponse(ProfileResponse):
+    """Profile response with statistics."""
+    interest_count: int = Field(0, description="Number of research interests")
+    total_scored_papers: int = Field(0, description="Total papers scored for this profile")
+    relevant_papers: int = Field(0, description="Papers marked as relevant")
+    average_score: Optional[float] = Field(None, description="Average relevance score")
+    research_interests: List[str] = Field(default_factory=list, description="List of research interest texts")
+
+
+class ProfileCreateRequest(BaseModel):
+    """Request model for creating a profile."""
+    name: str = Field(..., min_length=1, max_length=100, description="Profile name")
+    description: Optional[str] = Field(None, max_length=500, description="Profile description")
+    color: Optional[str] = Field(None, description="UI color coding")
+    tags: Optional[List[str]] = Field(None, description="Organization tags")
+    email_recipients: Optional[List[str]] = Field(None, description="Email distribution list")
+    arxiv_filters: Optional[Dict[str, Any]] = Field(None, description="ArXiv category filters")
+    research_interests: Optional[List[str]] = Field(None, description="Initial research interests")
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Request model for updating a profile."""
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Profile name")
+    description: Optional[str] = Field(None, max_length=500, description="Profile description")
+    color: Optional[str] = Field(None, description="UI color coding")
+    tags: Optional[List[str]] = Field(None, description="Organization tags")
+    email_recipients: Optional[List[str]] = Field(None, description="Email distribution list")
+    arxiv_filters: Optional[Dict[str, Any]] = Field(None, description="ArXiv category filters")
+    is_active: Optional[bool] = Field(None, description="Whether profile is active")
+    research_interests: Optional[List[str]] = Field(None, description="Research interests")
+
+
+class ProfileTagSearchResponse(BaseModel):
+    """Response model for tag search/auto-complete."""
+    query: str = Field(..., description="Search query")
+    suggestions: List[Dict[str, Any]] = Field(..., description="Tag suggestions with usage counts")
+    exact_match: bool = Field(..., description="Whether an exact match was found")
+
+
+class ProfileInterestResponse(BaseModel):
+    """Response model for profile research interests."""
+    id: int = Field(..., description="Interest ID")
+    interest_text: str = Field(..., description="Interest text")
+    embedding_model: Optional[str] = Field(None, description="Embedding model used")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+
+
+class ProfileInterestCreateRequest(BaseModel):
+    """Request model for creating a research interest."""
+    interest_text: str = Field(..., min_length=1, max_length=500, description="Research interest text")
+
+
+class BulkJudgeRunRequest(BaseModel):
+    """Request model for bulk LLM judge runs across profiles."""
+    profile_ids: Optional[List[int]] = Field(None, description="Specific profile IDs to process")
+    profile_tags: Optional[List[str]] = Field(None, description="Process profiles with these tags")
+    from_date: Optional[str] = Field(None, description="Start date for paper filtering (YYYY-MM-DD)")
+    to_date: Optional[str] = Field(None, description="End date for paper filtering (YYYY-MM-DD)")
+    batch_size: int = Field(100, ge=10, le=1000, description="Papers to process per batch")
+    overwrite_existing: bool = Field(False, description="Overwrite existing scores")
+    paper_ids: Optional[List[int]] = Field(None, description="Specific paper IDs to process (overrides date range)")
+
+
+class BulkJudgeRunResponse(BaseModel):
+    """Response model for bulk judge run initiation."""
+    job_id: str = Field(..., description="Job tracking ID")
+    status: str = Field(..., description="Job status")
+    profile_count: int = Field(..., description="Number of profiles to process")
+    estimated_papers: int = Field(..., description="Estimated papers to score")
+    message: str = Field(..., description="Status message")
+
+
+class ProfileAwareIngestRequest(BaseModel):
+    """Request model for profile-aware paper ingestion."""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    profile_ids: Optional[List[int]] = None
+    profile_tags: Optional[List[str]] = None
+    score_all_profiles: bool = False
+    overwrite_existing: bool = False
+    cosine_threshold: float = 0.5
+    arxiv_categories: Optional[List[str]] = None
+    use_profile_arxiv_filters: bool = True  # Use arXiv filters from selected profiles
+    batch_size: int = 10
+    send_error_notifications: bool = False
+    # Multi-server configuration (only used when LLM-as-Judge uses Ollama)
+    use_multi_server: bool = False
+    server_ids: Optional[List[int]] = None
+
+class ProfileAwareIngestResponse(BaseModel):
+    """Response model for profile-aware paper ingestion."""
+    task_id: str
+    message: str
+    profile_count: int
+    estimated_papers: int
+    status: str
+
+# Job monitoring models
+class JobStatus(BaseModel):
+    """Enum-like class for job statuses."""
+    PENDING: str = "pending"
+    RUNNING: str = "running"
+    COMPLETED: str = "completed"
+    FAILED: str = "failed"
+    CANCELLED: str = "cancelled"
+
+class JobResponse(BaseModel):
+    """Response model for job details."""
+    id: UUID = Field(..., description="Job ID")
+    job_type: str = Field(..., description="Type of job")
+    status: str = Field(..., description="Current job status")
+    configuration: Dict[str, Any] = Field(..., description="Job configuration")
+    state: Optional[Dict[str, Any]] = Field(None, description="Current job state")
+    progress_current: int = Field(0, description="Current progress count")
+    progress_total: Optional[int] = Field(None, description="Total items to process")
+    progress_percent: float = Field(0.0, description="Progress percentage")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+    error_count: int = Field(0, description="Number of errors")
+    started_at: Optional[datetime] = Field(None, description="Job start time")
+    completed_at: Optional[datetime] = Field(None, description="Job completion time")
+    last_checkpoint_at: Optional[datetime] = Field(None, description="Last checkpoint time")
+    created_at: datetime = Field(..., description="Job creation time")
+    updated_at: datetime = Field(..., description="Last update time")
+
+class JobListResponse(BaseModel):
+    """Response model for paginated job list."""
+    jobs: List[JobResponse] = Field(..., description="List of jobs")
+    total: int = Field(..., description="Total number of jobs")
+    limit: int = Field(..., description="Page size")
+    offset: int = Field(..., description="Page offset")
+
+class JobStatisticsResponse(BaseModel):
+    """Response model for job statistics."""
+    statistics: List[Dict[str, Any]] = Field(..., description="Statistics by job type")
+    overall: Dict[str, Any] = Field(..., description="Overall statistics")
+
+
+# =====================================================================
+# Research Timeline Visualization Models
+# =====================================================================
+
+class TimelineKeyPaper(BaseModel):
+    """Simplified paper model for timeline key papers."""
+    id: int = Field(..., description="Paper ID")
+    title: str = Field(..., description="Paper title")
+    date: str = Field(..., description="Publication date")
+    score: Optional[float] = Field(None, description="Relevance score")
+    relevance_score: Optional[float] = Field(None, description="Topic relevance score")
+
+
+class TimelinePeriodData(BaseModel):
+    """Data for a single time period in the timeline."""
+    period_start: str = Field(..., description="Period start date (ISO format)")
+    period_end: str = Field(..., description="Period end date (ISO format)")
+    period_type: str = Field(..., description="Period granularity: week, month, quarter, year")
+    doc_count: int = Field(..., description="Number of papers in this period")
+    growth_rate: Optional[float] = Field(None, description="Growth rate vs previous period")
+    phase: str = Field(..., description="Growth phase: emerging, growth, stable, declining")
+    key_papers: Optional[List[TimelineKeyPaper]] = Field(None, description="Top papers for this period")
+    forecast_1m: Optional[int] = Field(None, description="1-period forecast")
+    forecast_3m: Optional[int] = Field(None, description="3-period forecast")
+    forecast_6m: Optional[int] = Field(None, description="6-period forecast")
+    is_forecast: bool = Field(False, description="Whether this is a forecast period")
+
+
+class TopicTimelineData(BaseModel):
+    """Timeline data for a single topic."""
+    topic_id: int = Field(..., description="Topic ID")
+    topic_label: str = Field(..., description="Topic label/name")
+    keywords: List[str] = Field(..., description="Topic keywords")
+    total_papers: int = Field(..., description="Total papers for this topic")
+    periods: List[TimelinePeriodData] = Field(..., description="Time periods with data")
+
+
+class TimelineDataRequest(BaseModel):
+    """Request model for timeline data."""
+    topic_ids: Optional[List[int]] = Field(None, description="Topic IDs to include (None = all topics)")
+    period_type: str = Field("month", description="Period granularity: week, month, quarter, year")
+    start_date: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")
+    include_key_papers: bool = Field(True, description="Include key papers per period")
+    key_papers_limit: int = Field(3, ge=1, le=10, description="Max key papers per period")
+    include_forecasts: bool = Field(True, description="Include forecast periods")
+
+
+class TimelineDataResponse(BaseModel):
+    """Response model for timeline visualization data."""
+    topics: List[TopicTimelineData] = Field(..., description="Timeline data per topic")
+    date_range: Dict[str, str] = Field(..., description="Actual date range: {start, end}")
+    period_type: str = Field(..., description="Period granularity used")
+    available_zoom_levels: List[str] = Field(
+        default=["year", "quarter", "month", "week"],
+        description="Available zoom levels for this data"
+    )
+    total_topics: int = Field(..., description="Total topics returned")

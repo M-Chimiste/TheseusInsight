@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -19,8 +19,6 @@ import {
   Settings as SettingsIcon,
   Article as ArticleIcon,
   Podcasts as PodcastIcon,
-  Brightness4 as DarkModeIcon,
-  Brightness7 as LightModeIcon,
   Movie as MovieIcon,
   History as HistoryIcon,
   ListAlt as ListAltIcon,
@@ -32,11 +30,18 @@ import {
   LibraryBooks as LibraryBooksIcon,
   Storage as StorageIcon,
   AccountTree as AccountTreeIcon,
+  ShowChart as ShowChartIcon,
+  People as PeopleIcon,
+  WorkOutline as WorkOutlineIcon,
+  Timeline as TimelineIcon,
 } from '@mui/icons-material';
+
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
 import { useTheme } from '@mui/material/styles';
 import { useLayout } from '../contexts/LayoutContext';
+import { useProfile } from '../contexts/ProfileContext';
 import { settingsApi } from '../services/api';
+import ProfileSelector from './ProfileSelector';
 
 const REQUIRED_KEYS = [
   'OPENAI_API_KEY',
@@ -54,11 +59,13 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isDarkMode, toggleTheme } = useCustomTheme();
-  const { isDrawerOpen, currentDrawerWidth, toggleDrawer } = useLayout();
+  const { isDarkMode } = useCustomTheme();
+  const { isDrawerOpen, currentDrawerWidth, toggleDrawer, setHeaderHeight } = useLayout();
+  useProfile(); // Initialize profile context
   const theme = useTheme();
 
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     settingsApi
@@ -73,6 +80,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       });
   }, []);
 
+  // Measure header height and update context
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        const height = headerRef.current.offsetHeight;
+        setHeaderHeight(height);
+      }
+    };
+
+    updateHeaderHeight();
+    
+    // Create a ResizeObserver to watch for header height changes
+    const resizeObserver = new ResizeObserver(updateHeaderHeight);
+    if (headerRef.current) {
+      resizeObserver.observe(headerRef.current);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [setHeaderHeight]);
+
   const drawerGradient = isDarkMode
     ? 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)'
     : `linear-gradient(180deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`;
@@ -83,6 +112,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Papers', icon: <MenuBookIcon />, path: '/papers' },
     { text: 'Research Library', icon: <LibraryBooksIcon />, path: '/research-library' },
     { text: 'Mind-Map Reports', icon: <AccountTreeIcon />, path: '/mindmap-reports' },
+    { text: 'Research Timeline', icon: <ShowChartIcon />, path: '/timeline' },
+    { text: 'Profile Management', icon: <PeopleIcon />, path: '/profile-management' },
+    { text: 'Bulk Operations', icon: <WorkOutlineIcon />, path: '/bulk-operations' },
+    { text: 'Job Monitoring', icon: <TimelineIcon />, path: '/job-monitoring' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },
     { text: 'Model Catalog', icon: <StorageIcon />, path: '/model-catalog' },
     { text: 'Newsletter Builder', icon: <ArticleIcon />, path: '/newsletter' },
@@ -95,6 +128,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar
+        ref={headerRef}
         position="fixed"
         sx={{
           width: `calc(100% - ${currentDrawerWidth}px)`,
@@ -105,7 +139,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           transition: 'width 0.3s, margin 0.3s',
         }}
       >
-        <Toolbar>
+        <Toolbar sx={{ pl: 0 }}>
           <IconButton
             onClick={toggleDrawer}
             color="inherit"
@@ -113,13 +147,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           >
             {isDrawerOpen ? <ChevronLeftIcon /> : <MenuIcon />}
           </IconButton>
-          <img src="/logo.png" alt="Theseus Insight Logo" style={{ height: 84, marginRight: 8 }} />
+          <img src="/logo.png" alt="Theseus Insight Logo" style={{ height: 84, marginRight: 8, marginLeft: 16 }} />
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             Theseus Insight
           </Typography>
-          <IconButton onClick={toggleTheme} color="inherit">
-            {isDarkMode ? <LightModeIcon /> : <DarkModeIcon />}
-          </IconButton>
+          <ProfileSelector
+            allowMultiple={true}
+            label="Profile"
+            compact={true}
+          />
         </Toolbar>
       </AppBar>
       <Drawer

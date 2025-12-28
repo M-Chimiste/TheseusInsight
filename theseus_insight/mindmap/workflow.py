@@ -7,11 +7,12 @@ node orchestration, and progress tracking for interactive paper visualization.
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from langgraph.graph import StateGraph, END
 
 from .state import MindMapState, create_initial_mindmap_state, get_progress_summary, has_required_data
 from .nodes import (
+    ProfileResolverNode,
     SelectSeedNode,
     EmbedSeedNode,
     RetrieverNode,
@@ -56,12 +57,13 @@ class MindMapWorkflow:
         self.default_layout = default_layout
         self.logger = logging.getLogger(__name__)
         
-        # Initialize nodes
-        self.select_seed = SelectSeedNode(db)
-        self.embed_seed = EmbedSeedNode(db)
-        self.retriever = RetrieverNode(db)
-        self.multi_order_retriever = MultiOrderRetrieverNode(db)
-        self.summariser = SummariserNode(config, db)
+        # Initialize nodes (nodes now use repositories directly)
+        self.profile_resolver = ProfileResolverNode()
+        self.select_seed = SelectSeedNode()
+        self.embed_seed = EmbedSeedNode()
+        self.retriever = RetrieverNode()
+        self.multi_order_retriever = MultiOrderRetrieverNode()
+        self.summariser = SummariserNode(config)
         self.build_mindmap = BuildMindMapNode(config)
         
         # Build the workflow graph
@@ -83,6 +85,7 @@ class MindMapWorkflow:
         workflow = StateGraph(MindMapState)
         
         # Add nodes with progress tracking wrappers
+        workflow.add_node("profile_resolver", self._profile_resolver_with_progress)
         workflow.add_node("select_seed", self._select_seed_with_progress)
         workflow.add_node("embed_seed", self._embed_seed_with_progress)
         workflow.add_node("retriever", self._retriever_with_progress)
@@ -91,9 +94,10 @@ class MindMapWorkflow:
         workflow.add_node("build_mindmap", self._build_mindmap_with_progress)
         
         # Set entry point
-        workflow.set_entry_point("select_seed")
+        workflow.set_entry_point("profile_resolver")
         
-        # Add conditional routing based on expansion order
+        # Add routing with profile resolution first
+        workflow.add_edge("profile_resolver", "select_seed")
         workflow.add_edge("select_seed", "embed_seed")
         workflow.add_conditional_edges(
             "embed_seed",
@@ -132,7 +136,11 @@ class MindMapWorkflow:
         layout_algorithm: Optional[str] = None,
         embedding_model_config: Optional[Dict[str, Any]] = None,
         llm_model_config: Optional[Dict[str, Any]] = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        profile_id: Optional[int] = None,
+        profile_ids: Optional[List[int]] = None,
+        profile_tag: Optional[str] = None,
+        profile_tags: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Generate a mind-map for the given seed paper.
@@ -176,7 +184,11 @@ class MindMapWorkflow:
                 max_nodes_per_order=max_nodes_per_order or 20,
                 task_id=task_id or "",
                 embedding_model_config=embedding_model_config,
-                llm_model_config=llm_model_config
+                llm_model_config=llm_model_config,
+                profile_id=profile_id,
+                profile_ids=profile_ids,
+                profile_tag=profile_tag,
+                profile_tags=profile_tags
             )
             self.logger.info(f"Initial state created with keys: {list(initial_state.keys())}")
             self.logger.info(f"=== ACTUAL STATE VALUES ===")
@@ -235,7 +247,11 @@ class MindMapWorkflow:
         embedding_model_config: Optional[Dict[str, Any]] = None,
         llm_model_config: Optional[Dict[str, Any]] = None,
         task_id: Optional[str] = None,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        profile_id: Optional[int] = None,
+        profile_ids: Optional[List[int]] = None,
+        profile_tag: Optional[str] = None,
+        profile_tags: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Generate a mind-map synchronously for local LLM resource management.
@@ -293,7 +309,11 @@ class MindMapWorkflow:
                 max_nodes_per_order=max_nodes_per_order or 20,
                 task_id=task_id or "",
                 embedding_model_config=embedding_model_config,
-                llm_model_config=llm_model_config
+                llm_model_config=llm_model_config,
+                profile_id=profile_id,
+                profile_ids=profile_ids,
+                profile_tag=profile_tag,
+                profile_tags=profile_tags
             )
             self.logger.info(f"Initial state created with keys: {list(initial_state.keys())}")
             self.logger.info(f"=== ACTUAL STATE VALUES ===")
@@ -357,6 +377,33 @@ class MindMapWorkflow:
                 "mindmap_data": None
             }
     
+    async def _profile_resolver_with_progress(self, state: MindMapState) -> MindMapState:
+        """Profile resolver with progress tracking."""
+        from ..api.routers.websockets import manager as websocket_manager
+        
+        try:
+            if self.current_task_id:
+                await websocket_manager.send_mindmap_update(
+                    self.current_task_id, "profile_resolver", 10, "Resolving profile filters"
+                )
+            
+            result = self.profile_resolver(state)
+            
+            if self.current_task_id:
+                await websocket_manager.send_mindmap_update(
+                    self.current_task_id, "profile_resolver", 15, "Profile resolution completed"
+                )
+            
+            return {**state, **result}
+            
+        except Exception as e:
+            self.logger.error(f"Error in profile resolver with progress: {e}")
+            if self.current_task_id:
+                await websocket_manager.send_mindmap_update(
+                    self.current_task_id, "failed", 0, f"Profile resolution failed: {str(e)}"
+                )
+            return {**state, "errors": [str(e)]}
+
     async def _select_seed_with_progress(self, state: MindMapState) -> MindMapState:
         """Select seed node with progress tracking."""
         self.logger.info("=== _select_seed_with_progress STARTED ===")
@@ -553,8 +600,8 @@ class MindMapWorkflow:
             "mindmap_data": mindmap_data,
             "generation_summary": generation_summary,
             "statistics": {
-                "nodes_created": len(mindmap_data.get("nodes", [])),
-                "edges_created": len(mindmap_data.get("edges", [])),
+                "nodes_count": len(mindmap_data.get("nodes", [])),
+                "edges_count": len(mindmap_data.get("edges", [])),
                 "summaries_generated": len(final_state.get("summaries", {})),
                 "layout_algorithm": final_state.get("layout_algorithm", "force")
             },
@@ -689,6 +736,7 @@ class MindMapWorkflow:
         workflow = StateGraph(MindMapState)
         
         # Add nodes with synchronous progress tracking wrappers
+        workflow.add_node("profile_resolver", self._profile_resolver_with_sync_progress)
         workflow.add_node("select_seed", self._select_seed_with_sync_progress)
         workflow.add_node("embed_seed", self._embed_seed_with_sync_progress)
         workflow.add_node("single_order", self._retriever_with_sync_progress)
@@ -697,9 +745,10 @@ class MindMapWorkflow:
         workflow.add_node("build_mindmap", self._build_mindmap_with_sync_progress)
         
         # Set entry point
-        workflow.set_entry_point("select_seed")
+        workflow.set_entry_point("profile_resolver")
         
-        # Add edges with conditional routing for retriever selection
+        # Add edges with profile resolution first
+        workflow.add_edge("profile_resolver", "select_seed")
         workflow.add_edge("select_seed", "embed_seed")
         workflow.add_conditional_edges(
             "embed_seed",
@@ -715,6 +764,38 @@ class MindMapWorkflow:
         workflow.add_edge("build_mindmap", END)
         
         return workflow
+
+    def _profile_resolver_with_sync_progress(self, state: MindMapState) -> MindMapState:
+        """Profile resolver with synchronous progress tracking."""
+        self.logger.info("=== _profile_resolver_with_sync_progress STARTED ===")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                self.logger.info("Calling sync progress callback for profile_resolver start...")
+                self.sync_progress_callback("profile_resolver", 10, "Resolving profile filters")
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("About to call self.profile_resolver...")
+        result = self.profile_resolver(state)
+        self.logger.info(f"profile_resolver completed, result keys: {list(result.keys()) if result else 'None'}")
+        
+        if self.current_task_id and hasattr(self, 'sync_progress_callback') and self.sync_progress_callback:
+            try:
+                resolved_profile_ids = result.get("resolved_profile_ids")
+                if resolved_profile_ids:
+                    message = f"Profile filtering enabled: {len(resolved_profile_ids)} profile(s)"
+                else:
+                    message = "No profile filtering - using all papers"
+                self.logger.info("Calling sync progress callback for profile_resolver completion...")
+                self.sync_progress_callback("profile_resolver", 15, message)
+                self.logger.info("Sync progress callback completed successfully")
+            except Exception as e:
+                self.logger.error(f"Sync progress callback error: {e}")
+        
+        self.logger.info("=== _profile_resolver_with_sync_progress COMPLETED ===")
+        return result
 
     def _select_seed_with_sync_progress(self, state: MindMapState) -> MindMapState:
         """Select seed node with synchronous progress tracking."""

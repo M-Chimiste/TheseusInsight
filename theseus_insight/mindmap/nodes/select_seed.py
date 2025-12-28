@@ -10,6 +10,7 @@ from typing import Dict, Any
 import yake
 
 from ..state import MindMapState, Message, create_paper_node
+from ...data_access import PaperRepository
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,9 @@ class SelectSeedNode:
     data from the database to use as the center of the mind-map.
     """
     
-    def __init__(self, db):
-        """
-        Initialize the Select Seed Node.
-        
-        Args:
-            db: Database instance (PaperDatabase)
-        """
-        self.db = db
+    def __init__(self):
+        """Initialize the Select Seed Node."""
+        pass
         
     def __call__(self, state: MindMapState) -> Dict[str, Any]:
         """
@@ -54,7 +50,7 @@ class SelectSeedNode:
             logger.info(f"Selecting seed paper with ID: {seed_paper_id}")
             
             # Retrieve paper from database
-            paper_data = self.db.get_paper_by_id(seed_paper_id)
+            paper_data = PaperRepository.get_paper_by_id(seed_paper_id)
             
             if not paper_data:
                 logger.error(f"Seed paper with ID {seed_paper_id} not found in database")
@@ -74,7 +70,7 @@ class SelectSeedNode:
             # Keywords extraction / caching
             keywords = None
             try:
-                keywords = self.db.get_paper_keywords(seed_paper_id)
+                keywords = PaperRepository.get_paper_keywords(seed_paper_id)
             except Exception:
                 keywords = None
 
@@ -84,7 +80,7 @@ class SelectSeedNode:
                     text_for_kw = f"{paper_data.get('title','')} {paper_data.get('abstract','')}"
                     kw_scores = extractor.extract_keywords(text_for_kw)
                     keywords = [kw for kw, _ in kw_scores]
-                    self.db.update_paper_keywords(seed_paper_id, keywords)
+                    PaperRepository.update_paper_keywords(seed_paper_id, keywords)
                 except Exception:
                     keywords = []
 
@@ -118,14 +114,11 @@ class SelectSeedNode:
         }
 
 
-def create_select_seed_node(db) -> SelectSeedNode:
+def create_select_seed_node() -> SelectSeedNode:
     """
     Factory function to create a SelectSeedNode.
-    
-    Args:
-        db: Database instance
         
     Returns:
         Configured SelectSeedNode instance
     """
-    return SelectSeedNode(db) 
+    return SelectSeedNode() 

@@ -34,8 +34,7 @@ class EvidenceAssessment(BaseModel):
         le=1.0
     )
     relevance_score: float = Field(
-        description="Relevance score (typically 0.0 to 1.0, but may exceed 1.0 for some algorithms)", 
-        ge=0.0
+        description="Relevance score (can be negative for some similarity algorithms like cosine similarity with embeddings)"
     )
     key_findings: List[str] = Field(
         description="Key findings or insights from this source",
@@ -112,8 +111,7 @@ class Citation(BaseModel):
     url: Optional[str] = Field(description="URL if available")
     source_type: str = Field(description="Type of source (e.g., 'arxiv', 'local', 'external')")
     relevance_score: float = Field(
-        description="Relevance score (typically 0.0 to 1.0, but may exceed 1.0 for some algorithms)",
-        ge=0.0
+        description="Relevance score (can be negative for some similarity algorithms like cosine similarity with embeddings)"
     )
 
 

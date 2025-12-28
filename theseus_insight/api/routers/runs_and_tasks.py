@@ -4,7 +4,7 @@ from typing import Optional
 import os
 
 from ..models import PaginatedResponse, Run
-from ..dependencies import db
+from ...data_access import NewsletterRepository, PodcastRepository, TaskRepository
 from ..tasks import task_manager, TaskStatus
 
 router = APIRouter(tags=["runs-and-tasks"])
@@ -41,8 +41,8 @@ async def get_runs(
         # TODO: Implement proper pagination and filtering
         # For now, return all runs
         runs = []
-        newsletters = db.fetch_all_newsletters()
-        podcasts = db.fetch_all_podcasts()
+        newsletters = NewsletterRepository.all()
+        podcasts = PodcastRepository.all()
         
         # Convert newsletters to runs
         for n in newsletters:
@@ -101,8 +101,8 @@ async def delete_run_artifact(run_id: int):
     """
     try:
         # First determine if this is a newsletter or podcast run
-        newsletters = db.fetch_all_newsletters()
-        podcasts = db.fetch_all_podcasts()
+        newsletters = NewsletterRepository.all()
+        podcasts = PodcastRepository.all()
         
         # Check newsletters
         newsletter = next((n for n in newsletters if n['id'] == run_id), None)
@@ -179,7 +179,7 @@ async def get_active_tasks(task_types: Optional[str] = Query(None)):
     """
     try:
         types_filter = task_types.split(',') if task_types else None
-        active_tasks = task_manager.db.get_active_tasks(task_types=types_filter)
+        active_tasks = TaskRepository.get_active_tasks(task_types=types_filter)
         return {"active_tasks": active_tasks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -203,7 +203,7 @@ async def get_recent_completed_tasks(task_types: Optional[str] = Query(None)):
     """
     try:
         types_filter = task_types.split(',') if task_types else None
-        completed_tasks = task_manager.db.get_recent_completed_tasks(task_types=types_filter)
+        completed_tasks = TaskRepository.get_recent_completed_tasks(task_types=types_filter)
         return {"completed_tasks": completed_tasks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

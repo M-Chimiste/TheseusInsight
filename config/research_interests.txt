@@ -1,10 +1,10 @@
-1. Mixture of experts in large language models and alternative architectures
-2. Small language models and their applications
-3. Training large language models and advances for cheaper, faster, better performance
-4. More efficient inference on large language models
-5. Information extraction and knowledge-graph creation/generation with large language models
-6. Prompt engineering and dataset generation for LLMs
-7. Agentic systems and their applications
-8. Multi-modal models and their applications
-9. Synthetic data generation for training and evaluation of generative AI models
-10. Reinforcement learning methods and RL-related work in large language models
+1. Mixture of experts (MoE) architectures in large language models, including sparse MoE routing mechanisms, expert specialization, load balancing strategies, and alternative architectures such as state space models (SSMs), linear attention mechanisms, and hybrid architectures that combine multiple paradigms
+2. Small language models (SLMs) under 10B parameters, including model compression techniques, knowledge distillation from larger models, efficient architectures for edge deployment, domain-specific small models, and applications in resource-constrained environments
+3. Training methodologies for large language models including distributed training strategies, gradient accumulation techniques, mixed precision training, optimization algorithms beyond AdamW, learning rate scheduling, curriculum learning, continued pre-training, and methods to improve training efficiency, reduce costs, or enhance model performance
+4. Efficient inference techniques for large language models including quantization (INT8, INT4, 1-bit), pruning and sparsity, KV-cache optimization, speculative decoding, model parallelism strategies, batching optimizations, and hardware-aware inference acceleration
+5. Information extraction and structured output generation with large language models, including named entity recognition (NER), relation extraction, event extraction, knowledge graph construction and completion, schema-guided extraction, and methods for improving accuracy and reliability of structured outputs
+6. Prompt engineering techniques including few-shot and zero-shot learning strategies, chain-of-thought prompting, instruction tuning, prompt optimization and automatic prompt generation, and synthetic dataset generation methods including self-instruct, data augmentation, and quality filtering for training data creation
+7. Agentic systems and autonomous AI agents including tool use and function calling, planning and reasoning frameworks, multi-agent collaboration and communication, memory systems for agents, agent evaluation benchmarks, and real-world applications of agentic workflows in software development, data analysis, or scientific research
+8. Multi-modal models including vision-language models (VLMs), audio-language models, video understanding, cross-modal retrieval and alignment, multi-modal reasoning, unified multi-modal architectures, and applications requiring integration of text, image, audio, or video modalities
+9. Synthetic data generation for training and evaluating generative AI models, including methods for creating diverse and high-quality synthetic training data, data augmentation techniques, evaluation of synthetic data quality, use of synthetic data to improve model robustness, and techniques for generating preference data or evaluation datasets
+10. Reinforcement learning methods for language models including reinforcement learning from human feedback (RLHF), proximal policy optimization (PPO), direct preference optimization (DPO) and related preference learning methods, reward model training, constitutional AI methods, and other techniques that use RL to align or improve language model behavior

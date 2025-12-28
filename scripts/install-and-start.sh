@@ -155,6 +155,61 @@ create_directories() {
     print_success "Directory structure created"
 }
 
+# Function to check PostgreSQL installation
+check_postgresql() {
+    print_status "Checking PostgreSQL availability..."
+    
+    if command_exists psql; then
+        print_success "PostgreSQL client (psql) is available"
+        return 0
+    else
+        print_warning "PostgreSQL client (psql) not found in PATH"
+        print_status "Database setup will be skipped. You can:"
+        print_status "  1. Install PostgreSQL locally and run scripts/setup_database.sh"
+        print_status "  2. Use Docker Compose which includes PostgreSQL"
+        print_status "  3. Use an external PostgreSQL instance"
+        return 1
+    fi
+}
+
+# Function to setup database
+setup_database() {
+    print_status "Setting up PostgreSQL database..."
+    
+    # Check if we should skip database setup
+    if [ "$SKIP_DB_SETUP" = "true" ]; then
+        print_warning "Skipping database setup (SKIP_DB_SETUP=true)"
+        return 0
+    fi
+    
+    # Check if PostgreSQL is available
+    if ! check_postgresql; then
+        print_warning "Skipping database setup - PostgreSQL not available"
+        return 0
+    fi
+    
+    # Check if we're in Docker environment (skip local DB setup)
+    if [ "$RUNNING_IN_DOCKER" = "true" ] || [ -n "$DATABASE_URL" ]; then
+        print_status "Docker/external database detected - skipping local database setup"
+        return 0
+    fi
+    
+    # Run the database setup script
+    if [ -f "scripts/setup_database.sh" ]; then
+        print_status "Running database setup script..."
+        bash scripts/setup_database.sh
+        if [ $? -eq 0 ]; then
+            print_success "Database setup completed"
+        else
+            print_error "Database setup failed"
+            print_status "You can run 'bash scripts/setup_database.sh' manually later"
+            print_status "Or use Docker Compose which includes PostgreSQL"
+        fi
+    else
+        print_warning "Database setup script not found at scripts/setup_database.sh"
+    fi
+}
+
 # Function to create default config files if they don't exist
 create_default_configs() {
     print_status "Creating default configuration files..."
@@ -172,6 +227,34 @@ create_default_configs() {
 # deep learning
 EOF
         print_status "Created default config/research_interests.txt"
+    fi
+    
+    # Create default .env file if it doesn't exist
+    if [ ! -f ".env" ]; then
+        cat > .env << 'EOF'
+# Theseus Insight Configuration
+# Copy this file to .env and update with your values
+
+# Database Configuration (PostgreSQL)
+DATABASE_URL=postgresql://theseus:theseus@localhost:5432/theseusdb
+
+# API Keys (obtain from respective providers)
+# OPENAI_API_KEY=your_openai_api_key_here
+# ANTHROPIC_API_KEY=your_anthropic_api_key_here
+# GOOGLE_API_KEY=your_google_api_key_here
+
+# Optional: Local Ollama server
+OLLAMA_URL=http://127.0.0.1:11434
+
+# Optional: Gmail for newsletters
+# GMAIL_SENDER_ADDRESS=your_email@gmail.com
+# GMAIL_APP_PASSWORD=your_app_password
+
+# Optional: Debug mode
+# DEBUG=true
+EOF
+        print_status "Created default .env file"
+        print_warning "Please edit .env file with your configuration"
     fi
     
     print_success "Configuration files ready"
@@ -320,8 +403,17 @@ main() {
         echo ""
         create_default_configs
         echo ""
+        setup_database
+        echo ""
         
         print_success "✅ Installation complete!"
+        echo ""
+        print_status "🎯 Profile Features Enabled:"
+        print_status "  • Multiple research profiles with separate interests"
+        print_status "  • Profile-specific paper scoring and recommendations"
+        print_status "  • Profile-aware trends analysis" 
+        print_status "  • Newsletter generation for specific profiles"
+        print_status "  • Smart profile selection UI in the frontend"
         echo ""
     fi
     

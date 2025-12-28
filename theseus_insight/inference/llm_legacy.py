@@ -11,11 +11,31 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+DEPRECATED: This module has been replaced by the external LLMFactory package.
+https://github.com/M-Chimiste/LLMFactory
+
+This file is kept for reference only and will be removed in a future version.
+All imports should now use:
+    from theseus_insight.inference import LLMModelFactory, OllamaInference, etc.
+
+Migration Date: 2025-10-30
+"""
+
+import warnings
+warnings.warn(
+    "llm_legacy.py is deprecated. Use the LLMFactory package instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 import os
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union, Optional, Iterator
 from pydantic import BaseModel
 import numpy as np
+import inspect
 
 class InferenceModel(ABC):
     """
@@ -68,17 +88,33 @@ class OllamaInference(InferenceModel):
                  max_new_tokens: int = 4096,
                  temperature: float = 0.1,
                  url: str = None,
-                 num_ctx: int = 131072):
+                 num_ctx: int = 131072,
+                 request_timeout: Optional[float] = None):
         self.url = url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
         self.num_ctx = num_ctx
+        self.request_timeout = request_timeout  # Timeout in seconds, None = no timeout
         super().__init__(model_name, max_new_tokens, temperature)
+    
+    def close(self):
+        """Close the underlying HTTP client to release connections."""
+        if hasattr(self, 'client') and self.client:
+            if hasattr(self.client, '_client'):
+                self.client._client.close()
+    
+    def __del__(self):
+        """Ensure connections are closed when object is garbage collected."""
+        self.close()
 
     def _get_provider(self) -> str:
         return "ollama"
 
     def _load_model(self):
         from ollama import Client
-        return Client(host=self.url)
+        # Create client with timeout if specified
+        if self.request_timeout is not None:
+            return Client(host=self.url, timeout=self.request_timeout)
+        else:
+            return Client(host=self.url)
     
     def invoke(self, messages: List[Dict[str, str]], system_prompt: str, *,
                streaming: bool = False,
@@ -761,7 +797,7 @@ class LLMModelFactory:
         'anthropic': AnthropicInference,
         'openai': OpenAIInference,
         'gemini': GeminiInference,
-        'custom-oai': CustomOAIInference,
+        'custom_oai': CustomOAIInference,
         'sentence-transformer': SentenceTransformerInference,
         'ollama-embed': OllamaEmbedInference,
         'llamacpp': LlamacppInference
@@ -770,18 +806,28 @@ class LLMModelFactory:
     @classmethod
     def create_model(cls, model_type: str, **kwargs) -> InferenceModel:
         """
-        Create and return an instance of the specified model type.
-        
-        Args:
-            model_type: The type of model to create ('ollama', 'anthropic', etc.)
-            **kwargs: Additional arguments to pass to the model constructor
-            
-        Returns:
-            An instance of the specified model type
+        Create and return an instance of the specified inference model.
+        This method inspects the model's constructor and only passes arguments
+        that it can accept, preventing TypeErrors for unexpected keywords.
         """
         model_class = cls._models.get(model_type.lower())
         if not model_class:
             raise ValueError(f"Unknown model type: {model_type}")
-        return model_class(**kwargs)
+
+        # Inspect the constructor signature to filter out unexpected arguments
+        sig = inspect.signature(model_class.__init__)
+        allowed_args = {p.name for p in sig.parameters.values()}
+        
+        # Check if the constructor accepts arbitrary keyword arguments (**kwargs)
+        has_kwargs = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+
+        if has_kwargs:
+            # If it does, no need to filter.
+            filtered_kwargs = kwargs
+        else:
+            # Otherwise, filter to only include arguments present in the signature.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_args}
+
+        return model_class(**filtered_kwargs)
         
         

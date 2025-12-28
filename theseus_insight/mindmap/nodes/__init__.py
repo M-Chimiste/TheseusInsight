@@ -2,6 +2,7 @@
 Mind-Map Explorer Nodes Module
 
 Contains all LangGraph nodes for the mind-map generation workflow:
+- Profile resolution and validation
 - Seed paper selection and validation
 - Embedding generation for similarity search
 - Similar paper retrieval
@@ -9,6 +10,7 @@ Contains all LangGraph nodes for the mind-map generation workflow:
 - Mind-map structure building
 """
 
+from .profile_resolver import ProfileResolverNode
 from .select_seed import SelectSeedNode
 from .embed_seed import EmbedSeedNode
 from .retriever import RetrieverNode
@@ -17,6 +19,7 @@ from .summariser import SummariserNode
 from .build_mindmap import BuildMindMapNode
 
 __all__ = [
+    "ProfileResolverNode",
     "SelectSeedNode",
     "EmbedSeedNode",
     "RetrieverNode",

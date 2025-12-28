@@ -167,6 +167,7 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
                     message=current_task.get("message", ""),
                     result=current_task.get("result"),
                     error=current_task.get("error"),
+                    metadata=current_task.get("metadata"),  # Include metadata in snapshot
                 )
                 # Push snapshot to the front of the queue so it will be sent first
                 await status_queue.put(snapshot_status)
@@ -184,6 +185,8 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
             await websocket.send_json(status.dict())
 
             if status.overallStatus in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                # Add small delay to ensure message is sent before closing
+                await asyncio.sleep(0.1)
                 break
 
     except WebSocketDisconnect:
@@ -202,12 +205,17 @@ async def handle_websocket_connection(websocket: WebSocket, task_id: str, endpoi
         if status_queue:
             await task_manager.unsubscribe_from_updates(task_id, status_queue)
         manager.disconnect(task_id, websocket)
+        # Ensure the connection is properly closed
+        try:
+            await websocket.close(code=1000)
+        except Exception:
+            pass
 
 async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
     """Specialized WebSocket handler for research agent tasks.
 
     This method handles the WebSocket connection specifically for research agent tasks,
-    providing real-time progress updates for each node in the workflow.
+    providing real-time progress updates for both single-agent and multi-agent workflows.
 
     Args:
         websocket (WebSocket): The WebSocket connection to handle.
@@ -229,15 +237,20 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
         
         # Send initial status
         task_info = research_tasks[task_id]
-        await websocket.send_json({
+        mode = task_info.get("mode", "single")
+        
+        initial_message = {
             "type": "status_update",
             "task_id": task_id,
             "status": task_info["status"],
+            "mode": mode,
             "progress": task_info.get("progress", {}),
             "timestamp": task_info["created_at"].isoformat()
-        })
+        }
+        await websocket.send_json(initial_message)
         
         # Monitor task progress
+        last_progress_hash = None
         while True:
             await asyncio.sleep(1)  # Poll every second
             
@@ -246,39 +259,84 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
             if not current_task_info:
                 break
             
-            # Send status update
-            status_message = {
-                "type": "status_update",
-                "task_id": task_id,
-                "status": current_task_info["status"],
-                "progress": current_task_info.get("progress", {}),
-                "timestamp": current_task_info.get("started_at", current_task_info["created_at"]).isoformat()
-            }
+            # Check if progress has actually changed to avoid unnecessary updates
+            current_progress = current_task_info.get("progress", {})
+            current_progress_hash = str(hash(str(current_progress)))
             
-            # Add error message if failed
-            if current_task_info.get("error_message"):
-                status_message["error_message"] = current_task_info["error_message"]
+            # Only send update if progress changed or status changed
+            should_send_update = (
+                last_progress_hash != current_progress_hash or
+                task_info.get("status") != current_task_info["status"]
+            )
             
-            await websocket.send_json(status_message)
+            if should_send_update:
+                # Prepare status message with mode information
+                status_message = {
+                    "type": "status_update",
+                    "task_id": task_id,
+                    "status": current_task_info["status"],
+                    "mode": current_task_info.get("mode", "single"),
+                    "progress": current_progress,
+                    "timestamp": current_task_info.get("started_at", current_task_info["created_at"]).isoformat()
+                }
+                
+                # Add error message if failed
+                if current_task_info.get("error_message"):
+                    status_message["error_message"] = current_task_info["error_message"]
+                
+                await websocket.send_json(status_message)
+                last_progress_hash = current_progress_hash
+                task_info = current_task_info  # Update reference for status comparison
             
             # If task is completed, send final results and close
             if current_task_info["status"] in ["completed", "failed", "cancelled"]:
                 if current_task_info["status"] == "completed":
                     results = task_results.get(task_id, {})
-                    final_message = {
-                        "type": "task_completed",
-                        "task_id": task_id,
-                        "status": "completed",
-                        "results": {
+                    
+                    # Prepare results based on mode
+                    if current_task_info.get("mode") == "multi":
+                        # Multi-agent results
+                        result_data = {
+                            "final_answer": results.get("final_answer"),
+                            "generation_summary": results.get("generation_summary"),
+                            "statistics": results.get("statistics", {}),
+                            "sub_queries": results.get("sub_queries", []),
+                            "sources_count": len(results.get("sources_gathered", [])),
+                            "evidence_count": len(results.get("evidence", [])),
+                            "agents_used": results.get("statistics", {}).get("agents_used", 0),
+                            "synthesis_confidence": results.get("statistics", {}).get("synthesis_confidence", 0.0)
+                        }
+                    else:
+                        # Single-agent results (backward compatible)
+                        result_data = {
                             "final_answer": results.get("final_answer"),
                             "statistics": results.get("statistics"),
                             "sub_queries": results.get("sub_queries", []),
                             "sources_count": len(results.get("sources_gathered", [])),
                             "evidence_count": len(results.get("evidence", []))
-                        },
+                        }
+                    
+                    final_message = {
+                        "type": "task_completed",
+                        "task_id": task_id,
+                        "status": "completed",
+                        "mode": current_task_info.get("mode", "single"),
+                        "results": result_data,
                         "timestamp": current_task_info.get("completed_at", current_task_info["created_at"]).isoformat()
                     }
                     await websocket.send_json(final_message)
+                elif current_task_info["status"] == "failed":
+                    # Send failure notification
+                    failure_message = {
+                        "type": "task_completed",
+                        "task_id": task_id,
+                        "status": "failed",
+                        "mode": current_task_info.get("mode", "single"),
+                        "error_message": current_task_info.get("error_message", "Research task failed"),
+                        "timestamp": current_task_info.get("completed_at", current_task_info["created_at"]).isoformat()
+                    }
+                    await websocket.send_json(failure_message)
+                
                 break
                 
     except WebSocketDisconnect:
@@ -290,6 +348,112 @@ async def handle_research_agent_connection(websocket: WebSocket, task_id: str):
             pass
     finally:
         manager.disconnect(task_id, websocket)
+
+async def handle_bulk_judge_connection(websocket: WebSocket, job_id: str):
+    """Specialized WebSocket handler for bulk judge jobs with enhanced monitoring."""
+    try:
+        print(f"🔌 WebSocket connection attempt for job_id: {job_id}")
+        
+        # Validate job_id format first
+        try:
+            from uuid import UUID
+            job_uuid = UUID(job_id)
+            print(f"✅ Valid UUID format: {job_uuid}")
+        except ValueError as e:
+            print(f"❌ Invalid UUID format for job_id: {job_id}, error: {e}")
+            await websocket.close(code=4004, reason=f"Invalid job ID format: {job_id}")
+            return
+
+        await manager.connect(job_id, websocket)
+        print(f"✅ WebSocket connected for job: {job_id}")
+
+        # Send initial job status
+        try:
+            from ..routers.bulk_operations import get_job_metrics
+
+            # Get initial job metrics
+            print(f"🔍 Getting metrics for job: {job_uuid}")
+            metrics = await get_job_metrics(job_uuid)
+            print(f"✅ Got metrics for job: {job_id}")
+
+            initial_message = {
+                "type": "bulk_judge_status",
+                "job_id": job_id,
+                "status": "connected",
+                "message": "Connected to bulk judge monitoring",
+                "data": metrics
+            }
+
+            await websocket.send_json(initial_message)
+            print(f"✅ Sent initial message for job: {job_id}")
+
+        except Exception as e:
+            print(f"❌ Failed to get initial job status for {job_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Failed to get initial job status: {str(e)}"
+            })
+
+        # Main monitoring loop
+        while True:
+            try:
+                # Check for updated job status
+                try:
+                    from ..routers.bulk_operations import get_job_metrics
+
+                    # Get current job metrics
+                    metrics = await get_job_metrics(job_uuid)
+
+                    from datetime import datetime
+                    
+                    status_message = {
+                        "type": "bulk_judge_update",
+                        "job_id": job_id,
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "data": metrics
+                    }
+
+                    await websocket.send_json(status_message)
+
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Failed to get job metrics: {str(e)}"
+                    })
+
+                # Wait before next update (more frequent for bulk judge due to distributed nature)
+                await asyncio.sleep(5)  # 5 second intervals for real-time monitoring
+
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                error_message = {
+                    "type": "error",
+                    "message": f"Monitoring error: {str(e)}"
+                }
+                try:
+                    await websocket.send_json(error_message)
+                except:
+                    break
+                await asyncio.sleep(10)  # Back off on errors
+
+    except Exception as e:
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Connection error: {str(e)}"
+            })
+        except:
+            pass
+        try:
+            await websocket.close(code=4000, reason=str(e))
+        except:
+            pass
+    finally:
+        manager.disconnect(job_id, websocket)
 
 # WebSocket endpoints
 @router.websocket("/ws/newsletter/{task_id}")
@@ -330,4 +494,14 @@ async def mindmap_expand_status(websocket: WebSocket, task_id: str):
 @router.websocket("/ws/mindmap-pdf-parse/{task_id}")
 async def mindmap_pdf_parse_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for mind-map PDF parsing task status updates."""
-    await handle_websocket_connection(websocket, task_id, "mindmap_pdf_parse") 
+    await handle_websocket_connection(websocket, task_id, "mindmap_pdf_parse")
+
+@router.websocket("/ws/trends/{task_id}")
+async def trends_recompute_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for trends recomputation status updates."""
+    await handle_websocket_connection(websocket, task_id, "trends")
+
+@router.websocket("/ws/bulk-judge/{job_id}")
+async def bulk_judge_status(websocket: WebSocket, job_id: str):
+    """WebSocket endpoint for bulk judge job status updates."""
+    await handle_bulk_judge_connection(websocket, job_id) 

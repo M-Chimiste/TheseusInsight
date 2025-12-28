@@ -34,8 +34,10 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format } from 'date-fns'; // Correct import for date-fns v3
 import { getTaskHistory, settingsApi } from '../services/api';
 import type { TaskHistoryEntry } from '../services/api';
+import { useLayout } from '../contexts/LayoutContext';
 
 const RunHistory: React.FC = () => {
+    const { headerHeight } = useLayout(); // Get dynamic header height
     const [tasks, setTasks] = useState<TaskHistoryEntry[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -126,7 +128,7 @@ const RunHistory: React.FC = () => {
 
     return (
         <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <Box sx={{ p: 3 }}>
+            <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
                 <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
                     Run History
                 </Typography>

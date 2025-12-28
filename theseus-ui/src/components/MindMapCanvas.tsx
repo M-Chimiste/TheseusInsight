@@ -261,6 +261,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         },
         draggable: true,
         selectable: true,
+        zIndex: 1000, // Ensure nodes are always above edges
       };
     });
     
@@ -319,6 +320,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
           stroke: edgeColor,
           strokeWidth: Math.max(1, edge.similarity_score * 3),
         },
+        zIndex: 0, // Ensure edges are always below nodes
       };
     });
   }, [processedData.edges, initialNodes, theme.palette.mode]);
@@ -377,6 +379,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         x: Math.round(sNode.x), 
         y: Math.round(sNode.y) 
       },
+      zIndex: 1000, // Maintain high zIndex after simulation
     }));
 
     // Update handles for edges based on new positions
@@ -391,10 +394,11 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
           ...edge,
           sourceHandle: handles.sourceHandle,
           targetHandle: handles.targetHandle,
+          zIndex: 0, // Maintain low zIndex after simulation
         };
       }
       
-      return edge;
+      return { ...edge, zIndex: 0 };
     });
 
     setNodes(updatedNodes);
@@ -518,6 +522,29 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
           padding: '2px 4px',
           borderRadius: theme.shape.borderRadius,
         },
+        // Ensure nodes are always rendered above edges with !important
+        '& .react-flow__nodes': {
+          zIndex: '1000 !important',
+        },
+        '& .react-flow__edges': {
+          zIndex: '0 !important',
+        },
+        '& .react-flow__edge': {
+          zIndex: '0 !important',
+        },
+        '& .react-flow__node': {
+          zIndex: '1000 !important',
+        },
+        // Additional specificity for edge paths and labels
+        '& .react-flow__edge-path': {
+          zIndex: '0 !important',
+        },
+        '& .react-flow__edge-text': {
+          zIndex: '5 !important',
+        },
+        '& .react-flow__edge-textbg': {
+          zIndex: '4 !important',
+        },
       }}
     >
       <ReactFlow
@@ -547,7 +574,16 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({
         selectionOnDrag={false}
         snapToGrid={false}
         snapGrid={[15, 15]}
+        disableKeyboardA11y={false}
         connectionMode={ConnectionMode.Loose}
+        elevateNodesOnSelect={true} // Ensure nodes are elevated when selected
+        elevateEdgesOnSelect={false} // Prevent edges from being elevated above nodes
+        nodesFocusable={true}
+        edgesFocusable={false}
+        zoomOnScroll={true}
+        zoomOnPinch={true}
+        preventScrolling={true}
+        nodeOrigin={[0.5, 0.5]} // Center nodes on their position
         style={{
           backgroundColor: theme.palette.background.default,
         }}

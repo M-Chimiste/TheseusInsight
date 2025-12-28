@@ -5,47 +5,65 @@
     "max_new_tokens": null,
     "temperature": null,
     "num_ctx": null,
-    "trust_remote_code": true
+    "trust_remote_code": true,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "judge_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
-    "model_type": "ollama",
+    "model_name": "granite-4.0-h-tiny-mlx",
+    "model_type": "lmstudio",
     "max_new_tokens": 512,
     "temperature": 0.1,
     "num_ctx": 131072,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "content_extraction_model": {
-    "model_name": "phi4-mini:3.8b-q8_0",
-    "model_type": "ollama",
+    "model_name": "gemini-3-flash-preview",
+    "model_type": "gemini",
     "max_new_tokens": 4096,
-    "temperature": 0.1,
+    "temperature": 0.2,
     "num_ctx": 131072,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "newsletter_sections_model": {
-    "model_name": "hf.co/bartowski/google_gemma-3-27b-it-qat-GGUF:Q4_K_M",
-    "model_type": "ollama",
-    "max_new_tokens": 8192,
-    "temperature": 0.1,
-    "num_ctx": 131072,
-    "trust_remote_code": null
+    "model_name": "gemini-3-flash-preview",
+    "model_type": "gemini",
+    "max_new_tokens": 4096,
+    "temperature": 0.2,
+    "num_ctx": 128000,
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "newsletter_intro_model": {
-    "model_name": "gemini-2.0-flash",
+    "model_name": "gemini-3-flash-preview",
     "model_type": "gemini",
-    "max_new_tokens": null,
-    "temperature": 0.1,
-    "num_ctx": null,
-    "trust_remote_code": null
+    "max_new_tokens": 4096,
+    "temperature": 0.2,
+    "num_ctx": 128000,
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "podcast_model": {
-    "model_name": "gemini-2.0-flash",
+    "model_name": "gemini-2.5-flash",
     "model_type": "gemini",
-    "max_new_tokens": 8192,
-    "temperature": 0.1,
+    "max_new_tokens": 4096,
+    "temperature": 0.2,
     "num_ctx": 131072,
-    "trust_remote_code": null
+    "trust_remote_code": null,
+    "host": null,
+    "context_length": null,
+    "gpu_offload": null
   },
   "tts_model": {
     "tts_provider": "openai",
@@ -57,37 +75,49 @@
   },
   "research_agent_model_config": {
     "boss_model": {
-      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
-      "model_type": "ollama",
+      "model_name": "gpt-4",
+      "model_type": "openai",
       "max_new_tokens": 4096,
       "temperature": 0.1,
-      "num_ctx": 131072,
-      "trust_remote_code": null
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "worker_models": {
       "summary": {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "max_new_tokens": 2048,
         "temperature": 0.1,
-        "num_ctx": 131072,
-        "trust_remote_code": null
+        "num_ctx": null,
+        "trust_remote_code": null,
+        "host": null,
+        "context_length": null,
+        "gpu_offload": null
       },
       "analysis": {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "max_new_tokens": 2048,
         "temperature": 0.1,
-        "num_ctx": 131072,
-        "trust_remote_code": null
+        "num_ctx": null,
+        "trust_remote_code": null,
+        "host": null,
+        "context_length": null,
+        "gpu_offload": null
       },
       "search": {
-        "model_name": "phi4-mini:3.8b-q8_0",
-        "model_type": "ollama",
-        "max_new_tokens": 4096,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "max_new_tokens": 1024,
         "temperature": 0.1,
-        "num_ctx": 131072,
-        "trust_remote_code": null
+        "num_ctx": null,
+        "trust_remote_code": null,
+        "host": null,
+        "context_length": null,
+        "gpu_offload": null
       }
     },
     "default_worker": "summary",
@@ -97,52 +127,67 @@
     "initial_rerank_top_k": 40,
     "max_research_loops": 3,
     "query_planner_model": {
-      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
-      "model_type": "ollama",
-      "max_new_tokens": 4096,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "max_new_tokens": 1024,
       "temperature": 0.1,
-      "num_ctx": 131072,
-      "trust_remote_code": null
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "evidence_selector_model": {
-      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
-      "model_type": "ollama",
-      "max_new_tokens": 4096,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "max_new_tokens": 2048,
       "temperature": 0.1,
-      "num_ctx": 131072,
-      "trust_remote_code": null
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "compression_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
+      "model_name": "gpt-4",
+      "model_type": "openai",
       "max_new_tokens": 4096,
       "temperature": 0.1,
-      "num_ctx": 131072,
-      "trust_remote_code": null
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "answer_generator_model": {
-      "model_name": "hf.co/unsloth/Phi-4-mini-reasoning-GGUF:Q8_0",
-      "model_type": "ollama",
+      "model_name": "gpt-4",
+      "model_type": "openai",
       "max_new_tokens": 4096,
-      "temperature": 0.1,
-      "num_ctx": 131072,
-      "trust_remote_code": null
+      "temperature": 0.3,
+      "num_ctx": null,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
-    "arxiv_rate_limit": 1.0
+    "arxiv_rate_limit": 3.0
   },
   "mind_map_config": {
-    "k": 5,
-    "similarity_threshold": 0.65,
+    "k": 15,
+    "similarity_threshold": 0.3,
     "layout_algorithm": "force",
     "summarization_model": {
-      "model_name": "phi4-mini:3.8b-q8_0",
-      "model_type": "ollama",
+      "model_name": "granite-4.0-h-micro",
+      "model_type": "lmstudio",
       "max_new_tokens": 512,
-      "temperature": 0.1,
-      "num_ctx": 131072,
-      "trust_remote_code": null
+      "temperature": 0.3,
+      "num_ctx": 8192,
+      "trust_remote_code": null,
+      "host": null,
+      "context_length": null,
+      "gpu_offload": null
     },
     "expansion_order": 2,
-    "max_nodes_per_order": 5
+    "max_nodes_per_order": 20
   }
 }

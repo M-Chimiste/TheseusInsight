@@ -1,0 +1,500 @@
+# Set up PostgreSQL extensions for Theseus Insight in Docker or local environment
+
+param(
+    [string]$DbUser = $env:POSTGRES_USER,
+    [string]$DbPass = $env:POSTGRES_PASSWORD,
+    [string]$DbName = $env:POSTGRES_DB
+)
+
+# Set defaults if not provided
+if (-not $DbUser) { $DbUser = "theseus" }
+if (-not $DbPass) { $DbPass = "theseus" }
+if (-not $DbName) { $DbName = "theseusdb" }
+
+# Colors for output
+$InfoColor = "Cyan"
+$SuccessColor = "Green"
+$WarningColor = "Yellow"
+$ErrorColor = "Red"
+
+function Write-Status {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor $InfoColor
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor $SuccessColor
+}
+
+function Write-Warning {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor $WarningColor
+}
+
+function Write-ErrorMsg {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor $ErrorColor
+}
+
+Write-Host "Setting up pgvector extension for user: $DbUser, database: $DbName"
+
+# Detect environment and set schema file path
+$SchemaFile = $null
+$Environment = $null
+
+if (Test-Path "C:\app\sql\001_init_schema_postgres.sql") {
+    # Running in Docker container
+    $SchemaFile = "C:\app\sql\001_init_schema_postgres.sql"
+    $Environment = "docker"
+    Write-Host "🐳 Detected Docker environment" -ForegroundColor $InfoColor
+}
+elseif (Test-Path "$PSScriptRoot\001_init_schema_postgres.sql") {
+    # Running locally with schema file in same directory as script
+    $SchemaFile = "$PSScriptRoot\001_init_schema_postgres.sql"
+    $Environment = "local"
+    Write-Host "💻 Detected local environment" -ForegroundColor $InfoColor
+}
+else {
+    Write-ErrorMsg "❌ Error: Cannot find 001_init_schema_postgres.sql"
+    Write-Host "   Expected locations:"
+    Write-Host "   - Docker: C:\app\sql\001_init_schema_postgres.sql"
+    Write-Host "   - Local:  $PSScriptRoot\001_init_schema_postgres.sql"
+    exit 1
+}
+
+# For local installations, check if database and user exist, create if needed
+if ($Environment -eq "local") {
+    Write-Status "🔧 Checking local PostgreSQL setup..."
+    
+    # Try to detect available superuser
+    $SuperUser = $null
+    $CurrentUser = $env:USERNAME
+    
+    # Test different potential superusers
+    $testUsers = @($CurrentUser, "postgres", $env:USER)
+    foreach ($testUser in $testUsers) {
+        if ($testUser -and -not $SuperUser) {
+            try {
+                $result = & psql -U $testUser -d postgres -c "SELECT 1;" 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $SuperUser = $testUser
+                    Write-Success "✅ Found PostgreSQL superuser: $SuperUser"
+                    break
+                }
+            }
+            catch {
+                # Continue to next user
+            }
+        }
+    }
+    
+    if (-not $SuperUser) {
+        Write-ErrorMsg "❌ Error: Cannot find a working PostgreSQL superuser"
+        Write-Host "   Tried users: $CurrentUser, postgres, $($env:USER)"
+        Write-Host "   Please ensure PostgreSQL is running and you have superuser access"
+        Write-Host ""
+        Write-Host "💡 Common solutions:" -ForegroundColor Yellow
+        Write-Host "   - Windows: Make sure PostgreSQL service is running"
+        Write-Host "   - Check if you can connect with: psql -U postgres -d postgres"
+        Write-Host "   - Verify PostgreSQL is in your PATH"
+        exit 1
+    }
+    
+    # Check if target user already exists
+    Write-Status "👤 Checking if user '$DbUser' exists..."
+    try {
+        $userExists = & psql -U $SuperUser -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$DbUser';" 2>$null
+        
+        if ($userExists -eq "1") {
+            Write-Success "✅ User '$DbUser' already exists"
+        }
+        else {
+            Write-Status "➕ Creating user '$DbUser'..."
+            & psql -U $SuperUser -d postgres -c "CREATE USER $DbUser WITH PASSWORD '$DbPass'; ALTER USER $DbUser CREATEDB;" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-ErrorMsg "❌ Error: Failed to create user '$DbUser'"
+                exit 1
+            }
+            Write-Success "✅ User '$DbUser' created successfully"
+        }
+    }
+    catch {
+        Write-ErrorMsg "❌ Error checking user existence"
+        exit 1
+    }
+    
+    # Check if database already exists
+    Write-Status "🗄️  Checking if database '$DbName' exists..."
+    try {
+        $dbExists = & psql -U $SuperUser -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DbName';" 2>$null
+        
+        if ($dbExists -eq "1") {
+            Write-Success "✅ Database '$DbName' already exists"
+        }
+        else {
+            Write-Status "➕ Creating database '$DbName'..."
+            & psql -U $SuperUser -d postgres -c "CREATE DATABASE $DbName OWNER $DbUser;" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-ErrorMsg "❌ Error: Failed to create database '$DbName'"
+                exit 1
+            }
+            Write-Success "✅ Database '$DbName' created successfully"
+        }
+    }
+    catch {
+        Write-ErrorMsg "❌ Error checking database existence"
+        exit 1
+    }
+    
+    # Grant necessary privileges
+    Write-Status "🔐 Ensuring user '$DbUser' has proper privileges..."
+    try {
+        & psql -U $SuperUser -d $DbName -c @"
+GRANT ALL PRIVILEGES ON DATABASE $DbName TO $DbUser;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DbUser;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DbUser;
+GRANT CREATE ON SCHEMA public TO $DbUser;
+ALTER SCHEMA public OWNER TO $DbUser;
+"@ 2>$null
+    }
+    catch {
+        Write-Warning "⚠️  Warning: Some privilege grants may have failed, but continuing..."
+    }
+    
+    # Test connection as target user
+    Write-Status "🔍 Testing connection as user '$DbUser'..."
+    try {
+        & psql -U $DbUser -d $DbName -c "SELECT 1;" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "✅ Successfully connected as user '$DbUser'"
+        }
+        else {
+            Write-Warning "⚠️  Warning: Could not connect as user '$DbUser', but continuing..."
+            Write-Host "   You may need to update pg_hba.conf or check password authentication"
+        }
+    }
+    catch {
+        Write-Warning "⚠️  Warning: Could not test connection as user '$DbUser', but continuing..."
+    }
+}
+
+# Enable pgvector extension on the database
+Write-Status "🔌 Enabling pgvector extension..."
+try {
+    & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorMsg "❌ Error: Failed to create pgvector extension"
+        Write-Host "   Make sure pgvector is installed on your PostgreSQL instance"
+        Write-Host "   See: https://github.com/pgvector/pgvector#installation"
+        exit 1
+    }
+}
+catch {
+    Write-ErrorMsg "❌ Error: Failed to create pgvector extension"
+    exit 1
+}
+
+Write-Success "✅ pgvector extension enabled for database `"$DbName`"."
+
+# Create migration tracking table
+if (Test-Path $CreateMigrationTrackingFile) {
+    Write-Status "📊 Creating migration tracking table..."
+    try {
+        & psql -U $DbUser -d $DbName -f $CreateMigrationTrackingFile 2>$null
+    }
+    catch {
+        # Table might already exist, continue
+    }
+}
+
+# Apply migration compatibility functions
+if (Test-Path $MigrationCompatFile) {
+    Write-Status "🔧 Setting up migration compatibility functions..."
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $MigrationCompatFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply migration compatibility from $MigrationCompatFile"
+            exit 1
+        }
+        Write-Success "✅ Migration compatibility functions created"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply migration compatibility from $MigrationCompatFile"
+        exit 1
+    }
+}
+
+# Apply initial schema
+Write-Status "📋 Applying initial schema from: $SchemaFile"
+try {
+    & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $SchemaFile 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorMsg "❌ Error: Failed to apply schema from $SchemaFile"
+        exit 1
+    }
+}
+catch {
+    Write-ErrorMsg "❌ Error: Failed to apply schema from $SchemaFile"
+    exit 1
+}
+
+# Apply database migrations
+Write-Status "🔄 Applying database migrations..."
+
+# Determine migration file paths based on environment
+if ($Environment -eq "docker") {
+    $MigrationCompatFile = "C:\app\sql\000_migration_compatibility.sql"
+    $MigrateToProfilesFile = "C:\app\sql\002_migrate_to_profiles.sql"
+    $ProfilesTrendsFile = "C:\app\sql\003_profiles_trends_integration.sql"
+    $StagingTablesFile = "C:\app\sql\004_add_staging_tables.sql"
+    $OptimizeIndexesFile = "C:\app\sql\005_optimize_indexes.sql"
+    $ProcessingCheckpointsFile = "C:\app\sql\006_add_processing_checkpoints.sql"
+    $ScheduledTasksFile = "C:\app\sql\007_add_scheduled_tasks.sql"
+    $MultiOllamaFile = "C:\app\sql\008_add_multi_ollama_support.sql"
+    $LMStudioMultiServerFile = "C:\app\sql\009_add_lmstudio_multi_server.sql"
+    $PerServerModelConfigFile = "C:\app\sql\010_add_per_server_model_config.sql"
+    $NewsletterMultiServerFile = "C:\app\sql\011_newsletter_multi_server.sql"
+    $CreateMigrationTrackingFile = "C:\app\sql\create_migration_tracking.sql"
+}
+else {
+    $MigrationCompatFile = "$PSScriptRoot\000_migration_compatibility.sql"
+    $MigrateToProfilesFile = "$PSScriptRoot\002_migrate_to_profiles.sql"
+    $ProfilesTrendsFile = "$PSScriptRoot\003_profiles_trends_integration.sql"
+    $StagingTablesFile = "$PSScriptRoot\004_add_staging_tables.sql"
+    $OptimizeIndexesFile = "$PSScriptRoot\005_optimize_indexes.sql"
+    $ProcessingCheckpointsFile = "$PSScriptRoot\006_add_processing_checkpoints.sql"
+    $ScheduledTasksFile = "$PSScriptRoot\007_add_scheduled_tasks.sql"
+    $MultiOllamaFile = "$PSScriptRoot\008_add_multi_ollama_support.sql"
+    $LMStudioMultiServerFile = "$PSScriptRoot\009_add_lmstudio_multi_server.sql"
+    $PerServerModelConfigFile = "$PSScriptRoot\010_add_per_server_model_config.sql"
+    $NewsletterMultiServerFile = "$PSScriptRoot\011_newsletter_multi_server.sql"
+    $CreateMigrationTrackingFile = "$PSScriptRoot\create_migration_tracking.sql"
+}
+
+# Apply profile migration
+if (Test-Path $MigrateToProfilesFile) {
+    Write-Status "📋 Applying profile migration from: $MigrateToProfilesFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $MigrateToProfilesFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply profile migration from $MigrateToProfilesFile"
+            exit 1
+        }
+        Write-Success "✅ Profile migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply profile migration from $MigrateToProfilesFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Profile migration file not found at $MigrateToProfilesFile"
+    Write-Host "   The system will work but profile features may not be available"
+}
+
+# Apply profiles-trends integration
+if (Test-Path $ProfilesTrendsFile) {
+    Write-Status "📋 Applying profiles-trends integration from: $ProfilesTrendsFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $ProfilesTrendsFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply profiles-trends integration from $ProfilesTrendsFile"
+            exit 1
+        }
+        Write-Success "✅ Profiles-trends integration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply profiles-trends integration from $ProfilesTrendsFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Profiles-trends integration file not found at $ProfilesTrendsFile"
+    Write-Host "   Trends features may not work properly with profiles"
+}
+
+# Apply staging tables migration
+if (Test-Path $StagingTablesFile) {
+    Write-Status "📋 Applying staging tables migration from: $StagingTablesFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $StagingTablesFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply staging tables migration from $StagingTablesFile"
+            exit 1
+        }
+        Write-Success "✅ Staging tables migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply staging tables migration from $StagingTablesFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Staging tables migration file not found at $StagingTablesFile"
+    Write-Host "   Bulk import features may not be available"
+}
+
+# Apply index optimization
+if (Test-Path $OptimizeIndexesFile) {
+    Write-Status "📋 Applying index optimization from: $OptimizeIndexesFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $OptimizeIndexesFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply index optimization from $OptimizeIndexesFile"
+            exit 1
+        }
+        Write-Success "✅ Index optimization completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply index optimization from $OptimizeIndexesFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Index optimization file not found at $OptimizeIndexesFile"
+    Write-Host "   Database performance may not be optimal"
+}
+
+# Apply processing checkpoints migration
+if (Test-Path $ProcessingCheckpointsFile) {
+    Write-Status "📋 Applying processing checkpoints migration from: $ProcessingCheckpointsFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $ProcessingCheckpointsFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply processing checkpoints migration from $ProcessingCheckpointsFile"
+            exit 1
+        }
+        Write-Success "✅ Processing checkpoints migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply processing checkpoints migration from $ProcessingCheckpointsFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Processing checkpoints migration file not found at $ProcessingCheckpointsFile"
+    Write-Host "   Processing tracking features may not be available"
+}
+
+# Apply scheduled tasks migration
+if (Test-Path $ScheduledTasksFile) {
+    Write-Status "📋 Applying scheduled tasks migration from: $ScheduledTasksFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $ScheduledTasksFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply scheduled tasks migration from $ScheduledTasksFile"
+            exit 1
+        }
+        Write-Success "✅ Scheduled tasks migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply scheduled tasks migration from $ScheduledTasksFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Scheduled tasks migration file not found at $ScheduledTasksFile"
+    Write-Host "   Scheduled task features may not be available"
+}
+
+# Apply multi-Ollama server support migration
+if (Test-Path $MultiOllamaFile) {
+    Write-Status "📋 Applying multi-Ollama server migration from: $MultiOllamaFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $MultiOllamaFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply multi-Ollama server migration from $MultiOllamaFile"
+            exit 1
+        }
+        Write-Success "✅ Multi-Ollama server migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply multi-Ollama server migration from $MultiOllamaFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Multi-Ollama server migration file not found at $MultiOllamaFile"
+    Write-Host "   Multi-server bulk operations may not be available"
+}
+
+# Apply LMStudio multi-server support migration
+if (Test-Path $LMStudioMultiServerFile) {
+    Write-Status "📋 Applying LMStudio multi-server migration from: $LMStudioMultiServerFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $LMStudioMultiServerFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply LMStudio multi-server migration from $LMStudioMultiServerFile"
+            exit 1
+        }
+        Write-Success "✅ LMStudio multi-server migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply LMStudio multi-server migration from $LMStudioMultiServerFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: LMStudio multi-server migration file not found at $LMStudioMultiServerFile"
+    Write-Host "   LMStudio provider features may not be available"
+}
+
+# Apply per-server model config migration
+if (Test-Path $PerServerModelConfigFile) {
+    Write-Status "📋 Applying per-server model config migration from: $PerServerModelConfigFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $PerServerModelConfigFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply per-server model config migration from $PerServerModelConfigFile"
+            exit 1
+        }
+        Write-Success "✅ Per-server model config migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply per-server model config migration from $PerServerModelConfigFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Per-server model config migration file not found at $PerServerModelConfigFile"
+    Write-Host "   Per-server model configuration may not be available"
+}
+
+# Apply newsletter multi-server support migration
+if (Test-Path $NewsletterMultiServerFile) {
+    Write-Status "📋 Applying newsletter multi-server migration from: $NewsletterMultiServerFile"
+    try {
+        & psql -v ON_ERROR_STOP=1 -U $DbUser -d $DbName -f $NewsletterMultiServerFile 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorMsg "❌ Error: Failed to apply newsletter multi-server migration from $NewsletterMultiServerFile"
+            exit 1
+        }
+        Write-Success "✅ Newsletter multi-server migration completed successfully"
+    }
+    catch {
+        Write-ErrorMsg "❌ Error: Failed to apply newsletter multi-server migration from $NewsletterMultiServerFile"
+        exit 1
+    }
+}
+else {
+    Write-Warning "⚠️  Warning: Newsletter multi-server migration file not found at $NewsletterMultiServerFile"
+    Write-Host "   Newsletter multi-server features may not be available"
+}
+
+Write-Host ""
+Write-Success "🎉 Database setup with profile features completed successfully!"
+Write-Host ""
+Write-Host "📋 Connection details:" -ForegroundColor $InfoColor
+Write-Host "   Database: $DbName"
+Write-Host "   User: $DbUser"
+Write-Host "   Environment: $Environment"
+Write-Host ""
+
+if ($Environment -eq "local") {
+    Write-Host "🔗 Connection string example:" -ForegroundColor $InfoColor
+    Write-Host "   postgresql://$DbUser`:$DbPass@localhost:5432/$DbName"
+    Write-Host ""
+    Write-Host "💻 Test connection:" -ForegroundColor $InfoColor
+    Write-Host "   psql -U $DbUser -d $DbName -h localhost"
+} 

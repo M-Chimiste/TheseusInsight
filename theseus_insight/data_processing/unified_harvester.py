@@ -39,6 +39,8 @@ class UnifiedArxivHarvester:
         timeout: int = 300,
         verbose: bool = False,
         kaggle_dataset_path: Optional[str] = None,
+        auto_cleanup: bool = True,
+        force_kaggle: Optional[bool] = None,
     ):
         """Initialize the unified harvester.
 
@@ -52,6 +54,8 @@ class UnifiedArxivHarvester:
             verbose (bool, optional): Whether to print progress. Defaults to False.
             kaggle_dataset_path (Optional[str], optional): Path to Kaggle dataset. 
                 If None, uses KAGGLE_ARXIV_PATH environment variable.
+            auto_cleanup (bool, optional): Whether to clean up downloaded dataset on exit. 
+                Defaults to True. Set to False for bulk operations to avoid re-downloading.
         """
         self.category = category
         self.date_from = date_from
@@ -69,8 +73,14 @@ class UnifiedArxivHarvester:
         )
 
         self._debug_mode = os.getenv("DEBUG", "").lower() == "true"
-        self._force_kaggle = os.getenv("FORCE_KAGGLE", "").lower() == "true"
+        # Allow explicit override via parameter; fallback to environment
+        self._force_kaggle = (
+            bool(force_kaggle)
+            if force_kaggle is not None
+            else os.getenv("FORCE_KAGGLE", "").lower() == "true"
+        )
         self._auto_download = os.getenv("AUTO_DOWNLOAD", "true").lower() == "true"  # Default to true
+        self._auto_cleanup = auto_cleanup
         self._temp_dir = None
         self._downloaded_dataset = False
         
@@ -293,6 +303,8 @@ class UnifiedArxivHarvester:
                 self._downloaded_dataset = False
             except Exception as e:
                 self._debug_log(f"Failed to cleanup temporary directory: {e}")
+        else:
+            self._debug_log("No cleanup needed - dataset not downloaded or temp directory doesn't exist")
 
     def check_kaggle_availability(self) -> bool:
         """Check if Kaggle dataset is available (existing file or can be downloaded).
@@ -388,6 +400,7 @@ class UnifiedArxivHarvester:
             try:
                 self._debug_log("Attempting OAI-PMH harvest")
                 self._log("Trying ArXiv OAI-PMH API...")
+                self._log(f"Date range: {self.date_from} to {self.date_until}")
                 
                 records = self.oai_harvester.harvest()
                 
@@ -420,7 +433,11 @@ class UnifiedArxivHarvester:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - ensures cleanup."""
         if self._downloaded_dataset:
-            self._cleanup_downloaded_dataset()
+            if self._auto_cleanup:
+                self._debug_log("Context manager cleanup: removing downloaded dataset (auto_cleanup=True)")
+                self._cleanup_downloaded_dataset()
+            else:
+                self._debug_log("Context manager cleanup: preserving downloaded dataset (auto_cleanup=False)")
 
     def _harvest_with_kaggle(self) -> List[Dict[str, Any]]:
         """Harvest using Kaggle dataset.
@@ -470,6 +487,9 @@ class UnifiedArxivHarvester:
                     )
 
             self._debug_log("Starting Kaggle dataset harvest")
+            self._log(f"🔍 Searching Kaggle dataset for papers from {self.date_from} to {self.date_until}")
+            self._log(f"📁 Using dataset: {self.kaggle_harvester.dataset_path}")
+            
             records = self.kaggle_harvester.harvest()
             
             if records:
@@ -477,15 +497,19 @@ class UnifiedArxivHarvester:
                 self._debug_log(f"Kaggle harvest completed with {len(records)} records")
                 return records
             else:
-                raise RuntimeError("Kaggle dataset returned no matching records")
+                raise RuntimeError(f"Kaggle dataset returned no matching records for date range {self.date_from} to {self.date_until}")
                 
         except Exception as e:
             self._log(f"❌ Kaggle harvest failed: {e}")
             raise RuntimeError(f"Both OAI-PMH and Kaggle harvest methods failed. Last error: {e}")
         finally:
-            # Always cleanup downloaded files
+            # Only cleanup downloaded files if auto_cleanup is enabled
             if self._downloaded_dataset:
-                self._cleanup_downloaded_dataset()
+                if self._auto_cleanup:
+                    self._debug_log("Cleaning up downloaded dataset (auto_cleanup=True)")
+                    self._cleanup_downloaded_dataset()
+                else:
+                    self._debug_log("Preserving downloaded dataset for reuse (auto_cleanup=False)")
 
     def to_dataframe(self):
         """Convert harvested records to a pandas DataFrame.

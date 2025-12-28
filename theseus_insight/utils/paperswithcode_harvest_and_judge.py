@@ -29,11 +29,12 @@ import yake
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from theseus_insight.data_model.data_handling import PaperDatabase
+from theseus_insight.data_access import PaperRepository, SettingsRepository
 from theseus_insight.data_model.papers import Paper
 from theseus_insight.data_processing.paperswithcode import PapersWithCode
 from theseus_insight.inference import SentenceTransformerInference
-from theseus_insight.inference.llm import (
+from LLMFactory import LLMModelFactory
+from LLMFactory.providers import (
     OllamaInference, OpenAIInference, AnthropicInference, GeminiInference,
 )
 from theseus_insight.prompt import (
@@ -49,51 +50,40 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 # Helper functions for database operations
 # ---------------------------------------------------------------
 
-def check_paper_exists(db_url: str, paper_data: tuple) -> bool:
+def check_paper_exists(paper_data: tuple) -> bool:
     """Return True if paper already exists, by URL or title."""
-    from theseus_insight.data_model.data_handling import PaperDatabase
-
     idx, paper_url, paper_title = paper_data
-    db = PaperDatabase(db_url)
-    exists_by_url = db.paper_exists_by_url(paper_url) if paper_url else False
-    exists_by_title = db.paper_exists_by_title(paper_title)
+    exists_by_url = PaperRepository.exists_by_url(paper_url) if paper_url else False
+    exists_by_title = PaperRepository.exists_by_title(paper_title)
     return exists_by_url or exists_by_title
 
 
-def get_paper_count(db_url: str) -> int:
+def get_paper_count() -> int:
     """
     Get the total number of papers in the database.
-    
-    Args:
-        db_url: Database connection URL
     
     Returns:
         int: Number of papers in database
     """
-    from theseus_insight.data_model.data_handling import PaperDatabase
-    
     try:
-        db = PaperDatabase(db_url)
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM papers")
-            return cursor.fetchone()[0]
+        papers = PaperRepository.get_all()
+        return len(papers)
     except Exception:
         return -1  # Return -1 to indicate error/unknown
 
 
-def should_skip_database_checks(db_url: str, verbose: bool = True) -> bool:
+def should_skip_database_checks(verbose: bool = True) -> bool:
     """
     Determine if we should skip database existence checks.
     
     Args:
-        db_url: Database connection URL
         verbose: Whether to print status messages
     
     Returns:
         bool: True if database checks should be skipped
     """
     try:
-        paper_count = get_paper_count(db_url)
+        paper_count = get_paper_count()
         
         if paper_count == 0:
             if verbose:
@@ -116,7 +106,6 @@ def should_skip_database_checks(db_url: str, verbose: bool = True) -> bool:
 
 def check_existing_papers_parallel(
     df: pd.DataFrame, 
-    db_url: str, 
     max_workers: int = 4,
     verbose: bool = True
 ) -> List[bool]:
@@ -125,7 +114,6 @@ def check_existing_papers_parallel(
     
     Args:
         df: DataFrame with papers to check
-        db_url: Database connection URL
         max_workers: Maximum number of parallel workers
         verbose: Whether to show progress
     
@@ -145,11 +133,10 @@ def check_existing_papers_parallel(
     
     # Use ThreadPoolExecutor for I/O-bound database operations
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        check_func = partial(check_paper_exists, db_url)
         
         # Process in parallel with progress bar
         results = list(tqdm(
-            executor.map(check_func, paper_data),
+            executor.map(check_paper_exists, paper_data),
             total=len(paper_data),
             desc="Checking existing papers (parallel)",
             disable=not verbose
@@ -242,6 +229,21 @@ def load_inference_model(cfg: Dict[str, Any], verbose: bool = True):
         return AnthropicInference(model_name, max_new_tokens, temperature)
     if model_type == "gemini":
         return GeminiInference(model_name, max_new_tokens, temperature)
+    if model_type == "lmstudio":
+        # LMStudio needs host parameter instead of url
+        host = cfg.get('host')
+        if not host:
+            host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+        kwargs = {
+            'model_type': 'lmstudio',
+            'model_name': model_name,
+            'max_new_tokens': max_new_tokens,
+            'temperature': temperature,
+            'host': host
+        }
+        if num_ctx is not None:
+            kwargs['context_length'] = num_ctx
+        return LLMModelFactory.create_model(**kwargs)
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
@@ -344,7 +346,6 @@ def embed_papers(
     embedding_model: SentenceTransformerInference,
     research_interests: str,
     threshold: float,
-    db: PaperDatabase,
     checkpoint_dir: str,
     batch_size: int = 256,
     max_workers: int = 4,
@@ -360,7 +361,6 @@ def embed_papers(
         embedding_model (SentenceTransformerInference): The model used to embed the abstracts of the papers.
         research_interests (str): The research interest against which the papers are filtered.
         threshold (float): The minimum cosine similarity required for a paper to be considered relevant.
-        db (PaperDatabase): The database used to check if a paper already exists.
         checkpoint_dir (str): The directory where the checkpoint is saved.
         batch_size (int, optional): Number of papers to embed in each batch. 1 = no batching. Defaults to 256.
         max_workers (int, optional): Maximum number of parallel workers for database checks. Defaults to 4.
@@ -389,8 +389,7 @@ def embed_papers(
         return df
 
     # Smart database checking with optimization
-    db_url = db.db_path
-    skip_checks = should_skip_database_checks(db_url, verbose)
+    skip_checks = should_skip_database_checks(verbose)
     
     if skip_checks:
         # Skip database checks entirely for speed
@@ -400,7 +399,7 @@ def embed_papers(
     else:
         # Use parallel database checking for speed
         if len(df) > 50 and max_workers > 1:
-            new_mask = check_existing_papers_parallel(df, db_url, max_workers, verbose)
+            new_mask = check_existing_papers_parallel(df, max_workers, verbose)
         else:
             # Fall back to sequential for small datasets
             if verbose:
@@ -408,7 +407,7 @@ def embed_papers(
             new_mask = []
             with tqdm(df.iterrows(), total=len(df), desc="Checking existing papers", disable=not verbose) as pbar:
                 for _, row in pbar:
-                    exists = db.paper_exists_by_url(row.get("pdf_url") or row.get("url_pdf")) or db.paper_exists_by_title(row["title"])
+                    exists = PaperRepository.exists_by_url(row.get("pdf_url") or row.get("url_pdf")) or PaperRepository.exists_by_title(row["title"])
                     new_mask.append(not exists)
         
         new_df = df[new_mask].reset_index(drop=True)
@@ -613,6 +612,13 @@ def rank_papers(
                     
                     try:
                         resp_json = json_repair.loads(resp)
+                        
+                        # Ensure resp_json is a dictionary
+                        if not isinstance(resp_json, dict):
+                            if attempts >= 3:
+                                raise TypeError(f"Expected dict from JSON parsing, got {type(resp_json)}")
+                            continue
+                            
                     except Exception:
                         if attempts >= 3:
                             raise
@@ -699,19 +705,17 @@ def insert_papers(
     df: pd.DataFrame,
     all_df: pd.DataFrame,
     embedding_model_name: str,
-    db: PaperDatabase,
     verbose: bool = True,
 ):
     """
     Inserts papers into the database.
 
-    This function takes a DataFrame of papers, an embedding model name, a database, and a verbosity flag. It iterates through the papers, creates Paper objects, and inserts them into the database. The function saves the number of new papers and duplicate papers to a checkpoint file.
+    This function takes a DataFrame of papers, an embedding model name, and a verbosity flag. It iterates through the papers, creates Paper objects, and inserts them into the database. The function saves the number of new papers and duplicate papers to a checkpoint file.
 
     Args:
         df (pd.DataFrame): A DataFrame containing the papers to be inserted.
         all_df (pd.DataFrame): A DataFrame containing all the papers.
         embedding_model_name (str): The name of the embedding model.
-        db (PaperDatabase): The database used to insert the papers.
         verbose (bool, optional): If True, prints progress messages. Defaults to True.
 
     Returns:
@@ -752,17 +756,17 @@ def insert_papers(
                 embedding=emb,
             )
             
-            inserted = db.insert_paper(paper, skip_duplicates=True)
+            inserted = PaperRepository.insert(paper, skip_duplicates=True)
 
-            paper_rec = db.get_paper_by_url(pdf_url)
+            paper_rec = PaperRepository.get_by_url(pdf_url)
             if paper_rec:
                 pid = paper_rec["id"]
-                if not db.get_paper_keywords(pid):
+                if not PaperRepository.get_keywords(pid):
                     try:
                         text_kw = f"{row['title']} {row['abstract']}"
                         kw_scores = extractor.extract_keywords(text_kw)
                         keywords = [kw for kw, _ in kw_scores]
-                        db.update_paper_keywords(pid, keywords)
+                        PaperRepository.update_keywords(pid, keywords)
                     except Exception:
                         pass
 
@@ -793,7 +797,6 @@ def harvest_and_judge(
     date_from: Optional[str],
     date_to: Optional[str],
     checkpoint_dir: str,
-    db_url: str,
     cosine_threshold: float = 0.5,
     batch_size: int = 256,
     max_workers: int = 4,
@@ -809,9 +812,9 @@ def harvest_and_judge(
         date_from (Optional[str]): The start date for the time period selected (MM-DD-YYYY). Defaults to None.
         date_to (Optional[str]): The end date for the time period selected (MM-DD-YYYY). Defaults to None.
         checkpoint_dir (str): The directory where intermediate results are saved for checkpointing.
-        db_url (str): The URL of the database where the papers are stored.
         cosine_threshold (float, optional): The minimum cosine similarity required for a paper to be considered relevant. Defaults to 0.5.
         batch_size (int, optional): Number of papers to embed in each batch. 1 = no batching. Defaults to 1.
+        max_workers (int, optional): Maximum number of parallel workers for database checks. Defaults to 4.
         verbose (bool, optional): If True, prints detailed progress messages. Defaults to True.
     """
     if verbose:
@@ -822,14 +825,11 @@ def harvest_and_judge(
         if batch_size > 1:
             print(f"⚡ Embedding batch size: {batch_size}")
         print(f"📁 Checkpoint directory: {checkpoint_dir}")
-        print(f"🗄️ Database: {db_url}")
-    
-    db = PaperDatabase(db_url)
 
     if verbose:
         print(f"\n🔧 Loading configuration...")
     
-    orch_json = db.get_setting("orchestration")
+    orch_json = SettingsRepository.get("orchestration")
     if orch_json:
         orch_cfg = json.loads(orch_json)
         if verbose:
@@ -841,7 +841,7 @@ def harvest_and_judge(
         if verbose:
             print("📝 Using orchestration config from file")
 
-    research_interests = db.get_setting("research_interests")
+    research_interests = SettingsRepository.get("research_interests")
     if research_interests is None:
         path = PROJECT_ROOT / "config" / "research_interests.txt"
         if path.exists():
@@ -898,7 +898,6 @@ def harvest_and_judge(
         embedding_model,
         research_interests,
         cosine_threshold,
-        db,
         checkpoint_dir,
         batch_size,
         max_workers,
@@ -913,7 +912,7 @@ def harvest_and_judge(
         verbose,
     )
 
-    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], db, verbose)
+    insert_papers(ranked_df, embedded_df, embedding_cfg["model_name"], verbose)
     
     if verbose:
         print("\n" + "="*60)
@@ -925,7 +924,7 @@ def parse_args():
     """
     Parses command line arguments for the harvest_and_judge function.
 
-    This function creates an argument parser for the harvest_and_judge function, allowing users to specify the date range, database URL, and cosine threshold.
+    This function creates an argument parser for the harvest_and_judge function, allowing users to specify the date range and cosine threshold.
     It also sets default values for these parameters if not provided.
     """
     parser = argparse.ArgumentParser(
@@ -933,13 +932,6 @@ def parse_args():
     )
     parser.add_argument("--date-from", help="Start date YYYY-MM-DD", default='2024-01-01')
     parser.add_argument("--date-to", help="End date YYYY-MM-DD", default='2025-05-22')
-    parser.add_argument(
-        "--db-url",
-        default=os.getenv(
-            "DATABASE_URL", "data/theseus.db"
-        ),
-        help="Database connection URL",
-    )
     parser.add_argument("--checkpoint-dir", default="harvest_checkpoints")
     parser.add_argument("--cosine-threshold", type=float, default=0.65)
     parser.add_argument("--batch-size", type=int, default=32,
@@ -962,7 +954,6 @@ if __name__ == "__main__":
         date_from=args.date_from,
         date_to=args.date_to,
         checkpoint_dir=args.checkpoint_dir,
-        db_url=args.db_url,
         cosine_threshold=args.cosine_threshold,
         batch_size=args.batch_size,
         max_workers=args.max_workers,

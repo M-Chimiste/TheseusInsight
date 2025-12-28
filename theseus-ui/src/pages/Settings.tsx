@@ -21,21 +21,35 @@ import {
   Tooltip,
   IconButton,
   Autocomplete,
-  Chip,
   Accordion,
   AccordionSummary,
   AccordionDetails,
   LinearProgress,
+  Slider,
+  Paper,
+  Chip,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi, modelCatalogApi } from '../services/api';
+import { settingsApi, modelCatalogApi, performanceApi, researchAgentApi, ollamaServersApi } from '../services/api';
+import type { PerformanceConfig, SystemInfo } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import taxonomy from '../arxiv_taxonomy.json';
+import SpeedIcon from '@mui/icons-material/Speed';
+import MemoryIcon from '@mui/icons-material/Memory';
+import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
+import Brightness7Icon from '@mui/icons-material/Brightness7';
+import PaletteIcon from '@mui/icons-material/Palette';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
+import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
+import { useLayout } from '../contexts/LayoutContext';
+import { ScheduledTasksSettings } from '../components/ScheduledTasksSettings';
+import OllamaServersSettings from '../components/OllamaServersSettings';
 
 const CREDENTIAL_KEYS = [
   'GOOGLE_API_KEY',
@@ -61,8 +75,24 @@ const MODEL_TABS = [
   { key: 'newsletter_intro_model', label: 'Newsletter Intro Model', tooltip: 'Generates newsletter introduction.' },
   { key: 'podcast_model', label: 'Podcast Model', tooltip: 'Used for podcast generation.' },
   { key: 'tts_model', label: 'TTS Model', tooltip: 'Text-to-speech for podcast.' },
-  { key: 'research_agent_model_config', label: 'Research Agent Models', tooltip: 'Boss and worker models for automated literature review.' },
   { key: 'mind_map_config', label: 'Mind-Map Explorer', tooltip: 'Configuration for mind-map visualization and paper relationship exploration.' },
+  { key: 'inference_servers', label: 'Inference Servers', tooltip: 'Configure multiple Ollama and LMStudio servers for distributed bulk processing.' },
+];
+
+// Research Agent Configuration Tabs
+const RESEARCH_AGENT_TABS = [
+  { 
+    key: 'single', 
+    label: 'Single Agent', 
+    tooltip: 'Sequential workflow with research loops for iterative deep analysis',
+    icon: SmartToyIcon
+  },
+  { 
+    key: 'multi', 
+    label: 'Multi Agent', 
+    tooltip: 'Parallel orchestration with specialized agents for comprehensive research',
+    icon: GroupWorkIcon 
+  },
 ];
 
 interface TabPanelProps {
@@ -140,13 +170,10 @@ const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
       // User typed a custom value
       onChange(newValue);
     } else if (newValue) {
-      // User selected from catalog - let batched update handle everything including model_name
-      // This prevents race conditions between individual and batched updates
+      // User selected from catalog - update the input field immediately and call batch update
+      onChange(newValue.model_string);
       if (onModelSelected) {
         onModelSelected(newValue);
-      } else {
-        // Fallback if no batched update callback - set model name directly
-        onChange(newValue.model_string);
       }
     } else {
       // Cleared
@@ -215,18 +242,48 @@ const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
 
 const Settings: React.FC = () => {
   const queryClient = useQueryClient();
-  // Alias taxonomy as any to allow dynamic indexing
-  const taxonomyAny = taxonomy as any;
+  const { isDarkMode, toggleTheme } = useCustomTheme();
+  const { headerHeight } = useLayout(); // Get dynamic header height
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
-  const [selectedArxivMain, setSelectedArxivMain] = useState<string>('');
-  const [selectedArxivSubs, setSelectedArxivSubs] = useState<string[]>([]);
-  const [researchInterestsInput, setResearchInterestsInput] = useState<string>('');
-  const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
+  const [researchAgentTab, setResearchAgentTab] = useState(0);
+
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'overwrite'>('merge');
-  const [editedResearchAgentConfig, setEditedResearchAgentConfig] = useState<any | null>(null);
+
+  // Profile mapping options for import
+  const [importMappingStrategy, setImportMappingStrategy] = useState<'auto' | 'create_new' | 'merge_to' | 'match_by_name'>('auto');
+  const [importMergeToProfileId, setImportMergeToProfileId] = useState<number | null>(null);
+  const [importNewProfileName, setImportNewProfileName] = useState<string>('');
+  
+  // Incremental export state
+  const [exportMode, setExportMode] = useState<'full' | 'incremental' | 'profile'>('full');
+  const [incrementalSince, setIncrementalSince] = useState<string>('');
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
+  const [exportOptions, setExportOptions] = useState({
+    streaming: false,
+    parallel: false,
+    batch_size: 1000,
+    max_workers: 4
+  });
+
+  // Profile-scoped export state
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
+  const [profileExportOptions, setProfileExportOptions] = useState({
+    include_fulltext: true,
+    include_topics: false,
+    include_newsletters: false,
+    include_podcasts: false,
+    include_lit_reviews: false,
+    include_research_runs: false,
+    include_mindmap_reports: false,
+    include_model_catalog: false
+  });
+
+  // Research Agent Configuration State
+  const [singleAgentConfig, setSingleAgentConfig] = useState<any>({});
+  const [multiAgentConfig, setMultiAgentConfig] = useState<any>({});
   
   // Use the database task state hook for persistent state management
   const {
@@ -247,19 +304,10 @@ const Settings: React.FC = () => {
     queryFn: () => settingsApi.getOrchestrationConfig().then(res => res.data),
   });
 
-  const { data: arxivCategories, isLoading: isLoadingArxiv } = useQuery({
-    queryKey: ['arxivCategories'],
-    queryFn: () => settingsApi.getArxivCategories().then(res => res.data),
-  });
-
-  const { data: researchInterests, isLoading: isLoadingResearch } = useQuery({
-    queryKey: ['researchInterests'],
-    queryFn: () => settingsApi.getResearchInterests().then(res => res.data),
-  });
-
-  const { data: emailRecipients, isLoading: isLoadingEmail } = useQuery({
-    queryKey: ['emailRecipients'],
-    queryFn: () => settingsApi.getEmailRecipients().then(res => res.data),
+  // Research Agent Configuration Queries
+  const { data: researchModes, isLoading: isLoadingResearchModes } = useQuery({
+    queryKey: ['researchModes'],
+    queryFn: () => researchAgentApi.getModes().then(res => res.data),
   });
 
   const { data: modelProviders, isLoading: isLoadingProviders, isError: isErrorProviders } = useQuery<any[], Error>({
@@ -275,57 +323,79 @@ const Settings: React.FC = () => {
       page_size: 100  // Maximum allowed by backend validation
     }).then(res => res.data),
   });
+
+  // Query for inference servers to provide host autocomplete
+  const { data: inferenceServers } = useQuery({
+    queryKey: ['inferenceServersForSettings'],
+    queryFn: () => ollamaServersApi.getAllServers().then((res: any) => res.data)
+  });
+
+  // Helper function to get hosts filtered by provider
+  const getHostsByProvider = React.useCallback((provider: 'ollama' | 'lmstudio' | 'custom-oai') => {
+    if (!inferenceServers || !Array.isArray(inferenceServers)) return [];
+
+    // For custom-oai, we could show all hosts or none - let's show all
+    if (provider === 'custom-oai') {
+      const hosts = inferenceServers.map((server: any) => server.url);
+      return Array.from(new Set(hosts)).sort();
+    }
+
+    // Filter by provider and extract URLs
+    const hosts = inferenceServers
+      .filter((server: any) => server.provider === provider)
+      .map((server: any) => server.url);
+    return Array.from(new Set(hosts)).sort();
+  }, [inferenceServers]);
+
+  // Query for research profiles (for profile-scoped export)
+  const { data: researchProfiles } = useQuery({
+    queryKey: ['researchProfilesForExport'],
+    queryFn: async () => {
+      const response = await fetch('/api/profiles');
+      if (!response.ok) throw new Error('Failed to fetch profiles');
+      return response.json();
+    }
+  });
   
   const updateOrchestrationMutation = useMutation({
     mutationFn: (newConfig: any) => settingsApi.updateOrchestrationConfig(newConfig),
     onSuccess: (data) => {
       queryClient.setQueryData(['orchestrationConfig'], data.data); // Assuming API returns the updated config
       queryClient.invalidateQueries({ queryKey: ['orchestrationConfig'] });
-      setSuccess('Orchestration configuration updated successfully');
+      setSuccess('Configuration updated successfully');
     },
-    onError: (error: any) => setError(error.message || 'Failed to update orchestration config'),
+    onError: (error: any) => setError(error.message || 'Failed to update configuration'),
   });
 
-  const updateArxivCategoriesMutation = useMutation({
-    mutationFn: (config: any) => settingsApi.updateArxivCategories(config),
+  // Research Agent Configuration Mutations
+  const setResearchModeMutation = useMutation({
+    mutationFn: (mode: 'single' | 'multi') => researchAgentApi.setMode(mode),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['arxivCategories'] });
-      setSuccess('ArXiv categories updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['researchModes'] });
+      setSuccess('Research agent mode updated successfully');
     },
-    onError: (error: any) => setError(error.message),
+    onError: (error: any) => setError(error.message || 'Failed to update research agent mode'),
   });
 
-  const updateResearchInterestsMutation = useMutation({
-    mutationFn: (data: any) => settingsApi.updateResearchInterests(data),
+  const updateSingleAgentConfigMutation = useMutation({
+    mutationFn: (config: any) => researchAgentApi.setModeConfig('single', config),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['researchInterests'] });
-      setSuccess('Research interests updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['researchModes'] });
+      setSuccess('Single-agent configuration updated successfully');
     },
-    onError: (error: any) => setError(error.message),
+    onError: (error: any) => setError(error.message || 'Failed to update single-agent configuration'),
   });
 
-  const updateEmailRecipientsMutation = useMutation({
-    mutationFn: (data: any) => settingsApi.updateEmailRecipients(data),
+  const updateMultiAgentConfigMutation = useMutation({
+    mutationFn: (config: any) => researchAgentApi.setModeConfig('multi', config),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['emailRecipients'] });
-      setSuccess('Email recipients updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['researchModes'] });
+      setSuccess('Multi-agent configuration updated successfully');
     },
-    onError: (error: any) => setError(error.message),
+    onError: (error: any) => setError(error.message || 'Failed to update multi-agent configuration'),
   });
 
   const [appPasswordFailed, setAppPasswordFailed] = useState(false);
-
-  const sendTestEmailMutation = useMutation({
-    mutationFn: () => settingsApi.sendTestEmail(),
-    onSuccess: () => setSuccess('Test email sent successfully'),
-    onError: (error: any) => {
-      const message = error?.response?.data?.detail || error.message;
-      if (message && /application\-specific|authentication/i.test(message)) {
-        setAppPasswordFailed(true);
-      }
-      setError(message);
-    },
-  });
 
   const { data: credentials } = useQuery({
     queryKey: ['credentials'],
@@ -342,7 +412,49 @@ const Settings: React.FC = () => {
   });
 
   const exportDatabaseMutation = useMutation({
-    mutationFn: () => settingsApi.startExportDatabase(),
+    mutationFn: () => {
+      const options: any = {};
+
+      if (exportMode === 'profile') {
+        // Profile-scoped export
+        if (!selectedProfileId) {
+          throw new Error('Please select a profile for profile-scoped export');
+        }
+        options.profile_id = selectedProfileId;
+        options.include_fulltext = profileExportOptions.include_fulltext;
+        options.include_topics = profileExportOptions.include_topics;
+        options.include_newsletters = profileExportOptions.include_newsletters;
+        options.include_podcasts = profileExportOptions.include_podcasts;
+        options.include_lit_reviews = profileExportOptions.include_lit_reviews;
+        options.include_research_runs = profileExportOptions.include_research_runs;
+        options.include_mindmap_reports = profileExportOptions.include_mindmap_reports;
+        options.include_model_catalog = profileExportOptions.include_model_catalog;
+        options.streaming = exportOptions.streaming;
+      } else if (exportMode === 'incremental') {
+        options.incremental = true;
+        if (incrementalSince) {
+          // Convert date to ISO format with timezone
+          const date = new Date(incrementalSince);
+          options.since_timestamp = date.toISOString();
+        }
+        if (selectedTables.length > 0) {
+          options.tables = selectedTables;
+        }
+        // Add performance options for incremental
+        options.streaming = exportOptions.streaming;
+        options.parallel = exportOptions.parallel;
+        options.batch_size = exportOptions.batch_size;
+        options.max_workers = exportOptions.max_workers;
+      } else {
+        // Full export - add performance options
+        options.streaming = exportOptions.streaming;
+        options.parallel = exportOptions.parallel;
+        options.batch_size = exportOptions.batch_size;
+        options.max_workers = exportOptions.max_workers;
+      }
+
+      return settingsApi.startExportDatabase(options);
+    },
     onMutate: () => {
       // Clear any previous errors
       setExportError(null);
@@ -417,8 +529,29 @@ const Settings: React.FC = () => {
   });
 
   const importDatabaseMutation = useMutation({
-    mutationFn: ({ file, mode }: { file: File; mode: 'merge' | 'overwrite' }) => 
-      settingsApi.importDatabase(file, mode),
+    mutationFn: ({ file, mode, mappingStrategy, mergeToProfileId, newProfileName }: {
+      file: File;
+      mode: 'merge' | 'overwrite';
+      mappingStrategy?: string;
+      mergeToProfileId?: number | null;
+      newProfileName?: string;
+    }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('mode', mode);
+
+      if (mappingStrategy) {
+        formData.append('mapping_strategy', mappingStrategy);
+      }
+      if (mergeToProfileId) {
+        formData.append('merge_to_profile_id', mergeToProfileId.toString());
+      }
+      if (newProfileName) {
+        formData.append('new_profile_name', newProfileName);
+      }
+
+      return settingsApi.importDatabase(file, mode);
+    },
     onMutate: () => {
       // Clear any previous errors
       setImportError(null);
@@ -465,8 +598,68 @@ const Settings: React.FC = () => {
     onError: (error: any) => setImportError(error.message || 'Failed to start database import'),
   });
 
-  const [showCreds, setShowCreds] = useState<Record<string, boolean>>({});
   const [credValues, setCredValues] = useState<Record<string, string>>({});
+  const [showCreds, setShowCreds] = useState<Record<string, boolean>>({});
+
+  // Performance Configuration State
+  const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig | null>(null);
+  
+  // Performance Configuration Queries
+  const { data: systemInfo, isLoading: isLoadingSystemInfo } = useQuery<SystemInfo>({
+    queryKey: ['systemInfo'],
+    queryFn: () => performanceApi.getSystemInfo(),
+  });
+
+  const { data: currentPerformanceConfig, isLoading: isLoadingPerformanceConfig } = useQuery<PerformanceConfig>({
+    queryKey: ['performanceConfig'],
+    queryFn: () => performanceApi.getPerformanceConfig(),
+  });
+
+  const updatePerformanceConfigMutation = useMutation({
+    mutationFn: (config: PerformanceConfig) => performanceApi.updatePerformanceConfig(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['performanceConfig'] });
+      setSuccess('Performance configuration updated successfully');
+    },
+    onError: (error: any) => setError(error.message || 'Failed to update performance configuration'),
+  });
+
+  // Initialize performance config when loaded
+  useEffect(() => {
+    if (currentPerformanceConfig && !performanceConfig) {
+      setPerformanceConfig(currentPerformanceConfig);
+    }
+  }, [currentPerformanceConfig, performanceConfig]);
+
+  // Initialize research agent configurations
+  useEffect(() => {
+    if (researchModes) {
+      setSingleAgentConfig(researchModes.single_agent_config || {});
+      setMultiAgentConfig(researchModes.multi_agent_config || {});
+    }
+  }, [researchModes]);
+
+  // Helper functions for performance configuration
+  const handlePerformanceConfigChange = (field: keyof PerformanceConfig, value: any) => {
+    if (performanceConfig) {
+      setPerformanceConfig({
+        ...performanceConfig,
+        [field]: value,
+      });
+    }
+  };
+
+  const applyRecommendedConfig = () => {
+    if (systemInfo?.recommended_config) {
+      setPerformanceConfig(systemInfo.recommended_config);
+    }
+  };
+
+  const savePerformanceConfig = () => {
+    if (performanceConfig) {
+      updatePerformanceConfigMutation.mutate(performanceConfig);
+    }
+  };
 
   useEffect(() => {
     if (credentials) {
@@ -474,59 +667,7 @@ const Settings: React.FC = () => {
     }
   }, [credentials]);
 
-  useEffect(() => {
-    if (orchestrationConfig?.research_agent_model_config) {
-      // Deep clone the config and ensure all nested objects exist
-      const clonedConfig = JSON.parse(JSON.stringify(orchestrationConfig.research_agent_model_config));
-      
-      // Ensure all required nested objects exist to prevent null access errors
-      if (!clonedConfig.boss_model) clonedConfig.boss_model = {};
-      if (!clonedConfig.worker_models) clonedConfig.worker_models = {};
-      if (!clonedConfig.worker_models.summary) clonedConfig.worker_models.summary = {};
-      if (!clonedConfig.worker_models.analysis) clonedConfig.worker_models.analysis = {};
-      if (!clonedConfig.worker_models.search) clonedConfig.worker_models.search = {};
-      if (!clonedConfig.query_planner_model) clonedConfig.query_planner_model = {};
-      if (!clonedConfig.evidence_selector_model) clonedConfig.evidence_selector_model = {};
-      if (!clonedConfig.compression_model) clonedConfig.compression_model = {};
-      if (!clonedConfig.answer_generator_model) clonedConfig.answer_generator_model = {};
-      
-      setEditedResearchAgentConfig(clonedConfig);
-    }
-  }, [orchestrationConfig]);
-
   const handleModelConfigChange = (modelKey: string, field: string, value: any) => {
-    // Handle research agent model config separately
-    if (modelKey === 'research_agent_model_config') {
-      const newConfig = JSON.parse(JSON.stringify(editedResearchAgentConfig || {}));
-      
-      // Handle nested paths like "boss_model.model_name" or "worker_models.summary.temperature"
-      if (field.includes('.')) {
-        const fieldParts = field.split('.');
-        let currentObj = newConfig;
-        
-        // Navigate to the parent object
-        for (let i = 0; i < fieldParts.length - 1; i++) {
-          if (!currentObj[fieldParts[i]]) {
-            currentObj[fieldParts[i]] = {};
-          }
-          currentObj = currentObj[fieldParts[i]];
-        }
-        
-        // Set the final value
-        currentObj[fieldParts[fieldParts.length - 1]] = value;
-      } else {
-        newConfig[field] = value;
-      }
-      
-      setEditedResearchAgentConfig(newConfig);
-      // Optimistically update local state for UI responsiveness
-      queryClient.setQueryData(['orchestrationConfig'], {
-        ...orchestrationConfig,
-        research_agent_model_config: newConfig
-      });
-      return;
-    }
-    
     // Handle regular orchestration config
     if (!orchestrationConfig) {
       return;
@@ -602,102 +743,136 @@ const Settings: React.FC = () => {
 
     // Apply all fields in a single batch update to avoid race conditions
     if (Object.keys(modelData).length > 0) {
-      if (modelKey === 'research_agent_model_config') {
-        const newConfig = JSON.parse(JSON.stringify(editedResearchAgentConfig || {}));
-        
-        // Apply all fields to the config
-        Object.entries(modelData).forEach(([field, value]) => {
-          const fieldPath = prefix ? `${prefix}.${field}` : field;
-          
-          if (fieldPath.includes('.')) {
-            const fieldParts = fieldPath.split('.');
-            let currentObj = newConfig;
-            
-            for (let i = 0; i < fieldParts.length - 1; i++) {
-              if (!currentObj[fieldParts[i]]) {
-                currentObj[fieldParts[i]] = {};
-              }
-              currentObj = currentObj[fieldParts[i]];
-            }
-            
-            currentObj[fieldParts[fieldParts.length - 1]] = value;
-          } else {
-            newConfig[fieldPath] = value;
-          }
-        });
-        setEditedResearchAgentConfig(newConfig);
-        queryClient.setQueryData(['orchestrationConfig'], {
-          ...orchestrationConfig,
-          research_agent_model_config: newConfig
-        });
-      } else {
-        if (!orchestrationConfig) {
-          return;
-        }
-        const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
-        
-        if (!newOrchestrationConfig[modelKey]) {
-          newOrchestrationConfig[modelKey] = {};
-        }
-        
-        // Apply all fields to the config
-        Object.entries(modelData).forEach(([field, value]) => {
-          const fieldPath = prefix ? `${prefix}.${field}` : field;
-          
-          if (fieldPath.includes('.')) {
-            const fieldParts = fieldPath.split('.');
-            let currentObj = newOrchestrationConfig[modelKey];
-            
-            for (let i = 0; i < fieldParts.length - 1; i++) {
-              if (!currentObj[fieldParts[i]]) {
-                currentObj[fieldParts[i]] = {};
-              }
-              currentObj = currentObj[fieldParts[i]];
-            }
-            
-            currentObj[fieldParts[fieldParts.length - 1]] = value;
-          } else {
-            newOrchestrationConfig[modelKey][fieldPath] = value;
-          }
-        });
-        
-        queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
+      if (!orchestrationConfig) {
+        return;
       }
+      const newOrchestrationConfig = JSON.parse(JSON.stringify(orchestrationConfig)); // Deep copy
+      
+      if (!newOrchestrationConfig[modelKey]) {
+        newOrchestrationConfig[modelKey] = {};
+      }
+      
+      // Apply all fields to the config
+      Object.entries(modelData).forEach(([field, value]) => {
+        const fieldPath = prefix ? `${prefix}.${field}` : field;
+        
+        if (fieldPath.includes('.')) {
+          const fieldParts = fieldPath.split('.');
+          let currentObj = newOrchestrationConfig[modelKey];
+          
+          for (let i = 0; i < fieldParts.length - 1; i++) {
+            if (!currentObj[fieldParts[i]]) {
+              currentObj[fieldParts[i]] = {};
+            }
+            currentObj = currentObj[fieldParts[i]];
+          }
+          
+          currentObj[fieldParts[fieldParts.length - 1]] = value;
+        } else {
+          newOrchestrationConfig[modelKey][fieldPath] = value;
+        }
+      });
+      
+      queryClient.setQueryData(['orchestrationConfig'], newOrchestrationConfig);
     }
   };
 
-  useEffect(() => {
-    if (arxivCategories) {
-      const mainCat = arxivCategories.main_category || '';
-      setSelectedArxivMain(mainCat);
-      // Map DB subcategories (lowercase) to taxonomy keys (uppercase)
-      const subs = (arxivCategories.filter_categories || [])
-        .map((code: string) => {
-          const parts = code.split('.');
-          if (parts.length !== 2) return null;
-          const [mc, sc] = parts;
-          const upper = sc.toUpperCase();
-          if (taxonomyAny[mc] && taxonomyAny[mc][upper]) {
-            return `${mc}.${upper}`;
+  // Research Agent Configuration Helpers
+  const handleSingleAgentConfigChange = (field: string, value: any) => {
+    const newConfig = JSON.parse(JSON.stringify(singleAgentConfig));
+    
+    if (field.includes('.')) {
+      const fieldParts = field.split('.');
+      let currentObj = newConfig;
+      
+      for (let i = 0; i < fieldParts.length - 1; i++) {
+        if (!currentObj[fieldParts[i]]) {
+          currentObj[fieldParts[i]] = {};
+        }
+        currentObj = currentObj[fieldParts[i]];
+      }
+      
+      currentObj[fieldParts[fieldParts.length - 1]] = value;
+    } else {
+      newConfig[field] = value;
+    }
+    
+    setSingleAgentConfig(newConfig);
+  };
+
+  const handleMultiAgentConfigChange = (field: string, value: any) => {
+    const newConfig = JSON.parse(JSON.stringify(multiAgentConfig));
+    
+    if (field.includes('.')) {
+      const fieldParts = field.split('.');
+      let currentObj = newConfig;
+      
+      for (let i = 0; i < fieldParts.length - 1; i++) {
+        if (!currentObj[fieldParts[i]]) {
+          currentObj[fieldParts[i]] = {};
+        }
+        currentObj = currentObj[fieldParts[i]];
+      }
+      
+      currentObj[fieldParts[fieldParts.length - 1]] = value;
+    } else {
+      newConfig[field] = value;
+    }
+    
+    setMultiAgentConfig(newConfig);
+  };
+
+  const handleResearchAgentModelSelected = (configType: 'single' | 'multi', selectedOption: ModelCatalogOption, modelPath: string) => {
+    const fullCatalogEntry = modelCatalogData?.models?.find((model: any) => 
+      model.id === selectedOption.id
+    );
+
+    if (!fullCatalogEntry) return;
+
+    const modelData: any = {
+      model_name: fullCatalogEntry.model_string,
+      model_type: fullCatalogEntry.provider_name,
+      temperature: fullCatalogEntry.temperature || 0.1,
+      max_new_tokens: fullCatalogEntry.max_new_tokens || 4096,
+    };
+
+    if (fullCatalogEntry.num_ctx !== null && fullCatalogEntry.num_ctx !== undefined) {
+      modelData.num_ctx = fullCatalogEntry.num_ctx;
+    }
+
+    // --- NEW IMPLEMENTATION: batch apply all fields in a single state update ---
+    if (configType === 'single') {
+      const newConfig = JSON.parse(JSON.stringify(singleAgentConfig));
+      Object.entries(modelData).forEach(([field, value]) => {
+        const fullPath = `${modelPath}.${field}`;
+        const fieldParts = fullPath.split('.');
+        let currentObj: any = newConfig;
+        for (let i = 0; i < fieldParts.length - 1; i++) {
+          if (!currentObj[fieldParts[i]]) {
+            currentObj[fieldParts[i]] = {};
           }
-          return null;
-        })
-        .filter((v: string | null): v is string => !!v);
-      setSelectedArxivSubs(subs);
+          currentObj = currentObj[fieldParts[i]];
+        }
+        currentObj[fieldParts[fieldParts.length - 1]] = value;
+      });
+      setSingleAgentConfig(newConfig);
+    } else {
+      const newConfig = JSON.parse(JSON.stringify(multiAgentConfig));
+      Object.entries(modelData).forEach(([field, value]) => {
+        const fullPath = `${modelPath}.${field}`;
+        const fieldParts = fullPath.split('.');
+        let currentObj: any = newConfig;
+        for (let i = 0; i < fieldParts.length - 1; i++) {
+          if (!currentObj[fieldParts[i]]) {
+            currentObj[fieldParts[i]] = {};
+          }
+          currentObj = currentObj[fieldParts[i]];
+        }
+        currentObj[fieldParts[fieldParts.length - 1]] = value;
+      });
+      setMultiAgentConfig(newConfig);
     }
-  }, [arxivCategories]);
-
-  useEffect(() => {
-    if (researchInterests) {
-      setResearchInterestsInput(researchInterests.interests || '');
-    }
-  }, [researchInterests]);
-
-  useEffect(() => {
-    if (emailRecipients) {
-      setEmailRecipientsInput(emailRecipients.recipients?.join('\n') || '');
-    }
-  }, [emailRecipients]);
+  };
 
   const handleDatabaseImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -706,699 +881,20 @@ const Settings: React.FC = () => {
 
   const handleDatabaseImport = () => {
     if (selectedImportFile) {
-      importDatabaseMutation.mutate({ file: selectedImportFile, mode: importMode });
-    }
-  };
-
-  const cleanResearchAgentConfig = (config: any): any => {
-    if (!config) return null;
-
-    // Deep copy to avoid mutating the original state
-    const cleanedConfig = JSON.parse(JSON.stringify(config));
-
-    // Helper to clean individual model objects
-    const cleanModel = (model: any) => {
-      if (!model) return null;
-      // If it's not a valid model object, return null
-      if (typeof model !== 'object' || !model.model_name || !model.model_type) {
-        return null;
-      }
-      
-      // Convert empty strings to null for numeric fields
-      const numericFields = ['max_new_tokens', 'temperature', 'num_ctx'];
-      numericFields.forEach(field => {
-        if (model[field] === '' || model[field] === undefined) {
-          model[field] = null;
-        }
+      importDatabaseMutation.mutate({
+        file: selectedImportFile,
+        mode: importMode,
+        mappingStrategy: importMappingStrategy,
+        mergeToProfileId: importMergeToProfileId,
+        newProfileName: importNewProfileName
       });
-      return model;
-    };
-
-    // Clean the main boss_model (must be valid)
-    cleanedConfig.boss_model = cleanModel(cleanedConfig.boss_model);
-    if (!cleanedConfig.boss_model) {
-      setError("Research Agent's Boss Model must have a valid model name and type.");
-      return null; // Stop processing if boss model is invalid
     }
-
-    // Clean worker models, removing invalid ones
-    if (cleanedConfig.worker_models) {
-      const validWorkerModels: { [key: string]: any } = {};
-      for (const key in cleanedConfig.worker_models) {
-        const cleanedWorker = cleanModel(cleanedConfig.worker_models[key]);
-        if (cleanedWorker) {
-          validWorkerModels[key] = cleanedWorker;
-        }
-      }
-      cleanedConfig.worker_models = validWorkerModels;
-    }
-
-    // Clean optional node-specific models
-    const optionalModels = [
-      'query_planner_model',
-      'evidence_selector_model',
-      'compression_model',
-      'answer_generator_model'
-    ];
-    optionalModels.forEach(key => {
-      cleanedConfig[key] = cleanModel(cleanedConfig[key]);
-    });
-    
-    // Remove deprecated fields that are no longer used in the workflow
-    delete cleanedConfig.timeout_seconds;
-    delete cleanedConfig.external_search_timeout;
-    delete cleanedConfig.default_worker;
-    delete cleanedConfig.max_retries;
-
-    // Ensure PDF processing fields have proper defaults
-    if (cleanedConfig.enable_full_text === undefined) {
-      cleanedConfig.enable_full_text = true;
-    }
-    if (cleanedConfig.full_text_top_n === undefined || cleanedConfig.full_text_top_n === '') {
-      cleanedConfig.full_text_top_n = 20;
-    }
-    if (cleanedConfig.max_chunk_tokens === undefined || cleanedConfig.max_chunk_tokens === '') {
-      cleanedConfig.max_chunk_tokens = 8000;
-    }
-    if (cleanedConfig.summary_target_tokens === undefined || cleanedConfig.summary_target_tokens === '') {
-      cleanedConfig.summary_target_tokens = 1500;
-    }
-
-    return cleanedConfig;
   };
-
-  const renderResearchAgentModelConfig = (config: any) => {
-    if (!config) return <Typography>Research Agent configuration not available.</Typography>;
-
-    const bossModel = config.boss_model || {};
-    const workerModels = config.worker_models || {};
-
-    const renderModelFields = (modelConfig: any, prefix: string, title: string) => (
-      <Card variant="outlined" sx={{ mb: 2 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>{title}</Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <ModelNameAutocomplete
-                label="Model Name"
-                value={modelConfig.model_name || ''}
-                onChange={value => handleModelConfigChange('research_agent_model_config', `${prefix}.model_name`, value)}
-                onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, prefix)}
-                modelCatalogData={modelCatalogData}
-              />
-              <FormControl fullWidth>
-                <InputLabel>Model Type (Provider)</InputLabel>
-                <Select
-                  value={modelConfig.model_type || ''}
-                  label="Model Type (Provider)"
-                  onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.model_type`, e.target.value)}
-                >
-                  {(modelProviders || []).map((provider: any) => (
-                    <MenuItem key={provider.id} value={provider.name}>
-                      {provider.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
-            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                fullWidth
-                label="Max New Tokens"
-                type="number"
-                value={modelConfig.max_new_tokens || 4096}
-                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.max_new_tokens`, Number(e.target.value))}
-              />
-              <TextField
-                fullWidth
-                label="Temperature"
-                type="number"
-                inputProps={{ step: '0.1' }}
-                value={modelConfig.temperature || 0.1}
-                onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.temperature`, parseFloat(e.target.value))}
-              />
-              {(modelConfig.model_type === 'ollama' || modelConfig.model_type === 'llamacpp') && (
-                <TextField
-                  fullWidth
-                  label="Context Window (num_ctx)"
-                  type="number"
-                  value={modelConfig.num_ctx || 131072}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', `${prefix}.num_ctx`, Number(e.target.value))}
-                />
-              )}
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
-    );
-
-    return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {/* Boss Model */}
-        <Card variant="outlined" sx={{ mb: 2 }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <Typography variant="h6">Boss Model (Main Coordinator)</Typography>
-              <Tooltip title="The primary model that orchestrates the entire research workflow, makes high-level decisions, and coordinates between different nodes. Reasoning models (o1) are highly recommended for complex research orchestration.">
-                <IconButton size="small">
-                  <InfoOutlinedIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for superior research coordination and decision-making
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <ModelNameAutocomplete
-                  label="Model Name"
-                  value={bossModel.model_name || ''}
-                  onChange={value => handleModelConfigChange('research_agent_model_config', `boss_model.model_name`, value)}
-                  onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'boss_model')}
-                  modelCatalogData={modelCatalogData}
-                />
-                <FormControl fullWidth>
-                  <InputLabel>Model Type (Provider)</InputLabel>
-                  <Select
-                    value={bossModel.model_type || ''}
-                    label="Model Type (Provider)"
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.model_type`, e.target.value)}
-                  >
-                    {(modelProviders || []).map((provider: any) => (
-                      <MenuItem key={provider.id} value={provider.name}>
-                        {provider.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Box>
-              <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <TextField
-                  fullWidth
-                  label="Max New Tokens"
-                  type="number"
-                  value={bossModel.max_new_tokens || 4096}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.max_new_tokens`, Number(e.target.value))}
-                />
-                <TextField
-                  fullWidth
-                  label="Temperature"
-                  type="number"
-                  inputProps={{ step: '0.1' }}
-                  value={bossModel.temperature || 0.1}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.temperature`, parseFloat(e.target.value))}
-                />
-                {(bossModel.model_type === 'ollama' || bossModel.model_type === 'llamacpp') && (
-                  <TextField
-                    fullWidth
-                    label="Context Window (num_ctx)"
-                    type="number"
-                    value={bossModel.num_ctx || 131072}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `boss_model.num_ctx`, Number(e.target.value))}
-                  />
-                )}
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
-        
-        {/* Worker Models */}
-        <Box sx={{ mt: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-            <Typography variant="h6">Worker Models</Typography>
-            <Tooltip title="Specialized models for specific tasks like summarization, analysis, and search processing. These handle the detailed work while the Boss Model coordinates the overall workflow.">
-              <IconButton size="small">
-                <InfoOutlinedIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Box>
-          
-          {/* Summary Worker */}
-          <Card variant="outlined" sx={{ mb: 2 }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <Typography variant="h6">Summary Worker</Typography>
-                <Tooltip title="Processes and summarizes full-text content from PDFs and research papers. Instruct models are well-suited for this summarization task.">
-                  <IconButton size="small">
-                    <InfoOutlinedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                <strong>Recommended:</strong> Instruct models (GPT-4, Claude-3.5, Llama-3) excel at summarization tasks
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <ModelNameAutocomplete
-                    label="Model Name"
-                    value={workerModels.summary?.model_name || ''}
-                    onChange={value => handleModelConfigChange('research_agent_model_config', `worker_models.summary.model_name`, value)}
-                    onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'worker_models.summary')}
-                    modelCatalogData={modelCatalogData}
-                  />
-                  <FormControl fullWidth>
-                    <InputLabel>Model Type (Provider)</InputLabel>
-                    <Select
-                      value={workerModels.summary?.model_type || ''}
-                      label="Model Type (Provider)"
-                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.model_type`, e.target.value)}
-                    >
-                      {(modelProviders || []).map((provider: any) => (
-                        <MenuItem key={provider.id} value={provider.name}>
-                          {provider.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Box>
-                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <TextField
-                    fullWidth
-                    label="Max New Tokens"
-                    type="number"
-                    value={workerModels.summary?.max_new_tokens || 4096}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.max_new_tokens`, Number(e.target.value))}
-                  />
-                  <TextField
-                    fullWidth
-                    label="Temperature"
-                    type="number"
-                    inputProps={{ step: '0.1' }}
-                    value={workerModels.summary?.temperature || 0.1}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.temperature`, parseFloat(e.target.value))}
-                  />
-                  {(workerModels.summary?.model_type === 'ollama' || workerModels.summary?.model_type === 'llamacpp') && (
-                    <TextField
-                      fullWidth
-                      label="Context Window (num_ctx)"
-                      type="number"
-                      value={workerModels.summary?.num_ctx || 131072}
-                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.summary.num_ctx`, Number(e.target.value))}
-                    />
-                  )}
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-
-          {/* Analysis Worker */}
-          <Card variant="outlined" sx={{ mb: 2 }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <Typography variant="h6">Analysis Worker</Typography>
-                <Tooltip title="Analyzes research content for quality, relevance, and key insights. Reasoning models provide better analytical capabilities for complex research evaluation.">
-                  <IconButton size="small">
-                    <InfoOutlinedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for deeper analysis, or strong instruct models (GPT-4, Claude-3.5)
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <ModelNameAutocomplete
-                    label="Model Name"
-                    value={workerModels.analysis?.model_name || ''}
-                    onChange={value => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.model_name`, value)}
-                    onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'worker_models.analysis')}
-                    modelCatalogData={modelCatalogData}
-                  />
-                  <FormControl fullWidth>
-                    <InputLabel>Model Type (Provider)</InputLabel>
-                    <Select
-                      value={workerModels.analysis?.model_type || ''}
-                      label="Model Type (Provider)"
-                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.model_type`, e.target.value)}
-                    >
-                      {(modelProviders || []).map((provider: any) => (
-                        <MenuItem key={provider.id} value={provider.name}>
-                          {provider.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Box>
-                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <TextField
-                    fullWidth
-                    label="Max New Tokens"
-                    type="number"
-                    value={workerModels.analysis?.max_new_tokens || 4096}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.max_new_tokens`, Number(e.target.value))}
-                  />
-                  <TextField
-                    fullWidth
-                    label="Temperature"
-                    type="number"
-                    inputProps={{ step: '0.1' }}
-                    value={workerModels.analysis?.temperature || 0.1}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.temperature`, parseFloat(e.target.value))}
-                  />
-                  {(workerModels.analysis?.model_type === 'ollama' || workerModels.analysis?.model_type === 'llamacpp') && (
-                    <TextField
-                      fullWidth
-                      label="Context Window (num_ctx)"
-                      type="number"
-                      value={workerModels.analysis?.num_ctx || 131072}
-                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.analysis.num_ctx`, Number(e.target.value))}
-                    />
-                  )}
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-
-          {/* Search Worker */}
-          <Card variant="outlined" sx={{ mb: 2 }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <Typography variant="h6">Search Worker</Typography>
-                <Tooltip title="Processes search results, filters relevant content, and helps refine search strategies. Instruct models are sufficient for search result processing and filtering.">
-                  <IconButton size="small">
-                    <InfoOutlinedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                <strong>Recommended:</strong> Instruct models (GPT-4, Claude-3.5, Llama-3) work well for search processing and filtering
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <ModelNameAutocomplete
-                    label="Model Name"
-                    value={workerModels.search?.model_name || ''}
-                    onChange={value => handleModelConfigChange('research_agent_model_config', `worker_models.search.model_name`, value)}
-                    onModelSelected={selectedModel => handleModelSelectedFromCatalog('research_agent_model_config', selectedModel, 'worker_models.search')}
-                    modelCatalogData={modelCatalogData}
-                  />
-                  <FormControl fullWidth>
-                    <InputLabel>Model Type (Provider)</InputLabel>
-                    <Select
-                      value={workerModels.search?.model_type || ''}
-                      label="Model Type (Provider)"
-                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.model_type`, e.target.value)}
-                    >
-                      {(modelProviders || []).map((provider: any) => (
-                        <MenuItem key={provider.id} value={provider.name}>
-                          {provider.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Box>
-                <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <TextField
-                    fullWidth
-                    label="Max New Tokens"
-                    type="number"
-                    value={workerModels.search?.max_new_tokens || 4096}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.max_new_tokens`, Number(e.target.value))}
-                  />
-                  <TextField
-                    fullWidth
-                    label="Temperature"
-                    type="number"
-                    inputProps={{ step: '0.1' }}
-                    value={workerModels.search?.temperature || 0.1}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.temperature`, parseFloat(e.target.value))}
-                  />
-                  {(workerModels.search?.model_type === 'ollama' || workerModels.search?.model_type === 'llamacpp') && (
-                    <TextField
-                      fullWidth
-                      label="Context Window (num_ctx)"
-                      type="number"
-                      value={workerModels.search?.num_ctx || 131072}
-                      onChange={e => handleModelConfigChange('research_agent_model_config', `worker_models.search.num_ctx`, Number(e.target.value))}
-                    />
-                  )}
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Box>
-        
-
-        
-        {/* Workflow Parameters */}
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="h6" gutterBottom>Workflow Parameters</Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Core Parameters Row */}
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                <TextField
-                  label="Max Research Context Tokens"
-                  type="number"
-                  value={config.max_research_context_tokens || 15000}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_context_tokens', Number(e.target.value))}
-                  sx={{ minWidth: 200 }}
-                  inputProps={{ min: 1000, max: 100000 }}
-                  helperText="Token budget before compression"
-                />
-                <TextField
-                  label="Compress to Ratio"
-                  type="number"
-                  value={config.compress_to_ratio || 0.2}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', 'compress_to_ratio', parseFloat(e.target.value))}
-                  sx={{ minWidth: 150 }}
-                  inputProps={{ min: 0.1, max: 0.8, step: 0.1 }}
-                  helperText="Target compression ratio"
-                />
-                <TextField
-                  label="Max Research Loops"
-                  type="number"
-                  value={config.max_research_loops || 3}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', 'max_research_loops', Number(e.target.value))}
-                  sx={{ minWidth: 150 }}
-                  inputProps={{ min: 1, max: 10 }}
-                  helperText="Max iteration loops"
-                />
-              </Box>
-
-              {/* Search & Ranking Parameters Row */}
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                <TextField
-                  label="Initial Rerank Top K"
-                  type="number"
-                  value={config.initial_rerank_top_k || 40}
-                  onChange={e => handleModelConfigChange('research_agent_model_config', 'initial_rerank_top_k', Number(e.target.value))}
-                  sx={{ minWidth: 150 }}
-                  inputProps={{ min: 5, max: 100 }}
-                  helperText="Papers to re-rank"
-                />
-              </Box>
-
-              {/* PDF Full Text Processing Section */}
-              <Box sx={{ 
-                p: 2, 
-                border: '1px solid', 
-                borderColor: 'divider', 
-                borderRadius: 1,
-                backgroundColor: 'background.default'
-              }}>
-                <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
-                  PDF Full Text Processing
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Enable processing of full PDF content from top-ranked sources for enhanced evidence quality
-                </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={config.enable_full_text !== false} // Default to true if undefined
-                        onChange={e => handleModelConfigChange('research_agent_model_config', 'enable_full_text', e.target.checked)}
-                        color="primary"
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography variant="body2" fontWeight={500}>
-                          Enable PDF Processing
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Extract full text from PDFs for better analysis
-                        </Typography>
-                      </Box>
-                    }
-                  />
-                  <TextField
-                    label="Max PDFs to Process"
-                    type="number"
-                    value={config.full_text_top_n || 20}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', 'full_text_top_n', Number(e.target.value))}
-                    sx={{ minWidth: 180 }}
-                    inputProps={{ min: 1, max: 50 }}
-                    helperText="Number of top sources for full text"
-                    disabled={config.enable_full_text === false}
-                  />
-                  <TextField
-                    label="Chunk Size (Tokens)"
-                    type="number"
-                    value={config.max_chunk_tokens || 8000}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', 'max_chunk_tokens', Number(e.target.value))}
-                    sx={{ minWidth: 180 }}
-                    inputProps={{ min: 2000, max: 20000, step: 1000 }}
-                    helperText="Max tokens per chunk for processing"
-                    disabled={config.enable_full_text === false}
-                  />
-                  <TextField
-                    label="Summary Target (Tokens)"
-                    type="number"
-                    value={config.summary_target_tokens || 1500}
-                    onChange={e => handleModelConfigChange('research_agent_model_config', 'summary_target_tokens', Number(e.target.value))}
-                    sx={{ minWidth: 180 }}
-                    inputProps={{ min: 500, max: 4000, step: 250 }}
-                    helperText="Target tokens for each summary"
-                    disabled={config.enable_full_text === false}
-                  />
-                </Box>
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
-
-        {/* External API Configuration */}
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="h6" gutterBottom>External API Configuration</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Configure rate limits and timeouts for external research APIs
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              <TextField
-                label="ArXiv Rate Limit"
-                type="number"
-                value={config.arxiv_rate_limit || 3.0}
-                onChange={e => handleModelConfigChange('research_agent_model_config', 'arxiv_rate_limit', parseFloat(e.target.value))}
-                sx={{ minWidth: 180 }}
-                inputProps={{ min: 0.5, max: 10.0, step: 0.5 }}
-                helperText="Requests per second to ArXiv API"
-              />
-            </Box>
-          </CardContent>
-        </Card>
-
-        {/* Node-Specific Models - Collapsible */}
-        <Accordion sx={{ mt: 2 }}>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="h6">Node-Specific Models (Optional)</Typography>
-              <Tooltip title="Override default models for specific workflow nodes. Leave empty to use Boss/Worker models. These allow fine-tuning performance for specialized tasks.">
-                <IconButton size="small">
-                  <InfoOutlinedIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Query Planner Model */}
-              <Card variant="outlined">
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                    <Typography variant="h6">Query Planner Model</Typography>
-                    <Tooltip title="Breaks down your research question into focused sub-queries for targeted search. Reasoning models (like o1) excel at this complex decomposition task, but instruct models work fine for straightforward questions.">
-                      <IconButton size="small">
-                        <InfoOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for complex question decomposition, or instruct models for simpler queries
-                  </Typography>
-                  {renderModelFields(config.query_planner_model || {}, 'query_planner_model', '')}
-                </CardContent>
-              </Card>
-
-              {/* Evidence Selector Model */}
-              <Card variant="outlined">
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                    <Typography variant="h6">Evidence Selector Model</Typography>
-                    <Tooltip title="Evaluates source quality, relevance, and determines if gathered evidence is sufficient to answer the research question. Benefits from reasoning capabilities for quality assessment.">
-                      <IconButton size="small">
-                        <InfoOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for better quality assessment, or strong instruct models (GPT-4, Claude-3.5)
-                  </Typography>
-                  {renderModelFields(config.evidence_selector_model || {}, 'evidence_selector_model', '')}
-                </CardContent>
-              </Card>
-
-              {/* Compression Model */}
-              <Card variant="outlined">
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                    <Typography variant="h6">Compression Model</Typography>
-                    <Tooltip title="Compresses research evidence when token budget is exceeded, preserving the most important information while reducing length. Instruct models are sufficient for this summarization task.">
-                      <IconButton size="small">
-                        <InfoOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    <strong>Recommended:</strong> Instruct models (GPT-4, Claude-3.5, Llama-3) work well for summarization and compression
-                  </Typography>
-                  {renderModelFields(config.compression_model || {}, 'compression_model', '')}
-                </CardContent>
-              </Card>
-
-              {/* Answer Generator Model */}
-              <Card variant="outlined">
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                    <Typography variant="h6">Answer Generator Model</Typography>
-                    <Tooltip title="Creates the final comprehensive research report by synthesizing all gathered evidence into a coherent, well-structured answer. Reasoning models provide better synthesis and analysis.">
-                      <IconButton size="small">
-                        <InfoOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    <strong>Recommended:</strong> Reasoning models (o1-preview, o1-mini) for superior synthesis and analysis, or high-quality instruct models
-                  </Typography>
-                  {renderModelFields(config.answer_generator_model || {}, 'answer_generator_model', '')}
-                </CardContent>
-              </Card>
-            </Box>
-          </AccordionDetails>
-        </Accordion>
-      </Box>
-    );
-  };
-
-  if (isLoadingOrchestration || isLoadingArxiv || isLoadingResearch || isLoadingEmail || isLoadingProviders || isCheckingDbTasks) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
-        <CircularProgress />
-        {isCheckingDbTasks && (
-          <Typography variant="body2" sx={{ ml: 2 }}>
-            Checking for active database tasks...
-          </Typography>
-        )}
-      </Box>
-    );
-  }
-  
-  if (isErrorOrchestration) setError('Failed to load orchestration config.');
-  if (isErrorProviders) setError('Failed to load model providers.');
-
 
   const renderModelConfigFields = (modelKey: string, config: any) => {
     if (!config) return <Typography>Configuration not available for {modelKey}.</Typography>;
 
     const currentConfig = orchestrationConfig?.[modelKey] || {};
-
-    // Research Agent model is a special case (boss + worker models)
-    if (modelKey === 'research_agent_model_config') {
-      // Use editedResearchAgentConfig for research agent to maintain local state
-      return renderResearchAgentModelConfig(editedResearchAgentConfig || currentConfig);
-    }
 
     // TTS model is a special case (single column)
     if (modelKey === 'tts_model') {
@@ -1600,13 +1096,36 @@ const Settings: React.FC = () => {
                   value={currentConfig.summarization_model?.temperature || 0.3}
                   onChange={e => handleModelConfigChange(modelKey, 'summarization_model.temperature', parseFloat(e.target.value))}
                 />
-                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'llamacpp') && (
+                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'llamacpp' || currentConfig.summarization_model?.model_type === 'lmstudio') && (
                   <TextField
                     fullWidth
                     label="Context Window (num_ctx)"
                     type="number"
                     value={currentConfig.summarization_model?.num_ctx || 4096}
                     onChange={e => handleModelConfigChange(modelKey, 'summarization_model.num_ctx', Number(e.target.value))}
+                  />
+                )}
+                {(currentConfig.summarization_model?.model_type === 'ollama' || currentConfig.summarization_model?.model_type === 'lmstudio' || currentConfig.summarization_model?.model_type === 'custom-oai') && (
+                  <Autocomplete
+                    fullWidth
+                    freeSolo
+                    options={getHostsByProvider(currentConfig.summarization_model?.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
+                    value={currentConfig.summarization_model?.host || ''}
+                    onInputChange={(_, newInputValue) => {
+                      handleModelConfigChange(modelKey, 'summarization_model.host', newInputValue || undefined);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Host (Optional)"
+                        placeholder={
+                          currentConfig.summarization_model?.model_type === 'ollama' ? 'athena.local:11434' :
+                          currentConfig.summarization_model?.model_type === 'lmstudio' ? 'localhost:1234' :
+                          'http://custom-server:8000'
+                        }
+                        helperText="Custom host for this model (leave empty to use environment default)"
+                      />
+                    )}
                   />
                 )}
               </Box>
@@ -1663,7 +1182,7 @@ const Settings: React.FC = () => {
             />
           )}
           {typeof currentConfig.num_ctx === 'number' && ( // Only show for certain providers
-             (currentConfig.model_type === 'ollama' || currentConfig.model_type === 'llamacpp')
+             (currentConfig.model_type === 'ollama' || currentConfig.model_type === 'llamacpp' || currentConfig.model_type === 'lmstudio')
           ) && (
             <TextField
               fullWidth
@@ -1671,6 +1190,29 @@ const Settings: React.FC = () => {
               type="number"
               value={currentConfig.num_ctx}
               onChange={e => handleModelConfigChange(modelKey, 'num_ctx', Number(e.target.value))}
+            />
+          )}
+          {(currentConfig.model_type === 'ollama' || currentConfig.model_type === 'lmstudio' || currentConfig.model_type === 'custom-oai') && (
+            <Autocomplete
+              fullWidth
+              freeSolo
+              options={getHostsByProvider(currentConfig.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
+              value={currentConfig.host || ''}
+              onInputChange={(_, newInputValue) => {
+                handleModelConfigChange(modelKey, 'host', newInputValue || undefined);
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Host (Optional)"
+                  placeholder={
+                    currentConfig.model_type === 'ollama' ? 'athena.local:11434' :
+                    currentConfig.model_type === 'lmstudio' ? 'localhost:1234' :
+                    'http://custom-server:8000'
+                  }
+                  helperText="Custom host for this model (leave empty to use environment default)"
+                />
+              )}
             />
           )}
           {currentConfig.model_type === 'sentence-transformers' && (
@@ -1698,8 +1240,480 @@ const Settings: React.FC = () => {
     );
   };
 
+  // Render Single Agent Configuration
+  const renderSingleAgentConfig = () => {
+    const modelConfig = singleAgentConfig.model_config || {};
+    const bossModel = modelConfig.boss_model || {};
+
+    const renderModelFields = (modelObj: any, modelPath: string, title: string, description: string, isRequired: boolean = false) => (
+      <Card variant="outlined" sx={{ mb: 2 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+            <Typography variant="h6">{title}</Typography>
+            {isRequired && <Chip label="Required" size="small" color="primary" />}
+            <Tooltip title={description}>
+              <IconButton size="small">
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {description}
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <ModelNameAutocomplete
+                label="Model Name"
+                value={modelObj.model_name || ''}
+                onChange={value => handleSingleAgentConfigChange(`${modelPath}.model_name`, value)}
+                onModelSelected={selectedModel => handleResearchAgentModelSelected('single', selectedModel, modelPath)}
+                modelCatalogData={modelCatalogData}
+              />
+              <FormControl fullWidth>
+                <InputLabel>Model Type (Provider)</InputLabel>
+                <Select
+                  value={modelObj.model_type || ''}
+                  label="Model Type (Provider)"
+                  onChange={e => handleSingleAgentConfigChange(`${modelPath}.model_type`, e.target.value)}
+                >
+                  {(modelProviders || []).map((provider: any) => (
+                    <MenuItem key={provider.id} value={provider.name}>
+                      {provider.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                fullWidth
+                label="Max New Tokens"
+                type="number"
+                value={modelObj.max_new_tokens || 4096}
+                onChange={e => handleSingleAgentConfigChange(`${modelPath}.max_new_tokens`, Number(e.target.value))}
+              />
+              <TextField
+                fullWidth
+                label="Temperature"
+                type="number"
+                inputProps={{ step: '0.1' }}
+                value={modelObj.temperature || 0.1}
+                onChange={e => handleSingleAgentConfigChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
+              />
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp' || modelObj.model_type === 'lmstudio') && (
+                <TextField
+                  fullWidth
+                  label="Context Window (num_ctx)"
+                  type="number"
+                  value={modelObj.num_ctx || 131072}
+                  onChange={e => handleSingleAgentConfigChange(`${modelPath}.num_ctx`, Number(e.target.value))}
+                />
+              )}
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={getHostsByProvider(modelObj.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
+                  value={modelObj.host || ''}
+                  onInputChange={(_, newInputValue) => {
+                    handleSingleAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Host (Optional)"
+                      placeholder={
+                        modelObj.model_type === 'ollama' ? 'athena.local:11434' :
+                        modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
+                        'http://custom-server:8000'
+                      }
+                      helperText="Custom host for this model (leave empty to use environment default)"
+                    />
+                  )}
+                />
+              )}
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    );
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Boss Model */}
+        {renderModelFields(
+          bossModel, 
+          'model_config.boss_model', 
+          'Boss Model (Required)', 
+          'The primary model that orchestrates the entire research workflow, makes high-level decisions, and coordinates between different nodes. This model drives the sequential research loop.', 
+          true
+        )}
+
+        {/* Optional Node-Specific Models */}
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="h6">Node-Specific Models (Optional)</Typography>
+              <Tooltip title="Override default models for specific workflow nodes. Leave empty to use Boss Model for all nodes.">
+                <IconButton size="small">
+                  <InfoOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {renderModelFields(
+                modelConfig.query_planner_model || {}, 
+                'model_config.query_planner_model', 
+                'Query Planner Model', 
+                'Breaks down your research question into focused sub-queries for targeted search. Reasoning models excel at this complex decomposition task.'
+              )}
+              {renderModelFields(
+                modelConfig.evidence_selector_model || {}, 
+                'model_config.evidence_selector_model', 
+                'Evidence Selector Model', 
+                'Evaluates source quality, relevance, and determines if gathered evidence is sufficient to answer the research question.'
+              )}
+              {renderModelFields(
+                modelConfig.compression_model || {}, 
+                'model_config.compression_model', 
+                'Compression Model', 
+                'Compresses research evidence when token budget is exceeded, preserving the most important information while reducing length.'
+              )}
+              {renderModelFields(
+                modelConfig.answer_generator_model || {}, 
+                'model_config.answer_generator_model', 
+                'Answer Generator Model', 
+                'Creates the final comprehensive research report by synthesizing all gathered evidence into a coherent, well-structured answer.'
+              )}
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+
+        {/* Workflow Parameters */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Workflow Parameters</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <TextField
+                label="Max Research Loops"
+                type="number"
+                value={singleAgentConfig.max_research_loops || 3}
+                onChange={e => handleSingleAgentConfigChange('max_research_loops', Number(e.target.value))}
+                inputProps={{ min: 1, max: 10 }}
+                helperText="Maximum research iteration loops"
+                sx={{ minWidth: 200 }}
+              />
+              <TextField
+                label="Max Research Context Tokens"
+                type="number"
+                value={singleAgentConfig.max_research_context_tokens || 15000}
+                onChange={e => handleSingleAgentConfigChange('max_research_context_tokens', Number(e.target.value))}
+                inputProps={{ min: 5000, max: 100000 }}
+                helperText="Token budget before compression"
+                sx={{ minWidth: 200 }}
+              />
+              <TextField
+                label="Compress to Ratio"
+                type="number"
+                value={singleAgentConfig.compress_to_ratio || 0.2}
+                onChange={e => handleSingleAgentConfigChange('compress_to_ratio', parseFloat(e.target.value))}
+                inputProps={{ min: 0.1, max: 0.8, step: 0.1 }}
+                helperText="Target compression ratio"
+                sx={{ minWidth: 200 }}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Search Configuration */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Search Configuration</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <TextField
+                label="Local Search Limit"
+                type="number"
+                value={singleAgentConfig.search_config?.local_limit || 20}
+                onChange={e => handleSingleAgentConfigChange('search_config.local_limit', Number(e.target.value))}
+                inputProps={{ min: 5, max: 100 }}
+                helperText="Max papers from local database"
+                sx={{ minWidth: 200 }}
+              />
+              <TextField
+                label="External Search Limit"
+                type="number"
+                value={singleAgentConfig.search_config?.external_limit || 15}
+                onChange={e => handleSingleAgentConfigChange('search_config.external_limit', Number(e.target.value))}
+                inputProps={{ min: 5, max: 50 }}
+                helperText="Max papers from external APIs"
+                sx={{ minWidth: 200 }}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  };
+
+  // Render Multi Agent Configuration
+  const renderMultiAgentConfig = () => {
+    const bossModel = multiAgentConfig.boss_model || {};
+    const specializedModels = multiAgentConfig.specialized_models || {};
+
+    const renderModelFields = (modelObj: any, modelPath: string, title: string, description: string, isRequired: boolean = false) => (
+      <Card variant="outlined" sx={{ mb: 2 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+            <Typography variant="h6">{title}</Typography>
+            {isRequired && <Chip label="Required" size="small" color="primary" />}
+            <Tooltip title={description}>
+              <IconButton size="small">
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {description}
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <ModelNameAutocomplete
+                label="Model Name"
+                value={modelObj.model_name || ''}
+                onChange={value => handleMultiAgentConfigChange(`${modelPath}.model_name`, value)}
+                onModelSelected={selectedModel => handleResearchAgentModelSelected('multi', selectedModel, modelPath)}
+                modelCatalogData={modelCatalogData}
+              />
+              <FormControl fullWidth>
+                <InputLabel>Model Type (Provider)</InputLabel>
+                <Select
+                  value={modelObj.model_type || ''}
+                  label="Model Type (Provider)"
+                  onChange={e => handleMultiAgentConfigChange(`${modelPath}.model_type`, e.target.value)}
+                >
+                  {(modelProviders || []).map((provider: any) => (
+                    <MenuItem key={provider.id} value={provider.name}>
+                      {provider.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                fullWidth
+                label="Max New Tokens"
+                type="number"
+                value={modelObj.max_new_tokens || 4096}
+                onChange={e => handleMultiAgentConfigChange(`${modelPath}.max_new_tokens`, Number(e.target.value))}
+              />
+              <TextField
+                fullWidth
+                label="Temperature"
+                type="number"
+                inputProps={{ step: '0.1' }}
+                value={modelObj.temperature || 0.1}
+                onChange={e => handleMultiAgentConfigChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
+              />
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp' || modelObj.model_type === 'lmstudio') && (
+                <TextField
+                  fullWidth
+                  label="Context Window (num_ctx)"
+                  type="number"
+                  value={modelObj.num_ctx || 131072}
+                  onChange={e => handleMultiAgentConfigChange(`${modelPath}.num_ctx`, Number(e.target.value))}
+                />
+              )}
+              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={getHostsByProvider(modelObj.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
+                  value={modelObj.host || ''}
+                  onInputChange={(_, newInputValue) => {
+                    handleMultiAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Host (Optional)"
+                      placeholder={
+                        modelObj.model_type === 'ollama' ? 'athena.local:11434' :
+                        modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
+                        'http://custom-server:8000'
+                      }
+                      helperText="Custom host for this model (leave empty to use environment default)"
+                    />
+                  )}
+                />
+              )}
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    );
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Boss Model */}
+        {renderModelFields(
+          bossModel, 
+          'boss_model', 
+          'Boss Model (Required)', 
+          'The primary orchestration model that coordinates the entire multi-agent workflow, decomposes questions, and synthesizes final answers from all agents.', 
+          true
+        )}
+
+        {/* Specialized Agent Models */}
+        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Specialized Agent Models</Typography>
+        
+        {renderModelFields(
+          specializedModels.question_generator || {}, 
+          'specialized_models.question_generator', 
+          'Question Generator Model', 
+          'Decomposes the user\'s research question into specialized sub-questions tailored for different agent types. Reasoning models excel at this complex task.'
+        )}
+        
+        {renderModelFields(
+          specializedModels.research_agent || {}, 
+          'specialized_models.research_agent', 
+          'Research Agent Model', 
+          'Conducts comprehensive information gathering and primary research. Focuses on breadth of coverage and foundational understanding.'
+        )}
+        
+        {renderModelFields(
+          specializedModels.analysis_agent || {}, 
+          'specialized_models.analysis_agent', 
+          'Analysis Agent Model', 
+          'Provides deep analytical insights and pattern recognition. Analyzes trends, identifies contradictions, and evaluates methodological approaches.'
+        )}
+        
+        {renderModelFields(
+          specializedModels.verification_agent || {}, 
+          'specialized_models.verification_agent', 
+          'Verification Agent Model', 
+          'Cross-validates findings against authoritative sources and checks for accuracy, consistency, and credibility of research evidence.'
+        )}
+        
+        {renderModelFields(
+          specializedModels.synthesis_agent || {}, 
+          'specialized_models.synthesis_agent', 
+          'Synthesis Agent Model', 
+          'Combines and synthesizes results from all specialized agents into a coherent final answer, resolving conflicts and providing comprehensive conclusions.'
+        )}
+
+        {/* Orchestration Parameters */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Orchestration Parameters</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <TextField
+                label="Parallel Agents"
+                type="number"
+                value={multiAgentConfig.parallel_agents || 4}
+                onChange={e => handleMultiAgentConfigChange('parallel_agents', Number(e.target.value))}
+                inputProps={{ min: 2, max: 6 }}
+                helperText="Number of agents to run in parallel (2-6)"
+                sx={{ minWidth: 200 }}
+              />
+              <TextField
+                label="Task Timeout (seconds)"
+                type="number"
+                value={multiAgentConfig.task_timeout || 300}
+                onChange={e => handleMultiAgentConfigChange('task_timeout', Number(e.target.value))}
+                inputProps={{ min: 60, max: 1800 }}
+                helperText="Maximum time per agent task"
+                sx={{ minWidth: 200 }}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Search Configuration */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Search Configuration</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <TextField
+                label="Local Search Limit"
+                type="number"
+                value={multiAgentConfig.search_config?.local_limit || 25}
+                onChange={e => handleMultiAgentConfigChange('search_config.local_limit', Number(e.target.value))}
+                inputProps={{ min: 5, max: 100 }}
+                helperText="Max papers from local database per agent"
+                sx={{ minWidth: 200 }}
+              />
+              <TextField
+                label="External Search Limit"
+                type="number"
+                value={multiAgentConfig.search_config?.external_limit || 20}
+                onChange={e => handleMultiAgentConfigChange('search_config.external_limit', Number(e.target.value))}
+                inputProps={{ min: 5, max: 50 }}
+                helperText="Max papers from external APIs per agent"
+                sx={{ minWidth: 200 }}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Synthesis Configuration */}
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="h6" gutterBottom>Synthesis Configuration</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              <FormControl sx={{ minWidth: 250 }}>
+                <InputLabel>Conflict Resolution</InputLabel>
+                <Select
+                  value={multiAgentConfig.synthesis_config?.conflict_resolution || 'weighted_consensus'}
+                  label="Conflict Resolution"
+                  onChange={e => handleMultiAgentConfigChange('synthesis_config.conflict_resolution', e.target.value)}
+                >
+                  <MenuItem value="weighted_consensus">Weighted Consensus</MenuItem>
+                  <MenuItem value="evidence_based">Evidence Based</MenuItem>
+                  <MenuItem value="majority_vote">Majority Vote</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl sx={{ minWidth: 250 }}>
+                <InputLabel>Citation Strategy</InputLabel>
+                <Select
+                  value={multiAgentConfig.synthesis_config?.citation_strategy || 'comprehensive'}
+                  label="Citation Strategy"
+                  onChange={e => handleMultiAgentConfigChange('synthesis_config.citation_strategy', e.target.value)}
+                >
+                  <MenuItem value="comprehensive">Comprehensive</MenuItem>
+                  <MenuItem value="selective">Selective</MenuItem>
+                  <MenuItem value="minimal">Minimal</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  };
+
+  if (isLoadingOrchestration || isLoadingProviders || isCheckingDbTasks || isLoadingResearchModes) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh" sx={{ pt: `${headerHeight + 24}px` }}>
+        <CircularProgress />
+        {isCheckingDbTasks && (
+          <Typography variant="body2" sx={{ ml: 2 }}>
+            Checking for active database tasks...
+          </Typography>
+        )}
+      </Box>
+    );
+  }
+  
+  if (isErrorOrchestration) setError('Failed to load orchestration config.');
+  if (isErrorProviders) setError('Failed to load model providers.');
+
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
       <Snackbar
         open={Boolean(error)}
         autoHideDuration={4000}
@@ -1744,6 +1758,7 @@ const Settings: React.FC = () => {
         <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }}/> Settings
       </Typography>
 
+      {/* Model Configuration Section */}
       <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -1785,41 +1800,34 @@ const Settings: React.FC = () => {
                   <Typography variant="h6" gutterBottom component="div">
                     {tabDef.label} Settings
                   </Typography>
-                  {tabDef.key === 'research_agent_model_config' ? (
-                    editedResearchAgentConfig ?
-                      renderModelConfigFields(tabDef.key, editedResearchAgentConfig)
-                      : <Typography>Loading configuration...</Typography>
-                  ) : (
-                    orchestrationConfig && orchestrationConfig[tabDef.key] ?
-                      renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
-                      : <Typography>Loading configuration for {tabDef.label}...</Typography>
-                  )}
-                  <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
-                    <Button
-                      variant="contained"
-                      onClick={() => {
-                        if (!orchestrationConfig) return;
-                        
-                        // Create a mutable copy of the config to be sent
-                        const configToUpdate = JSON.parse(JSON.stringify(orchestrationConfig));
 
-                        // If we are saving the research agent, use the cleaned local state
-                        if (tabDef.key === 'research_agent_model_config') {
-                          const cleanedConfig = cleanResearchAgentConfig(editedResearchAgentConfig);
-                          if (cleanedConfig) {
-                            configToUpdate.research_agent_model_config = cleanedConfig;
-                            updateOrchestrationMutation.mutate(configToUpdate);
-                          }
-                        } else {
-                          // For other tabs, just save the entire orchestration config
+                  {/* Special handling for Inference servers (Ollama & LMStudio) */}
+                  {tabDef.key === 'inference_servers' ? (
+                    <OllamaServersSettings />
+                  ) : orchestrationConfig && orchestrationConfig[tabDef.key] ? (
+                    renderModelConfigFields(tabDef.key, orchestrationConfig[tabDef.key])
+                  ) : (
+                    <Typography>Loading configuration for {tabDef.label}...</Typography>
+                  )}
+
+                  {/* Only show save button for non-Inference servers tabs */}
+                  {tabDef.key !== 'inference_servers' && (
+                    <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+                      <Button
+                        variant="contained"
+                        onClick={() => {
+                          if (!orchestrationConfig) return;
+
+                          // Create a mutable copy of the config to be sent
+                          const configToUpdate = JSON.parse(JSON.stringify(orchestrationConfig));
                           updateOrchestrationMutation.mutate(configToUpdate);
-                        }
-                      }}
-                      disabled={updateOrchestrationMutation.isPending}
-                    >
-                      Save {tabDef.label} Settings
-                    </Button>
-                  </Box>
+                        }}
+                        disabled={updateOrchestrationMutation.isPending}
+                      >
+                        Save {tabDef.label} Settings
+                      </Button>
+                    </Box>
+                  )}
                 </CardContent>
               </Card>
             </TabPanel>
@@ -1827,158 +1835,496 @@ const Settings: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* ArXiv Categories Section */}
+      {/* Research Agent Configuration Section (moved below Model Configuration Section) */}
       <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              ArXiv Settings
+              Research Agent Configuration
             </Typography>
-            <Tooltip title="Configure the ArXiv categories to use for paper selection.">
+            <Tooltip title="Configure the research agent models and parameters for both single-agent and multi-agent modes.">
               <InfoOutlinedIcon color="action" />
             </Tooltip>
           </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Configure the ArXiv categories to use for paper selection.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            {/* Main Category Selector */}
-            <Autocomplete
-              options={Object.entries(taxonomyAny.main_categories).map(([value, label]) => ({ value: value as string, label: label as string }))}
-              getOptionLabel={(option) => option.label as string}
-              value={taxonomyAny.main_categories[selectedArxivMain] ? { value: selectedArxivMain, label: `${selectedArxivMain} - ${taxonomyAny.main_categories[selectedArxivMain]}` } : null}
-              onChange={(_, newValue) => {
-                setSelectedArxivMain(newValue?.value || '');
-                setSelectedArxivSubs([]);
-              }}
-              renderInput={(params) => <TextField {...params} label="Main Category" fullWidth />}
-            />
-            {/* Subcategories Multi-Select */}
-            <Autocomplete
-              multiple
-              filterSelectedOptions
-              isOptionEqualToValue={(option, value) => option.value === value.value}
-              options={Object.entries(taxonomyAny[selectedArxivMain] || {}).map(([sub, desc]) => ({ value: `${selectedArxivMain}.${sub}`, label: `${selectedArxivMain}.${sub} - ${desc}` }))}
-              getOptionLabel={(option) => option.label as string}
-              value={Object.entries(taxonomyAny[selectedArxivMain] || {})
-                .map(([sub, desc]) => ({ value: `${selectedArxivMain}.${sub}`, label: `${selectedArxivMain}.${sub} - ${desc}` }))
-                .filter(opt => selectedArxivSubs.includes(opt.value))
-              }
-              onChange={(_, newValues) => setSelectedArxivSubs((newValues as any[]).map(opt => opt.value))}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => {
-                  const tagProps = getTagProps({ index });
-                  const { key, ...otherProps } = tagProps;
-                  return <Chip key={key} label={option.label as string} {...otherProps} />;
-                })
-              }
-              renderInput={(params) => <TextField {...params} label="Subcategories" placeholder="Select subcategories" fullWidth />}
-            />
-            {/* Save Button */}
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  const lowerSubs = selectedArxivSubs.map((v: string) => {
-                    const parts = v.split('.');
-                    return parts.length === 2 ? `${parts[0]}.${parts[1].toLowerCase()}` : v;
-                  });
-                  updateArxivCategoriesMutation.mutate({ main_category: selectedArxivMain, filter_categories: lowerSubs });
-                }}
-                disabled={updateArxivCategoriesMutation.isPending}
-              >
-                Save ArXiv Settings
-              </Button>
+          {/* Current Mode Display */}
+          {researchModes && (
+            <Box sx={{ mb: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                <Typography variant="h6">Current Mode:</Typography>
+                <Chip 
+                  label={researchModes.current_mode === 'single' ? 'Single Agent' : 'Multi Agent'}
+                  color={researchModes.current_mode === 'single' ? 'primary' : 'secondary'}
+                  icon={researchModes.current_mode === 'single' ? <SmartToyIcon /> : <GroupWorkIcon />}
+                />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => {
+                    const newMode = researchModes.current_mode === 'single' ? 'multi' : 'single';
+                    setResearchModeMutation.mutate(newMode);
+                  }}
+                  disabled={setResearchModeMutation.isPending}
+                >
+                  Switch to {researchModes.current_mode === 'single' ? 'Multi' : 'Single'} Agent
+                </Button>
+              </Box>
+              
+              {researchModes.validation && !researchModes.validation.valid && (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  Configuration Issues: {researchModes.validation.issues.join(', ')}
+                </Alert>
+              )}
             </Box>
+          )}
+          <Tabs
+            value={researchAgentTab}
+            onChange={(_, newValue) => setResearchAgentTab(newValue)}
+            variant="fullWidth"
+            sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}
+          >
+            {RESEARCH_AGENT_TABS.map((tabDef, idx) => {
+              const Icon = tabDef.icon;
+              return (
+                <Tab
+                  key={tabDef.key}
+                  label={
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Icon />
+                      {tabDef.label}
+                      <Tooltip title={tabDef.tooltip}>
+                        <InfoOutlinedIcon fontSize="small" />
+                      </Tooltip>
+                    </Box>
+                  }
+                  id={`research-tab-${idx}`}
+                  aria-controls={`research-tabpanel-${idx}`}
+                />
+              );
+            })}
+          </Tabs>
+          {/* Single Agent Tab */}
+          <TabPanel value={researchAgentTab} index={0}>
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Single Agent Mode Configuration
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  Sequential workflow with research loops for iterative deep analysis. One model coordinates the entire process through different workflow nodes.
+                </Typography>
+                {renderSingleAgentConfig()}
+                <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="contained"
+                    onClick={() => updateSingleAgentConfigMutation.mutate(singleAgentConfig)}
+                    disabled={updateSingleAgentConfigMutation.isPending}
+                  >
+                    Save Single Agent Configuration
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          </TabPanel>
+          {/* Multi Agent Tab */}
+          <TabPanel value={researchAgentTab} index={1}>
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Multi Agent Mode Configuration
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  Parallel orchestration with specialized agents for comprehensive research. Multiple agents work simultaneously on different aspects of the research question.
+                </Typography>
+                {renderMultiAgentConfig()}
+                <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="contained"
+                    onClick={() => updateMultiAgentConfigMutation.mutate(multiAgentConfig)}
+                    disabled={updateMultiAgentConfigMutation.isPending}
+                  >
+                    Save Multi Agent Configuration
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          </TabPanel>
+        </CardContent>
+      </Card>
+
+      {/* Performance Configuration Section */}
+      <Card sx={{ mb: 4 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
+              <SpeedIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+              Performance Configuration
+            </Typography>
+            <Tooltip title="Optimize performance for your hardware. Configure CPU cores, memory usage, and processing parameters for maximum efficiency.">
+              <InfoOutlinedIcon color="action" />
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" sx={{ mb: 3 }}>
+            Optimize Theseus Insight for your hardware resources. Configure parallelization, memory usage, and processing parameters to maximize performance.
+          </Typography>
+
+          {/* System Information */}
+          {systemInfo && (
+            <Paper sx={{ 
+              p: 3, 
+              mb: 3, 
+              bgcolor: 'background.default',
+              border: '1px solid',
+              borderColor: 'divider'
+            }}>
+              <Typography variant="h6" gutterBottom>
+                <MemoryIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                System Information
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                <Box sx={{ minWidth: 200 }}>
+                  <Typography variant="body2" color="text.secondary">CPU Cores</Typography>
+                  <Typography variant="h6">{systemInfo.cpu_count_logical} ({systemInfo.cpu_count_physical} physical)</Typography>
+                </Box>
+                <Box sx={{ minWidth: 200 }}>
+                  <Typography variant="body2" color="text.secondary">Memory</Typography>
+                  <Typography variant="h6">{systemInfo.memory_total_gb.toFixed(1)} GB</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {systemInfo.memory_available_gb.toFixed(1)} GB available
+                  </Typography>
+                </Box>
+                <Box sx={{ minWidth: 200 }}>
+                  <Typography variant="body2" color="text.secondary">GPU</Typography>
+                  <Typography variant="h6">{systemInfo.gpu_available ? '✅ Available' : '❌ None'}</Typography>
+                  {systemInfo.gpu_name && (
+                    <Typography variant="caption" color="text.secondary">{systemInfo.gpu_name}</Typography>
+                  )}
+                </Box>
+                <Box sx={{ minWidth: 200, display: 'flex', alignItems: 'flex-end' }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={applyRecommendedConfig}
+                    disabled={!systemInfo.recommended_config}
+                  >
+                    Apply Recommended
+                  </Button>
+                </Box>
+              </Box>
+            </Paper>
+          )}
+
+          {/* Performance Configuration Controls */}
+          {performanceConfig && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              
+              {/* Hardware Resources */}
+              <Box>
+                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+                  <SpeedIcon sx={{ mr: 1 }} />
+                  Hardware Resources
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <Typography gutterBottom>
+                      Max CPU Cores: {performanceConfig.max_cores}
+                    </Typography>
+                    <Slider
+                      value={performanceConfig.max_cores}
+                      onChange={(_, value) => handlePerformanceConfigChange('max_cores', value)}
+                      min={1}
+                      max={systemInfo?.cpu_count_logical || 32}
+                      step={1}
+                      marks
+                      valueLabelDisplay="auto"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <Typography gutterBottom>
+                      Max Memory: {performanceConfig.max_memory_gb} GB
+                    </Typography>
+                    <Slider
+                      value={performanceConfig.max_memory_gb}
+                      onChange={(_, value) => handlePerformanceConfigChange('max_memory_gb', value)}
+                      min={4}
+                      max={systemInfo?.memory_total_gb || 64}
+                      step={1}
+                      marks
+                      valueLabelDisplay="auto"
+                    />
+                  </Box>
+                </Box>
+              </Box>
+
+              {/* Clustering Optimization */}
+              <Box>
+                <Typography variant="h6" gutterBottom>
+                  🧠 Clustering & Topic Extraction
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <TextField
+                      fullWidth
+                      label="HDBSCAN Parallel Jobs"
+                      type="number"
+                      value={performanceConfig.hdbscan_n_jobs}
+                      onChange={(e) => handlePerformanceConfigChange('hdbscan_n_jobs', parseInt(e.target.value))}
+                      helperText="-1 = use all cores, 1 = single threaded"
+                      inputProps={{ min: -1, max: 128 }}
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <TextField
+                      fullWidth
+                      label="Clustering Batch Size"
+                      type="number"
+                      value={performanceConfig.clustering_batch_size}
+                      onChange={(e) => handlePerformanceConfigChange('clustering_batch_size', parseInt(e.target.value))}
+                      helperText="Papers processed per batch"
+                      inputProps={{ min: 1000, max: 1000000 }}
+                    />
+                  </Box>
+                </Box>
+              </Box>
+
+              {/* Vector Processing */}
+              <Box>
+                <Typography variant="h6" gutterBottom>
+                  🔢 Vector & Embedding Processing
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <TextField
+                      fullWidth
+                      label="Embedding Batch Size"
+                      type="number"
+                      value={performanceConfig.embedding_batch_size}
+                      onChange={(e) => handlePerformanceConfigChange('embedding_batch_size', parseInt(e.target.value))}
+                      helperText={performanceConfig.auto_tune_batch_size ? "Auto-tuned on first run" : "Embeddings computed per batch"}
+                      inputProps={{ min: 32, max: 2048 }}
+                      disabled={performanceConfig.auto_tune_batch_size}
+                    />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={performanceConfig.auto_tune_batch_size !== false}
+                          onChange={(e) => handlePerformanceConfigChange('auto_tune_batch_size', e.target.checked)}
+                        />
+                      }
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          Auto-tune Batch Size
+                          <Tooltip title="Automatically optimizes batch size for your hardware on first run. Recommended for best performance.">
+                            <InfoOutlinedIcon fontSize="small" />
+                          </Tooltip>
+                        </Box>
+                      }
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                      Auto-tuning tests 256, 512, 1024, and 2048 batch sizes to find optimal throughput for your GPU
+                    </Typography>
+                  </Box>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <TextField
+                      fullWidth
+                      label="Vector Processing Workers"
+                      type="number"
+                      value={performanceConfig.vector_processing_workers}
+                      onChange={(e) => handlePerformanceConfigChange('vector_processing_workers', parseInt(e.target.value))}
+                      helperText="Parallel workers for vector operations"
+                      inputProps={{ min: 1, max: 64 }}
+                    />
+                  </Box>
+                </Box>
+              </Box>
+
+              {/* Memory Management */}
+              <Box>
+                <Typography variant="h6" gutterBottom>
+                  💾 Memory Management
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={performanceConfig.enable_memory_mapping}
+                          onChange={(e) => handlePerformanceConfigChange('enable_memory_mapping', e.target.checked)}
+                        />
+                      }
+                      label="Memory Mapping"
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Use memory-mapped files for large datasets
+                    </Typography>
+                  </Box>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={performanceConfig.cache_embeddings}
+                          onChange={(e) => handlePerformanceConfigChange('cache_embeddings', e.target.checked)}
+                        />
+                      }
+                      label="Cache Embeddings"
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Keep embeddings in memory for faster access
+                    </Typography>
+                  </Box>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={performanceConfig.aggressive_garbage_collection}
+                          onChange={(e) => handlePerformanceConfigChange('aggressive_garbage_collection', e.target.checked)}
+                        />
+                      }
+                      label="Aggressive GC"
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Force garbage collection between stages
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+
+              {/* Development Mode */}
+              <Box>
+                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+                  <DeveloperModeIcon sx={{ mr: 1 }} />
+                  Development Mode
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 300px' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={performanceConfig.development_mode}
+                          onChange={(e) => handlePerformanceConfigChange('development_mode', e.target.checked)}
+                        />
+                      }
+                      label="Enable Development Mode"
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Limit dataset size for faster iteration during development
+                    </Typography>
+                  </Box>
+                  {performanceConfig.development_mode && (
+                    <Box sx={{ flex: '1 1 300px' }}>
+                      <TextField
+                        fullWidth
+                        label="Max Papers (Dev Mode)"
+                        type="number"
+                        value={performanceConfig.development_max_papers}
+                        onChange={(e) => handlePerformanceConfigChange('development_max_papers', parseInt(e.target.value))}
+                        helperText="Maximum papers processed in development mode"
+                        inputProps={{ min: 100, max: 50000 }}
+                      />
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+
+              {/* Save Button */}
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 3 }}>
+                <Button
+                  variant="outlined"
+                  onClick={applyRecommendedConfig}
+                  disabled={!systemInfo?.recommended_config}
+                >
+                  Reset to Recommended
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={savePerformanceConfig}
+                  disabled={updatePerformanceConfigMutation.isPending}
+                  startIcon={updatePerformanceConfigMutation.isPending ? <CircularProgress size={20} /> : undefined}
+                >
+                  Save Performance Settings
+                </Button>
+              </Box>
+            </Box>
+          )}
+
+          {/* Loading States */}
+          {(isLoadingSystemInfo || isLoadingPerformanceConfig) && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress />
+              <Typography sx={{ ml: 2 }}>Loading performance configuration...</Typography>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Theme Preferences Section */}
+      <Card sx={{ mb: 4 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
+              <PaletteIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+              Theme Preferences
+            </Typography>
+            <Tooltip title="Choose between dark and light theme for the application interface.">
+              <InfoOutlinedIcon color="action" />
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" sx={{ mb: 3 }}>
+            Customize the appearance of Theseus Insight to match your preferences.
+          </Typography>
+
+          <Box sx={{ 
+            p: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 2,
+            maxWidth: 400
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {isDarkMode ? (
+                  <Brightness4Icon sx={{ color: 'warning.main' }} />
+                ) : (
+                  <Brightness7Icon sx={{ color: 'orange' }} />
+                )}
+                <Typography variant="h6">
+                  {isDarkMode ? 'Dark Mode' : 'Light Mode'}
+                </Typography>
+              </Box>
+              <Box sx={{ flex: 1 }} />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={isDarkMode}
+                    onChange={toggleTheme}
+                    color="primary"
+                  />
+                }
+                label=""
+                sx={{ m: 0 }}
+              />
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              {isDarkMode 
+                ? 'Switch to light mode for a brighter interface'
+                : 'Switch to dark mode for easier viewing in low-light environments'
+              }
+            </Typography>
           </Box>
         </CardContent>
       </Card>
 
-      {/* Research Interests Section */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              Research Interests
-            </Typography>
-            <Tooltip title="Provide a detailed description of your research interests. This will be used to guide paper discovery and analysis.">
-              <InfoOutlinedIcon color="action" />
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Provide a detailed description of your research interests. This will be used to guide paper discovery and analysis.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            <TextField
-              fullWidth
-              multiline
-              rows={5}
-              label="Your Research Interests"
-              value={researchInterestsInput}
-              onChange={(e) => setResearchInterestsInput(e.target.value)}
-              helperText="Describe your research interests."
-            />
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  updateResearchInterestsMutation.mutate({ interests: researchInterestsInput });
-                }}
-                disabled={updateResearchInterestsMutation.isPending}
-              >
-                Save Research Interests
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
-
-      {/* Email Configuration Section */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
-              Email Recipients
-            </Typography>
-            <Tooltip title="Enter email addresses below, one per line. These recipients will receive generated newsletters.">
-              <InfoOutlinedIcon color="action" />
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Enter email addresses below, one per line. These recipients will receive generated newsletters.
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Email Recipients"
-              value={emailRecipientsInput}
-              onChange={(e) => setEmailRecipientsInput(e.target.value)}
-              helperText="Enter one email address per line."
-            />
-            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  updateEmailRecipientsMutation.mutate({ recipients: emailRecipientsInput.split('\n').map((s: string) => s.trim()).filter(Boolean) });
-                }}
-                disabled={updateEmailRecipientsMutation.isPending}
-              >
-                Save Email Recipients
-              </Button>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={() => sendTestEmailMutation.mutate()}
-                disabled={sendTestEmailMutation.isPending}
-              >
-                Send Test Email
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
+      {/* Scheduled Tasks Section */}
+      <Box sx={{ mb: 4 }}>
+        <ScheduledTasksSettings 
+          onStatusChange={(message, severity) => {
+            if (severity === 'success') {
+              setSuccess(message);
+            } else if (severity === 'error') {
+              setError(message);
+            }
+          }}
+        />
+      </Box>
 
       {/* API Credentials Section */}
       <Accordion sx={{ mb: 4 }}>
@@ -2041,8 +2387,325 @@ const Settings: React.FC = () => {
                 Export Database
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Create a backup of your entire database as a compressed archive.
+                Create a backup of your database as a compressed archive.
               </Typography>
+              
+              {/* Export Mode Selection */}
+              <FormControl fullWidth sx={{ mb: 2 }}>
+                <InputLabel>Export Mode</InputLabel>
+                <Select
+                  value={exportMode}
+                  label="Export Mode"
+                  onChange={(e) => setExportMode(e.target.value as 'full' | 'incremental' | 'profile')}
+                >
+                  <MenuItem value="full">
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>Full Export</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Export all data in the database
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="incremental">
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>Incremental Export</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Export only changes since a specific date
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="profile">
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>Profile-Scoped Export</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Export a specific research profile with its papers
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+              
+              {/* Incremental Options */}
+              {exportMode === 'incremental' && (
+                <Box sx={{ mb: 2, pl: 4 }}>
+                  <TextField
+                    label="Export changes since"
+                    type="datetime-local"
+                    value={incrementalSince}
+                    onChange={(e) => setIncrementalSince(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    helperText="Leave empty to auto-detect from last export"
+                    sx={{ mb: 2, width: '100%', maxWidth: 300 }}
+                  />
+
+                  <FormControl sx={{ mb: 2, width: '100%', maxWidth: 400 }}>
+                    <InputLabel>Tables to export (optional)</InputLabel>
+                    <Select
+                      multiple
+                      value={selectedTables}
+                      onChange={(e) => setSelectedTables(e.target.value as string[])}
+                      renderValue={(selected) => selected.join(', ')}
+                    >
+                      {['papers', 'research_runs', 'mindmap_reports', 'research_agent_state',
+                        'paper_fulltext', 'topics', 'research_profiles', 'podcasts', 'newsletters'].map((table) => (
+                        <MenuItem key={table} value={table}>
+                          {table}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              )}
+
+              {/* Profile-Scoped Export Options */}
+              {exportMode === 'profile' && (
+                <Box sx={{ mb: 2, pl: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                  <Typography variant="body2" fontWeight={500} gutterBottom>
+                    Profile-Scoped Export Settings
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                    Export a single research profile with all its related data (papers, scores, interests)
+                  </Typography>
+
+                  <FormControl fullWidth sx={{ mb: 2 }}>
+                    <InputLabel>Select Research Profile</InputLabel>
+                    <Select
+                      value={selectedProfileId || ''}
+                      label="Select Research Profile"
+                      onChange={(e) => setSelectedProfileId(e.target.value as number)}
+                    >
+                      {researchProfiles?.map((profile: any) => (
+                        <MenuItem key={profile.id} value={profile.id}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box
+                              sx={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: '50%',
+                                bgcolor: profile.color || '#888'
+                              }}
+                            />
+                            <Typography>{profile.name}</Typography>
+                          </Box>
+                        </MenuItem>
+                      )) || []}
+                    </Select>
+                  </FormControl>
+
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_fulltext}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_fulltext: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Full-text Content</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export full-text content for papers (if available)
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_topics}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_topics: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Topic Relationships</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export topic classifications and relationships
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_newsletters}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_newsletters: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Newsletters</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export all newsletters
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_podcasts}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_podcasts: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Podcasts</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export all podcast episodes
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_lit_reviews}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_lit_reviews: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Literature Reviews</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export all literature reviews
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_research_runs}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_research_runs: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Research Runs</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export research agent runs
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_mindmap_reports}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_mindmap_reports: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Mindmap Reports</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export mindmap reports
+                          </Typography>
+                        </Box>
+                      }
+                    />
+
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={profileExportOptions.include_model_catalog}
+                          onChange={(e) => setProfileExportOptions({
+                            ...profileExportOptions,
+                            include_model_catalog: e.target.checked
+                          })}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">Include Model Catalog</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Export model catalog configuration
+                          </Typography>
+                        </Box>
+                      }
+                    />
+                  </Box>
+
+                  {selectedProfileId && (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                      This will export only the selected profile and papers scored by that profile.
+                      Use this to share or migrate specific research areas.
+                    </Alert>
+                  )}
+                </Box>
+              )}
+              
+              {/* Advanced Options */}
+              <Accordion sx={{ mb: 2 }}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="body2">Advanced Export Options</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={exportOptions.streaming}
+                          onChange={(e) => setExportOptions({...exportOptions, streaming: e.target.checked})}
+                        />
+                      }
+                      label="Enable streaming (for large datasets)"
+                    />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={exportOptions.parallel}
+                          onChange={(e) => setExportOptions({...exportOptions, parallel: e.target.checked})}
+                        />
+                      }
+                      label="Enable parallel processing"
+                    />
+                    {exportOptions.parallel && (
+                      <Box sx={{ pl: 3 }}>
+                        <Typography variant="body2" gutterBottom>
+                          Max Workers: {exportOptions.max_workers}
+                        </Typography>
+                        <Slider
+                          value={exportOptions.max_workers}
+                          onChange={(_, value) => setExportOptions({...exportOptions, max_workers: value as number})}
+                          min={1}
+                          max={8}
+                          marks
+                          sx={{ maxWidth: 200 }}
+                        />
+                      </Box>
+                    )}
+                  </Box>
+                </AccordionDetails>
+              </Accordion>
               <Button
                 variant="contained"
                 color="primary"
@@ -2130,7 +2793,102 @@ const Settings: React.FC = () => {
                   <strong>Merge Mode:</strong> New records will be added to your database. Existing records will be preserved. Any conflicts will be skipped.
                 </Alert>
               )}
-              
+
+              {/* Profile Mapping Options for Merge Mode */}
+              {importMode === 'merge' && (
+                <Accordion sx={{ mb: 2 }}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography variant="body2">Profile Mapping Options (for profile-scoped imports)</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Configure how imported profiles should be mapped to existing profiles
+                      </Typography>
+
+                      <FormControl fullWidth>
+                        <InputLabel>Mapping Strategy</InputLabel>
+                        <Select
+                          value={importMappingStrategy}
+                          label="Mapping Strategy"
+                          onChange={(e) => setImportMappingStrategy(e.target.value as any)}
+                        >
+                          <MenuItem value="auto">
+                            <Box>
+                              <Typography variant="body2">Auto (Recommended)</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Match by name, create if not exists
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="create_new">
+                            <Box>
+                              <Typography variant="body2">Create New Profile</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Always create a new profile
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="merge_to">
+                            <Box>
+                              <Typography variant="body2">Merge To Existing</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Merge into a specific profile
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="match_by_name">
+                            <Box>
+                              <Typography variant="body2">Match By Name</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Must match existing profile name
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                        </Select>
+                      </FormControl>
+
+                      {importMappingStrategy === 'merge_to' && (
+                        <FormControl fullWidth>
+                          <InputLabel>Target Profile</InputLabel>
+                          <Select
+                            value={importMergeToProfileId || ''}
+                            label="Target Profile"
+                            onChange={(e) => setImportMergeToProfileId(e.target.value as number)}
+                          >
+                            {researchProfiles?.map((profile: any) => (
+                              <MenuItem key={profile.id} value={profile.id}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Box
+                                    sx={{
+                                      width: 12,
+                                      height: 12,
+                                      borderRadius: '50%',
+                                      bgcolor: profile.color || '#888'
+                                    }}
+                                  />
+                                  <Typography>{profile.name}</Typography>
+                                </Box>
+                              </MenuItem>
+                            )) || []}
+                          </Select>
+                        </FormControl>
+                      )}
+
+                      {importMappingStrategy === 'create_new' && (
+                        <TextField
+                          fullWidth
+                          label="New Profile Name (optional)"
+                          value={importNewProfileName}
+                          onChange={(e) => setImportNewProfileName(e.target.value)}
+                          helperText="Leave empty to use original name with '(Imported)' suffix"
+                        />
+                      )}
+                    </Box>
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
               <input
                 accept=".tar.gz,.tgz,application/gzip,application/x-gzip,application/x-tar"
                 style={{ display: 'none' }}

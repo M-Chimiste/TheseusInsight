@@ -1,0 +1,126 @@
+-- Optimize indexes for bulk operations and common queries
+-- This migration adds partial indexes and removes redundant ones
+
+-- 1. Papers table optimizations
+-- =================================
+
+-- Drop redundant indexes that are covered by composite indexes
+DROP INDEX IF EXISTS idx_papers_date;  -- Covered by idx_papers_date_score
+DROP INDEX IF EXISTS idx_papers_related;  -- Rarely used alone
+
+-- Add partial index for pending papers (papers without embeddings)
+CREATE INDEX IF NOT EXISTS idx_papers_pending_embedding 
+ON papers(id, date) 
+WHERE embedding_model IS NULL;
+
+-- Add index for recent papers (commonly queried)
+-- Note: Cannot use CURRENT_DATE in partial index as it's not immutable
+-- Using a regular index instead, application code should filter by date
+CREATE INDEX IF NOT EXISTS idx_papers_recent 
+ON papers(date DESC, score DESC);
+
+-- Optimize the URL/title composite index for duplicate checking
+DROP INDEX IF EXISTS idx_papers_url_title;
+CREATE UNIQUE INDEX idx_papers_url_title_unique 
+ON papers(url, title) 
+WHERE url IS NOT NULL;
+
+-- 2. Paper profile scores optimizations
+-- =====================================
+
+-- Add covering index for common profile queries
+CREATE INDEX IF NOT EXISTS idx_paper_profile_scores_profile_covering 
+ON paper_profile_scores(profile_id, score DESC, date_scored DESC) 
+INCLUDE (paper_id, related);
+
+-- Partial index for high-scoring papers per profile
+CREATE INDEX IF NOT EXISTS idx_paper_profile_high_scores 
+ON paper_profile_scores(profile_id, score DESC, paper_id) 
+WHERE score >= 7;
+
+-- 3. Embeddings-related optimizations
+-- ===================================
+-- Note: Embeddings are stored in papers.embedding column, not a separate table
+-- The embeddings_staging table is used for bulk imports only
+
+-- Add index on papers.embedding if using vector similarity searches
+-- This would require pgvector's ivfflat or hnsw index types
+-- Example (uncomment if needed):
+-- CREATE INDEX IF NOT EXISTS idx_papers_embedding_ivfflat 
+-- ON papers USING ivfflat (embedding vector_cosine_ops)
+-- WITH (lists = 100);
+
+-- 4. Keywords optimizations  
+-- =========================
+-- Note: Keywords are stored in papers.keywords_json JSONB column, not separate tables
+-- These indexes would optimize JSONB queries if needed
+
+-- Index for JSONB keyword searches on papers table
+CREATE INDEX IF NOT EXISTS idx_papers_keywords_gin 
+ON papers USING gin (keywords_json);
+
+-- 5. Topics and trends optimizations
+-- ==================================
+
+-- Index for recent topics
+CREATE INDEX IF NOT EXISTS idx_topics_recent 
+ON topics(created_at DESC);
+
+-- Optimize paper topics for trend queries
+CREATE INDEX IF NOT EXISTS idx_paper_topics_composite 
+ON paper_topics(topic_id, paper_id, relevance_score DESC);
+
+-- Index for topic metrics queries
+CREATE INDEX IF NOT EXISTS idx_topic_metrics_period_topic 
+ON topic_metrics(period_type, period_end DESC, topic_id);
+
+-- 6. Research profiles optimizations
+-- ==================================
+
+-- Partial index for active profiles
+CREATE INDEX IF NOT EXISTS idx_profiles_active 
+ON research_profiles(is_active, created_at DESC) 
+WHERE is_active = true;
+
+-- 7. Query performance views
+-- ==========================
+
+-- Create a materialized view for paper statistics (refresh periodically)
+-- Note: View will include all data, filtering should be done at query time
+CREATE MATERIALIZED VIEW IF NOT EXISTS paper_stats_mv AS
+SELECT 
+    DATE_TRUNC('day', date) as day,
+    COUNT(*) as paper_count,
+    COUNT(CASE WHEN embedding_model IS NOT NULL THEN 1 END) as embedded_count,
+    AVG(score) as avg_score,
+    COUNT(DISTINCT url) as unique_urls
+FROM papers
+GROUP BY DATE_TRUNC('day', date);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_stats_mv_day ON paper_stats_mv(day);
+
+-- Create index to support the view refresh and date-based queries
+CREATE INDEX IF NOT EXISTS idx_papers_date_stats 
+ON papers(date);
+
+-- Ensure the migration runs smoothly even if some objects already exist
+-- This makes the migration idempotent
+
+-- 8. Vacuum and analyze
+-- =====================
+
+-- Update table statistics for query planner
+ANALYZE papers;
+ANALYZE paper_profile_scores;
+-- Note: embeddings are stored in papers.embedding column, not a separate table
+-- Note: keywords are stored in papers.keywords_json column, not separate tables
+ANALYZE topics;
+ANALYZE paper_topics;
+ANALYZE topic_metrics;
+ANALYZE research_profiles;
+
+-- Log index optimization completion
+DO $$
+BEGIN
+    RAISE NOTICE 'Index optimization completed. Monitor query performance and adjust as needed.';
+END $$;

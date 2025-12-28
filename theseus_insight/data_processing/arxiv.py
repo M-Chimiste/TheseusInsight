@@ -1,6 +1,7 @@
 from .unified_harvester import UnifiedArxivHarvester
 from datetime import datetime, timedelta, date
 import pandas as pd
+import os
 
 
 class ArxivDataProcessor:
@@ -23,10 +24,12 @@ class ArxivDataProcessor:
     def __init__(self,
                 start_date: str | datetime | None = None,
                 end_date: str | datetime | None = None,
-                category: str = "cs",
-                subcategories: list[str] = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
+                category: str | None = "cs",
+                subcategories: list[str] | None = ["cs.ai", "cs.cl", "cs.lg", "cs.ir", "cs.ma", "cs.cv"],
                 num_days: int|None = 7,
-                max_results: int|None = None
+                max_results: int|None = None,
+                *,
+                force_kaggle: bool | None = None
                 ):
         
         if not start_date:
@@ -49,6 +52,7 @@ class ArxivDataProcessor:
         self.subcategories = subcategories
         self.num_days = num_days
         self.max_results = max_results
+        self.force_kaggle = force_kaggle
 
         
     def download_and_process_data(self, start_date=None, end_date=None):
@@ -90,15 +94,27 @@ class ArxivDataProcessor:
         # --- End: Sanity check and swap if needed ---
         
         print(f"Start date: {start_date}, End date: {end_date}")
-        print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+        if self.category is None and self.subcategories is None:
+            print("Category: ALL (no filtering)")
+        else:
+            print(f"Category: {self.category}, Subcategories: {self.subcategories}")
 
+        # Determine force_kaggle: prefer explicit flag; fallback to env
+        force_kaggle_flag = (self.force_kaggle is True) or (os.getenv('FORCE_KAGGLE', '').lower() == 'true')
+        auto_cleanup = not force_kaggle_flag
+        print(f"[DEBUG] FORCE_KAGGLE={force_kaggle_flag}, auto_cleanup={auto_cleanup}")
+        if not auto_cleanup:
+            print("📌 Bulk mode: Kaggle dataset will be preserved for reuse")
+        
         with UnifiedArxivHarvester(
             category=self.category,
             subcategories=self.subcategories,
             date_from=start_date,
             date_until=end_date,
             max_results=self.max_results,
-            verbose=True
+            verbose=True,
+            auto_cleanup=auto_cleanup,  # Don't cleanup in bulk mode
+            force_kaggle=force_kaggle_flag
         ) as harvester:
             records = harvester.harvest()
             data_df = harvester.to_dataframe()
@@ -106,7 +122,10 @@ class ArxivDataProcessor:
             # Handle case where no records were retrieved
             if data_df.empty or len(records) == 0:
                 print(f"No records found for date range {start_date} to {end_date}")
-                print(f"Category: {self.category}, Subcategories: {self.subcategories}")
+                if self.category is None and self.subcategories is None:
+                    print("Category: ALL (no filtering)")
+                else:
+                    print(f"Category: {self.category}, Subcategories: {self.subcategories}")
                 
                 # Create an empty DataFrame with the expected structure for downstream processing
                 empty_df = pd.DataFrame(columns=[

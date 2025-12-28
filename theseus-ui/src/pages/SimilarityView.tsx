@@ -5,19 +5,22 @@ import {
   CircularProgress,
   Alert,
   IconButton,
-  Paper,
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Tooltip,
+  Button
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
+import DownloadIcon from '@mui/icons-material/Download';
 import { papersApi } from '../services/api';
 import type { PaperApiResponse, SimilarPapersResponse } from '../services/api';
 import PaperRowCard from './PaperRowCard';
 import ReferencePaperCard from './ReferencePaperCard';
+import { useLayout } from '../contexts/LayoutContext';
 
 interface SimilarityViewProps {
   referencePaper: PaperApiResponse;
@@ -29,6 +32,9 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState<number>(10);
+  
+  // Get layout context
+  const { headerHeight } = useLayout();
 
 
   const fetchSimilarPapers = useCallback(async (selectedLimit: number) => {
@@ -72,6 +78,78 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
     // fetchSimilarPapers will be called automatically due to the useEffect dependency on limit
   };
 
+  // Export similar papers to CSV
+  const handleExportCSV = () => {
+    // Helper to escape CSV values (handle commas, quotes, newlines)
+    const escapeCSV = (value: string): string => {
+      if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    };
+
+    // Format date for display
+    const formatDate = (dateStr: string): string => {
+      try {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+      } catch {
+        return dateStr;
+      }
+    };
+
+    // Build CSV content
+    const headers = ['Title', 'Published Date', 'URL', 'Similarity Score'];
+    const rows: string[][] = [];
+
+    // Add seed paper as first row
+    rows.push([
+      escapeCSV(referencePaper.title),
+      escapeCSV(formatDate(referencePaper.date)),
+      referencePaper.url,
+      'Seed Paper'
+    ]);
+
+    // Add similar papers
+    similarPapers.forEach((paper) => {
+      const similarityPercent = `${((paper.similarity_score ?? 0) * 100).toFixed(1)}%`;
+      rows.push([
+        escapeCSV(paper.title),
+        escapeCSV(formatDate(paper.date)),
+        paper.url,
+        similarityPercent
+      ]);
+    });
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Create filename from reference paper title (sanitized)
+    const sanitizedTitle = referencePaper.title
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .replace(/\s+/g, '_')
+      .substring(0, 50);
+    link.download = `similar_papers_${sanitizedTitle}.csv`;
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   if (loading && similarPapers.length === 0) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
@@ -81,8 +159,8 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
   }
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header with close button and controls - STICKY */}
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {/* Header with close button and controls - FIXED */}
       <Box sx={{ 
         display: 'flex', 
         alignItems: 'center', 
@@ -93,9 +171,11 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
         borderColor: 'divider',
         backgroundColor: 'background.paper',
         minHeight: 'auto',
-        position: 'sticky',
-        top: 0,
-        zIndex: 1000
+        position: 'fixed',
+        top: `${headerHeight}px`,
+        left: 0,
+        right: 0,
+        zIndex: 999
       }}>
         <Typography variant="h6" component="h1" sx={{ fontWeight: 600 }}>
           Similar Papers
@@ -117,6 +197,18 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
               <MenuItem value={200}>200</MenuItem>
             </Select>
           </FormControl>
+          <Tooltip title="Export to CSV">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<DownloadIcon />}
+              onClick={handleExportCSV}
+              disabled={loading || similarPapers.length === 0}
+              sx={{ textTransform: 'none' }}
+            >
+              Export
+            </Button>
+          </Tooltip>
           <Box sx={{ display: 'flex' }}>
             <IconButton onClick={onClose} aria-label="back to papers" size="small">
               <ArrowBackIcon />
@@ -128,18 +220,15 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
         </Box>
       </Box>
 
-      {/* Main content area */}
-      <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left side - Reference paper - STICKY */}
+      {/* Main content area - add top padding to account for fixed header */}
+      <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden', pt: '57px' }}>
+        {/* Left side - Reference paper */}
         <Box sx={{ 
           width: '40%', 
           borderRight: 1, 
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
-          position: 'sticky',
-          top: 0,
-          height: 'calc(100vh - 64px)', // Subtract header height
           overflow: 'auto'
         }}>
           <Box sx={{ p: 1.5 }}>
@@ -153,8 +242,7 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
         {/* Right side - Similar papers - SCROLLABLE */}
         <Box sx={{ 
           width: '60%', 
-          overflow: 'auto',
-          height: 'calc(100vh - 64px)' // Subtract header height
+          overflow: 'auto'
         }}>
           <Box sx={{ p: 1.5 }}>
             {loading && (
@@ -178,14 +266,16 @@ const SimilarityView: React.FC<SimilarityViewProps> = ({ referencePaper, onClose
             {/* Similar papers list */}
             {similarPapers.map((paper, index) => (
               <Box key={`${paper.id}_${paper.date_run}_similar_${index}`} sx={{ mb: 1.5 }}>
-                <Paper elevation={1} sx={{ p: 0.75 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                    <Typography variant="body2" color="primary" sx={{ fontWeight: 'bold', mr: 1 }}>
-                      Similarity: {((paper.similarity_score || 0) * 100).toFixed(1)}%
-                    </Typography>
-                  </Box>
-                  <PaperRowCard paper={paper} />
-                </Paper>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                  <Typography variant="body2" color="primary" sx={{ fontWeight: 'bold', mr: 1 }}>
+                    Similarity: {((paper.similarity_score ?? 0) * 100).toFixed(1)}%
+                  </Typography>
+                </Box>
+                <PaperRowCard 
+                  paper={paper} 
+                  hideRelevanceChip={true}
+                  hideScoreChip={true}
+                />
               </Box>
             ))}
           </Box>

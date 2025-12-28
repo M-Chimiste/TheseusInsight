@@ -16,6 +16,9 @@ unidecode
 # Embeddings & Vector Search
 sentence-transformers
 
+# Scheduler
+apscheduler>=3.10.4
+
 # Research Agent Dependencies
 arxiv>=1.4.7
 simhash>=2.1.0
@@ -23,6 +26,9 @@ langgraph
 yake
 
 # LLM & AI Services
+# LLMFactory - Unified inference interface for multiple providers
+# v0.2.4 includes LM Studio singleton handling fix
+git+https://github.com/M-Chimiste/LLMFactory.git@v0.2.4
 anthropic[bedrock]
 openai
 ollama
@@ -61,4 +67,8 @@ fastapi
 uvicorn[standard]
 websockets
 python-multipart
-sqlite-vec
+psycopg[binary,pool]
+asyncpg
+
+# System monitoring
+psutil>=5.9.0

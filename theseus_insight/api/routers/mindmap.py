@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Body
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 
 from ..models import (
     MindMapExpandRequest, MindMapExpandResponse,
@@ -12,10 +12,20 @@ from ..models import (
     MindMapReportListResponse,
     PaperApiResponse
 )
-from ..dependencies import db
+from ...data_access import (
+    PaperRepository,
+    PaperFulltextRepository,
+    MindmapReportRepository
+)
 from ..tasks import task_manager
 
 router = APIRouter(prefix="/api/mindmap", tags=["mindmap"])
+
+def _convert_datetime_to_string(value):
+    """Convert datetime/date objects to ISO format strings."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
 
 @router.post("/expand", response_model=MindMapExpandResponse)
 async def expand_mindmap(
@@ -23,11 +33,12 @@ async def expand_mindmap(
     request: MindMapExpandRequest
 ):
     """
-    Generate a mind-map around a seed paper.
+    Generate a mind-map around a seed paper or topic.
     
     This endpoint creates a background task to generate a mind-map visualization
-    around a specified seed paper. The process includes:
-    1. Validating the seed paper exists
+    around either a specified seed paper or from representative papers of a topic. 
+    The process includes:
+    1. Validating the seed paper/topic exists
     2. Finding similar papers using vector similarity
     3. Generating LLM summaries for each paper
     4. Building the mind-map with specified layout algorithm
@@ -35,23 +46,75 @@ async def expand_mindmap(
     The task progress can be tracked via WebSocket at /ws/mindmap/{task_id}
     """
     try:
-        # Validate seed paper exists
-        seed_paper = db.get_paper_by_id(int(request.paper_id))
-        if not seed_paper:
-            raise HTTPException(status_code=404, detail=f"Paper {request.paper_id} not found")
+        # Determine seed paper(s) based on input type
+        seed_paper_id = None
+        seed_paper = None
+        
+        if request.paper_id:
+            # Direct paper seed
+            seed_paper = PaperRepository.get_by_id(int(request.paper_id))
+            if not seed_paper:
+                raise HTTPException(status_code=404, detail=f"Paper {request.paper_id} not found")
+            seed_paper_id = request.paper_id
+            
+        elif request.topic_id:
+            # Topic-based seed - get representative papers from topic
+            from ...data_access import TopicsRepository, PaperTopicsRepository
+            
+            # Validate topic exists
+            topic_data = TopicsRepository.get(request.topic_id)
+            if not topic_data:
+                raise HTTPException(status_code=404, detail=f"Topic {request.topic_id} not found")
+            
+            # Get most relevant papers for this topic (limit to top 3-5 for seed selection)
+            topic_papers = PaperTopicsRepository.get_papers_for_topic(
+                request.topic_id, limit=5, min_relevance=0.3
+            )
+            
+            if not topic_papers:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"No papers found for topic {request.topic_id} ('{topic_data['label']}')"
+                )
+            
+            # Use the most relevant paper as the primary seed
+            top_paper = topic_papers[0]
+            seed_paper = PaperRepository.get_by_id(int(top_paper['id']))
+            if not seed_paper:
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Failed to retrieve top paper {top_paper['id']} for topic"
+                )
+            seed_paper_id = str(top_paper['id'])
+            
+        else:
+            # This should be caught by pydantic validation, but just in case
+            raise HTTPException(status_code=400, detail="Either paper_id or topic_id must be provided")
         
         # Generate unique task ID
         task_id = str(uuid.uuid4())
         
+        # Resolve profile parameters
+        profile_ids_list = None
+        if request.profile_ids:
+            profile_ids_list = request.profile_ids
+        elif request.profile_id:
+            profile_ids_list = [request.profile_id]
+        
         # Create task configuration
         config = {
-            "paper_id": request.paper_id,
+            "paper_id": seed_paper_id,
+            "topic_id": request.topic_id,  # Include topic_id for reference
             "k": request.k,
             "similarity_threshold": request.similarity_threshold,
             "layout_algorithm": request.layout_algorithm,
             "model_config_override": request.model_config_override.dict() if request.model_config_override else None,
             "expansion_order": request.expansion_order,
-            "max_nodes_per_order": request.max_nodes_per_order
+            "max_nodes_per_order": request.max_nodes_per_order,
+            "profile_id": request.profile_id,
+            "profile_ids": profile_ids_list,
+            "profile_tag": request.profile_tag,
+            "profile_tags": request.profile_tags
         }
         
         # Create task in database
@@ -60,9 +123,15 @@ async def expand_mindmap(
         # Enqueue background task
         await task_manager.enqueue_task(task_manager.run_mindmap_expand_task, task_id)
         
+        # Create response message based on input type
+        if request.paper_id:
+            message = f"Mind-map generation started for paper {seed_paper_id}"
+        else:
+            message = f"Mind-map generation started for topic {request.topic_id} (using paper {seed_paper_id} as seed)"
+        
         return MindMapExpandResponse(
             task_id=task_id,
-            message=f"Mind-map generation started for paper {request.paper_id}"
+            message=message
         )
         
     except HTTPException:
@@ -88,12 +157,12 @@ async def parse_pdfs(
         # Validate paper IDs exist and check which ones need parsing
         papers_to_parse = []
         for paper_id in request.paper_ids:
-            paper = db.get_paper_by_id(int(paper_id))
+            paper = PaperRepository.get_by_id(int(paper_id))
             if not paper:
                 raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
             
             # Check if paper already has full-text
-            if not db.has_paper_fulltext(int(paper_id)):
+            if not PaperFulltextRepository.has_fulltext(int(paper_id)):
                 papers_to_parse.append(paper_id)
         
         if not papers_to_parse:
@@ -150,7 +219,7 @@ async def search_seed_papers(
             raise HTTPException(status_code=400, detail="Limit must be between 1 and 50")
         
         # Perform search using existing database method
-        results = db.search_papers_for_mindmap_seed(query.strip(), limit)
+        results = PaperRepository.search_seed(query.strip(), limit)
         
         # Convert to API response format
         papers = []
@@ -159,8 +228,8 @@ async def search_seed_papers(
                 id=paper_data['id'],
                 title=paper_data['title'],
                 abstract=paper_data['abstract'],
-                date=paper_data['date'],
-                date_run=paper_data.get('date_run', ''),
+                date=_convert_datetime_to_string(paper_data['date']),
+                date_run=_convert_datetime_to_string(paper_data.get('date_run', '')),
                 score=paper_data.get('score', 0.0),
                 rationale=paper_data.get('rationale', ''),
                 related=paper_data.get('related', False),
@@ -191,19 +260,19 @@ async def get_paper_details(paper_id: str):
     """
     try:
         # Get paper from database
-        paper = db.get_paper_by_id(int(paper_id))
+        paper = PaperRepository.get_by_id(int(paper_id))
         if not paper:
             raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
         
         # Check if full-text is available
-        has_fulltext = db.has_paper_fulltext(int(paper_id))
+        has_fulltext = PaperFulltextRepository.has_fulltext(int(paper_id))
         
         # Return paper details with full-text flag
         return {
             "id": paper['id'],
             "title": paper['title'],
             "abstract": paper['abstract'],
-            "date": paper['date'],
+            "date": _convert_datetime_to_string(paper['date']),
             "url": paper.get('url', ''),
             "score": paper.get('score', 0.0),
             "has_fulltext": has_fulltext,
@@ -224,7 +293,7 @@ async def get_mindmap_reports():
     Returns a list of saved mind-map reports with metadata.
     """
     try:
-        reports_data = db.get_mindmap_reports()
+        reports_data = MindmapReportRepository.list()
         
         # Convert to API response format
         reports = []
@@ -238,7 +307,7 @@ async def get_mindmap_reports():
                 parameters=report_data.get('parameters', {}),
                 mindmap_data=report_data.get('mindmap_data', {}),
                 statistics=report_data.get('statistics', {}),
-                created_at=report_data['created_at']
+                created_at=_convert_datetime_to_string(report_data['created_at'])
             )
             reports.append(report)
         
@@ -264,12 +333,12 @@ async def save_mindmap_report(request: MindMapReportSaveRequest):
         
         # Get seed paper title for the report
         seed_paper_id = request.mindmap_data.get("seed_paper_id")
-        seed_paper = db.get_paper_by_id(int(seed_paper_id))
+        seed_paper = PaperRepository.get_by_id(int(seed_paper_id))
         if not seed_paper:
             raise HTTPException(status_code=404, detail=f"Seed paper {seed_paper_id} not found")
         
         # Save the report
-        report_id = db.save_mindmap_report(
+        report_id = MindmapReportRepository.insert(
             title=request.title,
             description=request.description,
             seed_paper_id=int(seed_paper_id),
@@ -298,7 +367,7 @@ async def get_mindmap_report(report_id: int):
     Returns the complete mind-map report data including the visualization data.
     """
     try:
-        report_data = db.get_mindmap_report_by_id(report_id)
+        report_data = MindmapReportRepository.get(report_id)
         if not report_data:
             raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
         
@@ -312,7 +381,7 @@ async def get_mindmap_report(report_id: int):
             parameters=report_data.get('parameters', {}),
             mindmap_data=report_data.get('mindmap_data', {}),
             statistics=report_data.get('statistics', {}),
-            created_at=report_data['created_at']
+            created_at=_convert_datetime_to_string(report_data['created_at'])
         )
         
         return report
@@ -331,12 +400,12 @@ async def delete_mindmap_report(report_id: int):
     """
     try:
         # Check if report exists
-        report = db.get_mindmap_report_by_id(report_id)
+        report = MindmapReportRepository.get(report_id)
         if not report:
             raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
         
         # Delete the report
-        db.delete_mindmap_report(report_id)
+        MindmapReportRepository.delete(report_id)
         
         return {
             "status": "success",
@@ -364,12 +433,12 @@ async def update_mindmap_report_title(report_id: int, request: dict):
             raise HTTPException(status_code=400, detail="Title must be 200 characters or less")
         
         # Check if report exists
-        report = db.get_mindmap_report_by_id(report_id)
+        report = MindmapReportRepository.get(report_id)
         if not report:
             raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
         
         # Update the title
-        db.update_mindmap_report_title(report_id, new_title)
+        MindmapReportRepository.update_title(report_id, new_title)
         
         return {
             "status": "success",
@@ -397,12 +466,12 @@ async def update_mindmap_report_description(report_id: int, request: dict):
             new_description = ""
 
         # Validate report exists
-        report = db.get_mindmap_report_by_id(report_id)
+        report = MindmapReportRepository.get(report_id)
         if not report:
             raise HTTPException(status_code=404, detail=f"Mind-map report {report_id} not found")
 
         # Persist change
-        db.update_mindmap_report_description(report_id, new_description)
+        MindmapReportRepository.update_description(report_id, new_description)
 
         return {
             "status": "success",
@@ -428,7 +497,7 @@ class MindMapReportUpdateRequest(BaseModel):
 async def update_mindmap_report(report_id: int, request: MindMapReportUpdateRequest = Body(...)):
     """Replace the stored mind-map data/parameters for an existing report."""
     try:
-        updated = db.update_mindmap_report_data(
+        updated = MindmapReportRepository.update_data(
             report_id=report_id,
             mindmap_data=request.mindmap_data,
             parameters=request.parameters,

@@ -21,7 +21,8 @@ from ..data_model import (Dialogue,
                           DialogueOutput,
                           PodcastDescription,
                           ContentSummary)
-from ..data_model.data_handling import PaperDatabase, Podcast
+from ..data_model.papers import Podcast
+from ..data_access import PodcastRepository
 from ..pdf import SpacyLayoutDocProcessor
 from datetime import datetime, date
 
@@ -55,8 +56,7 @@ class PodcastGenerator:
         instructions_template: dict = INSTRUCTION_TEMPLATES,
         intro_music_path: str = None,
         pause_duration: float = 0.5,
-        verbose: bool = False,
-        db_url: str = None
+        verbose: bool = False
     ):
         """
         Set up the class with your default settings.
@@ -72,7 +72,6 @@ class PodcastGenerator:
             intro_music_path (str): Path to intro music file
             pause_duration (float): Duration of silence in seconds to add between major segments
             verbose (bool): Whether to print verbose output
-            db_url (str): PostgreSQL database connection URL
         """
         self.verbose = verbose
         self.text_model_config = text_model
@@ -81,11 +80,7 @@ class PodcastGenerator:
         self.intro_music_path = intro_music_path
         self.pause_duration = pause_duration
         self.intro, self.section, self.outro = self._parse_prompts(instructions_template)
-        self.db_url = db_url
-        if self.db_url:
-            self.db = PaperDatabase(self.db_url)
-        else:
-            self.db = None
+        
         # Validate TTS provider
         valid_providers = ['polly', 'openai']
         if self.tts_provider not in valid_providers:
@@ -106,11 +101,28 @@ class PodcastGenerator:
             "max_new_tokens": self.text_model_config["max_new_tokens"],
             "temperature": self.text_model_config["temperature"]
         }
-        
+
+        # Add host parameter if specified (supports Ollama, LMStudio, Custom-OAI)
+        if "host" in self.text_model_config and self.text_model_config["host"]:
+            model_params["host"] = self.text_model_config["host"]
+
+        # Add provider-specific parameters
         if model_type == "ollama" and "num_ctx" in self.text_model_config:
             model_params["num_ctx"] = self.text_model_config["num_ctx"]
-        
-        self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
+        elif model_type == "lmstudio":
+            if "context_length" in self.text_model_config:
+                model_params["context_length"] = self.text_model_config["context_length"]
+            if "gpu_offload" in self.text_model_config:
+                model_params["gpu_offload"] = self.text_model_config["gpu_offload"]
+
+        # Use cached LMStudio client to avoid singleton error
+        if model_type == "lmstudio":
+            from theseus_insight.utils.lmstudio_client import get_lmstudio_client
+            import os
+            host = model_params.pop("host", None) or os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+            self.text_inference = get_lmstudio_client(host=host, **model_params)
+        else:
+            self.text_inference = LLMModelFactory.create_model(model_type, **model_params)
 
         # Initialize TTS models based on provider
        
@@ -242,7 +254,24 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
             if self.text_inference.provider == "anthropic":
                 raw_response = "{" + raw_response
 
-        data = json_repair.loads(raw_response)
+        # Parse JSON response with error handling
+        try:
+            data = json_repair.loads(raw_response)
+            
+            # Ensure data is a dictionary
+            if not isinstance(data, dict):
+                if self.verbose:
+                    print(f"Warning: Expected dict from JSON parsing, got {type(data)}")
+                    print(f"Raw response: {raw_response[:200]}...")
+                return None
+                
+        except Exception as json_error:
+            if self.verbose:
+                print(f"JSON parsing failed in podcast generator")
+                print(f"Error: {json_error}")
+                print(f"Raw response: {raw_response[:200]}...")
+            return None
+            
         if self.verbose:
             print("LLM response received")
         # Validate with Pydantic
@@ -591,7 +620,7 @@ No other text outside JSON. There are only two speakers on the podcast: speaker-
                 description=description,
                 script=script_data,  # This will be properly serialized by the insert_podcast method
             )
-            self.db.insert_podcast(podcast_record)
+            PodcastRepository.insert(podcast_record)
             if self.verbose:
                 print(f"Successfully inserted podcast record into database")
         except Exception as e:

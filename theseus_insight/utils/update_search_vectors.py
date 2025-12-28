@@ -12,17 +12,14 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from theseus_insight.data_model.data_handling import PaperDatabase
+from theseus_insight.data_access.base import get_cursor
 
 def update_search_vectors():
     """Update all existing papers with full-text search vectors."""
-    db_url = os.getenv("DATABASE_URL", "data/theseus.db")
-    db = PaperDatabase(db_url)
-    
     print("Updating papers with full-text search vectors...")
     
     try:
-        with db.get_cursor() as cursor:
+        with get_cursor() as cursor:
             # Check if search vector columns exist
             cursor.execute("""
                 SELECT column_name 

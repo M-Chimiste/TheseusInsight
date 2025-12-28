@@ -532,16 +532,39 @@ class TheseusInsight:
             self._log_error(500, cleanup_error)
 
     def _clear_judge_model_cache(self):
-        """Clear Ollama cache for the judge model to resolve potential context issues."""
+        """Clear model cache to resolve potential context issues (Ollama or LM Studio)."""
         try:
-            if (hasattr(self, 'judge_inference') and 
-                hasattr(self.judge_inference, 'provider') and 
-                self.judge_inference.provider == "ollama"):
+            if not hasattr(self, 'judge_inference'):
+                return
+                
+            provider = getattr(self.judge_inference, 'provider', None)
+            
+            if provider == "ollama":
                 model_name = self.judge_model_config.get('model_name')
                 if model_name:
                     if self.verbose:
                         print(f"Clearing Ollama cache for judge model: {model_name}")
                     purge_ollama_cache(OLLAMA_URL, model_name)
+                    
+            elif provider == "lmstudio":
+                # For LM Studio, verify the model is still loaded
+                # SDK singleton can't be reset, so we just verify connection
+                from theseus_insight.utils.lmstudio_client import verify_model_loaded
+                model_name = self.judge_model_config.get('model_name')
+                lmstudio_host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+                
+                if self.verbose:
+                    print(f"Verifying LM Studio model availability: {model_name}")
+                    
+                if not verify_model_loaded(host=lmstudio_host, model_name=model_name):
+                    if self.verbose:
+                        print(f"⚠️ LM Studio model {model_name} may not be loaded. Please check LM Studio.")
+                    # Wait a bit for potential auto-reload
+                    time.sleep(3)
+                else:
+                    if self.verbose:
+                        print(f"✓ LM Studio model verified")
+                        
         except Exception as e:
             if self.verbose:
                 print(f"Failed to clear judge model cache: {e}")
@@ -1062,6 +1085,25 @@ Theseus Insight Team
                     except Exception as e:
                         if self.verbose:
                             print(f"Error processing paper {actual_index+1}, attempt {attempts}: {e}")
+                        
+                        # Check if this is an LM Studio error - verify model and retry with longer delay
+                        provider = getattr(self.judge_inference, 'provider', None)
+                        error_str = str(e).lower()
+                        is_lmstudio_error = provider == "lmstudio" and (
+                            "lm studio" in error_str or 
+                            "inference" in error_str or
+                            "websocket" in error_str or
+                            error_str.strip() == "" or  # Empty error message
+                            ": ." in str(e)  # LMStudio SDK empty error pattern
+                        )
+                        
+                        if is_lmstudio_error and attempts < max_attempts:
+                            if self.verbose:
+                                print(f"LM Studio error detected, verifying model availability...")
+                            self._clear_judge_model_cache()  # This verifies LM Studio model
+                            time.sleep(3)  # Longer delay for LM Studio recovery
+                            continue
+                        
                         if attempts == max_attempts:
                             # Use default values for failed paper
                             if self.verbose:

@@ -54,7 +54,6 @@ interface ScheduledTasksSettingsProps {
 
 const TASK_TYPES = [
   { value: 'newsletter', label: 'Newsletter Generation', description: 'Generate and send newsletters' },
-  { value: 'trends_recomputation', label: 'Trends Analysis', description: 'Recompute research trends' },
   { value: 'database_cleanup', label: 'Database Cleanup', description: 'Clean up old data' },
 ];
 

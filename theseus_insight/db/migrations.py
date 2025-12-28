@@ -52,6 +52,8 @@ class MigrationRunner:
             (9, "009_add_lmstudio_multi_server.sql", "Add LMStudio multi-server support and rename to inference_servers"),
             (10, "010_add_per_server_model_config.sql", "Add per-server model name and config overrides for non-homogeneous deployments"),
             (11, "011_newsletter_multi_server.sql", "Add newsletter multi-server judge support"),
+            (12, "012_timeline_indexes.sql", "Add indexes for research timeline queries"),
+            (13, "013_profile_interest_metrics.sql", "Add profile-aware interest metrics tables"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:

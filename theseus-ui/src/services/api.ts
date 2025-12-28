@@ -1074,7 +1074,8 @@ export const papersApi = {
         profileIds?: number[],
         minProfileScore?: number,
         maxProfileScore?: number,
-        profileRelatedOnly?: boolean
+        profileRelatedOnly?: boolean,
+        profileInterestId?: number
     ): Promise<PaginatedPapersResponse> => {
         const params: Record<string, any> = {
             page,
@@ -1082,13 +1083,14 @@ export const papersApi = {
             sort_field: sortField,
             sort_direction: sortDirection
         };
-        
+
         if (minScore !== undefined) params.score = minScore;
         if (maxScore !== undefined) params.max_score = maxScore;
         if (fromDate) params.from_date = fromDate;
         if (toDate) params.to_date = toDate;
         if (search) params.search = search;
         if (topicId !== undefined) params.topic_id = topicId;
+        if (profileInterestId !== undefined) params.profile_interest_id = profileInterestId;
         
         // Profile filtering parameters
         if (profileIds && profileIds.length > 0) {
@@ -1465,21 +1467,6 @@ export interface TrendsSearchResponse {
   total_results: number;
 }
 
-export interface TrendsRecomputeRequest {
-  lookback_months: number;
-  duration_months: number;
-  min_papers: number;
-  force_full_recalc: boolean;
-  validate_accuracy: boolean;
-  clear_all_data: boolean;
-}
-
-export interface TrendsRecomputeResponse {
-  task_id: string;
-  message: string;
-  estimated_duration_minutes: number;
-}
-
 export interface TopicPapersResponse {
   topic_id: number;
   topic_label: string;
@@ -1524,10 +1511,6 @@ export const trendsApi = {
     return api.get(`/trends/${topicId}?${searchParams.toString()}`);
   },
 
-  recomputeTrends: async (params: TrendsRecomputeRequest): Promise<AxiosResponse<TrendsRecomputeResponse>> => {
-    return api.post('/trends/recompute', params);
-  },
-
   getTopicPapers: async (topicId: number, params?: GetTopicPapersParams): Promise<AxiosResponse<TopicPapersResponse>> => {
     const searchParams = new URLSearchParams();
     if (params?.limit) searchParams.append('limit', params.limit.toString());
@@ -1546,6 +1529,31 @@ export const trendsApi = {
     if (params?.min_similarity) searchParams.append('min_similarity', params.min_similarity.toString());
     if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
     return api.get(`/trends/research-interests/${interestId}/papers`, { params: searchParams });
+  },
+
+  getTimelineData: async (params?: GetTimelineDataParams): Promise<AxiosResponse<TimelineDataResponse>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.topic_ids) searchParams.append('topic_ids', params.topic_ids);
+    if (params?.profile_ids) searchParams.append('profile_ids', params.profile_ids);
+    if (params?.period_type) searchParams.append('period_type', params.period_type);
+    if (params?.start_date) searchParams.append('start_date', params.start_date);
+    if (params?.end_date) searchParams.append('end_date', params.end_date);
+    if (params?.include_key_papers !== undefined) searchParams.append('include_key_papers', params.include_key_papers.toString());
+    if (params?.key_papers_limit) searchParams.append('key_papers_limit', params.key_papers_limit.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.source) searchParams.append('source', params.source);
+
+    return api.get(`/trends/timeline-data?${searchParams.toString()}`);
+  },
+
+  generateShortLabels: async (params?: { profile_ids?: number[] }): Promise<AxiosResponse<{
+    status: string;
+    message: string;
+    processed: number;
+    total_interests?: number;
+    errors?: string[];
+  }>> => {
+    return api.post('/trends/generate-short-labels', params || {});
   },
 };
 
@@ -1575,20 +1583,17 @@ export const researchInterestsApi = {
     if (params?.period_type) searchParams.append('period_type', params.period_type);
     if (params?.timeline_limit) searchParams.append('timeline_limit', params.timeline_limit.toString());
     if (params?.papers_limit) searchParams.append('papers_limit', params.papers_limit.toString());
-    
+
     return api.get(`/trends/research-interests/${interestId}?${searchParams.toString()}`);
   },
 
-  recomputeResearchInterests: async (params: TrendsRecomputeRequest): Promise<AxiosResponse<TrendsRecomputeResponse>> => {
+  recomputeProfileInterests: async (params: {
+    profile_ids: number[];
+    lookback_months?: number;
+    similarity_threshold?: number;
+    clear_existing?: boolean;
+  }): Promise<AxiosResponse<{ task_id: string; message: string }>> => {
     return api.post('/trends/research-interests/recompute', params);
-  },
-
-  getResearchInterestPapers: async (interestId: number, params?: GetResearchInterestPapersParams): Promise<AxiosResponse<ResearchInterestPapersResponse>> => {
-    const searchParams = new URLSearchParams();
-    if (params?.limit) searchParams.append('limit', params.limit.toString());
-    if (params?.min_similarity) searchParams.append('min_similarity', params.min_similarity.toString());
-    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
-    return api.get(`/trends/research-interests/${interestId}/papers`, { params: searchParams });
   },
 };
 
@@ -1635,6 +1640,58 @@ export interface ResearchInterestDetailResponse {
 
 // Union type for detail responses to handle both topics and research interests
 export type EntityDetailResponse = TopicDetailResponse | ResearchInterestDetailResponse;
+
+// === Research Timeline Visualization Types ===
+
+export interface TimelineKeyPaper {
+  id: number;
+  title: string;
+  date: string;
+  score?: number;
+  relevance_score?: number;
+}
+
+export interface TimelinePeriodData {
+  period_start: string;
+  period_end: string;
+  period_type: string;
+  doc_count: number;
+  growth_rate?: number;
+  phase: 'emerging' | 'growth' | 'stable' | 'declining';
+  key_papers?: TimelineKeyPaper[];
+  forecast_1m?: number;
+  forecast_3m?: number;
+  forecast_6m?: number;
+  is_forecast: boolean;
+}
+
+export interface TopicTimelineData {
+  topic_id: number;
+  topic_label: string;
+  keywords: string[];
+  total_papers: number;
+  periods: TimelinePeriodData[];
+}
+
+export interface TimelineDataResponse {
+  topics: TopicTimelineData[];
+  date_range: { start: string; end: string };
+  period_type: string;
+  available_zoom_levels: string[];
+  total_topics: number;
+}
+
+export interface GetTimelineDataParams {
+  topic_ids?: string;
+  profile_ids?: string;
+  period_type?: 'week' | 'month' | 'quarter' | 'year';
+  start_date?: string;
+  end_date?: string;
+  include_key_papers?: boolean;
+  key_papers_limit?: number;
+  limit?: number;
+  source?: 'research_interests' | 'profile_interests' | 'topics';
+}
 
 // Type guards to differentiate between topic and research interest responses
 export function isTopicDetailResponse(response: EntityDetailResponse): response is TopicDetailResponse {

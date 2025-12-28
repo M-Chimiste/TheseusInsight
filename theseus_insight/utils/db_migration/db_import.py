@@ -2525,14 +2525,15 @@ class DatabaseImporter:
                 # Insert interest
                 with get_cursor() as cursor:
                     cursor.execute("""
-                        INSERT INTO profile_research_interests 
-                        (profile_id, interest_text, embedding, embedding_model, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO profile_research_interests
+                        (profile_id, interest_text, embedding, embedding_model, short_label, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         mapped_profile_id,
                         interest_data["interest_text"],
                         embedding_str,
                         interest_data.get("embedding_model"),
+                        interest_data.get("short_label"),
                         interest_data.get("created_at"),
                         interest_data.get("updated_at")
                     ))
@@ -3019,6 +3020,128 @@ class DatabaseImporter:
         print(f"Paper-research interest relationships import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
         return stats
 
+    def import_profile_paper_interests(self, profile_paper_interests_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import profile paper-interest relationships from JSON file.
+
+        Args:
+            profile_paper_interests_file: Path to profile_paper_interests.json file
+            skip_duplicates: Whether to skip relationships that already exist
+            progress_callback: Optional callback function(current, total, message)
+
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing profile paper-interest relationships...")
+
+        with open(profile_paper_interests_file, 'r', encoding='utf-8') as f:
+            relationships_data = json.load(f)
+
+        stats = {"total": len(relationships_data), "imported": 0, "skipped": 0, "errors": 0}
+
+        for i, rel_data in enumerate(relationships_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM profile_paper_interests
+                            WHERE paper_id = %s AND profile_interest_id = %s
+                        """, (rel_data["paper_id"], rel_data["profile_interest_id"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+
+                # Insert profile paper-interest relationship
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO profile_paper_interests (paper_id, profile_interest_id, similarity_score, created_at)
+                        VALUES (%s, %s, %s, %s)
+                    """, (
+                        rel_data["paper_id"],
+                        rel_data["profile_interest_id"],
+                        rel_data.get("similarity_score", 0.0),
+                        rel_data.get("created_at")
+                    ))
+
+                stats["imported"] += 1
+
+            except Exception as e:
+                print(f"Error importing profile paper-interest relationship for paper_id '{rel_data.get('paper_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(relationships_data), f"Importing profile paper-interest relationships: {i + 1}/{len(relationships_data)}")
+
+        print(f"Profile paper-interest relationships import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
+    def import_profile_interest_metrics(self, profile_interest_metrics_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
+        """
+        Import profile interest metrics from JSON file.
+
+        Args:
+            profile_interest_metrics_file: Path to profile_interest_metrics.json file
+            skip_duplicates: Whether to skip metrics that already exist
+            progress_callback: Optional callback function(current, total, message)
+
+        Returns:
+            Dictionary with import statistics
+        """
+        print("Importing profile interest metrics...")
+
+        with open(profile_interest_metrics_file, 'r', encoding='utf-8') as f:
+            metrics_data = json.load(f)
+
+        stats = {"total": len(metrics_data), "imported": 0, "skipped": 0, "errors": 0}
+
+        for i, metric_data in enumerate(metrics_data):
+            try:
+                # Check for duplicates if requested
+                if skip_duplicates:
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM profile_interest_metrics
+                            WHERE profile_interest_id = %s AND period_start = %s AND period_type = %s
+                        """, (metric_data["profile_interest_id"], metric_data["period_start"], metric_data["period_type"]))
+                        if cursor.fetchone()[0] > 0:
+                            stats["skipped"] += 1
+                            continue
+
+                # Insert profile interest metric
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO profile_interest_metrics (
+                            profile_interest_id, period_start, period_end, period_type,
+                            doc_count, avg_relevance_score, avg_paper_score, growth_rate, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        metric_data["profile_interest_id"],
+                        metric_data["period_start"],
+                        metric_data["period_end"],
+                        metric_data["period_type"],
+                        metric_data.get("doc_count", 0),
+                        metric_data.get("avg_relevance_score"),
+                        metric_data.get("avg_paper_score"),
+                        metric_data.get("growth_rate"),
+                        metric_data.get("created_at")
+                    ))
+
+                stats["imported"] += 1
+
+            except Exception as e:
+                print(f"Error importing profile interest metric for interest_id '{metric_data.get('profile_interest_id', 'Unknown')}': {e}")
+                stats["errors"] += 1
+
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, len(metrics_data), f"Importing profile interest metrics: {i + 1}/{len(metrics_data)}")
+
+        print(f"Profile interest metrics import completed: {stats['imported']} imported, {stats['skipped']} skipped, {stats['errors']} errors")
+        return stats
+
     def import_label_summaries(self, label_summaries_file: str, skip_duplicates: bool = True, progress_callback=None) -> Dict[str, int]:
         """
         Import label summaries from JSON file.
@@ -3273,11 +3396,13 @@ class DatabaseImporter:
             "research_interests": "research_interests.json",
             "research_interest_metrics": "research_interest_metrics.json",
             "paper_research_interests": "paper_research_interests.json",
+            "profile_paper_interests": "profile_paper_interests.json",
+            "profile_interest_metrics": "profile_interest_metrics.json",
             "label_summaries": "label_summaries.json",
             "scheduled_tasks": "scheduled_tasks.json",
             "scheduled_task_runs": "scheduled_task_runs.json"
         }
-        
+
         for table_name, filename in file_map.items():
             if (input_path / filename).exists():
                 available_files.append(table_name)
@@ -3476,6 +3601,14 @@ class DatabaseImporter:
                     )
                 elif table_name == "paper_research_interests":
                     results[table_name] = self.import_paper_research_interests(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "profile_paper_interests":
+                    results[table_name] = self.import_profile_paper_interests(
+                        str(file_path), skip_duplicates, create_progress_callback(i, table_name)
+                    )
+                elif table_name == "profile_interest_metrics":
+                    results[table_name] = self.import_profile_interest_metrics(
                         str(file_path), skip_duplicates, create_progress_callback(i, table_name)
                     )
                 elif table_name == "label_summaries":
@@ -3800,10 +3933,14 @@ class DatabaseImporter:
             'paper_research_interests',      # FK: papers.id, research_interests.id
             'research_interest_metrics',     # FK: research_interests.id
             'research_interests',
-            
+
+            # Profile-specific interest tables (depend on profile_research_interests)
+            'profile_paper_interests',       # FK: papers.id, profile_research_interests.id
+            'profile_interest_metrics',      # FK: profile_research_interests.id
+
             # Misc tables
             'label_summaries',
-            
+
             # Profile relationships (depend on papers, research_profiles)
             'paper_profile_scores',          # FK: papers.id, research_profiles.id
             'profile_research_interests',    # FK: research_profiles.id

@@ -50,10 +50,10 @@ const navItems: NavCardItem[] = [
     path: '/mindmap-reports',
   },
   {
-    title: 'Trends',
-    description: 'Discover emerging research topics and track their evolution over time.',
+    title: 'Research Timeline',
+    description: 'Visualize research interest trends and paper activity over time.',
     icon: <TrendingUpIcon fontSize="large" color="primary" />,
-    path: '/trends',
+    path: '/research-timeline',
   },
   {
     title: 'Profile Management',

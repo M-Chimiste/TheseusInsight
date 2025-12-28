@@ -16,10 +16,7 @@ unidecode
 # Embeddings & Vector Search
 sentence-transformers
 
-# Topic Modeling & Trend Analysis
-bertopic>=0.16.0
-hdbscan>=0.8.33
-prophet>=1.1.5
+# Scheduler
 apscheduler>=3.10.4
 
 # Research Agent Dependencies
@@ -30,7 +27,8 @@ yake
 
 # LLM & AI Services
 # LLMFactory - Unified inference interface for multiple providers
-git+https://github.com/M-Chimiste/LLMFactory.git
+# v0.2.4 includes LM Studio singleton handling fix
+git+https://github.com/M-Chimiste/LLMFactory.git@v0.2.4
 anthropic[bedrock]
 openai
 ollama

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, List, Optional, Set, Tuple
 import json
 
@@ -963,20 +964,43 @@ class PaperRepository:
             return cur.fetchall()
 
     @staticmethod
-    def get_papers_with_embeddings(limit: int = 10000, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get papers that have embeddings for trend analysis."""
+    def get_papers_with_embeddings(
+        limit: Optional[int] = 10000,
+        offset: int = 0,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> List[Dict[str, Any]]:
+        """Get papers that have embeddings for trend analysis.
+
+        Args:
+            limit: Maximum number of papers to return (None for all)
+            offset: Number of papers to skip
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+        """
         with get_cursor() as cur:
-            # If limit is very large (100000+), remove it to get all papers
-            if limit >= 100000:
-                cur.execute(
-                    "SELECT * FROM papers WHERE embedding IS NOT NULL ORDER BY date DESC OFFSET %s",
-                    (offset,)
-                )
+            # Build query with optional date filters
+            conditions = ["embedding IS NOT NULL"]
+            params: List[Any] = []
+
+            if start_date:
+                conditions.append("date >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("date <= %s")
+                params.append(end_date)
+
+            where_clause = " AND ".join(conditions)
+
+            # If limit is None or very large (100000+), remove it to get all papers
+            if limit is None or limit >= 100000:
+                query = f"SELECT * FROM papers WHERE {where_clause} ORDER BY date DESC OFFSET %s"
+                params.append(offset)
             else:
-                cur.execute(
-                    "SELECT * FROM papers WHERE embedding IS NOT NULL ORDER BY date DESC LIMIT %s OFFSET %s",
-                    (limit, offset)
-                )
+                query = f"SELECT * FROM papers WHERE {where_clause} ORDER BY date DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+            cur.execute(query, params)
             return cur.fetchall()
 
     @staticmethod

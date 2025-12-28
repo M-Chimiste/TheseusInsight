@@ -1063,3 +1063,63 @@ class JobStatisticsResponse(BaseModel):
     """Response model for job statistics."""
     statistics: List[Dict[str, Any]] = Field(..., description="Statistics by job type")
     overall: Dict[str, Any] = Field(..., description="Overall statistics")
+
+
+# =====================================================================
+# Research Timeline Visualization Models
+# =====================================================================
+
+class TimelineKeyPaper(BaseModel):
+    """Simplified paper model for timeline key papers."""
+    id: int = Field(..., description="Paper ID")
+    title: str = Field(..., description="Paper title")
+    date: str = Field(..., description="Publication date")
+    score: Optional[float] = Field(None, description="Relevance score")
+    relevance_score: Optional[float] = Field(None, description="Topic relevance score")
+
+
+class TimelinePeriodData(BaseModel):
+    """Data for a single time period in the timeline."""
+    period_start: str = Field(..., description="Period start date (ISO format)")
+    period_end: str = Field(..., description="Period end date (ISO format)")
+    period_type: str = Field(..., description="Period granularity: week, month, quarter, year")
+    doc_count: int = Field(..., description="Number of papers in this period")
+    growth_rate: Optional[float] = Field(None, description="Growth rate vs previous period")
+    phase: str = Field(..., description="Growth phase: emerging, growth, stable, declining")
+    key_papers: Optional[List[TimelineKeyPaper]] = Field(None, description="Top papers for this period")
+    forecast_1m: Optional[int] = Field(None, description="1-period forecast")
+    forecast_3m: Optional[int] = Field(None, description="3-period forecast")
+    forecast_6m: Optional[int] = Field(None, description="6-period forecast")
+    is_forecast: bool = Field(False, description="Whether this is a forecast period")
+
+
+class TopicTimelineData(BaseModel):
+    """Timeline data for a single topic."""
+    topic_id: int = Field(..., description="Topic ID")
+    topic_label: str = Field(..., description="Topic label/name")
+    keywords: List[str] = Field(..., description="Topic keywords")
+    total_papers: int = Field(..., description="Total papers for this topic")
+    periods: List[TimelinePeriodData] = Field(..., description="Time periods with data")
+
+
+class TimelineDataRequest(BaseModel):
+    """Request model for timeline data."""
+    topic_ids: Optional[List[int]] = Field(None, description="Topic IDs to include (None = all topics)")
+    period_type: str = Field("month", description="Period granularity: week, month, quarter, year")
+    start_date: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")
+    include_key_papers: bool = Field(True, description="Include key papers per period")
+    key_papers_limit: int = Field(3, ge=1, le=10, description="Max key papers per period")
+    include_forecasts: bool = Field(True, description="Include forecast periods")
+
+
+class TimelineDataResponse(BaseModel):
+    """Response model for timeline visualization data."""
+    topics: List[TopicTimelineData] = Field(..., description="Timeline data per topic")
+    date_range: Dict[str, str] = Field(..., description="Actual date range: {start, end}")
+    period_type: str = Field(..., description="Period granularity used")
+    available_zoom_levels: List[str] = Field(
+        default=["year", "quarter", "month", "week"],
+        description="Available zoom levels for this data"
+    )
+    total_topics: int = Field(..., description="Total topics returned")

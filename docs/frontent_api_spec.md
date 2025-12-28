@@ -23,7 +23,7 @@
 |                                   | `GET`    | `/api/podcasts/history/{id}`        | –                                                           | `PodcastDetail`       |
 |                                   | `DELETE` | `/api/podcasts/history/{id}`        | –                                                           | *(empty / 204)*       |
 |                                   | `PUT`    | `/api/podcasts/history/{id}/title`  | `{ title: string }`                                         | `{ status: string, message: string, title: string }` |
-| **Papers**                        | `GET`    | `/api/papers`                       | `page, score, max_score, sort_field, sort_direction, search, from_date, to_date, page_size, topic_id` | `PaginatedPapersResponse` |
+| **Papers**                        | `GET`    | `/api/papers`                       | `page, score, max_score, sort_field, sort_direction, search, from_date, to_date, page_size, profile_ids` | `PaginatedPapersResponse` |
 |                                   | `POST`   | `/api/papers/similarity-search`     | `SimilaritySearchRequest`                                   | `SimilaritySearchResponse` |
 |                                   | `POST`   | `/api/papers/hybrid-search`         | `HybridSearchRequest`                                       | `HybridSearchResponse` |
 | **Research Agent**                | `POST`   | `/api/research-agent/run`           | `ResearchAgentRunRequest`                                   | `ResearchAgentRunResponse` |
@@ -47,20 +47,9 @@
 |                                   | `PUT`    | `/api/mindmap/reports/{id}/description` | `{ description: string }`                               | `{ status: string, message: string, description: string }` |
 |                                   | `WS`     | `/ws/mindmap/{taskId}`              | –                                                           | `RunStatus` stream    |
 |                                   | `WS`     | `/ws/mindmap-pdf-parse/{taskId}`    | –                                                           | `RunStatus` stream    |
-| **Trends & Topics**               | `GET`    | `/api/trends`                       | `limit, period_type, duration_months, min_doc_count, sort_by` | `TrendsListResponse` |
-|                                   | `GET`    | `/api/trends/search`                | `query, limit`                                              | `TrendsSearchResponse` |
-|                                   | `GET`    | `/api/trends/{topicId}`             | `period_type, timeline_limit, papers_limit`                | `TopicDetailResponse` |
-|                                   | `POST`   | `/api/trends/recompute`             | `TrendsRecomputeRequest`                                    | `TrendsRecomputeResponse` |
-|                                   | `GET`    | `/api/trends/{topicId}/papers`      | `limit, page`                                               | `TopicPapersResponse` |
-|                                   | `GET`    | `/api/trends/system-info`           | –                                                           | `SystemInfoResponse`  |
-|                                   | `GET`    | `/api/trends/performance-config`    | –                                                           | `PerformanceConfig`   |
-|                                   | `POST`   | `/api/trends/performance-config`    | `PerformanceConfig`                                         | `{ status: string, message: string }` |
-|                                   | `WS`     | `/ws/trends/{taskId}`               | –                                                           | `RunStatus` stream    |
-| **Research Interests**            | `GET`    | `/api/trends/research-interests`    | `limit, period_type, duration_months, min_doc_count, sort_by` | `ResearchInterestsListResponse` |
-|                                   | `GET`    | `/api/trends/research-interests/search` | `query, limit`                                          | `ResearchInterestsSearchResponse` |
-|                                   | `GET`    | `/api/trends/research-interests/{id}` | `period_type, timeline_limit, papers_limit`              | `ResearchInterestDetailResponse` |
-|                                   | `POST`   | `/api/trends/research-interests/recompute` | `TrendsRecomputeRequest`                            | `ResearchInterestRecomputeResponse` |
-|                                   | `GET`    | `/api/trends/research-interests/{id}/papers` | `limit, page`                                   | `ResearchInterestPapersResponse` |
+| **Research Timeline**             | `GET`    | `/api/trends/timeline-data`         | `topic_ids, profile_ids, period_type, start_date, end_date, include_key_papers, key_papers_limit, limit, source` | `TimelineDataResponse` |
+|                                   | `POST`   | `/api/trends/generate-short-labels` | `{ profile_ids?: number[] }`                                | `{ status: string, count: number }` |
+|                                   | `GET`    | `/api/profiles/{profile_id}/research-interests` | –                                             | `ProfileResearchInterestsResponse` |
 | **Runs**                          | `GET`    | `/api/runs`                         | `page, sort_field, sort_direction, from_date, to_date`     | `PaginatedResponse`   |
 |                                   | `DELETE` | `/api/runs/{runId}/artifact`        | –                                                           | *(empty / 204)*       |
 | **Logs**                          | `GET`    | `/api/logs`                         | `limit, from_date, to_date`                                 | `LogEntry[]`          |
@@ -213,88 +202,52 @@ interface MindMapReportListResponse {
   total_count: number;
 }
 
-// --- Topics & Trends types ------------------------------------------------
-interface TopicApiResponse {
-  id: number;
+// --- Research Timeline types ----------------------------------------------
+interface TimelineTopicData {
+  topic_id: number;
   label: string;
-  keywords: string[];
-  embedding_model?: string;
-  created_at: string;
-  updated_at: string;
-  latest_doc_count?: number;
-  latest_growth_rate?: number;
-  total_papers?: number;
-  forecast_1m?: number;
-  forecast_3m?: number;
-  forecast_6m?: number;
+  short_label?: string;
+  total_papers: number;
+  periods: TimelinePeriod[];
 }
 
-interface TopicMetricResponse {
-  id: number;
-  topic_id: number;
+interface TimelinePeriod {
   period_start: string;
   period_end: string;
-  period_type: string;
+  period_type: string;  // "week" | "month" | "quarter" | "year"
   doc_count: number;
-  avg_score?: number;
   growth_rate?: number;
-  forecast_1m?: number;
-  forecast_3m?: number;
-  forecast_6m?: number;
-  created_at: string;
+  phase?: string;       // "emerging" | "growth" | "stable" | "declining"
+  key_papers?: TimelineKeyPaper[];
 }
 
-interface TopicDetailResponse {
-  topic: TopicApiResponse;
-  timeline: TopicMetricResponse[];
-  representative_papers: PaperApiResponse[];
-  total_papers: number;
+interface TimelineKeyPaper {
+  id: number;
+  title: string;
+  score: number;
+  date: string;
 }
 
-interface TrendsListResponse {
-  topics: TopicApiResponse[];
-  total_topics: number;
-  total_papers_with_topics: number;
+interface TimelineDataResponse {
+  topics: TimelineTopicData[];
   period_type: string;
-  duration_months: number;
+  start_date: string;
+  end_date: string;
+  total_periods: number;
 }
 
-interface TrendsSearchResponse {
-  query: string;
-  topics: TopicApiResponse[];
-  total_results: number;
-}
-
-// --- Research Interest types ----------------------------------------------
-interface ResearchInterestApiResponse {
+interface ProfileResearchInterest {
   id: number;
   interest_text: string;
-  embedding_model?: string;
-  created_at: string;
-  updated_at?: string;
-  latest_doc_count?: number;
-  latest_growth_rate?: number;
-  total_papers: number;
-  latest_avg_relevance?: number;
-  latest_avg_score?: number;
-  forecast_1m?: number;
-  forecast_3m?: number;
-  forecast_6m?: number;
+  short_label?: string;
+  similarity_threshold?: number;
+  paper_count?: number;
 }
 
-interface ResearchInterestDetailResponse {
-  interest: ResearchInterestApiResponse;
-  timeline: ResearchInterestMetricResponse[];
-  representative_papers: PaperApiResponse[];
-  total_papers: number;
-}
-
-interface ResearchInterestsListResponse {
-  interests: ResearchInterestApiResponse[];
-  total_interests: number;
-  total_papers_with_interests: number;
-  period_type: string;
-  duration_months: number;
+interface ProfileResearchInterestsResponse {
+  profile_id: number;
+  profile_name: string;
+  interests: ProfileResearchInterest[];
 }
 
 // --- worker progress via WebSocket ---------------------------------------
@@ -532,76 +485,48 @@ Progress updates for PDF parsing tasks.
 
 ---
 
-### 3.4  Trends & Topics Endpoints
+### 3.4  Research Timeline Endpoints
 
-#### `GET /api/trends`
+The Research Timeline provides an interactive stream graph visualization for tracking how your research interests evolve over time.
 
-Get trending topics with filtering and sorting.
+#### `GET /api/trends/timeline-data`
 
-Query parameters:
-- `limit` (int) – Maximum topics (1-100, default: 20)
-- `period_type` (string) – "week", "month", "quarter" (default: "month")
-- `duration_months` (int) – Analysis duration 1-24 (default: 6)
-- `min_doc_count` (int) – Minimum document count (default: 5)
-- `sort_by` (string) – "growth_rate", "doc_count", "forecast_3m"
-
-#### `GET /api/trends/search`
-
-Search topics by keyword.
+Get timeline data for stream graph visualization.
 
 Query parameters:
-- `query` (string) – Search query
-- `limit` (int) – Maximum results
+- `topic_ids` (string) – Comma-separated list of research interest IDs to include
+- `profile_ids` (string) – Comma-separated list of profile IDs to filter by
+- `period_type` (string) – Time granularity: "week", "month", "quarter", "year" (default: "month")
+- `start_date` (string) – Optional start date filter (ISO 8601)
+- `end_date` (string) – Optional end date filter (ISO 8601)
+- `include_key_papers` (boolean) – Include influential papers for each period (default: true)
+- `key_papers_limit` (int) – Number of key papers per topic per period (default: 3)
+- `limit` (int) – Maximum number of topics to return (default: 10)
+- `source` (string) – Data source, use `profile_interests` for profile-specific interests
 
-#### `GET /api/trends/{topicId}`
+Returns `TimelineDataResponse` with topics, periods, paper counts, growth rates, and key papers.
 
-Get detailed topic information including timeline and papers.
+#### `POST /api/trends/generate-short-labels`
 
-Query parameters:
-- `period_type` (string) – Timeline granularity
-- `timeline_limit` (int) – Timeline data points
-- `papers_limit` (int) – Representative papers
-
-#### `POST /api/trends/recompute`
-
-Trigger trends recomputation.
+Generate AI-summarized short labels for research interests.
 
 ```json
 {
-  "lookback_months": 24,
-  "duration_months": 6,
-  "min_papers": 100,
-  "force_full_recalc": false,
-  "validate_accuracy": true,
-  "clear_all_data": false
+  "profile_ids": [1, 2]  // Optional: specific profiles to generate labels for
 }
 ```
 
-#### Performance Configuration
+Returns processing status with count of labels generated. Uses configured LLM model and caches results in database.
 
-- `GET /api/trends/system-info` – System resource information
-- `GET /api/trends/performance-config` – Current performance settings
-- `POST /api/trends/performance-config` – Update performance settings
+#### `GET /api/profiles/{profile_id}/research-interests`
 
-#### WebSocket `/ws/trends/{taskId}`
+Get research interests for a specific profile for timeline selection.
 
-Progress updates for trends recomputation.
+Returns profile's research interests with metadata including interest descriptions, similarity thresholds, short labels, and associated paper counts.
 
 ---
 
-### 3.5  Research Interests Endpoints
-
-Similar to trends but for user-defined research interests:
-
-- `GET /api/trends/research-interests` – List research interests with metrics
-- `GET /api/trends/research-interests/search` – Search research interests
-- `GET /api/trends/research-interests/{id}` – Detailed research interest view
-- `POST /api/trends/research-interests/recompute` – Recompute metrics
-- `GET /api/trends/research-interests/{id}/papers` – Papers for research interest
-
----
-
-### 3.6  Enhanced Papers Endpoints
+### 3.5  Enhanced Papers Endpoints
 
 #### `GET /api/papers`
 
@@ -616,7 +541,7 @@ Query parameters:
 - `search` (string) – Full-text search
 - `from_date`, `to_date` (ISO 8601) – Date range
 - `page_size` (int) – Items per page (max 100)
-- `topic_id` (int) – Filter by topic
+- `profile_ids` (string) – Comma-separated profile IDs to filter by
 
 #### `POST /api/papers/similarity-search`
 
@@ -750,7 +675,6 @@ All WebSocket endpoints follow the pattern `/ws/{type}/{taskId}` and return `Run
 - `/ws/research-agent/{taskId}` – Research agent tasks
 - `/ws/mindmap/{taskId}` – Mind map generation
 - `/ws/mindmap-pdf-parse/{taskId}` – PDF parsing
-- `/ws/trends/{taskId}` – Trends recomputation
 
 ---
 
@@ -774,7 +698,7 @@ Common error codes:
 
 1. **Model Management**: Replaced simple `/api/models` with comprehensive `/api/model-catalog/` endpoints
 2. **Enhanced Pagination**: Added `total_items`, `total_pages`, `current_page` to pagination responses
-3. **New Feature Areas**: Research Agent, Mind Maps, Trends, Research Interests
+3. **New Feature Areas**: Research Agent, Mind Maps, Research Timeline
 4. **Settings Enhancement**: All settings now support GET operations
 5. **WebSocket Expansion**: Added multiple new WebSocket types for different features
 6. **Paper Filtering**: Enhanced with topic filtering and semantic/hybrid search

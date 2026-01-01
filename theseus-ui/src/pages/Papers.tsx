@@ -299,8 +299,18 @@ const Papers: React.FC = () => {
 
   const loader = useRef<HTMLDivElement>(null); // For Intersection Observer
 
-  // Show filters panel if URL parameters are present
+  // Track if we've handled the initial URL params to avoid re-triggering on every render.
+  const urlParamsHandledRef = useRef<string | null>(null);
+
+  // Sync URL parameters to filter state when searchParams change (e.g., navigating from Star Map).
   useEffect(() => {
+    const searchParamsKey = searchParams.toString();
+    
+    // Skip if we've already handled these exact params.
+    if (urlParamsHandledRef.current === searchParamsKey) {
+      return;
+    }
+
     const hasUrlParams = searchParams.get('topic_id') ||
                         searchParams.get('profile_interest_id') ||
                         searchParams.get('search') ||
@@ -310,9 +320,19 @@ const Papers: React.FC = () => {
                         searchParams.get('to_date');
 
     if (hasUrlParams) {
+      urlParamsHandledRef.current = searchParamsKey;
+      const newFilters = getInitialFilters();
       setShowFilters(true);
+      // Update both filters and appliedFilters.
+      setFilters(newFilters);
+      // Force a fresh fetch by resetting state before setting new filters.
+      setAllPapers([]);
+      setCurrentPage(1);
+      setHasNextPage(true);
+      setInitialLoadComplete(false);
+      setAppliedFilters(newFilters);
     }
-  }, [searchParams]);
+  }, [searchParams, getInitialFilters]);
 
   const fetchPapers = useCallback(async (page: number, size: number, isInitialLoad: boolean = false) => {
     if (!hasNextPage && !isInitialLoad) return; // Don't fetch if no more pages, unless it's the very first load

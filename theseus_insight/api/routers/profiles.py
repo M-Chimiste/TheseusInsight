@@ -1,6 +1,6 @@
 """API router for research profiles management."""
 
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Body
 from typing import Optional, List, Dict, Any
 import json
 import uuid
@@ -20,6 +20,7 @@ from ...data_access.profiles import (
 )
 from ...data_access.papers import PaperRepository
 from ...data_access.settings import SettingsRepository
+from ...data_access.star_map import ProfileStarMapRepository
 from ..tasks import task_manager, TaskStatus
 from ...theseus_insight import TheseusInsight
 
@@ -567,6 +568,72 @@ async def delete_profile_interest(profile_id: int, interest_id: int):
 # =====================================================================
 # Profile Papers Endpoints
 # =====================================================================
+
+@router.get("/{profile_id}/star-map", response_model=Dict[str, Any])
+async def get_profile_star_map(
+    profile_id: int,
+    limit: int = Query(10000, gt=0, le=10000, description="Maximum number of points to return"),
+):
+    """Get cached star map points for a profile."""
+    try:
+        profile = ProfileRepository.get_by_id(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+
+        data = ProfileStarMapRepository.get_points(profile_id, limit=limit)
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching star map: {str(e)}")
+
+
+@router.get("/{profile_id}/star-map/status", response_model=Dict[str, Any])
+async def get_profile_star_map_status(profile_id: int):
+    """Get cached star map status (when computed, how many points)."""
+    try:
+        profile = ProfileRepository.get_by_id(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+
+        return ProfileStarMapRepository.get_status(profile_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching star map status: {str(e)}")
+
+
+@router.post("/{profile_id}/star-map/recompute", response_model=Dict[str, Any])
+async def recompute_profile_star_map(
+    profile_id: int,
+    request: Dict[str, Any] = Body(default={}),
+):
+    """Start a background task to recompute cached star map points for a profile."""
+    try:
+        profile = ProfileRepository.get_by_id(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+
+        payload = request or {}
+        limit = int(payload.get("limit", 10000))
+        if limit <= 0 or limit > 10000:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 10000")
+
+        task_id = str(uuid.uuid4())
+        config = {"profile_id": profile_id, "limit": limit}
+
+        await task_manager.create_task(task_id, "star-map", config)
+
+        from ...star_map.task import run_profile_star_map_task
+
+        await task_manager.enqueue_task(run_profile_star_map_task, task_id)
+
+        return {"task_id": task_id, "message": f"Star map recomputation started for profile {profile_id}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start star map recompute: {str(e)}")
+
 
 @router.get("/{profile_id}/papers", response_model=Dict[str, Any])
 async def get_profile_papers(

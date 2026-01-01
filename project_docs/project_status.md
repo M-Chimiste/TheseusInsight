@@ -1,10 +1,60 @@
 # Theseus Insight Project Status
 
-## Last Updated: November 25, 2025
+## Last Updated: December 31, 2025
 
 ---
 
 ## Recent Changes
+
+### Version 1.0 Release (2025-12-31)
+
+**What changed:** Bumped repository versions to 1.0.0 to mark the first major release.
+
+**Files modified:**
+- `setup.py` (backend version)
+- `theseus_insight/__init__.py` (backend package version)
+- `theseus-ui/package.json` (frontend version)
+- `theseus-ui/package-lock.json` (frontend lockfile version)
+
+### Dashboard Overhaul + Profile Star Map (2025-12-31)
+
+**What changed:** Replaced the landing dashboard from a redundant nav card grid into a real command-center, and introduced a new “Profile Star Map” visualization (dashboard preview + dedicated page) to explore ~10k profile papers as a constellation.
+
+**Frontend (theseus-ui):**
+- New widget-based dashboard layout with:
+  - **Pinned shortcuts** (user-customizable + reorderable via drag-and-drop; stored in localStorage)
+  - **Recent outputs** (Research Agent history, Podcast history, and recent completed tasks)
+  - **Insights strip** (compact stacked-area chart from profile interest timeline data)
+  - **Star Map preview** (sampled starfield + CTA to full view)
+- Added dedicated Star Map page at `'/star-map'` with Canvas rendering, zoom/pan, hover tooltips, and click-through to Papers search.
+- Added sidebar entry **Star Map** for easy access.
+
+**Backend (theseus_insight):**
+- Added cached star map point storage + recompute pipeline:
+  - SQL migration `scripts/015_profile_star_map.sql`
+  - Automatic migrations list updated to include `014_interest_short_labels.sql` and `015_profile_star_map.sql`
+  - New profile endpoints:
+    - `GET /api/profiles/{profile_id}/star-map`
+    - `GET /api/profiles/{profile_id}/star-map/status`
+    - `POST /api/profiles/{profile_id}/star-map/recompute`
+  - New websocket stream:
+    - `ws://localhost:8000/ws/star-map/{task_id}`
+
+**Files added/modified (high-signal):**
+- Frontend:
+  - `theseus-ui/src/pages/Dashboard.tsx`
+  - `theseus-ui/src/pages/ProfileStarMap.tsx`
+  - `theseus-ui/src/components/dashboard/*`
+  - `theseus-ui/src/components/starMap/StarMapCanvas.tsx`
+  - `theseus-ui/src/services/api.ts` (added `starMapApi`, extended websocket types)
+  - `theseus-ui/src/components/Layout.tsx`, `theseus-ui/src/App.tsx`
+- Backend:
+  - `theseus_insight/data_access/star_map.py`
+  - `theseus_insight/star_map/task.py`
+  - `theseus_insight/api/routers/profiles.py`
+  - `theseus_insight/api/routers/websockets.py`
+  - `theseus_insight/db/migrations.py`
+  - `scripts/015_profile_star_map.sql`
 
 ### Database Import Profile Merging Fix (2025-11-25)
 
@@ -51,9 +101,12 @@
 ## What Needs to Be Implemented Next
 
 ### Short Term
-1. **UI Update**: Add toggle in Settings/Database import UI to control `merge_interests` behavior
-2. **Import Preview**: Show user what interests will be merged before confirming import
-3. **Logging**: Add more detailed logging about profile/interest merge decisions
+1. **Star Map quality**: Replace deterministic random projection with a higher-quality dimensionality reduction (e.g. UMAP) with caching + versioning.
+2. **Star Map semantics**: Add cluster labeling + selection actions (open Papers with filters, export selection, seed Mind-Map).
+3. **Dashboard iteration**: Add “Continue where I left off” cards (active jobs/tasks) and/or user-configurable widget visibility.
+4. **UI Update**: Add toggle in Settings/Database import UI to control `merge_interests` behavior
+5. **Import Preview**: Show user what interests will be merged before confirming import
+6. **Logging**: Add more detailed logging about profile/interest merge decisions
 
 ### Medium Term
 1. **Interest Similarity Detection**: Use embeddings to detect semantically similar interests (not just exact text match)
@@ -63,6 +116,33 @@
 ---
 
 ## Debug Log
+
+### 2025-12-31: Version 1.0 Bump
+- Bumped versions in `setup.py`, `theseus_insight/__init__.py`, `theseus-ui/package.json`, and `theseus-ui/package-lock.json` from 0.9.x to 1.0.0.
+
+### 2025-12-31: Landing Dashboard + Star Map Implementation
+- Audited existing dashboard; identified it duplicated sidebar navigation and included a broken timeline path.
+- Implemented widget-based dashboard with pinned shortcuts, recent outputs, insights strip, and star map preview.
+- Added Star Map page (Canvas + d3-zoom + quadtree hit-testing) and wired routing/sidebar.
+- Added backend cached point table + recompute task using TaskManager, plus `/api/profiles/{id}/star-map*` endpoints and websocket stream.
+- Verified TypeScript lint on edited files and Python syntax via `compileall`.
+
+### 2025-12-31: Star Map numerical stability fix
+- Observed runtime warnings during projection (`divide by zero/overflow/invalid in matmul`) caused by non-finite or extreme embedding vectors.
+- Hardened star map recompute to:
+  - Skip embeddings containing NaN/Inf
+  - Skip embeddings with extreme magnitudes
+  - Normalize vectors to unit length before projection
+  - Drop any points that still become non-finite after projection
+
+### 2025-12-31: Star Map 3D + dashboard preview fit
+- Fixed dashboard Star Map preview rendering so it fits/centers on the point cloud (correct DPR rendering + fit-to-bounds mapping).
+- Extended star map cache + API to support a Z coordinate for 3D visualization:
+  - Added migration `scripts/016_profile_star_map_3d.sql` (adds `z` column)
+  - Updated star map recompute to project embeddings to **3D** (x/y/z) and normalize each axis.
+- Updated Star Map page to support **3D (rotate/zoom)** and added an Insights panel:
+  - Quick stats + top “constellations” (dominant interest labels + counts)
+  - 2D/3D toggle
 
 ### 2025-11-25: Database Import Investigation
 - Traced through `db_import.py` to understand profile mapping flow

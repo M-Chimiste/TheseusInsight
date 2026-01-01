@@ -24,6 +24,7 @@ const ResearchTimeline = React.lazy(() => import('./pages/ResearchTimeline'));
 const ProfileManagement = React.lazy(() => import('./pages/ProfileManagement'));
 const BulkOperations = React.lazy(() => import('./pages/BulkOperations'));
 const JobMonitoring = React.lazy(() => import('./pages/JobMonitoring'));
+const ProfileStarMap = React.lazy(() => import('./pages/ProfileStarMap'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,6 +60,7 @@ function App() {
                     <Route path="/mindmap-reports" element={<MindMapReports />} />
                     <Route path="/timeline" element={<ResearchTimeline />} />
                     <Route path="/profile-management" element={<ProfileManagement />} />
+                    <Route path="/star-map" element={<ProfileStarMap />} />
                     <Route path="/bulk-operations" element={<BulkOperations />} />
                     <Route path="/job-monitoring" element={<JobMonitoring />} />
                     <Route path="/*" element={<Navigate to="/" replace />} />

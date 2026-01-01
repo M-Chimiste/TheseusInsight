@@ -719,6 +719,61 @@ export const profileApi = {
 
 };
 
+// === Profile Star Map API Types ===
+export interface StarMapPoint {
+  paper_id: number;
+  x: number;
+  y: number;
+  z?: number;
+  // Optional metadata for richer UI (kept light for 10k points)
+  title?: string;
+  date?: string;
+  profile_score?: number;
+  paper_score?: number;
+  cluster_id?: number;
+  dominant_interest_id?: number;
+  dominant_label?: string;
+  dominant_short_label?: string;
+}
+
+export interface StarMapCentroid {
+  interest_id: number;
+  x: number;
+  y: number;
+  z: number;
+  label: string;
+  short_label: string;
+  count: number;
+}
+
+export interface ProfileStarMapResponse {
+  profile_id: number;
+  total_points: number;
+  computed_at?: string;
+  points: StarMapPoint[];
+  centroids?: StarMapCentroid[];
+}
+
+export interface ProfileStarMapStatusResponse {
+  profile_id: number;
+  computed_at?: string;
+  total_points?: number;
+}
+
+export interface ProfileStarMapRecomputeResponse {
+  task_id: string;
+  message: string;
+}
+
+export const starMapApi = {
+  getProfileStarMap: (profileId: number, limit: number = 10000) =>
+    api.get<ProfileStarMapResponse>(`/profiles/${profileId}/star-map`, { params: { limit } }),
+  getProfileStarMapStatus: (profileId: number) =>
+    api.get<ProfileStarMapStatusResponse>(`/profiles/${profileId}/star-map/status`),
+  recomputeProfileStarMap: (profileId: number, params?: { limit?: number }) =>
+    api.post<ProfileStarMapRecomputeResponse>(`/profiles/${profileId}/star-map/recompute`, params || {}),
+};
+
 // Runs API
 export const runsApi = {
   getRuns: (page: number = 1) => api.get('/runs', { params: { page } }),
@@ -902,7 +957,18 @@ export const mindMapApi = {
 };
 
 // WebSocket connection
-export const createWebSocket = (taskId: string, type: 'newsletter' | 'podcast' | 'visualizer' | 'research-agent' | 'mindmap' | 'mindmap-pdf-parse' | 'trends') => {
+export const createWebSocket = (
+  taskId: string,
+  type:
+    | 'newsletter'
+    | 'podcast'
+    | 'visualizer'
+    | 'research-agent'
+    | 'mindmap'
+    | 'mindmap-pdf-parse'
+    | 'trends'
+    | 'star-map'
+) => {
   const ws = new WebSocket(`ws://localhost:8000/ws/${type}/${taskId}`);
   return ws;
 };

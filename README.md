@@ -16,6 +16,7 @@ Theseus Insight is an end‑to‑end platform for analysing research papers and 
 - [Custom Data Storage Location](#custom-data-storage-location)
 - [Key Endpoints](#key-endpoints)
   - [Research Timeline](#research-timeline)
+  - [Profile Star Map](#profile-star-map)
   - [Research Agent System](#research-agent-system)
   - [Profile Management](#profile-management)
 - [Database Migration](#database-migration)
@@ -34,6 +35,8 @@ Theseus Insight fetches and ranks papers from [ArXiv](https://arxiv.org/) or pro
 The system introduces the **Mind-Map Explorer**, an interactive visualization system for exploring multi-order research paper relationships through configurable network graphs, enabling researchers to discover both direct and indirect connections in the academic literature.
 
 **NEW: Research Timeline** - An interactive stream graph visualization that tracks how your research interests evolve over time, with profile integration, multi-level zoom, key paper discovery, and phase classification to help researchers understand trends in their areas of focus.
+
+**NEW: Profile Star Map** - A stunning 3D constellation visualization that displays up to 10,000 papers as an interactive star field, with papers clustered by research interest and color-coded by constellation, enabling researchers to explore their paper collection spatially and discover thematic patterns.
 
 ---
 
@@ -115,6 +118,17 @@ python -m theseus_insight.utils.db_migration.db_import --input backup.json
   - **AI Short Labels**: One-click generation of concise AI-summarized labels for long research interest descriptions.
   - **Click-Through Navigation**: Click any point on the timeline to navigate directly to filtered paper results for that research interest and time period.
   - **Export to Papers**: Seamless integration with the paper library for deep-diving into specific time periods and interests.
+- **Profile Star Map**: Interactive 3D constellation visualization of your research paper collection.
+  - **3D Star Field**: Papers rendered as stars in a 3D space using dimensionality reduction of paper embeddings, preserving semantic relationships.
+  - **Constellation Clustering**: Papers are grouped by dominant research interest with gentle gravitational clustering, creating organic "constellation" formations.
+  - **Color-Coded Constellations**: Each research interest is assigned a unique color, making it easy to identify thematic clusters at a glance.
+  - **Interactive Controls**: Click and drag to rotate in 3D, scroll to zoom, with smooth animations and depth-aware rendering (near stars appear larger/brighter).
+  - **Centroid Markers**: Glowing constellation centroids with labeled background pills show the "center of mass" for each research interest.
+  - **Paper Details on Click**: Click any star to see paper details including title, date, and dominant research interest, with direct navigation to the Papers page.
+  - **2D/3D Toggle**: Switch between 2D and 3D visualization modes based on preference.
+  - **Dashboard Preview**: Auto-rotating 3D preview widget on the dashboard with drag-to-rotate interaction.
+  - **Insights Panel**: Quick stats showing total papers, unlabeled count, and top constellations with paper counts.
+  - **Recompute on Demand**: Trigger star map recalculation after adding new papers or updating research interests.
 - **Comprehensive Profile Management System**: Create and manage multiple research profiles with individual configurations.
   - **Smart Profile Selection**: Visual profile chips with individual remove buttons and system-wide Smart Selection Bar for easy multi-profile workflows.
   - **Profile-Specific Configurations**: Each profile maintains its own email recipients, research interests, ArXiv category filters, tags, and visual styling.
@@ -631,6 +645,53 @@ The Research Timeline provides an interactive stream graph visualization for tra
 - Each time period shows the most relevant papers for that research interest
 - Papers are ranked by similarity score to the research interest
 - Direct links to paper details from the tooltip
+
+### Profile Star Map
+
+The Profile Star Map provides an immersive 3D visualization of your research paper collection, rendering up to 10,000 papers as an interactive constellation where spatial proximity reflects semantic similarity.
+
+#### Core Star Map Endpoints
+
+**`GET /api/profiles/{profile_id}/star-map`** - Get cached star map points
+- **Parameters**: 
+  - `limit` - Maximum number of points to return (default: 10000)
+- **Returns**: Star map points with coordinates, paper metadata, and constellation assignments
+- **Features**: Returns pre-computed 3D coordinates, dominant research interest labels, and centroid positions
+
+**`GET /api/profiles/{profile_id}/star-map/status`** - Get star map computation status
+- **Returns**: Computation timestamp, total points, and profile ID
+- **Features**: Check if star map needs recomputation after data changes
+
+**`POST /api/profiles/{profile_id}/star-map/recompute`** - Trigger star map recomputation
+- **Parameters**: `limit` - Maximum papers to include (default: 10000)
+- **Returns**: Task ID for background processing with WebSocket progress tracking
+- **Features**: Async computation with real-time progress updates via WebSocket
+
+#### Star Map Visualization Features
+
+**3D Rendering**:
+- **Perspective Projection**: Papers rendered with depth-aware sizing (near stars larger, far stars smaller)
+- **Rotation Controls**: Click and drag to rotate the view in 3D space
+- **Zoom Controls**: Scroll to zoom in/out with configurable limits
+- **Depth Ordering**: Back-to-front rendering for correct visual layering
+
+**Constellation System**:
+- **Semantic Clustering**: Papers grouped by dominant research interest using embedding-based projection
+- **Gravitational Layout**: Papers gently pulled toward their constellation centroid while preserving local semantic structure
+- **Color Coding**: Each constellation assigned a unique color from a vibrant palette
+- **Centroid Markers**: Glowing markers at constellation centers with labeled background pills
+
+**Interactivity**:
+- **Hover Tooltips**: Paper title, date, and research interest on hover
+- **Click Navigation**: Click any paper to open details dialog with "Open in Papers" action
+- **2D/3D Toggle**: Switch between flat and perspective views
+- **Dashboard Preview**: Mini auto-rotating 3D preview with drag interaction
+
+**Technical Implementation**:
+- **Dimensionality Reduction**: Random projection from high-dimensional embeddings to 3D coordinates
+- **PostgreSQL Storage**: Cached coordinates stored in `profile_star_map_points` table
+- **Canvas Rendering**: Hardware-accelerated 2D canvas with custom 3D projection
+- **Quadtree Indexing**: Efficient point picking using D3 quadtree for hover/click detection
 
 ### Research Agent System
 

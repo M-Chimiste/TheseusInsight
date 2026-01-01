@@ -501,6 +501,11 @@ async def trends_recompute_status(websocket: WebSocket, task_id: str):
     """WebSocket endpoint for trends recomputation status updates."""
     await handle_websocket_connection(websocket, task_id, "trends")
 
+@router.websocket("/ws/star-map/{task_id}")
+async def star_map_status(websocket: WebSocket, task_id: str):
+    """WebSocket endpoint for star map recomputation status updates."""
+    await handle_websocket_connection(websocket, task_id, "star-map")
+
 @router.websocket("/ws/bulk-judge/{job_id}")
 async def bulk_judge_status(websocket: WebSocket, job_id: str):
     """WebSocket endpoint for bulk judge job status updates."""

@@ -54,6 +54,9 @@ class MigrationRunner:
             (11, "011_newsletter_multi_server.sql", "Add newsletter multi-server judge support"),
             (12, "012_timeline_indexes.sql", "Add indexes for research timeline queries"),
             (13, "013_profile_interest_metrics.sql", "Add profile-aware interest metrics tables"),
+            (14, "014_interest_short_labels.sql", "Add short labels for profile interests"),
+            (15, "015_profile_star_map.sql", "Add cached star map points per profile"),
+            (16, "016_profile_star_map_3d.sql", "Add Z coordinate for 3D star map"),
         ]
     
     def _get_file_checksum(self, filepath: pathlib.Path) -> str:

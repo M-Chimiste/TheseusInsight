@@ -34,6 +34,7 @@ import {
   People as PeopleIcon,
   WorkOutline as WorkOutlineIcon,
   Timeline as TimelineIcon,
+  AutoGraph as AutoGraphIcon,
 } from '@mui/icons-material';
 
 import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
@@ -114,6 +115,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: 'Mind-Map Reports', icon: <AccountTreeIcon />, path: '/mindmap-reports' },
     { text: 'Research Timeline', icon: <ShowChartIcon />, path: '/timeline' },
     { text: 'Profile Management', icon: <PeopleIcon />, path: '/profile-management' },
+    { text: 'Star Map', icon: <AutoGraphIcon />, path: '/star-map' },
     { text: 'Bulk Operations', icon: <WorkOutlineIcon />, path: '/bulk-operations' },
     { text: 'Job Monitoring', icon: <TimelineIcon />, path: '/job-monitoring' },
     { text: 'Visualizer', icon: <MovieIcon />, path: '/visualizer' },

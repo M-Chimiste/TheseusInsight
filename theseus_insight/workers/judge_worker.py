@@ -23,6 +23,19 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, timedelta
 
+
+class PaperProcessingError(Exception):
+    """
+    Exception for paper-specific errors that should NOT trigger the circuit breaker.
+    
+    Use this for errors related to the paper content (bad abstract, unparseable response, etc.)
+    rather than server-level errors (connection refused, timeout, server unavailable).
+    
+    Paper errors mark the task as failed but don't count toward consecutive_failures,
+    allowing the worker to continue processing other papers.
+    """
+    pass
+
 # Configure logging
 # Set up both console and file logging for worker diagnostics
 log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'logs')
@@ -317,13 +330,38 @@ class JudgeWorker:
                     break
                 except Exception as e:
                     logger.error(f"Error in main loop: {e}", exc_info=True)
-                    self.consecutive_failures += 1
                     
-                    # With autocommit mode, no need to rollback
+                    # Determine if this is a server-level error that should trigger circuit breaker
+                    error_str = str(e).lower()
                     
-                    # If too many failures, exit
+                    # LM Studio "model not loaded" errors are transient - model may still be loaded
+                    # but LM Studio's API is temporarily reporting it as unavailable
+                    is_model_loading_error = any(term in error_str for term in [
+                        'no model found', 'nomodelmatchingquery', 'totalloadedmodels',
+                        'model not loaded', 'model unavailable', 'no model matching'
+                    ])
+                    
+                    # True server errors indicate the server itself is unreachable
+                    is_server_error = any(term in error_str for term in [
+                        'connection refused', 'timeout', 'unreachable',
+                        'network', 'socket', 'eof', 'reset', 'broken pipe', 'no route',
+                        'ssl', 'certificate', 'handshake', 'dns'
+                    ])
+                    
+                    if is_model_loading_error:
+                        # LM Studio model loading issue - retry but don't count toward circuit breaker
+                        # The model may still be loaded, just temporarily unavailable via API
+                        logger.warning(f"LM Studio model loading error (not counting toward circuit breaker): {e}")
+                    elif is_server_error:
+                        self.consecutive_failures += 1
+                        logger.warning(f"Server error in main loop, consecutive failures: {self.consecutive_failures}")
+                    else:
+                        # Other errors - log but don't count toward circuit breaker
+                        logger.info(f"Non-server error in main loop, not incrementing consecutive failures")
+                    
+                    # If too many server failures, exit
                     if self.consecutive_failures >= 10:
-                        logger.error("Too many consecutive failures, shutting down")
+                        logger.error("Too many consecutive server failures, shutting down")
                         break
                     
                     time.sleep(10)
@@ -569,11 +607,38 @@ class JudgeWorker:
             # Perform LLM scoring (this happens outside any transaction)
             logger.info(f"Scoring paper for {profile_name}")
             try:
+                # Check for empty/invalid abstract before sending to LLM
+                abstract = paper.get('abstract', '')
+                if not abstract or len(abstract.strip()) < 20:
+                    raise PaperProcessingError(f"Paper has empty or too-short abstract (length: {len(abstract.strip()) if abstract else 0})")
+                
                 score_data = self._score_paper(paper, research_interests)
+            except PaperProcessingError:
+                # Re-raise paper processing errors as-is
+                raise
+            except (TimeoutError, ConnectionError, OSError) as e:
+                # Server-level errors - re-raise to trigger circuit breaker logic
+                logger.error(f"Server error during LLM scoring: {e}")
+                raise
             except Exception as e:
-                # If LLM fails, mark the task as failed and continue
-                logger.error(f"LLM scoring failed: {e}")
-                raise Exception(f"LLM inference failed: {e}")
+                # Check if error indicates a paper content issue vs server issue
+                error_str = str(e).lower()
+                is_paper_issue = any(term in error_str for term in [
+                    'parse', 'json', 'decode', 'invalid', 'malformed', 'format',
+                    'content', 'empty', 'response', 'schema', 'validation'
+                ])
+                is_server_issue = any(term in error_str for term in [
+                    'connection', 'timeout', 'refused', 'unreachable', 'unavailable',
+                    'network', 'socket', 'model not', 'no model'
+                ])
+                
+                if is_paper_issue and not is_server_issue:
+                    # Paper content caused the error
+                    raise PaperProcessingError(f"Paper content caused LLM error: {e}")
+                else:
+                    # Assume server error, propagate normally
+                    logger.error(f"LLM scoring failed: {e}")
+                    raise
 
             # Create a new cursor for saving results
             cur = self.conn.cursor(row_factory=psycopg.rows.dict_row)
@@ -615,13 +680,60 @@ class JudgeWorker:
             self.tasks_processed += 1
             logger.info(f"Completed {job_type} task with score {score_data['score']} (total: {self.tasks_processed})")
 
+        except PaperProcessingError as e:
+            # Paper-level error (bad abstract, unparseable content, etc.)
+            # Do NOT re-raise - this allows the main loop to reset consecutive_failures
+            # But DO allow retries since LLM responses can be flaky
+            logger.warning(f"Task {task['id']} failed due to paper content issue: {e}")
+            
+            try:
+                if cur:
+                    cur.close()
+                with self.conn.cursor() as err_cur:
+                    # Get current attempts count
+                    err_cur.execute("SELECT attempts FROM judge_task_queue WHERE id = %s", (task['id'],))
+                    result = err_cur.fetchone()
+                    current_attempts = result[0] if result else 0
+                    new_attempts = current_attempts + 1
+                    
+                    # Use max_retries from config (default 3) - allow retries for LLM flakiness
+                    max_retries = getattr(self, 'max_retries', 3)
+                    
+                    if new_attempts < max_retries:
+                        # Requeue for retry - might work on another attempt (LLM flakiness)
+                        err_cur.execute("""
+                            UPDATE judge_task_queue
+                            SET status = 'pending',
+                                last_error = %s,
+                                attempts = %s,
+                                assigned_server_url = NULL,
+                                leased_until = NULL,
+                                leased_by_worker = NULL,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """, (f"Paper content issue (retrying): {e}", new_attempts, task['id']))
+                        logger.info(f"Task {task['id']} requeued for retry (attempt {new_attempts}/{max_retries}) - paper issue, may be LLM flakiness")
+                    else:
+                        # Max retries exceeded - mark as permanently failed
+                        err_cur.execute("""
+                            UPDATE judge_task_queue
+                            SET status = 'failed',
+                                last_error = %s,
+                                attempts = %s,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """, (f"Paper content error after {new_attempts} attempts: {e}", new_attempts, task['id']))
+                        logger.warning(f"Task {task['id']} permanently failed after {new_attempts} attempts (paper content issue)")
+            except Exception as retry_err:
+                logger.error(f"Failed to update task status: {retry_err}")
+            # Return normally - main loop will reset consecutive_failures (server is healthy)
+                
         except Exception as e:
+            # All other exceptions - mark task as failed and RE-RAISE to main loop
+            # This allows the main loop's circuit breaker to track failures properly
             logger.error(f"Task {task['id']} failed: {e}")
 
-            # Increment consecutive failures for circuit breaker
-            self.consecutive_failures += 1
-
-            # Mark task as failed with retry logic
+            # Mark task as failed with retry logic before re-raising
             try:
                 if cur:
                     cur.close()
@@ -636,7 +748,7 @@ class JudgeWorker:
                     max_retries = getattr(self, 'max_retries', 3)
                     
                     if new_attempts < max_retries:
-                        # Task has retries left - requeue as pending for another worker to try
+                        # Requeue for retry
                         err_cur.execute("""
                             UPDATE judge_task_queue
                             SET status = 'pending',
@@ -660,9 +772,11 @@ class JudgeWorker:
                             WHERE id = %s
                         """, (str(e), new_attempts, task['id']))
                         logger.warning(f"Task {task['id']} permanently failed after {new_attempts} attempts")
-                    # With autocommit mode, already committed
             except Exception as retry_err:
                 logger.error(f"Failed to update task status: {retry_err}")
+            
+            # Re-raise so main loop's circuit breaker can track this failure
+            raise
         finally:
             # Ensure cursor is closed
             if cur:

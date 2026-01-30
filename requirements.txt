@@ -28,7 +28,7 @@ yake
 # LLM & AI Services
 # LLMFactory - Unified inference interface for multiple providers
 # v0.2.4 includes LM Studio singleton handling fix
-git+https://github.com/M-Chimiste/LLMFactory.git@v0.2.4
+git+https://github.com/M-Chimiste/LLMFactory.git
 anthropic[bedrock]
 openai
 ollama

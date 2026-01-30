@@ -308,8 +308,8 @@ class NewsletterScorer:
                     papers_scored=completed
                 )
 
-                # NEW: Get per-server statistics
-                server_stats = NewsletterJobRepository.get_job_server_stats(job_id)
+                # Get per-server statistics from judge_task_queue (has better timestamps for throughput calc)
+                server_stats = JudgeTaskQueueRepository.get_job_server_stats(job_id)
 
                 stats_by_url = {}
                 for stat in (server_stats or []):
@@ -329,8 +329,10 @@ class NewsletterScorer:
                     avg_latency = None
                     throughput = 0.0
                     
+                    # Method 1 (preferred): Calculate from timestamps - accounts for parallel processing
                     first_task = stat.get('first_task_at')
-                    last_update = stat.get('last_update_at')
+                    # Support both column names from different sources
+                    last_update = stat.get('last_completed_at') or stat.get('last_update_at')
                     
                     if completed_tasks > 0 and first_task and last_update:
                         # Ensure timezone awareness compatibility if needed
@@ -342,7 +344,15 @@ class NewsletterScorer:
                         duration = (last_update - first_task).total_seconds()
                         if duration > 1.0:  # Avoid division by zero or tiny intervals
                             avg_latency = duration / completed_tasks
-                            throughput = (completed_tasks / duration) * 60
+                            throughput = (completed_tasks / duration) * 60  # Papers per minute
+                    
+                    # Method 2 (fallback): Use avg_task_duration_seconds 
+                    # Note: This assumes serial processing, so underestimates parallel throughput
+                    if throughput == 0.0:
+                        avg_duration = stat.get('avg_task_duration_seconds')
+                        if avg_duration and float(avg_duration) > 0:
+                            avg_latency = float(avg_duration)  # Convert Decimal to float
+                            throughput = 60.0 / avg_latency  # Papers per minute (serial estimate)
                     
                     return avg_latency, throughput
 

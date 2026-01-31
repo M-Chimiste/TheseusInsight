@@ -12,7 +12,7 @@ with req_path.open() as f:
 
 setup(
     name="theseus-insight",
-    version="1.0.0",
+    version="1.0.1",
     packages=find_packages(),
     install_requires=requirements,
     python_requires=">=3.10",

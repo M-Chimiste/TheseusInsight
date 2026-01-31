@@ -374,9 +374,10 @@ class JudgeWorker:
         self.running = False
     
     def _watchdog_loop(self):
-        """Watch for stalls and dump stack traces to the log."""
+        """Watch for stalls and log a brief warning (full dumps written to file only)."""
         import traceback, sys
         stall_threshold = 45  # seconds without progress
+        stall_reported = False  # Only report once per stall
         while True:
             try:
                 time.sleep(15)
@@ -384,21 +385,23 @@ class JudgeWorker:
                     return
                 idle = time.time() - getattr(self, 'last_progress_ts', time.time())
                 if idle > stall_threshold:
-                    logger.error(f"Watchdog: worker stalled for {int(idle)}s. Dumping stack traces...")
-                    for thread_id, frame in sys._current_frames().items():
-                        stack = ''.join(traceback.format_stack(frame))
-                        logger.error(f"Thread {thread_id} stack:\n{stack}")
-                    # Also write a marker to the log file
-                    try:
-                        with open(self.log_file, 'a') as f:
-                            f.write(f"\n==== Watchdog dump at {time.strftime('%Y-%m-%d %H:%M:%S')} (idle {int(idle)}s) ====\n")
-                            for thread_id, frame in sys._current_frames().items():
-                                f.write(f"\n--- Thread {thread_id} ---\n")
-                                f.write(''.join(traceback.format_stack(frame)))
-                    except Exception:
-                        pass
-                    # Reset timer to avoid spamming
-                    self.last_progress_ts = time.time()
+                    if not stall_reported:
+                        # Log a brief warning (not the full stack traces)
+                        logger.warning(f"Watchdog: worker stalled for {int(idle)}s waiting for LLM response. Will recover after timeout.")
+                        stall_reported = True
+                        
+                        # Write detailed stack traces to file only (for debugging if needed)
+                        try:
+                            with open(self.log_file, 'a') as f:
+                                f.write(f"\n==== Watchdog dump at {time.strftime('%Y-%m-%d %H:%M:%S')} (idle {int(idle)}s) ====\n")
+                                for thread_id, frame in sys._current_frames().items():
+                                    f.write(f"\n--- Thread {thread_id} ---\n")
+                                    f.write(''.join(traceback.format_stack(frame)))
+                        except Exception:
+                            pass
+                else:
+                    # Worker is making progress - reset the stall flag
+                    stall_reported = False
             except Exception:
                 # Watchdog should never crash the worker
                 pass

@@ -555,7 +555,7 @@ class ProfileInterestsRepository:
                 """
                 SELECT * FROM profile_research_interests 
                 WHERE profile_id = %s 
-                ORDER BY created_at
+                ORDER BY id
                 """,
                 (profile_id,)
             )

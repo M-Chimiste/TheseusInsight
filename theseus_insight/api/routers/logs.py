@@ -50,8 +50,8 @@ class TaskHistoryEntry(BaseModel):
 @router.get("/logs", response_model=List[LogEntry])
 async def get_logs_api(
     limit: int = Query(100, gt=0, le=1000),
-    from_date: Optional[str] = Query(None, regex="^\\d{4}-\\d{2}-\\d{2}$"), # YYYY-MM-DD
-    to_date: Optional[str] = Query(None, regex="^\\d{4}-\\d{2}-\\d{2}$") # YYYY-MM-DD
+    from_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"), # YYYY-MM-DD
+    to_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$") # YYYY-MM-DD
 ):
     """
     Retrieves recent logs, filterable by date.
@@ -75,8 +75,8 @@ async def get_logs_api(
 @router.get("/task-history", response_model=List[TaskHistoryEntry])
 async def get_task_history_api(
     limit: int = Query(100, gt=0, le=1000),
-    from_date: Optional[str] = Query(None, regex="^\\d{4}-\\d{2}-\\d{2}$"), # YYYY-MM-DD
-    to_date: Optional[str] = Query(None, regex="^\\d{4}-\\d{2}-\\d{2}$") # YYYY-MM-DD
+    from_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"), # YYYY-MM-DD
+    to_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$") # YYYY-MM-DD
 ):
     """
     Retrieves recent task history with complete information including task type.

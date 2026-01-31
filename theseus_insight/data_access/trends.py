@@ -1665,6 +1665,7 @@ class ProfileInterestMetricsRepository:
             # Create placeholders for profile IDs
             placeholders = ','.join(['%s'] * len(profile_ids))
 
+            # Note: Metrics are always stored with period_type='week' - aggregation happens in frontend
             cur.execute(f"""
                 WITH latest_metrics AS (
                     SELECT
@@ -1676,7 +1677,7 @@ class ProfileInterestMetricsRepository:
                         ROW_NUMBER() OVER (PARTITION BY pim.profile_interest_id ORDER BY pim.period_start DESC) as rn
                     FROM profile_interest_metrics pim
                     JOIN profile_research_interests pri ON pim.profile_interest_id = pri.id
-                    WHERE pim.period_type = %s
+                    WHERE pim.period_type = 'week'
                       AND pim.period_start >= %s
                       AND pri.profile_id IN ({placeholders})
                 ),
@@ -1707,7 +1708,7 @@ class ProfileInterestMetricsRepository:
                 WHERE pri.profile_id IN ({placeholders})
                 ORDER BY lm.growth_rate DESC NULLS LAST, lm.doc_count DESC NULLS LAST
                 LIMIT %s
-            """, (period_type, start_date, *profile_ids, *profile_ids, *profile_ids, limit))
+            """, (start_date, *profile_ids, *profile_ids, *profile_ids, limit))
 
             trending_interests = cur.fetchall()
 

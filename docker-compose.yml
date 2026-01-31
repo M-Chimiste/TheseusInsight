@@ -64,6 +64,11 @@ services:
       - ./scripts/009_add_lmstudio_multi_server.sql:/app/sql/009_add_lmstudio_multi_server.sql
       - ./scripts/010_add_per_server_model_config.sql:/app/sql/010_add_per_server_model_config.sql
       - ./scripts/011_newsletter_multi_server.sql:/app/sql/011_newsletter_multi_server.sql
+      - ./scripts/012_timeline_indexes.sql:/app/sql/012_timeline_indexes.sql
+      - ./scripts/013_profile_interest_metrics.sql:/app/sql/013_profile_interest_metrics.sql
+      - ./scripts/014_interest_short_labels.sql:/app/sql/014_interest_short_labels.sql
+      - ./scripts/015_profile_star_map.sql:/app/sql/015_profile_star_map.sql
+      - ./scripts/016_profile_star_map_3d.sql:/app/sql/016_profile_star_map_3d.sql
       # Mount migration tracking files
       - ./scripts/create_migration_tracking.sql:/app/sql/create_migration_tracking.sql
       - ./scripts/check_and_apply_migrations.sh:/app/sql/check_and_apply_migrations.sh

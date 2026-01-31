@@ -316,7 +316,8 @@ class ProfileInterestProcessor:
             # Group papers by week
             weekly_data = defaultdict(list)
             for paper in papers:
-                pub_date = paper.get('published_date')
+                # Support both 'date' (from DB) and 'published_date' field names
+                pub_date = paper.get('date') or paper.get('published_date')
                 if pub_date:
                     if isinstance(pub_date, str):
                         pub_date = datetime.fromisoformat(pub_date.replace('Z', '+00:00')).date()

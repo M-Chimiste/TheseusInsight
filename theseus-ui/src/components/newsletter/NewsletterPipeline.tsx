@@ -92,7 +92,7 @@ export const NewsletterPipeline: React.FC<NewsletterPipelineProps> = ({ taskStat
 
             {/* Stats Grid */}
             <Box sx={{ mb: 3 }}>
-                <StatsGrid metadata={metadata} />
+                <StatsGrid metadata={metadata} taskMessage={taskState.message} />
             </Box>
 
             {/* Multi-Server Activity */}

@@ -278,28 +278,32 @@ class TheseusInsight:
             self.judge_model_config['model_name'],
             self.judge_model_config['max_new_tokens'],
             self.judge_model_config['temperature'],
-            self.judge_model_config.get('num_ctx')
+            self.judge_model_config.get('num_ctx'),
+            host=self.judge_model_config.get('host')
         )
         self.content_extraction_inference = self._load_inference_model(
             self.content_extraction_model_config['model_type'],
             self.content_extraction_model_config['model_name'],
             self.content_extraction_model_config['max_new_tokens'],
             self.content_extraction_model_config['temperature'],
-            self.content_extraction_model_config.get('num_ctx')
+            self.content_extraction_model_config.get('num_ctx'),
+            host=self.content_extraction_model_config.get('host')
         )
         self.newsletter_sections_inference = self._load_inference_model(
             self.newsletter_sections_model_config['model_type'],
             self.newsletter_sections_model_config['model_name'],
             self.newsletter_sections_model_config['max_new_tokens'],
             self.newsletter_sections_model_config['temperature'],
-            self.newsletter_sections_model_config.get('num_ctx')
+            self.newsletter_sections_model_config.get('num_ctx'),
+            host=self.newsletter_sections_model_config.get('host')
         )
         self.newsletter_intro_inference = self._load_inference_model(
             self.newsletter_intro_model_config['model_type'],
             self.newsletter_intro_model_config['model_name'],
             self.newsletter_intro_model_config['max_new_tokens'],
             self.newsletter_intro_model_config['temperature'],
-            self.newsletter_intro_model_config.get('num_ctx')
+            self.newsletter_intro_model_config.get('num_ctx'),
+            host=self.newsletter_intro_model_config.get('host')
         )
 
         # 3) Podcast model
@@ -323,7 +327,7 @@ class TheseusInsight:
         self.arxiv_main_category = self.orchestration_config['arxiv_search_categories']['main_category']
         self.arxiv_filter_categories = self.orchestration_config['arxiv_search_categories']['filter_categories']
 
-    def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None):
+    def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None, host=None):
         """Load the appropriate inference model based on model type."""
         try:
             if model_type == "anthropic":
@@ -346,11 +350,12 @@ class TheseusInsight:
 
             elif model_type == "ollama":
                 from LLMFactory.providers import OllamaInference
+                ollama_url = host or OLLAMA_URL
                 kwargs = {
                     'model_name': model_name,
                     'max_new_tokens': max_new_tokens,
                     'temperature': temperature,
-                    'url': OLLAMA_URL
+                    'url': ollama_url
                 }
                 if num_ctx is not None:
                     kwargs['num_ctx'] = num_ctx
@@ -359,8 +364,8 @@ class TheseusInsight:
             elif model_type == "lmstudio":
                 from theseus_insight.utils.lmstudio_client import get_lmstudio_client
                 # LMStudio needs host parameter instead of url
-                # Default to localhost:1234 if not set in environment
-                lmstudio_host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
+                # Respect explicit config first, then env, then localhost default
+                lmstudio_host = host or os.getenv('LMSTUDIO_HOST', 'localhost:1234')
                 return get_lmstudio_client(
                     model_name=model_name,
                     max_new_tokens=max_new_tokens,
@@ -743,6 +748,8 @@ Theseus Insight Team
                     print(f"🧠 Running LLM judge on {len(unscored_papers_df)} unscored papers...")
                 newly_scored_df = self.rank_papers(unscored_papers_df, progress_callback=progress_callback)
             else:
+                if self.verbose:
+                    print("⏭️ No new papers required judge inference; reusing historical scores from the database.")
                 newly_scored_df = pd.DataFrame()
 
             # Combine all papers
@@ -953,6 +960,7 @@ Theseus Insight Team
     def _rank_papers_single_server(self, data_df, progress_callback=None):
         """Single-server sequential scoring (original implementation)."""
         try:
+            progress_callback = progress_callback or self.progress_callback
             abstracts = list(data_df['abstract'])
             scores, related, rationale = [], [], []
             failed_papers = []
@@ -971,6 +979,42 @@ Theseus Insight Team
                     print(f"Resuming ranking from paper {start_index + 1}/{len(abstracts)}")
             
             total_papers = len(abstracts)
+
+            def emit_rank_progress(processed_count: int, in_progress_count: int = 0):
+                if not progress_callback:
+                    return
+
+                successful_count = max(processed_count - len(failed_papers), 0)
+                pending_count = max(total_papers - processed_count - in_progress_count, 0)
+                progress_pct = 20 + (processed_count / total_papers) * 30 if total_papers > 0 else 30
+                current_paper_num = min(processed_count + in_progress_count, total_papers)
+                message = (
+                    f"Ranking paper {current_paper_num}/{total_papers}"
+                    if total_papers > 0 else
+                    "Ranking papers"
+                )
+                scoring_summary = {
+                    "completed": successful_count,
+                    "failed": len(failed_papers),
+                    "pending": pending_count,
+                    "in_progress": in_progress_count,
+                    "total": total_papers,
+                    "pending_plus_in_progress": pending_count + in_progress_count,
+                }
+                metadata = {
+                    "papers_to_score": total_papers,
+                    "papers_total": total_papers,
+                    "papers_scored": successful_count,
+                    "papers_failed": len(failed_papers),
+                    "papers_pending": pending_count,
+                    "papers_in_progress": in_progress_count,
+                    "scoring_summary": scoring_summary,
+                }
+
+                try:
+                    progress_callback("rank", progress_pct, message, metadata)
+                except TypeError:
+                    progress_callback("rank", progress_pct, message)
             
             for i, abstract in enumerate(tqdm(abstracts[start_index:], 
                                             disable=not self.verbose, 
@@ -980,17 +1024,7 @@ Theseus Insight Team
                 actual_index = start_index + i
                 
                 # Progress update
-                if progress_callback:
-                    progress_pct = 20 + (actual_index / total_papers) * 30  # Map to 20-50% range
-                    metadata = {
-                        "papers_scored": actual_index,
-                        "papers_total": total_papers,
-                        "papers_failed": len(failed_papers)
-                    }
-                    try:
-                        progress_callback("rank", progress_pct, f"Ranking paper {actual_index+1}/{total_papers}", metadata)
-                    except TypeError:
-                        progress_callback("rank", progress_pct, f"Ranking paper {actual_index+1}/{total_papers}")
+                emit_rank_progress(processed_count=actual_index, in_progress_count=1)
 
                 success = False
                 attempts = 0
@@ -1117,6 +1151,8 @@ Theseus Insight Team
                         else:
                             # Add small delay before retry
                             time.sleep(1)
+
+                emit_rank_progress(processed_count=len(scores), in_progress_count=0)
 
                 # Save partial progress every 50 papers
                 if (actual_index + 1) % 50 == 0:
@@ -1382,7 +1418,12 @@ Theseus Insight Team
             traceback.print_exc()
             return pd.DataFrame()
 
-    def get_and_score_profile_papers(self, profile_ids: List[int], embedded_df: pd.DataFrame = None) -> pd.DataFrame:
+    def get_and_score_profile_papers(
+        self,
+        profile_ids: List[int],
+        embedded_df: pd.DataFrame = None,
+        progress_callback: Optional[Callable[[str, float, str, dict], None]] = None
+    ) -> pd.DataFrame:
         """
         Get papers from database in date range and score them for the profile.
         This ensures newsletter generation works even if profile hasn't scored papers yet.
@@ -1516,7 +1557,11 @@ Theseus Insight Team
             try:
                 # Score papers using the optimized ranking method
                 # Get both top_n for newsletter AND all scored papers for profile saving
-                top_n_df, all_scored_df = self.rank_papers_with_historical_scores(df, return_all_scored=True)
+                top_n_df, all_scored_df = self.rank_papers_with_historical_scores(
+                    df,
+                    return_all_scored=True,
+                    progress_callback=progress_callback
+                )
             finally:
                 # Restore original research interests
                 self.research_interests = original_research_interests
@@ -2061,7 +2106,8 @@ Theseus Insight Team
                             print("Using freshly downloaded papers and scoring for profile...")
                         top_n_df = self.get_and_score_profile_papers(
                             profile_ids=self.profile_ids_override,
-                            embedded_df=embedded_df
+                            embedded_df=embedded_df,
+                            progress_callback=progress_callback
                         )
                     else:
                         # Use traditional embedding-based approach

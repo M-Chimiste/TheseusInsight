@@ -10,6 +10,12 @@ LMStudio inference clients across the application, avoiding the
 import logging
 from typing import Optional, Dict, Any
 
+import httpx
+import requests
+from openai import OpenAI
+
+from LLMFactory.providers.lmstudio import LMStudioInference
+
 logger = logging.getLogger(__name__)
 
 # Module-level cache for LMStudio inference clients
@@ -19,6 +25,37 @@ _lmstudio_client_cache: Dict[tuple, Any] = {}
 
 # Track the configured host (LMStudio only allows one default client per process)
 _configured_host: Optional[str] = None
+
+
+class TheseusLMStudioInference(LMStudioInference):
+    """Local wrapper around the LLMFactory LM Studio provider.
+
+    The upstream provider is generally fine, but in this app we want client
+    initialization to bypass any ambient proxy/env behavior and talk directly
+    to the configured LM Studio host.
+    """
+
+    def _load_model(self):
+        """Initialize the OpenAI-compatible client after a direct connectivity check."""
+        session = requests.Session()
+        session.trust_env = False
+
+        try:
+            response = session.get(f"{self.base_url}/v1/models", timeout=5)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise ConnectionError(
+                f"Cannot connect to LM Studio at {self.base_url}. "
+                f"Ensure LM Studio is running and the server is enabled. Error: {e}"
+            )
+
+        # Also disable env/proxy inheritance for the OpenAI/httpx client.
+        http_client = httpx.Client(trust_env=False, timeout=300.0)
+        return OpenAI(
+            base_url=f"{self.base_url}/v1",
+            api_key=self.api_key,
+            http_client=http_client,
+        )
 
 
 def get_lmstudio_client(
@@ -76,11 +113,7 @@ def get_lmstudio_client(
             f"Restart the application to use a different host."
         )
     
-    # Create new client
-    from LLMFactory import LLMModelFactory
-    
     create_kwargs = {
-        'model_type': 'lmstudio',
         'model_name': model_name,
         'max_new_tokens': max_new_tokens,
         'temperature': temperature,
@@ -92,7 +125,7 @@ def get_lmstudio_client(
         create_kwargs['context_length'] = context_length
     
     try:
-        client = LLMModelFactory.create_model(**create_kwargs)
+        client = TheseusLMStudioInference(**create_kwargs)
         _lmstudio_client_cache[cache_key] = client
         _configured_host = host
         logger.info(f"Created LMStudio client for {model_name}@{host}")
@@ -177,4 +210,3 @@ def verify_model_loaded(host: str = "localhost:1234", model_name: Optional[str] 
     except Exception as e:
         logger.warning(f"Error checking LM Studio models: {e}")
         return False
-

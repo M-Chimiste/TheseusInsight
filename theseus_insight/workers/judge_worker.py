@@ -561,10 +561,13 @@ class JudgeWorker:
                     'abstract': task.get('paper_abstract', '')
                 }
                 research_interests = task.get('research_interests', '')
-                profile_id = None
-                profile_name = 'newsletter'
+                profile_id = task.get('profile_id')
+                profile_name = f"newsletter/profile_{profile_id}" if profile_id is not None else 'newsletter'
 
-                logger.info(f"Processing newsletter task for paper {task['paper_id']}")
+                logger.info(
+                    f"Processing newsletter task for paper {task['paper_id']} "
+                    f"(profile_id={profile_id}, server={self.server_url})"
+                )
             else:
                 # Bulk judge mode: load paper and profile from database
                 # Get paper

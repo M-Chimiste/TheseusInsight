@@ -138,68 +138,24 @@ class ArxivOAIHarvester:
                 return self.check_service_health()  # Recursive retry with new URL
             return False
         
-        # Test with Identify first (lighter request)
         identify_params = {"verb": "Identify"}
-        
+
         try:
             request_timeout = 10
-            self._debug_log(f"Testing Identify endpoint at {self._current_url} with {request_timeout}s timeout") 
+            self._debug_log(f"Testing Identify endpoint at {self._current_url} with {request_timeout}s timeout")
             resp = self._session.get(self._current_url, params=identify_params, timeout=request_timeout)
             if resp.status_code != 200:
                 self._debug_log(f"Identify test failed - HTTP {resp.status_code}")
                 raise Exception(f"HTTP {resp.status_code}")
-            self._debug_log("Identify test passed - basic connectivity OK")
+            self._debug_log("Identify test passed - ArXiv OAI-PMH is responsive")
+            return True
         except Exception as exc:
             self._debug_log(f"Identify test failed - {exc}")
-            # Check if this should trigger fallback
-            is_connection_issue = any(keyword in str(exc).lower() for keyword in 
+            is_connection_issue = any(keyword in str(exc).lower() for keyword in
                                     ['timeout', 'connection', 'unreachable', 'refused', 'reset', 'read timed out'])
             if is_connection_issue and self._try_next_url():
                 self._debug_log("Identify failed with connection issue - trying fallback URL...")
                 return self.check_service_health()
-            return False
-        
-        # Test with a minimal ListRecords request - just one day, minimal date range
-        test_params = {
-            "verb": "ListRecords",
-            "metadataPrefix": "arXiv", 
-            "from": "2024-01-01",
-            "until": "2024-01-01",
-            "set": "cs"
-        }
-        
-        try:
-            # Use a longer timeout for ListRecords health check (it's slower)
-            request_timeout = 45
-            self._debug_log(f"ListRecords health check to {self._current_url} with {request_timeout}s timeout")
-            self._debug_log("Warning: ListRecords may be slow - this is normal for ArXiv")
-            resp = self._session.get(self._current_url, params=test_params, timeout=request_timeout)
-            
-            if resp.status_code == 200:
-                # Check if we got valid XML (not just connection)
-                root = ET.fromstring(resp.content)
-                error = root.find(_OAI_NS + "error")
-                if error is not None:
-                    self._debug_log(f"Health check failed - OAI error: {error.attrib.get('code')}: {error.text}")
-                    return False
-                    
-                self._debug_log("Health check passed - ArXiv OAI-PMH is responsive")
-                return True
-            else:
-                self._debug_log(f"Health check failed - HTTP {resp.status_code}")
-                return False
-                
-        except Exception as exc:
-            self._debug_log(f"Health check failed - {exc}")
-            
-            # Check if this is a timeout/connection issue that might benefit from HTTP fallback
-            is_connection_issue = any(keyword in str(exc).lower() for keyword in 
-                                    ['timeout', 'connection', 'unreachable', 'refused', 'reset', 'read timed out'])
-            
-            if is_connection_issue and self._try_next_url():
-                self._debug_log("Health check failed with connection issue - trying fallback URL...")
-                return self.check_service_health()  # Recursive retry with new URL
-                
             return False
 
     def _log(self, msg: str) -> None:
@@ -272,8 +228,7 @@ class ArxivOAIHarvester:
             self._throttle()
 
             try:
-                # Use a shorter timeout for individual requests to avoid hanging
-                request_timeout = min(30, self.timeout)
+                request_timeout = min(180, self.timeout)
                 self._debug_log(f"Making HTTP request to {self._current_url} with {request_timeout}s timeout")
                 resp = self._session.get(self._current_url, params=params, timeout=request_timeout)
                 self._debug_log(f"Response received: status={resp.status_code}, content_length={len(resp.content)}")

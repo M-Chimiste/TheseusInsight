@@ -6,7 +6,6 @@ from datetime import datetime
 from enum import Enum
 from .models import RunStatus, NodeStatus
 from ..theseus_insight import TheseusInsight
-from ..podcast.generator import PodcastGenerator
 from ..data_access import (
     TaskRepository, LogsRepository, SettingsRepository, 
     PaperRepository, PaperFulltextRepository
@@ -513,9 +512,10 @@ class TaskManager:
                 task_id=task_id,
                 progress_callback=self._progress_callback(task_id),
                 profile_ids_override=resolved_profile_ids,  # Pass resolved profile IDs
+                top_n=config.get("num_sections", 5),
                 **{
-                    k: v for k, v in config.items() 
-                    if k not in ["emailRecipients", "researchInterests", "profile_id", "profile_ids", "profile_tag", "profile_tags", "use_profile_recipients"]
+                    k: v for k, v in config.items()
+                    if k not in ["emailRecipients", "researchInterests", "profile_id", "profile_ids", "profile_tag", "profile_tags", "use_profile_recipients", "num_sections"]
                 },
                 generate_podcast=False,  # We handle podcast generation separately for now
                 data_path=os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb"),
@@ -576,6 +576,7 @@ class TaskManager:
             if not podcast_model_configuration:
                 raise ValueError("Podcast model configuration (podcast_model_config) is missing from task config.")
 
+            from ..podcast.generator import PodcastGenerator
             podcast_gen = PodcastGenerator(
                 text_model=podcast_model_configuration, # Use the correct key here
                 tts_provider=config.get("tts_model_config", {}).get("tts_provider", "openai"),

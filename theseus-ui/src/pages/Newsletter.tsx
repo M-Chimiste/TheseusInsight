@@ -59,6 +59,7 @@ const Newsletter = () => {
   const [emailRecipientsInput, setEmailRecipientsInput] = useState<string>('');
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [researchInterests, setResearchInterests] = useState<string>('');
+  const [numSections, setNumSections] = useState<number>(5);
   const [isAborting, setIsAborting] = useState<boolean>(false);
 
   // Multi-server judge configuration state
@@ -230,6 +231,7 @@ const Newsletter = () => {
         email_recipients: emailRecipients,
         research_interests: researchInterests,
         profile_ids: selectedProfileIds,
+        num_sections: numSections,
         // Multi-server judge configuration
         use_multi_server_judge: useMultiServerJudge,
         judge_server_ids: useMultiServerJudge ? selectedJudgeServers : undefined,
@@ -333,6 +335,24 @@ const Newsletter = () => {
                 maxDate={today}
                 minDate={startDate || undefined}
               />
+              <Box display="flex" alignItems="center" gap={1} sx={{ minWidth: '150px' }}>
+                <TextField
+                  label="Sections"
+                  type="number"
+                  value={numSections}
+                  onChange={(e) => {
+                    const val = Math.max(1, Math.min(15, parseInt(e.target.value, 10) || 5));
+                    setNumSections(val);
+                  }}
+                  inputProps={{ min: 1, max: 15 }}
+                  sx={{ width: '100px' }}
+                />
+                <IconButton onClick={() => setNumSections(Math.max(1, numSections - 1))} disabled={numSections <= 1} size="small"> <RemoveIcon /> </IconButton>
+                <IconButton onClick={() => setNumSections(Math.min(15, numSections + 1))} disabled={numSections >= 15} size="small"> <AddIcon /> </IconButton>
+                <Tooltip title="Number of paper sections to include in the newsletter (1-15). Extra papers are fetched as backup in case some PDFs fail to download.">
+                  <InfoOutlinedIcon color="action" />
+                </Tooltip>
+              </Box>
             </Box>
           </CardContent>
         </Card>

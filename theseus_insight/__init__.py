@@ -15,7 +15,6 @@
 __version__ = "1.0.1"
 from .theseus_insight import *
 from .prompt import *
-from .podcast import *
 from .inference import *
 from .utils import *
 from .communication import *
@@ -23,6 +22,14 @@ from .data_processing import *
 from .pdf import *
 from .data_model import *
 from .constants import *
+
+
+def __getattr__(name):
+    """Lazily expose podcast symbols without importing pygame on package import."""
+    if name in {"PodcastGenerator", "generate_visualizer_video"}:
+        from . import podcast as podcast_module
+        return getattr(podcast_module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # -----------------------------------------------------------------------------
 # Global debug / logging configuration

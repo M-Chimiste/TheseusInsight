@@ -533,3 +533,6 @@ package.json
 # Backup files from build scripts
 package.json.bak 
 CLAUDE.md
+AGENTS.md
+*secret.json
+*token.json

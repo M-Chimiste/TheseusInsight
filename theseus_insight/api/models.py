@@ -288,6 +288,9 @@ class NewsletterRunParams(BaseModel):
     judge_request_timeout_sec: Optional[int] = Field(None, description="Timeout in seconds for judge LLM requests")
     judge_max_retries: Optional[int] = Field(None, description="Maximum number of retries for failed judge tasks")
 
+    # Newsletter section configuration
+    num_sections: Optional[int] = Field(5, ge=1, le=15, description="Number of newsletter sections to generate")
+
 # --- Pydantic Model for Profile-Specific Newsletter Generation ---
 class ProfileNewsletterRequest(BaseModel):
     start_date: str = Field(..., example=date.today().strftime("%Y-%m-%d"))

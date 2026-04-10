@@ -6,6 +6,11 @@ import pickle
 import random
 import datetime
 import time
+import queue
+import multiprocessing as mp
+import concurrent.futures as cf
+import tempfile
+from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 from dotenv import load_dotenv
@@ -14,8 +19,7 @@ from typing import Optional, Callable, List
 import yake
 import asyncio
 import uuid
-
-from docling.document_converter import DocumentConverter
+import requests
 
 # Local application imports
 from theseus_insight.communication import GmailCommunication, construct_email_body, upload_video
@@ -27,7 +31,6 @@ from theseus_insight.data_access import (
 )
 from theseus_insight.db import get_connection_pool
 from theseus_insight.inference import SentenceTransformerInference
-from theseus_insight.podcast import PodcastGenerator
 from theseus_insight.prompt import (
     NEWSLETTER_SYSTEM_PROMPT,
     RESEARCH_INTERESTS_SYSTEM_PROMPT,
@@ -52,6 +55,63 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", None)
 GMAIL_SENDER_ADDRESS = os.getenv("GMAIL_SENDER_ADDRESS", None)
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", None)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+PDF_CONVERSION_TIMEOUT_SEC = int(os.getenv("PDF_CONVERSION_TIMEOUT_SEC", "120"))
+PDF_DOWNLOAD_MAX_WORKERS = int(os.getenv("PDF_DOWNLOAD_MAX_WORKERS", "4"))
+
+
+def _parse_optional_timeout_env(name: str, default: Optional[float]) -> Optional[float]:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"0", "none", "off", "false", "no"}:
+        return None
+
+    return float(raw_value)
+
+
+NEWSLETTER_INTRO_REQUEST_TIMEOUT_SEC = _parse_optional_timeout_env(
+    "NEWSLETTER_INTRO_REQUEST_TIMEOUT_SEC",
+    1200.0,
+)
+
+
+def _markitdown_convert_worker(pdf_path: str, result_queue):
+    """Convert a local PDF file to markdown in a subprocess so hangs can be terminated."""
+    try:
+        import re
+        from markitdown import MarkItDown
+
+        converter = MarkItDown(enable_plugins=False)
+        result = converter.convert(pdf_path)
+        markdown = re.sub(r"\n{2,}", "\n", result.text_content or "").strip()
+        if not markdown:
+            raise ValueError(f"MarkItDown returned empty content for {pdf_path}")
+        result_queue.put(("ok", markdown))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
+def _docling_convert_worker(pdf_path: str, result_queue):
+    """Convert a local PDF file to markdown with Docling in a subprocess."""
+    try:
+        from theseus_insight.pdf.processing import DoclingDocProcessor
+
+        processor = DoclingDocProcessor(
+            export_tables=False,
+            export_figures=False,
+            save_text=False,
+            remove_md_image_tags=True,
+            verbose=False,
+        )
+        result = processor.process_document(pdf_path)
+        markdown = (result.get("processed_data") or "").strip()
+        if not markdown:
+            raise ValueError(f"Docling returned empty content for {pdf_path}")
+        result_queue.put(("ok", markdown))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
 class TheseusInsight:
@@ -303,11 +363,17 @@ class TheseusInsight:
             self.newsletter_intro_model_config['max_new_tokens'],
             self.newsletter_intro_model_config['temperature'],
             self.newsletter_intro_model_config.get('num_ctx'),
-            host=self.newsletter_intro_model_config.get('host')
+            host=self.newsletter_intro_model_config.get('host'),
+            request_timeout_sec=(
+                NEWSLETTER_INTRO_REQUEST_TIMEOUT_SEC
+                if self.newsletter_intro_model_config['model_type'] == "lmstudio"
+                else None
+            ),
         )
 
         # 3) Podcast model
         if self.generate_podcast:
+            from theseus_insight.podcast.generator import PodcastGenerator
             self.podcast_inference = self.orchestration_config.get('podcast_model', None)
             if not self.podcast_inference:
                 raise ValueError("Podcast model not set in orchestration config.")
@@ -326,8 +392,170 @@ class TheseusInsight:
         # 4) Arxiv search categories
         self.arxiv_main_category = self.orchestration_config['arxiv_search_categories']['main_category']
         self.arxiv_filter_categories = self.orchestration_config['arxiv_search_categories']['filter_categories']
+        self.pdf_conversion_timeout_sec = PDF_CONVERSION_TIMEOUT_SEC
+        self.pdf_download_max_workers = max(PDF_DOWNLOAD_MAX_WORKERS, 1)
 
-    def _load_inference_model(self, model_type, model_name, max_new_tokens, temperature, num_ctx=None, host=None):
+    def _download_pdf_to_temp_file(self, pdf_url: str) -> str:
+        """Download a PDF to a temporary local file with periodic progress logs."""
+        temp_pdf_path = None
+        downloaded_bytes = 0
+        last_log_time = time.time()
+        last_logged_bytes = 0
+        chunk_size = 256 * 1024
+
+        if self.verbose:
+            print(f"   Downloading PDF from {pdf_url}")
+
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+                temp_pdf_path = temp_file.name
+
+            with requests.Session() as session:
+                response = session.get(
+                    pdf_url,
+                    timeout=(15, 60),
+                    stream=True,
+                    headers={
+                        "User-Agent": "TheseusInsight/1.0 PDF fetcher",
+                        "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+                    },
+                )
+                response.raise_for_status()
+
+                total_bytes = int(response.headers.get("Content-Length", "0") or 0)
+
+                with open(temp_pdf_path, "wb") as temp_file:
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if not chunk:
+                            continue
+
+                        temp_file.write(chunk)
+                        downloaded_bytes += len(chunk)
+
+                        should_log = (
+                            downloaded_bytes - last_logged_bytes >= 5 * 1024 * 1024
+                            or time.time() - last_log_time >= 10
+                        )
+                        if self.verbose and should_log:
+                            downloaded_mb = downloaded_bytes / (1024 * 1024)
+                            if total_bytes > 0:
+                                total_mb = total_bytes / (1024 * 1024)
+                                pct = (downloaded_bytes / total_bytes) * 100
+                                print(
+                                    f"   Downloaded {downloaded_mb:.1f}/{total_mb:.1f} MB "
+                                    f"({pct:.0f}%)"
+                                )
+                            else:
+                                print(f"   Downloaded {downloaded_mb:.1f} MB")
+                            last_log_time = time.time()
+                            last_logged_bytes = downloaded_bytes
+
+            if self.verbose:
+                final_mb = downloaded_bytes / (1024 * 1024)
+                print(f"   PDF download complete ({final_mb:.1f} MB)")
+
+            return temp_pdf_path
+
+        except Exception:
+            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                try:
+                    os.unlink(temp_pdf_path)
+                except OSError:
+                    pass
+            raise
+
+    def _run_pdf_parse_worker(
+        self,
+        worker_target,
+        parser_name: str,
+        temp_pdf_path: str,
+        source_pdf_url: str,
+    ) -> str:
+        """Run a PDF parser subprocess with a hard timeout and return markdown text."""
+        ctx = mp.get_context("spawn")
+        result_queue = ctx.Queue(maxsize=1)
+        process = ctx.Process(
+            target=worker_target,
+            args=(temp_pdf_path, result_queue),
+            daemon=True,
+        )
+        if self.verbose:
+            print(
+                f"   Starting {parser_name} parse for local file "
+                f"{Path(temp_pdf_path).name} "
+                f"(source: {source_pdf_url}, timeout: {self.pdf_conversion_timeout_sec}s)"
+            )
+        process.start()
+        deadline = time.monotonic() + self.pdf_conversion_timeout_sec
+
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"{parser_name} parsing exceeded {self.pdf_conversion_timeout_sec}s for local file "
+                        f"{Path(temp_pdf_path).name} (source: {source_pdf_url})"
+                    )
+
+                try:
+                    status, payload = result_queue.get(timeout=min(1.0, remaining))
+                    break
+                except queue.Empty:
+                    if process.exitcode is not None:
+                        raise RuntimeError(
+                            "PDF conversion subprocess exited without returning data "
+                            f"(exit code: {process.exitcode})"
+                        )
+
+            if status == "error":
+                raise RuntimeError(payload)
+
+            return payload
+        finally:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=1)
+            else:
+                process.join(timeout=1)
+            result_queue.close()
+            result_queue.join_thread()
+
+    def _parse_downloaded_pdf_to_markdown(self, temp_pdf_path: str, source_pdf_url: str) -> str:
+        """Convert a downloaded local PDF file to markdown using Docling, then MarkItDown as fallback."""
+        parser_attempts = (
+            ("Docling", _docling_convert_worker),
+            ("MarkItDown", _markitdown_convert_worker),
+        )
+        parse_errors = []
+
+        for parser_name, worker in parser_attempts:
+            try:
+                return self._run_pdf_parse_worker(
+                    worker_target=worker,
+                    parser_name=parser_name,
+                    temp_pdf_path=temp_pdf_path,
+                    source_pdf_url=source_pdf_url,
+                )
+            except Exception as exc:
+                parse_errors.append(f"{parser_name}: {exc}")
+                if self.verbose:
+                    print(f"   {parser_name} parse failed, trying next parser if available: {exc}")
+
+        raise RuntimeError("All PDF parsers failed. " + " | ".join(parse_errors))
+
+    def _load_inference_model(
+        self,
+        model_type,
+        model_name,
+        max_new_tokens,
+        temperature,
+        num_ctx=None,
+        host=None,
+        request_timeout_sec=None,
+    ):
         """Load the appropriate inference model based on model type."""
         try:
             if model_type == "anthropic":
@@ -371,7 +599,8 @@ class TheseusInsight:
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     host=lmstudio_host,
-                    context_length=num_ctx
+                    context_length=num_ctx,
+                    request_timeout_sec=request_timeout_sec,
                 )
 
             else:
@@ -2202,162 +2431,212 @@ Theseus Insight Team
                         if self.verbose:
                             print("Generating newsletter sections (paper-by-paper) ...")
 
-                        # Initialize DocumentConverter with error handling
-                        converter = None
-                        try:
-                            converter = DocumentConverter()
-                            if self.verbose:
-                                print("✅ DocumentConverter initialized successfully")
-                        except Exception as converter_error:
-                            if self.verbose:
-                                print(f"⚠️ Failed to initialize DocumentConverter: {converter_error}")
-                                print("   Will use abstracts only for content extraction")
-                        
                         sections = []
                         urls_and_titles = []
                         successful_sections = 0
                         target_sections = self.top_n
                         papers_processed = 0
+                        candidate_rows = [row.to_dict() for _, row in top_n_df.iterrows()]
 
                         if self.verbose:
                             print(f"Processing papers to generate {target_sections} newsletter sections...")
                             print(f"Available papers: {len(top_n_df)}")
-
-                        for _, row in tqdm(top_n_df.iterrows(), total=len(top_n_df), desc="Sections"):
-                            # Stop if we've already got enough successful sections
-                            if successful_sections >= target_sections:
-                                if self.verbose:
-                                    print(f"✅ Reached target of {target_sections} sections, stopping")
-                                break
-                                
-                            papers_processed += 1
-                            intro_text = random.choice(INTRO_TEXT)
-                            
-                            # Convert PDF to markdown with simple error handling
-                            markdown = None
-                            pdf_conversion_failed = False
-                            
-                            if converter is not None:
-                                try:
-                                    if self.verbose:
-                                        print(f"Converting PDF {papers_processed}/{len(top_n_df)}: {row['title'][:50]}...")
-                                    
-                                    # Synchronous PDF conversion - let it take as long as it needs
-                                    response = converter.convert(row['pdf_url'])
-                                    markdown = response.document.export_to_markdown()
-                                    if self.verbose:
-                                        print(f"✅ PDF conversion successful")
-                                            
-                                except Exception as pdf_error:
-                                    pdf_conversion_failed = True
-                                    if self.verbose:
-                                        print(f"❌ PDF conversion error for {row['title']}: {pdf_error}")
-                                        print(f"   PDF URL: {row['pdf_url']}")
-                                        print(f"   Skipping this paper and trying next one...")
-                            else:
-                                # No converter available - skip paper
-                                pdf_conversion_failed = True
-                                if self.verbose:
-                                    print(f"❌ No PDF converter available for {row['title'][:50]}... - skipping")
-                            
-                            # Skip this paper if PDF conversion failed
-                            if pdf_conversion_failed:
-                                if self.verbose:
-                                    print(f"📝 Skipped paper {papers_processed} - {successful_sections}/{target_sections} sections completed")
-                                continue
-
-                            # Summarize the PDF content (or abstract if PDF failed)
-                            messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
-                            
-                            if self.content_extraction_inference.provider == "ollama":
-                                resp = self.content_extraction_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
-                                    schema=SummaryPromptData
-                                )
-                            else:
-                                resp = self.content_extraction_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
-                                )
-
-                            # Parse JSON response with error handling
-                            try:
-                                resp_json = json_repair.loads(resp)
-                                
-                                # Ensure resp_json is a dictionary
-                                if not isinstance(resp_json, dict):
-                                    if self.verbose:
-                                        print(f"Warning: Content extraction expected dict, got {type(resp_json)}")
-                                        print(f"Raw response: {resp[:200]}...")
-                                    # Fallback: use the raw response
-                                    summarized_paper = resp
-                                else:
-                                    # Extract content from JSON response
-                                    summarized_paper = resp_json.get('content', resp)
-                                    
-                            except Exception as json_error:
-                                if self.verbose:
-                                    print(f"Content extraction JSON parsing failed for paper: {row['title']}")
-                                    print(f"Error: {json_error}")
-                                    print(f"Raw response: {resp[:200]}...")
-                                # Fallback: use the raw response
-                                summarized_paper = resp
-
-                            # Now produce the "newsletter section" for that paper
-                            context = (
-                                f"Title: {row['title']}\n"
-                                f"Abstract: {row['abstract']}\n"
-                                f"Rationale: {row['rationale']}\n"
-                                f"Summary: {summarized_paper}"
+                            print(
+                                f"✅ Docling -> MarkItDown parser fallback enabled "
+                                f"(parse timeout: {self.pdf_conversion_timeout_sec}s, "
+                                f"download workers: {self.pdf_download_max_workers})"
                             )
-                            messages = [
-                                {"role": "user", 
-                                 "content": newsletter_context_prompt(self.research_interests, context, intro_text)}
-                            ]
-                         
-                            if self.newsletter_sections_inference.provider == "ollama":
-                                resp = self.newsletter_sections_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT,
-                                    schema=NewsletterPromptData
-                                )
-                            else:
-                                resp = self.newsletter_sections_inference.invoke(
-                                    messages=messages,
-                                    system_prompt=NEWSLETTER_SYSTEM_PROMPT
-                                )
 
-                            # Parse JSON response with error handling
+                        with tqdm(total=len(candidate_rows), desc="Sections") as section_progress:
+                            download_executor = cf.ThreadPoolExecutor(
+                                max_workers=min(self.pdf_download_max_workers, len(candidate_rows))
+                            )
+                            download_futures: dict[cf.Future, dict] = {}
+                            processed_futures = set()
+                            next_candidate_index = 0
+
+                            def submit_next_download():
+                                nonlocal next_candidate_index
+                                if next_candidate_index >= len(candidate_rows):
+                                    return
+                                row = candidate_rows[next_candidate_index]
+                                next_candidate_index += 1
+                                future = download_executor.submit(self._download_pdf_to_temp_file, row['pdf_url'])
+                                download_futures[future] = row
+
                             try:
-                                resp_json = json_repair.loads(resp)
-                                
-                                # Ensure resp_json is a dictionary
-                                if not isinstance(resp_json, dict):
-                                    if self.verbose:
-                                        print(f"Warning: Expected dict from JSON parsing, got {type(resp_json)}")
-                                        print(f"Raw response: {resp[:200]}...")
-                                    # Fallback: use the raw response as the draft
-                                    draft = f"## {row['title']}\n\n{resp}"
-                                else:
-                                    # Extract draft from JSON response
-                                    draft_content = resp_json.get('draft', resp)
-                                    draft = f"## {row['title']}\n\n{draft_content}"
-                                    
-                            except Exception as json_error:
-                                if self.verbose:
-                                    print(f"JSON parsing failed for paper: {row['title']}")
-                                    print(f"Error: {json_error}")
-                                    print(f"Raw response: {resp[:200]}...")
-                                # Fallback: use the raw response as the draft
-                                draft = f"## {row['title']}\n\n{resp}"
-                            
-                            sections.append(draft)
-                            urls_and_titles.append(f"{row['title']}: {row['pdf_url']}")
-                            successful_sections += 1
-                            
-                            if self.verbose:
-                                print(f"✅ Successfully processed paper {papers_processed} - {successful_sections}/{target_sections} sections completed")
+                                for _ in range(min(self.pdf_download_max_workers, len(candidate_rows))):
+                                    submit_next_download()
+
+                                while download_futures and successful_sections < target_sections:
+                                    done, _ = cf.wait(
+                                        list(download_futures.keys()),
+                                        return_when=cf.FIRST_COMPLETED,
+                                    )
+
+                                    for future in done:
+                                        if successful_sections >= target_sections:
+                                            break
+                                        row = download_futures.pop(future)
+                                        processed_futures.add(future)
+                                        papers_processed += 1
+                                        intro_text = random.choice(INTRO_TEXT)
+                                        temp_pdf_path = None
+                                        markdown = None
+                                        pdf_conversion_failed = False
+
+                                        try:
+                                            temp_pdf_path = future.result()
+                                            if self.verbose:
+                                                print(f"Converting PDF {papers_processed}/{len(candidate_rows)}: {row['title'][:50]}...")
+                                            markdown = self._parse_downloaded_pdf_to_markdown(temp_pdf_path, row['pdf_url'])
+                                            if self.verbose:
+                                                print("✅ PDF conversion successful")
+                                        except Exception as pdf_error:
+                                            pdf_conversion_failed = True
+                                            if self.verbose:
+                                                print(f"❌ PDF conversion error for {row['title']}: {pdf_error}")
+                                                print(f"   PDF URL: {row['pdf_url']}")
+                                                print("   Skipping this paper and trying next one...")
+                                        finally:
+                                            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                                                try:
+                                                    os.unlink(temp_pdf_path)
+                                                except OSError:
+                                                    if self.verbose:
+                                                        print(f"Warning: Failed to remove temporary PDF: {temp_pdf_path}")
+
+                                        if pdf_conversion_failed:
+                                            if self.verbose:
+                                                print(
+                                                    f"📝 Skipped paper {papers_processed} - "
+                                                    f"{successful_sections}/{target_sections} sections completed"
+                                                )
+                                            section_progress.update(1)
+                                            submit_next_download()
+                                            continue
+
+                                        # Summarize the PDF content (or abstract if PDF failed)
+                                        messages = [{"role": "user", "content": general_summary_prompt(markdown)}]
+                                        
+                                        if self.content_extraction_inference.provider == "ollama":
+                                            resp = self.content_extraction_inference.invoke(
+                                                messages=messages,
+                                                system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY,
+                                                schema=SummaryPromptData
+                                            )
+                                        else:
+                                            resp = self.content_extraction_inference.invoke(
+                                                messages=messages,
+                                                system_prompt=SYSTEM_CONTENT_EXTRACTION_SUMMARY
+                                            )
+
+                                        # Parse JSON response with error handling
+                                        try:
+                                            resp_json = json_repair.loads(resp)
+                                            
+                                            # Ensure resp_json is a dictionary
+                                            if not isinstance(resp_json, dict):
+                                                if self.verbose:
+                                                    print(f"Warning: Content extraction expected dict, got {type(resp_json)}")
+                                                    print(f"Raw response: {resp[:200]}...")
+                                                # Fallback: use the raw response
+                                                summarized_paper = resp
+                                            else:
+                                                # Extract content from JSON response
+                                                summarized_paper = resp_json.get('content', resp)
+                                                
+                                        except Exception as json_error:
+                                            if self.verbose:
+                                                print(f"Content extraction JSON parsing failed for paper: {row['title']}")
+                                                print(f"Error: {json_error}")
+                                                print(f"Raw response: {resp[:200]}...")
+                                            # Fallback: use the raw response
+                                            summarized_paper = resp
+
+                                        # Now produce the "newsletter section" for that paper
+                                        context = (
+                                            f"Title: {row['title']}\n"
+                                            f"Abstract: {row['abstract']}\n"
+                                            f"Rationale: {row['rationale']}\n"
+                                            f"Summary: {summarized_paper}"
+                                        )
+                                        messages = [
+                                            {"role": "user", 
+                                             "content": newsletter_context_prompt(self.research_interests, context, intro_text)}
+                                        ]
+                                     
+                                        if self.newsletter_sections_inference.provider == "ollama":
+                                            resp = self.newsletter_sections_inference.invoke(
+                                                messages=messages,
+                                                system_prompt=NEWSLETTER_SYSTEM_PROMPT,
+                                                schema=NewsletterPromptData
+                                            )
+                                        else:
+                                            resp = self.newsletter_sections_inference.invoke(
+                                                messages=messages,
+                                                system_prompt=NEWSLETTER_SYSTEM_PROMPT
+                                            )
+
+                                        # Parse JSON response with error handling
+                                        try:
+                                            resp_json = json_repair.loads(resp)
+                                            
+                                            # Ensure resp_json is a dictionary
+                                            if not isinstance(resp_json, dict):
+                                                if self.verbose:
+                                                    print(f"Warning: Expected dict from JSON parsing, got {type(resp_json)}")
+                                                    print(f"Raw response: {resp[:200]}...")
+                                                # Fallback: use the raw response as the draft
+                                                draft = f"## {row['title']}\n\n{resp}"
+                                            else:
+                                                # Extract draft from JSON response
+                                                draft_content = resp_json.get('draft', resp)
+                                                draft = f"## {row['title']}\n\n{draft_content}"
+                                                
+                                        except Exception as json_error:
+                                            if self.verbose:
+                                                print(f"JSON parsing failed for paper: {row['title']}")
+                                                print(f"Error: {json_error}")
+                                                print(f"Raw response: {resp[:200]}...")
+                                            # Fallback: use the raw response as the draft
+                                            draft = f"## {row['title']}\n\n{resp}"
+                                        
+                                        sections.append(draft)
+                                        urls_and_titles.append(f"{row['title']}: {row['pdf_url']}")
+                                        successful_sections += 1
+                                        
+                                        if self.verbose:
+                                            print(
+                                                f"✅ Successfully processed paper {papers_processed} - "
+                                                f"{successful_sections}/{target_sections} sections completed"
+                                            )
+
+                                        section_progress.update(1)
+
+                                        if successful_sections < target_sections:
+                                            submit_next_download()
+
+                                        if successful_sections >= target_sections and self.verbose:
+                                            print(f"✅ Reached target of {target_sections} sections, stopping")
+
+                            finally:
+                                download_executor.shutdown(wait=False, cancel_futures=True)
+
+                                for future, row in download_futures.items():
+                                    if future.cancel():
+                                        continue
+                                    if future.done():
+                                        try:
+                                            temp_pdf_path = future.result()
+                                        except Exception:
+                                            continue
+                                        if temp_pdf_path and os.path.exists(temp_pdf_path):
+                                            try:
+                                                os.unlink(temp_pdf_path)
+                                            except OSError:
+                                                if self.verbose:
+                                                    print(f"Warning: Failed to remove temporary PDF: {temp_pdf_path}")
 
                         # Final summary
                         if self.verbose:

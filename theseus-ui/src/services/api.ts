@@ -86,6 +86,8 @@ export interface NewsletterRunParams {
   judge_server_ids?: number[];
   judge_request_timeout_sec?: number;
   judge_max_retries?: number;
+  // Newsletter section configuration
+  num_sections?: number;
 }
 
 const api = axios.create({

@@ -68,22 +68,35 @@ const PaperRowCard: React.FC<PaperRowCardProps> = ({ paper, onFindSimilar, onOpe
   };
 
   return (
-    <Card sx={{ display: 'flex', flexDirection: 'column', mb: 2, width: '100%' }}>
-      <CardContent 
-        sx={{ 
-            flexGrow: 1, 
-            display: 'flex', 
-            justifyContent: 'space-between', 
+    <Card sx={{ display: 'flex', flexDirection: 'column', mb: 1.25, width: '100%', borderRadius: '6px' }}>
+      <CardContent
+        sx={{
+            flexGrow: 1,
+            display: 'flex',
+            justifyContent: 'space-between',
             alignItems: 'flex-start',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            py: 1.5,
+            px: 2,
+            '&:last-child': { pb: 1.5 },
         }}
         onClick={handleExpandClick}
       >
-        <Box sx={{ flexGrow: 1, mr: 2 }}>
-          <Typography variant="h6" component="div" gutterBottom sx={{ color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'primary.main' }}>
+        <Box sx={{ flexGrow: 1, mr: 2, minWidth: 0 }}>
+          <Typography
+            component="div"
+            sx={{
+              fontSize: 14,
+              fontWeight: 500,
+              color: 'text.primary',
+              lineHeight: 1.35,
+              mb: 0.5,
+              letterSpacing: '-0.005em',
+            }}
+          >
             {paper.title}
           </Typography>
-          <TruncatedTypography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          <TruncatedTypography variant="body2" color="text.secondary" sx={{ mb: 0.5, fontSize: 12 }}>
             {paper.abstract}
           </TruncatedTypography>
         </Box>

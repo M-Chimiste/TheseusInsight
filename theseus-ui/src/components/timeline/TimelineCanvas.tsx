@@ -382,10 +382,12 @@ const TimelineCanvas: React.FC<TimelineCanvasProps> = ({
       .attr('x', width / 2)
       .attr('y', 28)
       .attr('text-anchor', 'middle')
-      .style('fill', isDarkMode ? '#e0e0e0' : '#333')
-      .style('font-size', '16px')
-      .style('font-weight', 600)
-      .text(`Research Interest Flow (${zoomLevel}ly)`);
+      .style('fill', '#E8EDF7')
+      .style('font-family', '"Instrument Serif", Georgia, serif')
+      .style('font-size', '20px')
+      .style('font-weight', 400)
+      .style('letter-spacing', '-0.01em')
+      .text(`Research interest flow · ${zoomLevel}`);
 
     // Legend is now rendered as React component below the SVG for better text handling
 

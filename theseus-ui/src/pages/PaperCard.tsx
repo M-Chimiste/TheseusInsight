@@ -70,7 +70,18 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, onFindSimilar, onOpenMindM
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardActionArea onClick={handleExpandClick} sx={{ flexGrow: 1}}>
         <CardContent>
-          <Typography variant="h6" component="div" gutterBottom sx={{fontWeight: 'bold', color: theme => theme.palette.mode === 'dark' ? 'common.white' : 'text.primary'}}>
+          <Typography
+            component="div"
+            gutterBottom
+            sx={{
+              fontFamily: '"Instrument Serif", Georgia, serif',
+              fontSize: 18,
+              lineHeight: 1.2,
+              letterSpacing: '-0.01em',
+              color: 'text.primary',
+              mb: 1,
+            }}
+          >
             {paper.title}
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, gap: 0.5, flexWrap: 'wrap' }}>

@@ -1,5 +1,7 @@
 import React from 'react';
-import { Box, Button, Card, CardContent, Divider, Skeleton, Typography } from '@mui/material';
+import { Box, Button, Skeleton, Typography } from '@mui/material';
+import ObsCard from '../observatory/ObsCard';
+import ObsKicker from '../observatory/ObsKicker';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useQuery } from '@tanstack/react-query';
@@ -199,14 +201,16 @@ export function StarMapPreview() {
   };
 
   return (
-    <Card>
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2 }}>
+    <ObsCard padding={18}>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1.5 }}>
           <Box>
-            <Typography variant="h6" fontWeight={700}>
-              Profile Star Map
+            <ObsKicker>Profile</ObsKicker>
+            <Typography
+              sx={{ fontFamily: '"Instrument Serif", Georgia, serif', fontSize: 22, lineHeight: 1.1, mt: 0.5 }}
+            >
+              Star map preview
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               A constellation snapshot of papers aligned to your selected profile.
             </Typography>
           </Box>
@@ -214,8 +218,6 @@ export function StarMapPreview() {
             Open Star Map
           </Button>
         </Box>
-
-        <Divider sx={{ my: 2 }} />
 
         {selectedProfileIds.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
@@ -266,7 +268,6 @@ export function StarMapPreview() {
             Showing a preview for the first selected profile. Open Star Map to switch/compare.
           </Typography>
         )}
-      </CardContent>
-    </Card>
+    </ObsCard>
   );
 }

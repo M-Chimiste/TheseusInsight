@@ -2,15 +2,14 @@ import React from 'react';
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
-  Divider,
   Skeleton,
   Tab,
   Tabs,
   Typography,
 } from '@mui/material';
+import ObsCard from '../observatory/ObsCard';
+import ObsKicker from '../observatory/ObsKicker';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { podcastHistoryApi, researchAgentApi, taskApi } from '../../services/api';
@@ -162,14 +161,16 @@ export function RecentOutputs() {
   };
 
   return (
-    <Card>
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2 }}>
+    <ObsCard padding={18}>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1.5 }}>
           <Box>
-            <Typography variant="h6" fontWeight={700}>
+            <ObsKicker>Pulse</ObsKicker>
+            <Typography
+              sx={{ fontFamily: '"Instrument Serif", Georgia, serif', fontSize: 22, lineHeight: 1.1, mt: 0.5 }}
+            >
               Recent outputs
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               What you (or the system) produced recently.
             </Typography>
           </Box>
@@ -177,8 +178,6 @@ export function RecentOutputs() {
             View all runs
           </Button>
         </Box>
-
-        <Divider sx={{ mt: 2 }} />
 
         <Tabs
           value={tabIndex}
@@ -279,7 +278,6 @@ export function RecentOutputs() {
             View history
           </Button>
         </TabPanel>
-      </CardContent>
-    </Card>
+    </ObsCard>
   );
 }

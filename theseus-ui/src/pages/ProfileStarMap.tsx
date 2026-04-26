@@ -17,7 +17,6 @@ import {
   Skeleton,
   Typography,
 } from '@mui/material';
-import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ViewInArIcon from '@mui/icons-material/ViewInAr';
@@ -112,14 +111,32 @@ export default function ProfileStarMap() {
 
   return (
     <Container maxWidth="xl" sx={{ pt: `${headerHeight + 24}px`, pb: 4 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 2 }}>
-        <Box>
-          <Typography variant="h4" fontWeight={800} gutterBottom>
-            <AutoGraphIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-            Profile Star Map
+      <Box sx={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 2, mb: 2 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Box sx={{
+            fontFamily: '"Geist Mono", monospace',
+            fontSize: 10,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'primary.main',
+            mb: 0.75,
+          }}>
+            Profile · Constellation
+          </Box>
+          <Typography
+            component="div"
+            sx={{
+              fontFamily: '"Instrument Serif", Georgia, serif',
+              fontSize: 32,
+              letterSpacing: '-0.02em',
+              lineHeight: 1.05,
+              mb: 0.5,
+            }}
+          >
+            Star map
           </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Explore clusters and outliers across a profile’s paper universe.
+          <Typography variant="body2" color="text.secondary">
+            Explore clusters and outliers across a profile's paper universe.
           </Typography>
         </Box>
         <Button

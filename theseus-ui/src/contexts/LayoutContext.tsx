@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 
-const drawerWidth = 240;
+const drawerWidth = 220;
 const collapsedDrawerWidth = 64;
 
 interface LayoutContextType {
@@ -30,7 +30,7 @@ interface LayoutProviderProps {
 
 export const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(true);
-  const [headerHeight, setHeaderHeight] = useState(84); // Default header height
+  const [headerHeight, setHeaderHeight] = useState(56); // Observatory thin top strip
 
   const toggleDrawer = () => {
     setIsDrawerOpen(!isDrawerOpen);

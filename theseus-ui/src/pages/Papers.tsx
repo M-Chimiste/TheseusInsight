@@ -64,6 +64,8 @@ import SimilarityView from './SimilarityView'; // Import the new SimilarityView
 import MindMapExplorer from '../components/MindMapExplorer'; // Import the new MindMapExplorer
 import { useLayout } from '../contexts/LayoutContext';
 import { useProfile } from '../contexts/ProfileContext';
+import ObsKicker from '../components/observatory/ObsKicker';
+import { OBS } from '../styles/observatoryTokens';
 
 const DEFAULT_PAGE_SIZE = 18; // 6 cards per row, 3 rows for grid view - increased for smoother scrolling
 
@@ -721,20 +723,31 @@ const Papers: React.FC = () => {
             transition: 'left 0.3s, top 0.3s', // Smooth transition when sidebar toggles or header height changes
           }}>
             {/* Main header with title and controls */}
-            <Box sx={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center', 
-              px: 3, 
-              py: 2,
-              backgroundColor: 'background.default',
-              borderBottom: 1,
-              borderColor: 'divider',
-              minHeight: '64px'
+            <Box sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              px: 3,
+              py: 1.5,
+              backgroundColor: OBS.bg,
+              borderBottom: `1px solid ${OBS.border}`,
+              minHeight: '60px'
             }}>
-              <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
-                Historical Papers
-              </Typography>
+              <Box sx={{ minWidth: 0 }}>
+                <ObsKicker>Corpus</ObsKicker>
+                <Typography
+                  component="div"
+                  sx={{
+                    fontFamily: OBS.serif,
+                    fontSize: 24,
+                    letterSpacing: '-0.02em',
+                    lineHeight: 1.05,
+                    mt: 0.25,
+                  }}
+                >
+                  Papers
+                </Typography>
+              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Button
                   variant="outlined"

@@ -2,8 +2,6 @@ import React from 'react';
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   Dialog,
   DialogActions,
@@ -18,6 +16,8 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import ObsCard from '../observatory/ObsCard';
+import ObsKicker from '../observatory/ObsKicker';
 import SettingsIcon from '@mui/icons-material/Settings';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CloseIcon from '@mui/icons-material/Close';
@@ -135,14 +135,16 @@ export function PinnedShortcuts() {
   };
 
   return (
-    <Card>
-      <CardContent sx={{ pb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+    <ObsCard padding={18}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 1.5 }}>
           <Box>
-            <Typography variant="h6" fontWeight={700}>
+            <ObsKicker>Shortcuts</ObsKicker>
+            <Typography
+              sx={{ fontFamily: '"Instrument Serif", Georgia, serif', fontSize: 22, lineHeight: 1.1, mt: 0.5 }}
+            >
               Pinned
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               Your shortcuts for quick navigation.
             </Typography>
           </Box>
@@ -156,12 +158,10 @@ export function PinnedShortcuts() {
           </Button>
         </Box>
 
-        <Divider sx={{ my: 2 }} />
-
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
           {pinnedDefs.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              No pinned shortcuts yet. Use “Manage” to add a few.
+              No pinned shortcuts yet. Use "Manage" to add a few.
             </Typography>
           ) : (
             pinnedDefs.map((d) => (
@@ -177,7 +177,6 @@ export function PinnedShortcuts() {
             ))
           )}
         </Box>
-      </CardContent>
 
       <Dialog open={manageOpen} onClose={() => setManageOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
@@ -263,7 +262,7 @@ export function PinnedShortcuts() {
           </Button>
         </DialogActions>
       </Dialog>
-    </Card>
+    </ObsCard>
   );
 }
 

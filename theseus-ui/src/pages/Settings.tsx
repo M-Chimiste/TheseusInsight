@@ -40,13 +40,11 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import SpeedIcon from '@mui/icons-material/Speed';
 import MemoryIcon from '@mui/icons-material/Memory';
 import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
-import Brightness4Icon from '@mui/icons-material/Brightness4';
-import Brightness7Icon from '@mui/icons-material/Brightness7';
 import PaletteIcon from '@mui/icons-material/Palette';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import { useDatabaseTaskState } from '../hooks/useDatabaseTaskState';
-import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
+import DisplayTweaks from '../components/observatory/DisplayTweaks';
 import { useLayout } from '../contexts/LayoutContext';
 import { ScheduledTasksSettings } from '../components/ScheduledTasksSettings';
 import OllamaServersSettings from '../components/OllamaServersSettings';
@@ -242,7 +240,6 @@ const ModelNameAutocomplete: React.FC<ModelNameAutocompleteProps> = ({
 
 const Settings: React.FC = () => {
   const queryClient = useQueryClient();
-  const { isDarkMode, toggleTheme } = useCustomTheme();
   const { headerHeight } = useLayout(); // Get dynamic header height
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -2256,60 +2253,23 @@ const Settings: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Theme Preferences Section */}
+      {/* Display / Observatory tweaks */}
       <Card sx={{ mb: 4 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
             <Typography variant="h5" fontWeight={600} sx={{ flex: 1 }}>
               <PaletteIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-              Theme Preferences
+              Display
             </Typography>
-            <Tooltip title="Choose between dark and light theme for the application interface.">
+            <Tooltip title="Tune the Observatory visual system: accent color, density, and card surface style.">
               <InfoOutlinedIcon color="action" />
             </Tooltip>
           </Box>
-          <Typography variant="body2" sx={{ mb: 3 }}>
-            Customize the appearance of Theseus Insight to match your preferences.
+          <Typography variant="body2" sx={{ mb: 3 }} color="text.secondary">
+            Tune the Observatory visual system live across every page.
           </Typography>
 
-          <Box sx={{ 
-            p: 3,
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 2,
-            maxWidth: 400
-          }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {isDarkMode ? (
-                  <Brightness4Icon sx={{ color: 'warning.main' }} />
-                ) : (
-                  <Brightness7Icon sx={{ color: 'orange' }} />
-                )}
-                <Typography variant="h6">
-                  {isDarkMode ? 'Dark Mode' : 'Light Mode'}
-                </Typography>
-              </Box>
-              <Box sx={{ flex: 1 }} />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={isDarkMode}
-                    onChange={toggleTheme}
-                    color="primary"
-                  />
-                }
-                label=""
-                sx={{ m: 0 }}
-              />
-            </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {isDarkMode 
-                ? 'Switch to light mode for a brighter interface'
-                : 'Switch to dark mode for easier viewing in low-light environments'
-              }
-            </Typography>
-          </Box>
+          <DisplayTweaks />
         </CardContent>
       </Card>
 

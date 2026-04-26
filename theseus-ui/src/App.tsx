@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { DesignProvider } from './contexts/DesignContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { LayoutProvider } from './contexts/LayoutContext';
 import { ProfileProvider } from './contexts/ProfileContext';
@@ -38,9 +39,10 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <LayoutProvider>
-          <ProfileProvider>
+      <DesignProvider>
+        <ThemeProvider>
+          <LayoutProvider>
+            <ProfileProvider>
             <Router>
               <Layout>
                 <React.Suspense fallback={<div>Loading...</div>}>
@@ -68,9 +70,10 @@ function App() {
                 </React.Suspense>
               </Layout>
             </Router>
-          </ProfileProvider>
-        </LayoutProvider>
-      </ThemeProvider>
+            </ProfileProvider>
+          </LayoutProvider>
+        </ThemeProvider>
+      </DesignProvider>
     </QueryClientProvider>
   );
 }

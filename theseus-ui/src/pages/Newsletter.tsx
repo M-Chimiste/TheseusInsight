@@ -265,9 +265,33 @@ const Newsletter = () => {
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
       <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
-        <Typography variant="h4" gutterBottom component="div" sx={{ mb: 3 }}>
-          <RocketLaunchIcon sx={{ mr: 1, verticalAlign: 'middle' }} /> New Theseus Insight Newsletter Run
-        </Typography>
+        <Box sx={{ mb: 3 }}>
+          <Box sx={{
+            fontFamily: '"Geist Mono", monospace',
+            fontSize: 10,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'primary.main',
+            mb: 0.75,
+          }}>
+            Output · Broadcast
+          </Box>
+          <Typography
+            component="div"
+            sx={{
+              fontFamily: '"Instrument Serif", Georgia, serif',
+              fontSize: 32,
+              letterSpacing: '-0.02em',
+              lineHeight: 1.05,
+              mb: 0.75,
+            }}
+          >
+            Newsletter run
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Compose a multi-section digest from this week's profile pulse.
+          </Typography>
+        </Box>
 
         {/* Profile Selection */}
         <Card sx={{ mb: 3 }}>

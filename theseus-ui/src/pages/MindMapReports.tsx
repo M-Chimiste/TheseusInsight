@@ -25,7 +25,6 @@ import {
   Delete as DeleteIcon,
   MoreVert as MoreVertIcon,
   Map as MapIcon,
-  AccountTree as AccountTreeIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { mindMapApi } from '../services/api';
@@ -203,14 +202,33 @@ const MindMapReports: React.FC = () => {
 
   return (
     <Box sx={{ pt: `${headerHeight + 24}px`, pb: 3, px: 3 }}>
-      <Typography variant="h4" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <AccountTreeIcon />
-        Mind-Map Reports
-      </Typography>
-      
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        View and manage your saved mind-map reports. Click on a report to explore the visualization.
-      </Typography>
+      <Box sx={{ mb: 3 }}>
+        <Box sx={{
+          fontFamily: '"Geist Mono", monospace',
+          fontSize: 10,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'primary.main',
+          mb: 0.75,
+        }}>
+          Atlas
+        </Box>
+        <Typography
+          component="div"
+          sx={{
+            fontFamily: '"Instrument Serif", Georgia, serif',
+            fontSize: 32,
+            letterSpacing: '-0.02em',
+            lineHeight: 1.05,
+            mb: 1,
+          }}
+        >
+          Mind-map reports
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          View and manage your saved mind-map reports. Click on a report to explore the visualization.
+        </Typography>
+      </Box>
 
       {reports.length === 0 ? (
         <Card>

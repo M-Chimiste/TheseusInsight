@@ -227,16 +227,34 @@ const ResearchTimeline: React.FC = () => {
     <Box
       sx={{
         p: 3,
+        pt: `${headerHeight + 16}px`,
         minHeight: `calc(100vh - ${headerHeight}px)`,
         bgcolor: 'background.default',
       }}
     >
       {/* Header */}
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <ShowChartIcon sx={{ fontSize: 32, color: 'primary.main' }} />
-          <Typography variant="h4" fontWeight="bold">
-            Research Timeline
+      <Box sx={{ mb: 3, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Box sx={{
+            fontFamily: '"Geist Mono", monospace',
+            fontSize: 10,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'primary.main',
+            mb: 0.75,
+          }}>
+            Trends · 2024–2026
+          </Box>
+          <Typography
+            component="div"
+            sx={{
+              fontFamily: '"Instrument Serif", Georgia, serif',
+              fontSize: 32,
+              letterSpacing: '-0.02em',
+              lineHeight: 1.05,
+            }}
+          >
+            Research timeline
           </Typography>
         </Box>
 

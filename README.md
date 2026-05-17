@@ -198,6 +198,9 @@ LMSTUDIO_HOST=localhost:1234
 
 # Remote connection
 LMSTUDIO_HOST=athena.local:1234
+
+# Disable Qwen thinking mode in LM Studio requests
+LMSTUDIO_DISABLE_THINKING=true
 ```
 
 **Advanced Features:**
@@ -205,6 +208,34 @@ LMSTUDIO_HOST=athena.local:1234
 - **Context Length Configuration**: Customize context windows (e.g., 32768, 131072 tokens)
 - **GPU Offload Options**: Configure GPU memory usage (`max`, `off`, or ratio 0-1)
 - **Model Hot-Swapping**: Change models without restarting the application
+
+**Qwen Thinking Control:**
+- Theseus disables thinking by default for Qwen models served through LM Studio.
+- This behavior is controlled by `LMSTUDIO_DISABLE_THINKING` and currently defaults to `true`.
+- When enabled, Theseus forces `use_thinking=False` and injects Qwen's `/no_think` directive into the request as a fallback.
+- Set `LMSTUDIO_DISABLE_THINKING=false` if you want to allow Qwen thinking mode again.
+
+**Newsletter PDF Extraction Safety:**
+- Newsletter section generation now tries Docling first for PDF-to-markdown extraction, then falls back to MarkItDown if Docling fails or times out.
+- Each parser runs in its own subprocess with a hard timeout so a corrupted or wedged PDF cannot block the whole newsletter pipeline.
+- The timeout is controlled by `PDF_CONVERSION_TIMEOUT_SEC` and defaults to `120` seconds.
+
+**SMTP DNS Fallback:**
+- Gmail delivery now retries hostname resolution against fallback DNS servers if the local system resolver fails, which is helpful on unstable VPN/public-network combinations.
+- Fallback DNS is enabled by default and tries Google Public DNS over both TCP and UDP (`tcp://8.8.8.8,tcp://8.8.4.4,8.8.8.8,8.8.4.4`) unless overridden.
+- You can tune this with `SMTP_DNS_FALLBACK_ENABLED`, `SMTP_DNS_NAMESERVERS`, `SMTP_DNS_TIMEOUT_SEC`, and `SMTP_CONNECT_TIMEOUT_SEC`.
+
+**Gmail API Delivery Fallback:**
+- Newsletter email delivery now tries Gmail SMTP first, then falls back to the Gmail API over HTTPS if SMTP fails.
+- The Gmail API fallback requires a saved OAuth token file with the `gmail.send` scope.
+- Use `scripts/send_test_email.py --send --authorize` once to create the token file locally.
+- The token file defaults to `gmail_token.json`, and the Gmail API request timeout defaults to `30` seconds.
+
+**Newsletter Intro Timeout:**
+- The newsletter intro generation step can use a much longer LM Studio request timeout than the rest of the pipeline.
+- This is controlled by `NEWSLETTER_INTRO_REQUEST_TIMEOUT_SEC` and defaults to `1200` seconds.
+- Set `NEWSLETTER_INTRO_REQUEST_TIMEOUT_SEC=0` (or `none`) to disable the timeout entirely and let the intro request run as long as needed.
+- This setting is only applied to the newsletter intro model when that model uses `lmstudio`.
 
 **Example Configuration** (in `config/orchestration.json`):
 ```json
@@ -433,6 +464,15 @@ Create a `.env` file in the project root containing keys and settings:
 | `OLLAMA_URL` | Base URL of a local Ollama server (default `http://127.0.0.1:11434`) |
 | `OLLAMA_PASSTHROUGH` | When `true` (default), Docker containers redirect localhost Ollama URLs to host machine. Set to `false` to use container-local Ollama installation |
 | `LMSTUDIO_HOST` | LM Studio server host:port for local inference (default `localhost:1234`). Supports remote connections (e.g., `athena.local:1234`) |
+| `LMSTUDIO_DISABLE_THINKING` | Disable Qwen thinking mode for LM Studio requests. Defaults to `true`; set to `false` to allow thinking again |
+| `PDF_CONVERSION_TIMEOUT_SEC` | Per-PDF timeout for newsletter section extraction. Defaults to `120`; timed-out or corrupted PDFs are skipped so the run can continue |
+| `SMTP_DNS_FALLBACK_ENABLED` | Enable fallback DNS resolution for SMTP hostname lookups when system DNS fails. Defaults to `true` |
+| `SMTP_DNS_NAMESERVERS` | Comma-separated DNS servers used by the SMTP fallback resolver. Supports `tcp://` or `udp://` prefixes; defaults to `tcp://8.8.8.8,tcp://8.8.4.4,8.8.8.8,8.8.4.4` |
+| `SMTP_DNS_TIMEOUT_SEC` | Timeout per fallback DNS query in seconds. Defaults to `5` |
+| `SMTP_CONNECT_TIMEOUT_SEC` | SMTP socket connect timeout in seconds. Defaults to `20` |
+| `GMAIL_TOKEN_FILE` | Path to the saved Gmail API OAuth token used when SMTP delivery fails. Defaults to `gmail_token.json` |
+| `GMAIL_API_TIMEOUT_SEC` | Timeout for Gmail API send requests in seconds. Defaults to `30` |
+| `NEWSLETTER_INTRO_REQUEST_TIMEOUT_SEC` | LM Studio request timeout for the newsletter intro generation step. Defaults to `1200`; set to `0` or `none` to disable the timeout entirely |
 | `GMAIL_SENDER_ADDRESS` | Gmail address used to send newsletters |
 | `GMAIL_APP_PASSWORD` | Gmail App password for SMTP authentication see: [Gmail App Password Instructions](https://support.google.com/mail/answer/185833?hl=en)|
 | `DEBUG` | When set to `true`, `1`, or `yes` globally re-enables verbose `print()` statements and DEBUG-level logger output. Leave unset (default) for a quiet console |
@@ -919,4 +959,3 @@ For detailed documentation and advanced usage examples, see [docs/db_migration_R
 - [FastAPI](https://fastapi.tiangolo.com/), [Pydantic](https://pydantic-docs.helpmanual.io/), PostgreSQL with [pgvector](https://github.com/pgvector/pgvector) for backend processing.
 
 Theseus Insight is maintained by [M. Chimiste](https://github.com/M-Chimiste) & contributors.
-

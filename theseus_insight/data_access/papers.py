@@ -26,6 +26,31 @@ class PaperRepository:
             return cur.fetchone() is not None
 
     @staticmethod
+    def get_url_to_id_and_score_map(urls: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Bulk lookup: url -> {id, score, related, rationale}.
+
+        Avoids N+1 round-trips when classifying a large batch of papers as
+        already-scored vs needs-scoring. Returns only rows that exist; callers
+        treat missing URLs as "needs ingest".
+        """
+        if not urls:
+            return {}
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT id, url, score, related, rationale FROM papers WHERE url = ANY(%s)",
+                (list(urls),),
+            )
+            return {
+                row["url"]: {
+                    "id": row["id"],
+                    "score": row["score"],
+                    "related": row["related"],
+                    "rationale": row["rationale"],
+                }
+                for row in cur.fetchall()
+            }
+
+    @staticmethod
     def exists_by_title(title: str) -> bool:
         with get_cursor() as cur:
             cur.execute("SELECT 1 FROM papers WHERE title = %s LIMIT 1", (title,))

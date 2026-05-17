@@ -234,6 +234,7 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
             message: 'Completed successfully',
             error: null,
             result: task.result || { completed: true },
+            metadata: task.metadata || prev.metadata,
           }));
         } else if (task.status === 'failed' && taskState.isRunning) {
           console.warn(`[useTaskState] ⚠️  STUCK TASK DETECTED! Task ${taskState.taskId} is failed but UI still shows running. Fixing now...`);
@@ -246,6 +247,20 @@ export const useTaskState = (taskType: 'newsletter' | 'podcast' | 'visualizer'):
             progress: 0,
             message: 'Task failed',
             error: task.error || 'Task failed',
+            metadata: task.metadata || prev.metadata,
+          }));
+        } else {
+          setTaskState(prev => ({
+            ...prev,
+            progress: task.progress ?? prev.progress,
+            currentStep: task.current_step ?? prev.currentStep,
+            stage: task.current_step || prev.stage,
+            message: task.message || prev.message,
+            error: task.error || prev.error,
+            result: task.result || prev.result,
+            metadata: task.metadata
+              ? { ...(prev.metadata || {}), ...task.metadata }
+              : prev.metadata,
           }));
         }
       } catch (error) {

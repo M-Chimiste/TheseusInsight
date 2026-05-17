@@ -8,7 +8,15 @@ LMStudio inference clients across the application, avoiding the
 """
 
 import logging
+import os
+import re
 from typing import Optional, Dict, Any
+
+import httpx
+import requests
+from openai import OpenAI
+
+from LLMFactory.providers.lmstudio import LMStudioInference
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +29,222 @@ _lmstudio_client_cache: Dict[tuple, Any] = {}
 _configured_host: Optional[str] = None
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    """Parse a boolean env var with a safe default."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Remove Qwen-style <think>...</think> blocks from model output."""
+    if not text:
+        return text
+
+    cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Handle partially malformed outputs that open a think block but never close it.
+    if "<think>" in cleaned.lower():
+        cleaned = re.sub(r"<think>.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+
+    return cleaned.strip()
+
+
+class TheseusLMStudioInference(LMStudioInference):
+    """Local wrapper around the LLMFactory LM Studio provider.
+
+    The upstream provider is generally fine, but in this app we want client
+    initialization to bypass any ambient proxy/env behavior and talk directly
+    to the configured LM Studio host.
+    """
+
+    def __init__(
+        self,
+        *args,
+        disable_thinking: Optional[bool] = None,
+        request_timeout_sec: Optional[float] = None,
+        **kwargs,
+    ):
+        # Default to disabling Qwen thinking on LM Studio unless explicitly opted out.
+        self.disable_thinking = (
+            _env_flag("LMSTUDIO_DISABLE_THINKING", True)
+            if disable_thinking is None else bool(disable_thinking)
+        )
+        self.request_timeout_sec = (
+            None if request_timeout_sec is None else float(request_timeout_sec)
+        )
+        super().__init__(*args, **kwargs)
+
+    def _is_qwen_model(self, model_name: Optional[str] = None) -> bool:
+        resolved_name = (model_name or self.model_name or "").lower()
+        return "qwen" in resolved_name
+
+    def _apply_no_think_directive(self, messages):
+        """Inject LM Studio/Qwen's no-think slash command into the latest user turn."""
+        patched_messages = [dict(message) for message in messages]
+
+        for index in range(len(patched_messages) - 1, -1, -1):
+            message = patched_messages[index]
+            if message.get("role") != "user":
+                continue
+
+            content = message.get("content", "")
+            if isinstance(content, str) and "/no_think" not in content:
+                message["content"] = (
+                    content if content.rstrip().endswith("/no_think")
+                    else f"{content.rstrip()}\n/no_think"
+                )
+            return patched_messages
+
+        return patched_messages
+
+    def _build_disable_thinking_extra_body(self, extra_body: Optional[dict] = None) -> dict:
+        """Add LM Studio/Qwen chat-template kwargs to disable thinking."""
+        merged_extra_body = dict(extra_body or {})
+        chat_template_kwargs = dict(merged_extra_body.get("chat_template_kwargs") or {})
+        chat_template_kwargs["enable_thinking"] = False
+        merged_extra_body["chat_template_kwargs"] = chat_template_kwargs
+        # Also include the plain key for clients/runtimes that read it directly.
+        merged_extra_body["enable_thinking"] = False
+        return merged_extra_body
+
+    def _load_model(self):
+        """Initialize the OpenAI-compatible client after a direct connectivity check."""
+        session = requests.Session()
+        session.trust_env = False
+
+        try:
+            response = session.get(f"{self.base_url}/v1/models", timeout=5)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise ConnectionError(
+                f"Cannot connect to LM Studio at {self.base_url}. "
+                f"Ensure LM Studio is running and the server is enabled. Error: {e}"
+            )
+
+        # Also disable env/proxy inheritance for the OpenAI/httpx client.
+        http_client = httpx.Client(
+            trust_env=False,
+            timeout=None if self.request_timeout_sec is None else self.request_timeout_sec,
+        )
+        return OpenAI(
+            base_url=f"{self.base_url}/v1",
+            api_key=self.api_key,
+            http_client=http_client,
+        )
+
+    def invoke(
+        self,
+        messages,
+        system_prompt,
+        *,
+        streaming: bool = False,
+        model_name: Optional[str] = None,
+        schema=None,
+        images=None,
+        use_thinking=False,
+        return_thinking: bool = False,
+        **kwargs,
+    ):
+        resolved_model_name = model_name or self.model_name
+        if self.disable_thinking and self._is_qwen_model(resolved_model_name):
+            if use_thinking:
+                logger.info(
+                    "Overriding use_thinking for LM Studio Qwen model '%s' because LMSTUDIO_DISABLE_THINKING is enabled",
+                    resolved_model_name,
+                )
+            use_thinking = False
+            messages = self._apply_no_think_directive(messages)
+            if not images and not return_thinking:
+                full_messages = [{"role": "system", "content": system_prompt}] + messages
+                completion_params = {
+                    "model": resolved_model_name,
+                    "messages": full_messages,
+                    "max_tokens": kwargs.get("max_tokens", self.max_new_tokens),
+                    "temperature": kwargs.get("temperature", self.temperature),
+                    "extra_body": self._build_disable_thinking_extra_body(kwargs.get("extra_body")),
+                }
+
+                if "top_p" in kwargs:
+                    completion_params["top_p"] = kwargs["top_p"]
+                if "top_k" in kwargs:
+                    completion_params["top_k"] = kwargs["top_k"]
+                if "stop" in kwargs:
+                    completion_params["stop"] = kwargs["stop"]
+                if "presence_penalty" in kwargs:
+                    completion_params["presence_penalty"] = kwargs["presence_penalty"]
+                if "frequency_penalty" in kwargs:
+                    completion_params["frequency_penalty"] = kwargs["frequency_penalty"]
+                if "seed" in kwargs:
+                    completion_params["seed"] = kwargs["seed"]
+
+                if schema:
+                    completion_params["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": schema.__name__,
+                            "schema": schema.model_json_schema(),
+                        },
+                    }
+
+                if streaming:
+                    completion_params["stream"] = True
+                    stream = self.client.chat.completions.create(**completion_params)
+
+                    def _gen():
+                        for chunk in stream:
+                            if chunk.choices and chunk.choices[0].delta.content:
+                                yield _strip_think_blocks(chunk.choices[0].delta.content)
+
+                    return _gen()
+
+                response = self.client.chat.completions.create(**completion_params)
+                raw_content = response.choices[0].message.content or ""
+                cleaned_response = _strip_think_blocks(raw_content)
+                if cleaned_response != raw_content:
+                    logger.info(
+                        "Stripped think tags from LM Studio Qwen response for model '%s'",
+                        resolved_model_name,
+                    )
+                return cleaned_response
+
+        response = super().invoke(
+            messages=messages,
+            system_prompt=system_prompt,
+            streaming=streaming,
+            model_name=model_name,
+            schema=schema,
+            images=images,
+            use_thinking=use_thinking,
+            return_thinking=return_thinking,
+            **kwargs,
+        )
+
+        if (
+            self.disable_thinking
+            and self._is_qwen_model(resolved_model_name)
+            and isinstance(response, str)
+        ):
+            cleaned_response = _strip_think_blocks(response)
+            if cleaned_response != response:
+                logger.info(
+                    "Stripped think tags from LM Studio Qwen response for model '%s'",
+                    resolved_model_name,
+                )
+            return cleaned_response
+
+        return response
+
+
 def get_lmstudio_client(
     model_name: str,
     max_new_tokens: int = 512,
     temperature: float = 0.1,
     host: str = "localhost:1234",
     context_length: Optional[int] = None,
+    disable_thinking: Optional[bool] = None,
+    request_timeout_sec: Optional[float] = None,
     **kwargs
 ):
     """
@@ -51,7 +269,7 @@ def get_lmstudio_client(
     """
     global _configured_host
     
-    cache_key = (host, model_name)
+    cache_key = (host, model_name, request_timeout_sec)
     
     # Check if we have a cached client for this exact configuration
     if cache_key in _lmstudio_client_cache:
@@ -76,15 +294,13 @@ def get_lmstudio_client(
             f"Restart the application to use a different host."
         )
     
-    # Create new client
-    from LLMFactory import LLMModelFactory
-    
     create_kwargs = {
-        'model_type': 'lmstudio',
         'model_name': model_name,
         'max_new_tokens': max_new_tokens,
         'temperature': temperature,
         'host': host,
+        'disable_thinking': disable_thinking,
+        'request_timeout_sec': request_timeout_sec,
         **kwargs
     }
     
@@ -92,7 +308,7 @@ def get_lmstudio_client(
         create_kwargs['context_length'] = context_length
     
     try:
-        client = LLMModelFactory.create_model(**create_kwargs)
+        client = TheseusLMStudioInference(**create_kwargs)
         _lmstudio_client_cache[cache_key] = client
         _configured_host = host
         logger.info(f"Created LMStudio client for {model_name}@{host}")
@@ -177,4 +393,3 @@ def verify_model_loaded(host: str = "localhost:1234", model_name: Optional[str] 
     except Exception as e:
         logger.warning(f"Error checking LM Studio models: {e}")
         return False
-

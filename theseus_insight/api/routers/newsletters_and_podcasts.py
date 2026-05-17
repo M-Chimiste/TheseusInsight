@@ -295,6 +295,7 @@ async def run_newsletter_pipeline_endpoint(
                 profile_ids_override=resolved_profile_ids,
                 orchestration_config=orchestration_config,  # Pass config from database
                 generate_podcast=params.generate_podcast_run,
+                top_n=params.num_sections or 5,
                 db_saving=True,
                 data_path=run_db_path,
                 verbose=True,

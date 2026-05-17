@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .harvester import ArxivOAIHarvester
 from .kaggle_harvester import KaggleArxivHarvester
+from .api_harvester import ArxivApiHarvester
 
 
 class UnifiedArxivHarvester:
@@ -102,6 +103,16 @@ class UnifiedArxivHarvester:
             date_until=date_until,
             subcategories=subcategories,
             max_results=max_results,
+            verbose=verbose,
+        )
+
+        self.api_harvester = ArxivApiHarvester(
+            category=category,
+            date_from=date_from,
+            date_until=date_until,
+            subcategories=subcategories,
+            max_results=max_results,
+            timeout=timeout,
             verbose=verbose,
         )
 
@@ -401,20 +412,39 @@ class UnifiedArxivHarvester:
                 self._debug_log("Attempting OAI-PMH harvest")
                 self._log("Trying ArXiv OAI-PMH API...")
                 self._log(f"Date range: {self.date_from} to {self.date_until}")
-                
+
                 records = self.oai_harvester.harvest()
-                
+
                 if records:
                     self._log(f"✅ OAI-PMH harvest successful: {len(records)} records")
                     self._debug_log(f"OAI-PMH harvest completed with {len(records)} records")
                     return records
                 else:
-                    self._log("⚠️  OAI-PMH returned no records, trying Kaggle fallback...")
-                    self._debug_log("OAI-PMH returned empty results - trying Kaggle")
-                    
+                    self._log("⚠️  OAI-PMH returned no records, trying ArXiv REST API fallback...")
+                    self._debug_log("OAI-PMH returned empty results - trying REST API")
+
             except Exception as e:
                 self._log(f"❌ OAI-PMH failed: {e}")
                 self._debug_log(f"OAI-PMH harvest failed: {e}")
+                self._log("🔄 Falling back to ArXiv REST API...")
+
+            # Try REST API as second-tier fallback before Kaggle
+            try:
+                self._debug_log("Attempting ArXiv REST API harvest")
+                self._log("Trying ArXiv REST API...")
+                records = self.api_harvester.harvest()
+
+                if records:
+                    self._log(f"✅ ArXiv REST API harvest successful: {len(records)} records")
+                    self._debug_log(f"REST API harvest completed with {len(records)} records")
+                    return records
+                else:
+                    self._log("⚠️  ArXiv REST API returned no records, trying Kaggle fallback...")
+                    self._debug_log("REST API returned empty results - trying Kaggle")
+
+            except Exception as e:
+                self._log(f"❌ ArXiv REST API failed: {e}")
+                self._debug_log(f"REST API harvest failed: {e}")
                 self._log("🔄 Falling back to Kaggle dataset...")
 
             # Fall back to Kaggle

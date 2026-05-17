@@ -935,6 +935,45 @@ class ProfileScoreRepository:
             return cur.rowcount
 
     @staticmethod
+    def get_aggregated_scores_for_profiles(profile_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """Aggregate existing scores across the given profiles, keyed by paper_id.
+
+        Mirrors the aggregation in JudgeTaskQueueRepository.get_newsletter_results so
+        that a resumed newsletter can reuse historical per-profile scores without
+        rerunning the LLM judge: AVG(score), BOOL_OR(related), STRING_AGG rationale.
+
+        Returns {} when profile_ids is empty; callers should treat missing paper_ids
+        as "no historical score, must rescore".
+        """
+        if not profile_ids:
+            return {}
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    paper_id,
+                    AVG(score)::REAL AS score,
+                    BOOL_OR(related) AS related,
+                    STRING_AGG(DISTINCT rationale, ' | ') AS rationale,
+                    COUNT(*) AS profile_score_count
+                FROM paper_profile_scores
+                WHERE profile_id = ANY(%s)
+                  AND score IS NOT NULL
+                GROUP BY paper_id
+                """,
+                (list(profile_ids),),
+            )
+            return {
+                row["paper_id"]: {
+                    "score": row["score"],
+                    "related": bool(row["related"]) if row["related"] is not None else None,
+                    "rationale": row["rationale"] or "Historical profile score",
+                    "profile_score_count": row["profile_score_count"],
+                }
+                for row in cur.fetchall()
+            }
+
+    @staticmethod
     def has_score_for_profile(paper_id: int, profile_id: int) -> bool:
         """
         Check if a paper has a score for a specific profile.

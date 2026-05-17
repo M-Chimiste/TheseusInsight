@@ -946,26 +946,73 @@ Theseus Insight Team
                 print(f"Total papers to process: {len(data_df)}")
                 print("="*60)
 
+            # Bulk-fetch existing rows + aggregated profile scores upfront so we
+            # don't issue 3686 round-trips classifying "has score" vs "needs scoring".
+            # For profile-aware runs the authoritative score lives in
+            # paper_profile_scores, NOT papers.score — the latter is only populated by
+            # the legacy single-research-interests path and stays NULL for profile mode.
+            urls = [row['pdf_url'] for _, row in data_df.iterrows() if row.get('pdf_url')]
+            url_to_paper = PaperRepository.get_url_to_id_and_score_map(urls)
+
+            profile_score_map: dict = {}
+            using_profile_scores = bool(getattr(self, 'profile_ids_override', None))
+            if using_profile_scores:
+                from .data_access.profiles import ProfileScoreRepository
+                profile_score_map = ProfileScoreRepository.get_aggregated_scores_for_profiles(
+                    self.profile_ids_override
+                )
+                if self.verbose:
+                    print(
+                        f"📚 Profile-aware resume: found cached scores for "
+                        f"{len(profile_score_map)} papers across profiles {self.profile_ids_override}"
+                    )
+
             # Separate papers into those with and without existing scores
             papers_with_scores = []
             papers_without_scores = []
 
             for idx, row in data_df.iterrows():
-                existing_paper = PaperRepository.get_by_url(row['pdf_url'])
-                if existing_paper and existing_paper.get('score') is not None and existing_paper.get('score') > 0:
-                    # Paper has existing score - use it
-                    paper_data = row.to_dict()
+                paper_data = row.to_dict()
+                pdf_url = row.get('pdf_url')
+                existing_paper = url_to_paper.get(pdf_url) if pdf_url else None
+
+                # Profile-aware path: prefer paper_profile_scores. A row in that table
+                # means a worker successfully scored this paper for at least one of
+                # the active profiles — treat it as historical, no rescore needed.
+                profile_score = None
+                if using_profile_scores and existing_paper:
+                    profile_score = profile_score_map.get(existing_paper['id'])
+
+                if profile_score is not None and profile_score.get('score') is not None:
+                    paper_data['score'] = profile_score['score']
+                    paper_data['related'] = profile_score.get('related', True)
+                    paper_data['rationale'] = profile_score.get('rationale') or 'Historical profile score'
+                    papers_with_scores.append(paper_data)
+                elif (
+                    existing_paper
+                    and existing_paper.get('score') is not None
+                    and (existing_paper.get('score') or 0) > 0
+                ):
+                    # Legacy single-interests path: papers.score is populated
                     paper_data['score'] = existing_paper['score']
                     paper_data['related'] = existing_paper.get('related', True)
                     paper_data['rationale'] = existing_paper.get('rationale', 'Historical score')
                     papers_with_scores.append(paper_data)
                 else:
                     # Paper needs to be scored
-                    papers_without_scores.append(row.to_dict())
+                    papers_without_scores.append(paper_data)
 
             if self.verbose:
                 print(f"📊 Papers with existing scores: {len(papers_with_scores)}")
                 print(f"🔄 Papers needing new scores: {len(papers_without_scores)}")
+                if using_profile_scores and papers_with_scores:
+                    reused_from_profile = sum(
+                        1
+                        for p in papers_with_scores
+                        if isinstance(p.get('rationale'), str)
+                        and 'profile' in p['rationale'].lower()
+                    )
+                    print(f"   ↳ reused from paper_profile_scores: {reused_from_profile}")
 
             # Create DataFrames
             scored_papers_df = pd.DataFrame(papers_with_scores) if papers_with_scores else pd.DataFrame()
@@ -1024,10 +1071,19 @@ Theseus Insight Team
             return top_n_df
             
         except Exception as e:
-            if self.verbose:
-                print(f"Error in optimized ranking: {e}")
-            # Fallback to original ranking method
-            return self.rank_papers(data_df, progress_callback=progress_callback)
+            # Surface the underlying error so the caller's traceback isn't the only signal —
+            # otherwise a bad fallback shape masks the real failure (e.g. caller unpacks
+            # `top_n_df, all_scored_df` and sees only "too many values to unpack").
+            print(f"Error in optimized ranking: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to original ranking method. Honor `return_all_scored` so the caller's
+            # 2-tuple unpack still works — the fallback's `top_n_df` doubles as "all scored"
+            # since we don't have a separate "all" set without re-running the full pipeline.
+            fallback_df = self.rank_papers(data_df, progress_callback=progress_callback)
+            if return_all_scored:
+                return fallback_df, fallback_df
+            return fallback_df
 
     async def rank_papers_async(self, data_df):
         """Async wrapper for rank_papers that supports both single and multi-server modes."""
@@ -2396,8 +2452,15 @@ Theseus Insight Team
                             if self.verbose:
                                 print("Ranking papers...")
                             top_n_df = self.rank_papers_with_historical_scores(embedded_df, progress_callback=progress_callback)
-                    
-                    await self._save_checkpoint_async('papers_ranked', top_n_df)
+
+                    # Only checkpoint a non-empty result. Persisting an empty df here
+                    # would poison subsequent retries: load_checkpoint returns the
+                    # (empty) df, the `if top_n_df is None` guard sees a non-None
+                    # value, and the whole scoring stage gets skipped.
+                    if top_n_df is not None and len(top_n_df) > 0:
+                        await self._save_checkpoint_async('papers_ranked', top_n_df)
+                    elif self.verbose:
+                        print("Skipping papers_ranked checkpoint (empty result — retry will re-attempt scoring)")
 
                 # free memory from embeddings if needed
                 del embedded_df
@@ -2949,13 +3012,27 @@ Theseus Insight Team
 
             # Log final success
             LogsRepository.upsert(
-                task_id=self.task_id, 
+                task_id=self.task_id,
                 status="COMPLETED: Successfully completed Theseus Insight run",
                 datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             )
 
-            # Optionally remove all checkpoints on success
-            self._cleanup_checkpoints()
+            # Only purge checkpoints when the run actually produced a newsletter.
+            # An empty top_n_df means scoring failed silently or no papers met
+            # criteria; keeping the file checkpoints lets a manual retry resume
+            # from the closest viable stage instead of re-ingesting from scratch.
+            produced_papers = (
+                'top_n_df' in locals()
+                and top_n_df is not None
+                and len(top_n_df) > 0
+            )
+            if produced_papers:
+                self._cleanup_checkpoints()
+            elif self.verbose:
+                print(
+                    "Skipping checkpoint cleanup: run completed with no papers ranked. "
+                    "Checkpoints retained so a retry can resume."
+                )
 
         except Exception as e:
             # Mark job as failed if using database checkpoints

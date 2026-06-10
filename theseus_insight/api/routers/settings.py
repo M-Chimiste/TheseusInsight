@@ -14,6 +14,8 @@ from ...utils.path_resolver import get_config_path, config_file_exists
 from ... import theseus_insight as ti_module
 from ...data_access import SettingsRepository
 
+from ..models import StatusMessageResponse
+
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("/orchestration", response_model=OrchestrationConfig)
@@ -290,7 +292,7 @@ async def get_email_recipients():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/email-recipients")
+@router.put("/email-recipients", response_model=StatusMessageResponse)
 async def update_email_recipients(data: EmailRecipients):
     """
     Updates the email recipients list.
@@ -342,7 +344,7 @@ async def get_visualizer_settings():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/send-test-email")
+@router.post("/send-test-email", response_model=StatusMessageResponse)
 async def send_test_email():
     """
     Sends a test email to the email address in GMAIL_SENDER_ADDRESS environment variable.
@@ -398,7 +400,7 @@ async def send_test_email():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/credentials")
+@router.get("/credentials", response_model=Dict[str, str])
 async def get_credentials():
     """
     Retrieves the API credentials from the database or environment.
@@ -425,7 +427,7 @@ async def get_credentials():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/credentials")
+@router.put("/credentials", response_model=StatusMessageResponse)
 async def update_credentials(data: Dict[str, str]):
     """
     Updates the API credentials in the database and environment.

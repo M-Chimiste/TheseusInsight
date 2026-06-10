@@ -9,7 +9,9 @@ from ..models import (
     SimilarPapersRequest, SimilarPapersResponse,
     HybridSearchRequest, HybridSearchResponse,
     ProfileAwareIngestRequest, ProfileAwareIngestResponse,
-    PaperUpdateRequest
+    PaperUpdateRequest,
+    PapersWithoutEmbeddingsResponse, EmbeddingUpdateResponse,
+    BulkEmbedStartResponse, BulkDataCheckResponse
 )
 from ...data_access import (
     PaperRepository, SettingsRepository
@@ -693,7 +695,7 @@ async def hybrid_search_papers(request: HybridSearchRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@router.get("/without-embeddings")
+@router.get("/without-embeddings", response_model=PapersWithoutEmbeddingsResponse)
 async def get_papers_without_embeddings():
     """
     Retrieves a list of papers without embeddings.
@@ -724,7 +726,7 @@ async def get_papers_without_embeddings():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{paper_id}/update-embedding")
+@router.post("/{paper_id}/update-embedding", response_model=EmbeddingUpdateResponse)
 async def update_paper_embedding(paper_id: int):
     """
     Generates and updates an embedding for a specific paper.
@@ -1025,7 +1027,7 @@ async def start_profile_aware_ingest(
         logger.error(f"❌ Error in profile-aware ingestion: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start profile-aware ingestion: {str(e)}")
 
-@router.post("/bulk-embed")
+@router.post("/bulk-embed", response_model=BulkEmbedStartResponse)
 async def start_bulk_embed(request: dict):
     """
     Start a bulk paper embedding task without profile scoring.
@@ -1096,7 +1098,7 @@ async def start_bulk_embed(request: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start bulk embedding: {str(e)}")
 
-@router.get("/check-existing-bulk-data")
+@router.get("/check-existing-bulk-data", response_model=BulkDataCheckResponse)
 async def check_existing_bulk_data(start_date: str, end_date: str):
     """
     Check if bulk data already exists for the specified date range.

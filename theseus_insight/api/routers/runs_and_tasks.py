@@ -1,11 +1,13 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-from typing import Optional
+from typing import Any, Dict, Optional
 import os
 
 from ..models import PaginatedResponse, Run
 from ...data_access import NewsletterRepository, PodcastRepository, TaskRepository
 from ..tasks import task_manager, TaskStatus
+
+from ..models import StatusMessageResponse, ActiveTasksResponse, CompletedTasksResponse
 
 router = APIRouter(tags=["runs-and-tasks"])
 
@@ -82,7 +84,7 @@ async def get_runs(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/api/runs/{run_id}/artifact")
+@router.delete("/api/runs/{run_id}/artifact", response_model=StatusMessageResponse)
 async def delete_run_artifact(run_id: int):
     """
     Deletes the artifact associated with a run.
@@ -138,7 +140,7 @@ async def delete_run_artifact(run_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Tasks endpoints
-@router.get("/api/tasks/{task_id}/status")
+@router.get("/api/tasks/{task_id}/status", response_model=Dict[str, Any])
 async def get_task_status(task_id: str):
     """
     Retrieves the current status of a task.
@@ -163,7 +165,7 @@ async def get_task_status(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/tasks/active")
+@router.get("/api/tasks/active", response_model=ActiveTasksResponse)
 async def get_active_tasks(task_types: Optional[str] = Query(None)):
     """
     Retrieves all active tasks, optionally filtered by type.
@@ -184,7 +186,7 @@ async def get_active_tasks(task_types: Optional[str] = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/tasks/recent-completed")
+@router.get("/api/tasks/recent-completed", response_model=CompletedTasksResponse)
 async def get_recent_completed_tasks(task_types: Optional[str] = Query(None)):
     """
     Retrieves recent completed tasks with results available for download.
@@ -245,7 +247,7 @@ async def get_task_result(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/api/tasks/{task_id}/abort")
+@router.post("/api/tasks/{task_id}/abort", response_model=StatusMessageResponse)
 async def abort_task(task_id: str):
     """
     Aborts a running task.

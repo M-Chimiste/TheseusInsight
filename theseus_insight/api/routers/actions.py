@@ -4,12 +4,12 @@ import uuid
 import os
 import json
 
-from ..models import VisualizerSettings
+from ..models import VisualizerSettings, TaskQueuedResponse
 from ..tasks import task_manager
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
 
-@router.post("/run-visualizer-pipeline")
+@router.post("/run-visualizer-pipeline", response_model=TaskQueuedResponse)
 async def run_visualizer_pipeline_endpoint(
     background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(..., description="Audio file to visualize"),

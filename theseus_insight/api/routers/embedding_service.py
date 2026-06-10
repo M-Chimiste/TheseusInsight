@@ -10,10 +10,12 @@ from uuid import UUID
 
 from ...services import StreamingEmbeddingService, EmbeddingServiceConfig
 
+from ..models import MessageResponse, CleanupHungJobsResponse
+
 router = APIRouter(prefix="/api/embedding-service", tags=["embedding-service"])
 
 
-@router.get("/jobs")
+@router.get("/jobs", response_model=List[Dict[str, Any]])
 async def list_embedding_jobs() -> List[Dict[str, Any]]:
     """List all active embedding jobs with checkpoints.
     
@@ -29,7 +31,7 @@ async def list_embedding_jobs() -> List[Dict[str, Any]]:
         raise HTTPException(status_code=500, detail=f"Failed to list embedding jobs: {str(e)}")
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", response_model=Dict[str, Any])
 async def get_embedding_job_status(job_id: UUID) -> Dict[str, Any]:
     """Get status of a specific embedding job.
     
@@ -54,7 +56,7 @@ async def get_embedding_job_status(job_id: UUID) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get job status: {str(e)}")
 
 
-@router.post("/jobs/{job_id}/resume")
+@router.post("/jobs/{job_id}/resume", response_model=Dict[str, Any])
 async def resume_embedding_job(job_id: UUID) -> Dict[str, Any]:
     """Resume an embedding job from checkpoint.
     
@@ -75,7 +77,7 @@ async def resume_embedding_job(job_id: UUID) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to resume job: {str(e)}")
 
 
-@router.delete("/jobs/{job_id}")
+@router.delete("/jobs/{job_id}", response_model=MessageResponse)
 async def delete_embedding_job(job_id: UUID) -> Dict[str, str]:
     """Delete an embedding job checkpoint.
     
@@ -94,7 +96,7 @@ async def delete_embedding_job(job_id: UUID) -> Dict[str, str]:
         raise HTTPException(status_code=500, detail=f"Failed to delete job: {str(e)}")
 
 
-@router.post("/jobs/cleanup-hung")
+@router.post("/jobs/cleanup-hung", response_model=CleanupHungJobsResponse)
 async def cleanup_hung_jobs() -> Dict[str, Any]:
     """Clean up jobs that have been inactive for too long.
     

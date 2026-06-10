@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, List
 from ..tasks import task_manager
 from ...db import get_pool_stats
 
+from ..models import TaskQueuedResponse
+
 router = APIRouter(prefix="/api/settings/database", tags=["database"])
 
 class ExportRequest(BaseModel):
@@ -118,7 +120,7 @@ async def export_database(background_tasks: BackgroundTasks):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Database export failed: {str(e)}")
 
-@router.post("/export-task")
+@router.post("/export-task", response_model=TaskQueuedResponse)
 async def start_database_export(request: ExportRequest = ExportRequest()):
     """
     Initiates a background database export task with optional incremental support.
@@ -214,7 +216,7 @@ async def download_exported_database(task_id: str):
         },
     )
 
-@router.post("/import")
+@router.post("/import", response_model=TaskQueuedResponse)
 async def import_database(
     background_tasks: BackgroundTasks,
     backup_file: UploadFile = File(...),
@@ -295,7 +297,7 @@ async def import_database(
         raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
 
 
-@router.get("/pool-stats")
+@router.get("/pool-stats", response_model=Dict[str, Any])
 async def get_database_pool_stats() -> Dict[str, Any]:
     """
     Get connection pool statistics.

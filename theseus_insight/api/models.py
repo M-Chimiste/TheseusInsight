@@ -1126,3 +1126,64 @@ class TimelineDataResponse(BaseModel):
         description="Available zoom levels for this data"
     )
     total_topics: int = Field(..., description="Total topics returned")
+
+
+# ---------------------------------------------------------------------------
+# Generic operation responses (added in refactor B7 to complete response_model
+# coverage — these unblock OpenAPI->TypeScript codegen on the frontend).
+# ---------------------------------------------------------------------------
+
+class MessageResponse(BaseModel):
+    """Simple message acknowledgement."""
+    message: str
+
+
+class StatusMessageResponse(BaseModel):
+    """Status acknowledgement with optional detail message."""
+    status: str
+    message: Optional[str] = None
+
+
+class TaskQueuedResponse(BaseModel):
+    """Returned when a background task has been queued."""
+    task_id: str
+    message: str
+
+
+class CleanupHungJobsResponse(BaseModel):
+    cleaned_jobs: List[str]
+    count: int
+
+
+class ActiveTasksResponse(BaseModel):
+    active_tasks: List[Dict[str, Any]]
+
+
+class CompletedTasksResponse(BaseModel):
+    completed_tasks: List[Dict[str, Any]]
+
+
+class EmbeddingUpdateResponse(BaseModel):
+    message: str
+    updated: bool
+
+
+class PapersWithoutEmbeddingsResponse(BaseModel):
+    papers: List[Dict[str, Any]]
+    count: int
+
+
+class BulkEmbedStartResponse(BaseModel):
+    task_id: str
+    message: str
+    estimated_papers: int
+    status: str
+
+
+class BulkDataCheckResponse(BaseModel):
+    paper_count: int
+    embedded_count: int
+    missing_embeddings: int
+    start_date: str
+    end_date: str
+    has_all_embeddings: bool

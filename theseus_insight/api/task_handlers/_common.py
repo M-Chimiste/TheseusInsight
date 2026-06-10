@@ -38,33 +38,6 @@ def progress_callback(task_manager: "TaskManager", task_id: str):
 
 
 def get_orchestration_config(verbose: bool = False) -> dict:
-    """
-    Get orchestration config with proper fallback hierarchy: DB -> config file -> defaults.
-
-    Args:
-        verbose: Whether to print debug information about config source
-
-    Returns:
-        Dictionary containing orchestration configuration
-    """
-    orchestration_json = SettingsRepository.get("orchestration")
-    if orchestration_json:
-        orchestration_config = json.loads(orchestration_json)
-        if verbose:
-            print("📊 Using orchestration config from database settings")
-        return orchestration_config
-    else:
-        # Fallback to config file
-        try:
-            from pathlib import Path
-            # parents[3]: this file sits one level deeper than tasks.py did
-            config_path = Path(__file__).resolve().parents[3] / "config" / "orchestration.json"
-            orchestration_config = json.loads(config_path.read_text())
-            if verbose:
-                print("📊 Using orchestration config from config file")
-            return orchestration_config
-        except Exception as e:
-            print(f"Warning: Could not load orchestration config from file: {e}")
-            if verbose:
-                print("📊 Using empty orchestration config (defaults only)")
-            return {}
+    """Compat shim — canonical implementation moved to theseus_insight.config (B10)."""
+    from ...config import get_orchestration_config as _impl
+    return _impl(verbose=verbose)

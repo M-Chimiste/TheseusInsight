@@ -195,12 +195,12 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
   };
 
 
-  // Render Single Agent Configuration
-  const renderSingleAgentConfig = () => {
-    const modelConfig = singleAgentConfig.model_config || {};
-    const bossModel = modelConfig.boss_model || {};
-
-    const renderModelFields = (modelObj: any, modelPath: string, title: string, description: string, isRequired: boolean = false) => (
+  // Shared renderer for both agent modes (was duplicated per mode).
+  const makeModelFieldsRenderer = (configType: 'single' | 'multi') => {
+    const onFieldChange = configType === 'single'
+      ? handleSingleAgentConfigChange
+      : handleMultiAgentConfigChange;
+    return (modelObj: any, modelPath: string, title: string, description: string, isRequired: boolean = false) => (
       <Card variant="outlined" sx={{ mb: 2 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -221,8 +221,8 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
               <ModelNameAutocomplete
                 label="Model Name"
                 value={modelObj.model_name || ''}
-                onChange={value => handleSingleAgentConfigChange(`${modelPath}.model_name`, value)}
-                onModelSelected={selectedModel => handleResearchAgentModelSelected('single', selectedModel, modelPath)}
+                onChange={value => onFieldChange(`${modelPath}.model_name`, value)}
+                onModelSelected={selectedModel => handleResearchAgentModelSelected(configType, selectedModel, modelPath)}
                 modelCatalogData={modelCatalogData}
               />
               <FormControl fullWidth>
@@ -230,7 +230,7 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
                 <Select
                   value={modelObj.model_type || ''}
                   label="Model Type (Provider)"
-                  onChange={e => handleSingleAgentConfigChange(`${modelPath}.model_type`, e.target.value)}
+                  onChange={e => onFieldChange(`${modelPath}.model_type`, e.target.value)}
                 >
                   {(modelProviders || []).map((provider: any) => (
                     <MenuItem key={provider.id} value={provider.name}>
@@ -246,7 +246,7 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
                 label="Max New Tokens"
                 type="number"
                 value={modelObj.max_new_tokens || 4096}
-                onChange={e => handleSingleAgentConfigChange(`${modelPath}.max_new_tokens`, Number(e.target.value))}
+                onChange={e => onFieldChange(`${modelPath}.max_new_tokens`, Number(e.target.value))}
               />
               <TextField
                 fullWidth
@@ -254,7 +254,7 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
                 type="number"
                 inputProps={{ step: '0.1' }}
                 value={modelObj.temperature || 0.1}
-                onChange={e => handleSingleAgentConfigChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
+                onChange={e => onFieldChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
               />
               {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp' || modelObj.model_type === 'lmstudio') && (
                 <TextField
@@ -262,7 +262,7 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
                   label="Context Window (num_ctx)"
                   type="number"
                   value={modelObj.num_ctx || 131072}
-                  onChange={e => handleSingleAgentConfigChange(`${modelPath}.num_ctx`, Number(e.target.value))}
+                  onChange={e => onFieldChange(`${modelPath}.num_ctx`, Number(e.target.value))}
                 />
               )}
               {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
@@ -272,7 +272,7 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
                   options={getHostsByProvider(modelObj.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
                   value={modelObj.host || ''}
                   onInputChange={(_, newInputValue) => {
-                    handleSingleAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
+                    onFieldChange(`${modelPath}.host`, newInputValue || undefined);
                   }}
                   renderInput={(params) => (
                     <TextField
@@ -293,6 +293,14 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
         </CardContent>
       </Card>
     );
+  };
+
+  // Render Single Agent Configuration
+  const renderSingleAgentConfig = () => {
+    const modelConfig = singleAgentConfig.model_config || {};
+    const bossModel = modelConfig.boss_model || {};
+
+    const renderModelFields = makeModelFieldsRenderer('single');
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -418,99 +426,7 @@ export const ResearchAgentSettings: React.FC<ResearchAgentSettingsProps> = ({
     const bossModel = multiAgentConfig.boss_model || {};
     const specializedModels = multiAgentConfig.specialized_models || {};
 
-    const renderModelFields = (modelObj: any, modelPath: string, title: string, description: string, isRequired: boolean = false) => (
-      <Card variant="outlined" sx={{ mb: 2 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Typography variant="h6">{title}</Typography>
-            {isRequired && <Chip label="Required" size="small" color="primary" />}
-            <Tooltip title={description}>
-              <IconButton size="small">
-                <InfoOutlinedIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Box>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {description}
-          </Typography>
-          
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <ModelNameAutocomplete
-                label="Model Name"
-                value={modelObj.model_name || ''}
-                onChange={value => handleMultiAgentConfigChange(`${modelPath}.model_name`, value)}
-                onModelSelected={selectedModel => handleResearchAgentModelSelected('multi', selectedModel, modelPath)}
-                modelCatalogData={modelCatalogData}
-              />
-              <FormControl fullWidth>
-                <InputLabel>Model Type (Provider)</InputLabel>
-                <Select
-                  value={modelObj.model_type || ''}
-                  label="Model Type (Provider)"
-                  onChange={e => handleMultiAgentConfigChange(`${modelPath}.model_type`, e.target.value)}
-                >
-                  {(modelProviders || []).map((provider: any) => (
-                    <MenuItem key={provider.id} value={provider.name}>
-                      {provider.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
-            <Box sx={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                fullWidth
-                label="Max New Tokens"
-                type="number"
-                value={modelObj.max_new_tokens || 4096}
-                onChange={e => handleMultiAgentConfigChange(`${modelPath}.max_new_tokens`, Number(e.target.value))}
-              />
-              <TextField
-                fullWidth
-                label="Temperature"
-                type="number"
-                inputProps={{ step: '0.1' }}
-                value={modelObj.temperature || 0.1}
-                onChange={e => handleMultiAgentConfigChange(`${modelPath}.temperature`, parseFloat(e.target.value))}
-              />
-              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'llamacpp' || modelObj.model_type === 'lmstudio') && (
-                <TextField
-                  fullWidth
-                  label="Context Window (num_ctx)"
-                  type="number"
-                  value={modelObj.num_ctx || 131072}
-                  onChange={e => handleMultiAgentConfigChange(`${modelPath}.num_ctx`, Number(e.target.value))}
-                />
-              )}
-              {(modelObj.model_type === 'ollama' || modelObj.model_type === 'lmstudio' || modelObj.model_type === 'custom-oai') && (
-                <Autocomplete
-                  fullWidth
-                  freeSolo
-                  options={getHostsByProvider(modelObj.model_type as 'ollama' | 'lmstudio' | 'custom-oai')}
-                  value={modelObj.host || ''}
-                  onInputChange={(_, newInputValue) => {
-                    handleMultiAgentConfigChange(`${modelPath}.host`, newInputValue || undefined);
-                  }}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Host (Optional)"
-                      placeholder={
-                        modelObj.model_type === 'ollama' ? 'athena.local:11434' :
-                        modelObj.model_type === 'lmstudio' ? 'localhost:1234' :
-                        'http://custom-server:8000'
-                      }
-                      helperText="Custom host for this model (leave empty to use environment default)"
-                    />
-                  )}
-                />
-              )}
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
-    );
+    const renderModelFields = makeModelFieldsRenderer('multi');
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

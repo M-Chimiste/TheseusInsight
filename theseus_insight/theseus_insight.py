@@ -24,6 +24,7 @@ from theseus_insight.pipeline.checkpoints import CheckpointAdapter
 from theseus_insight.pipeline.model_loading import load_inference_model
 from theseus_insight.pipeline.stages import download as download_stage
 from theseus_insight.pipeline.stages import email as email_stage
+from theseus_insight.pipeline.stages import rank as rank_stage
 from theseus_insight.pdf.markdown_extraction import (
     download_pdf_to_temp_file, pdf_to_markdown,
 )
@@ -2044,97 +2045,10 @@ Theseus Insight Team
                 progress_callback("embed", 15, "Paper embedding complete")
 
             # -----------
-            # Stage 3: Rank Papers (or Get Profile Papers)
+            # Stage 3: Rank Papers (pipeline/stages/rank.py, B9)
             # -----------
-            if progress_callback:
-                progress_callback("rank", 20, "Starting paper ranking")
-
-            if start_from is None or start_from in ['papers_embedded', 'papers_ranked']:
-                top_n_df = await self._load_checkpoint_async('papers_ranked')
-                if top_n_df is None:
-                    # Check if we should use profile-based paper scoring
-                    if self.profile_ids_override:
-                        if self.verbose:
-                            print(f"Profile newsletter generation for profiles: {self.profile_ids_override}")
-                            print("Using freshly downloaded papers and scoring for profile...")
-                        top_n_df = self.get_and_score_profile_papers(
-                            profile_ids=self.profile_ids_override,
-                            embedded_df=embedded_df,
-                            progress_callback=progress_callback
-                        )
-                    else:
-                        # Use traditional embedding-based approach
-                        if embedded_df is None:
-                            embedded_df = self._load_checkpoint('papers_embedded')
-                            if embedded_df is None:
-                                raise ValueError("No embedded papers found to rank.")
-                        
-                        # Check if we have any papers to rank
-                        if len(embedded_df) == 0:
-                            if self.verbose:
-                                print("No new papers to rank (all papers already exist in database)")
-                                print("Loading existing papers from database for newsletter generation...")
-                            
-                            # Load existing papers from database within date range for newsletter generation
-                            existing_papers = PaperRepository.get_papers_in_date_range(
-                                start_date=self.start_date.strftime('%Y-%m-%d'),
-                                end_date=self.end_date.strftime('%Y-%m-%d')
-                            )
-                            
-                            if existing_papers:
-                                # Convert to DataFrame format expected by newsletter generation
-                                papers_list = []
-                                for paper in existing_papers:
-                                    papers_list.append({
-                                        'title': paper['title'],
-                                        'abstract': paper['abstract'],
-                                        'pdf_url': paper['url'],
-                                        'date': paper['date'],
-                                        'score': paper.get('score', 5.0),  # Use existing score or default
-                                        'related': paper.get('related', True),
-                                        'rationale': paper.get('rationale', 'Previously scored paper'),
-                                        'cosine_similarity': paper.get('cosine_similarity', 0.0),
-                                        'abstract_embedding': paper.get('embedding', [])
-                                    })
-                                
-                                df = pd.DataFrame(papers_list)
-                                # Sort by score if available, otherwise by date
-                                if 'score' in df.columns:
-                                    df = df.sort_values('score', ascending=False)
-                                else:
-                                    df = df.sort_values('date', ascending=False)
-                                
-                                # Get more papers than needed to allow for PDF conversion failures
-                                backup_multiplier = 2
-                                extended_count = min(len(df), self.top_n * backup_multiplier)
-                                top_n_df = df.head(extended_count)
-                                
-                                if self.verbose:
-                                    print(f"✅ Loaded {len(top_n_df)} existing papers for newsletter generation")
-                            else:
-                                # No papers found in database for date range
-                                top_n_df = embedded_df.copy()  # Empty dataframe with same structure
-                                if self.verbose:
-                                    print("No existing papers found in database for date range")
-                        else:
-                            if self.verbose:
-                                print("Ranking papers...")
-                            top_n_df = self.rank_papers_with_historical_scores(embedded_df, progress_callback=progress_callback)
-
-                    # Only checkpoint a non-empty result. Persisting an empty df here
-                    # would poison subsequent retries: load_checkpoint returns the
-                    # (empty) df, the `if top_n_df is None` guard sees a non-None
-                    # value, and the whole scoring stage gets skipped.
-                    if top_n_df is not None and len(top_n_df) > 0:
-                        await self._save_checkpoint_async('papers_ranked', top_n_df)
-                    elif self.verbose:
-                        print("Skipping papers_ranked checkpoint (empty result — retry will re-attempt scoring)")
-
-                # free memory from embeddings if needed
-                del embedded_df
-                gc.collect()
-            if progress_callback:
-                progress_callback("rank", 30, "Paper ranking complete")
+            top_n_df = await rank_stage.run(self, embedded_df, start_from, progress_callback)
+            embedded_df = None  # the stage releases embeddings; drop our reference too
 
             # -----------
             # Stage 4: Generate Newsletter Sections

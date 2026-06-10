@@ -1,27 +1,392 @@
 import axios from 'axios';
+
+// --- Types generated from the backend OpenAPI schema (F2) ---
+// These replaced hand-written duplicates; regenerate via `npm run generate:api`.
+import type {
+    ModelConfig,
+    MindMapConfig,
+    ServerTestResult,
+    GlobalDefaults,
+    ProfileCreateRequest,
+    ProfileUpdateRequest,
+    ProfileAwareIngestResponse,
+    BulkJudgeRunResponse,
+    ProfileInterestResponse,
+    LogEntry,
+    TaskHistoryEntry,
+    PodcastScriptItem,
+    PodcastDetailResponse,
+    PodcastListItemResponse,
+    PaperApiResponse,
+    PaginatedPapersResponse,
+    SimilarPapersResponse,
+    HybridSearchResponse,
+    TopicApiResponse,
+    TopicMetricResponse,
+    TopicDetailResponse,
+    TrendsListResponse,
+    TrendsSearchResponse,
+    TopicPapersResponse,
+    TimelineKeyPaper,
+    TimelinePeriodData,
+    TopicTimelineData,
+    TimelineDataResponse,
+} from './generated/types';
+export type {
+    ModelConfig,
+    MindMapConfig,
+    ServerTestResult,
+    GlobalDefaults,
+    ProfileCreateRequest,
+    ProfileUpdateRequest,
+    ProfileAwareIngestResponse,
+    BulkJudgeRunResponse,
+    ProfileInterestResponse,
+    LogEntry,
+    TaskHistoryEntry,
+    PodcastScriptItem,
+    PodcastDetailResponse,
+    PodcastListItemResponse,
+    PaperApiResponse,
+    PaginatedPapersResponse,
+    SimilarPapersResponse,
+    HybridSearchResponse,
+    TopicApiResponse,
+    TopicMetricResponse,
+    TopicDetailResponse,
+    TrendsListResponse,
+    TrendsSearchResponse,
+    TopicPapersResponse,
+    TimelineKeyPaper,
+    TimelinePeriodData,
+    TopicTimelineData,
+    TimelineDataResponse,
+};
+
+// TODO(codegen): the following types conflict with the generated schema
+// (required-vs-optional request fields, Dict[str,Any] backend models, or
+// genuine drift like PerformanceConfig.auto_tune_batch_size not existing
+// server-side). Re-alias them as backend models tighten.
+
+export interface ProfileAwareIngestRequest {
+  start_date?: string;
+  end_date?: string;
+  profile_ids?: number[];
+  profile_tags?: string[];
+  score_all_profiles?: boolean;
+  overwrite_existing?: boolean;
+  cosine_threshold?: number;
+  arxiv_categories?: string[];
+  use_profile_arxiv_filters?: boolean;
+  batch_size?: number;
+  send_error_notifications?: boolean;
+  // Multi-server configuration (only used when LLM-as-Judge is configured for Ollama)
+  use_multi_server?: boolean;
+  server_ids?: number[];
+}
+
+export interface ResearchTaskRequest {
+  research_question: string;
+  mode?: 'single' | 'multi';
+  config?: {
+    search_config?: {
+      local_limit?: number;
+      external_limit?: number;
+    };
+    evidence_config?: {
+      min_evidence_threshold?: number;
+      quality_threshold?: number;
+    };
+    compression_config?: {
+      compression_ratio?: number;
+      max_tokens?: number;
+    };
+    answer_config?: {
+      citation_style?: 'academic' | 'numbered' | 'apa';
+      include_methodology?: boolean;
+      include_limitations?: boolean;
+    };
+    synthesis_config?: {
+      strategy?: 'weighted_consensus' | 'evidence_based' | 'confidence_weighted';
+      confidence_threshold?: number;
+    };
+  };
+  save_to_library?: boolean;
+}
+
+export interface ResearchTaskResponse {
+  task_id: string;
+  status: string;
+  created_at: string;
+  research_question: string;
+  mode: 'single' | 'multi';
+}
+
+export interface ResearchTaskStatus {
+  task_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  mode?: 'single' | 'multi';
+  progress?: any;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export interface ResearchTaskResult {
+  task_id: string;
+  status: string;
+  research_question: string;
+  mode: 'single' | 'multi';
+  final_answer?: string;
+  generation_summary?: string;
+  statistics?: {
+    research_loops: number;
+    total_sources_found: number;
+    selected_sources: number;
+    evidence_pieces: number;
+    evidence_sufficient: boolean;
+    compression_used: boolean;
+    agents_used?: number;
+    synthesis_confidence?: number;
+  };
+  sub_queries: string[];
+  sources_gathered: any[];
+  judged_sources: any[];
+  evidence: string[];
+  compressed_notes: string;
+  workflow_messages: any[];
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
+export interface ResearchHistoryItem {
+  task_id: string;
+  research_question: string;
+  status: string;
+  mode?: 'single' | 'multi';
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  statistics?: {
+    research_loops: number;
+    total_sources_found: number;
+    selected_sources: number;
+    evidence_pieces: number;
+    evidence_sufficient: boolean;
+    compression_used: boolean;
+    agents_used?: number;
+    synthesis_confidence?: number;
+  };
+}
+
+export interface ResearchModeResponse {
+  current_mode: 'single' | 'multi';
+  validation: {
+    valid: boolean;
+    issues: string[];
+    has_single_config: boolean;
+    has_multi_config: boolean;
+  };
+  success: boolean;
+  message: string;
+}
+
+export interface ResearchConfigResponse {
+  current_mode: 'single' | 'multi';
+  single_agent_config: any;
+  multi_agent_config: any;
+  validation: {
+    valid: boolean;
+    issues: string[];
+    has_single_config: boolean;
+    has_multi_config: boolean;
+  };
+  available_modes: string[];
+}
+
+export interface MindMapExpandRequest {
+  paper_id?: string;
+  topic_id?: number;
+  k?: number;
+  similarity_threshold?: number;
+  layout_algorithm?: 'force' | 'circular' | 'hierarchical';
+  model_config_override?: any;
+  expansion_order?: number;
+  max_nodes_per_order?: number;
+}
+
+export interface MindMapExpandResponse {
+  task_id: string;
+  message: string;
+}
+
+export interface MindMapSeedSearchResponse {
+  papers: PaperApiResponse[];
+  total_results: number;
+}
+
+export interface MindMapReport {
+  id: number;
+  title: string;
+  description?: string;
+  seed_paper_id: number;
+  seed_paper_title: string;
+  parameters: Record<string, any>;
+  mindmap_data: MindMapData;
+  statistics: Record<string, any>;
+  created_at: string;
+}
+
+export interface MindMapReportSaveRequest {
+  title: string;
+  description?: string;
+  mindmap_data: MindMapData;
+  parameters: Record<string, any>;
+}
+
+export interface MindMapReportSaveResponse {
+  id: number;
+  title: string;
+  message: string;
+}
+
+export interface MindMapReportListResponse {
+  reports: MindMapReport[];
+  total_count: number;
+}
+
+export interface ScheduledTaskConfig {
+  emailRecipients?: string[];
+  researchInterests?: string[];
+  use_profile_recipients?: boolean;
+  lookback_months?: number;
+  duration_months?: number;
+  min_papers?: number;
+  months_to_keep?: number;
+}
+
+export interface ScheduledTaskCreate {
+  name: string;
+  task_type: 'newsletter' | 'trends_recomputation' | 'database_cleanup' | 'profile_ingestion' | 'bulk_embedding';
+  profile_id?: number;
+  is_enabled: boolean;
+  frequency: 'hourly' | 'daily' | 'weekly' | 'monthly';
+  day_of_week?: number; // 0=Monday, 6=Sunday
+  day_of_month?: number; // 1-31
+  hour: number; // 0-23
+  minute?: number; // 0-59
+  timezone?: string;
+  config: ScheduledTaskConfig;
+}
+
+export interface ScheduledTaskUpdate {
+  name?: string;
+  is_enabled?: boolean;
+  frequency?: 'hourly' | 'daily' | 'weekly' | 'monthly';
+  day_of_week?: number;
+  day_of_month?: number;
+  hour?: number;
+  minute?: number;
+  timezone?: string;
+  config?: ScheduledTaskConfig;
+}
+
+export interface NewsletterRunParams {
+  start_date: string;
+  end_date: string;
+  email_recipients?: string[];
+  research_interests: string;
+  topic_id?: number;
+  generate_podcast_run?: boolean;
+  // Profile filtering
+  profile_id?: number;
+  profile_ids?: number[];
+  profile_tag?: string;
+  profile_tags?: string[];
+  use_profile_recipients?: boolean;
+  // Multi-server judge configuration
+  use_multi_server_judge?: boolean;
+  judge_server_ids?: number[];
+  judge_request_timeout_sec?: number;
+  judge_max_retries?: number;
+  // Newsletter section configuration
+  num_sections?: number;
+}
+
+export interface BulkJudgeRunRequest {
+  profile_ids?: number[];
+  profile_tags?: string[];
+  start_date?: string;
+  end_date?: string;
+  overwrite_existing?: boolean;
+  cosine_threshold?: number;
+  batch_size?: number;
+}
+
+export interface InferenceServerCreate {
+  name: string;
+  url: string;
+  provider: 'ollama' | 'lmstudio';
+  config_json?: {
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  notes?: string;
+}
+
+export interface InferenceServerUpdate {
+  name: string;
+  url: string;
+  provider: 'ollama' | 'lmstudio';
+  enabled: boolean;
+  config_json?: {
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  model_name?: string;  // Override model name for this server
+  model_config?: {
+    temperature?: number;
+    max_new_tokens?: number;
+    num_ctx?: number;
+    context_length?: number;
+    gpu_offload?: string;
+  };
+  notes?: string;
+}
+
+export interface PerformanceConfig {
+  max_cores: number;
+  max_memory_gb: number;
+  hdbscan_n_jobs: number;
+  clustering_batch_size: number;
+  embedding_batch_size: number;
+  auto_tune_batch_size?: boolean;
+  vector_processing_workers: number;
+  enable_memory_mapping: boolean;
+  cache_embeddings: boolean;
+  aggressive_garbage_collection: boolean;
+  development_mode: boolean;
+  development_max_papers: number;
+}
+
+
 import type { AxiosResponse } from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
 // Configuration interfaces
-export interface ModelConfig {
-  model_name: string;
-  model_type: string;
-  max_new_tokens?: number;
-  temperature?: number;
-  num_ctx?: number;
-  trust_remote_code?: boolean;
-  host?: string;  // Custom host for Ollama, LMStudio, or Custom-OAI providers
-}
 
-export interface MindMapConfig {
-  k: number;
-  similarity_threshold: number;
-  layout_algorithm: 'force' | 'circular' | 'hierarchical';
-  summarization_model: ModelConfig;
-  expansion_order: number;
-  max_nodes_per_order: number;
-}
 
 export interface OrchestrationConfig {
   embedding_model: ModelConfig;
@@ -68,27 +433,7 @@ export interface GetResearchInterestPapersParams {
 }
 
 // Newsletter Run Parameters
-export interface NewsletterRunParams {
-  start_date: string;
-  end_date: string;
-  email_recipients?: string[];
-  research_interests: string;
-  topic_id?: number;
-  generate_podcast_run?: boolean;
-  // Profile filtering
-  profile_id?: number;
-  profile_ids?: number[];
-  profile_tag?: string;
-  profile_tags?: string[];
-  use_profile_recipients?: boolean;
-  // Multi-server judge configuration
-  use_multi_server_judge?: boolean;
-  judge_server_ids?: number[];
-  judge_request_timeout_sec?: number;
-  judge_max_retries?: number;
-  // Newsletter section configuration
-  num_sections?: number;
-}
+
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -186,63 +531,12 @@ export interface InferenceServer {
   updated_at?: string;
 }
 
-export interface InferenceServerCreate {
-  name: string;
-  url: string;
-  provider: 'ollama' | 'lmstudio';
-  config_json?: {
-    context_length?: number;
-    gpu_offload?: string;
-  };
-  model_name?: string;  // Override model name for this server
-  model_config?: {
-    temperature?: number;
-    max_new_tokens?: number;
-    num_ctx?: number;
-    context_length?: number;
-    gpu_offload?: string;
-  };
-  notes?: string;
-}
-
-export interface InferenceServerUpdate {
-  name: string;
-  url: string;
-  provider: 'ollama' | 'lmstudio';
-  enabled: boolean;
-  config_json?: {
-    context_length?: number;
-    gpu_offload?: string;
-  };
-  model_name?: string;  // Override model name for this server
-  model_config?: {
-    temperature?: number;
-    max_new_tokens?: number;
-    num_ctx?: number;
-    context_length?: number;
-    gpu_offload?: string;
-  };
-  notes?: string;
-}
 
 // Backward compatibility aliases
 export type OllamaServer = InferenceServer;
 export type OllamaServerCreate = InferenceServerCreate;
 export type OllamaServerUpdate = InferenceServerUpdate;
 
-export interface ServerTestResult {
-  success: boolean;
-  latency_ms?: number;
-  error?: string;
-  version?: string;
-  models_available?: string[];
-}
-
-export interface GlobalDefaults {
-  request_timeout_sec: number;
-  max_retries: number;
-  circuit_breaker_threshold: number;
-}
 
 export interface JobMetrics {
   job_id: string;
@@ -591,49 +885,6 @@ export interface ProfileApiResponse {
   recent_papers?: number;
 }
 
-export interface ProfileCreateRequest {
-  name: string;
-  description?: string;
-  color?: string;
-  tags?: string[];
-  email_recipients?: string[];
-  arxiv_filters?: string[];
-}
-
-export interface ProfileUpdateRequest {
-  name?: string;
-  description?: string;
-  color?: string;
-  tags?: string[];
-  email_recipients?: string[];
-  arxiv_filters?: string[];
-  is_active?: boolean;
-}
-
-export interface ProfileAwareIngestRequest {
-  start_date?: string;
-  end_date?: string;
-  profile_ids?: number[];
-  profile_tags?: string[];
-  score_all_profiles?: boolean;
-  overwrite_existing?: boolean;
-  cosine_threshold?: number;
-  arxiv_categories?: string[];
-  use_profile_arxiv_filters?: boolean;
-  batch_size?: number;
-  send_error_notifications?: boolean;
-  // Multi-server configuration (only used when LLM-as-Judge is configured for Ollama)
-  use_multi_server?: boolean;
-  server_ids?: number[];
-}
-
-export interface ProfileAwareIngestResponse {
-  task_id: string;
-  message: string;
-  profile_count: number;
-  estimated_papers: number;
-  status: string;
-}
 
 export interface TagSearchResponse {
   query: string;
@@ -652,32 +903,9 @@ export interface BulkEmbedRequest {
   arxiv_categories?: string[];
 }
 
-export interface BulkJudgeRunRequest {
-  profile_ids?: number[];
-  profile_tags?: string[];
-  start_date?: string;
-  end_date?: string;
-  overwrite_existing?: boolean;
-  cosine_threshold?: number;
-  batch_size?: number;
-}
-
-export interface BulkJudgeRunResponse {
-  task_id: string;
-  message: string;
-  profile_count: number;
-  estimated_papers: number;
-  status: string;
-}
 
 // Profile Research Interest API Types
-export interface ProfileInterestResponse {
-  id: number;
-  interest_text: string;
-  embedding_model?: string;
-  created_at?: string;
-  updated_at?: string;
-}
+
 
 // Profile API
 export const profileApi = {
@@ -783,41 +1011,7 @@ export const runsApi = {
 };
 
 // Scheduled Tasks Types
-export interface ScheduledTaskConfig {
-  emailRecipients?: string[];
-  researchInterests?: string[];
-  use_profile_recipients?: boolean;
-  lookback_months?: number;
-  duration_months?: number;
-  min_papers?: number;
-  months_to_keep?: number;
-}
 
-export interface ScheduledTaskCreate {
-  name: string;
-  task_type: 'newsletter' | 'trends_recomputation' | 'database_cleanup' | 'profile_ingestion' | 'bulk_embedding';
-  profile_id?: number;
-  is_enabled: boolean;
-  frequency: 'hourly' | 'daily' | 'weekly' | 'monthly';
-  day_of_week?: number; // 0=Monday, 6=Sunday
-  day_of_month?: number; // 1-31
-  hour: number; // 0-23
-  minute?: number; // 0-59
-  timezone?: string;
-  config: ScheduledTaskConfig;
-}
-
-export interface ScheduledTaskUpdate {
-  name?: string;
-  is_enabled?: boolean;
-  frequency?: 'hourly' | 'daily' | 'weekly' | 'monthly';
-  day_of_week?: number;
-  day_of_month?: number;
-  hour?: number;
-  minute?: number;
-  timezone?: string;
-  config?: ScheduledTaskConfig;
-}
 
 export interface ScheduledTask {
   id: number;
@@ -975,23 +1169,6 @@ export const createWebSocket = (
   return ws;
 };
 
-export interface LogEntry {
-  task_id: string;
-  status: string;
-  datetime_run: string;
-}
-
-export interface TaskHistoryEntry {
-  task_id: string;
-  task_type: string;
-  status: string;
-  start_time: string;
-  end_time: string | null;
-  progress: number | null;
-  current_step: string | null;
-  message: string | null;
-  error: string | null;
-}
 
 export const getLogs = async (limit: number = 100, fromDate?: string, toDate?: string): Promise<LogEntry[]> => {
   const params: Record<string, string | number> = { limit };
@@ -1037,71 +1214,10 @@ export const getTaskStatus = async (taskId: string): Promise<RunStatusPayload | 
 };
 
 // Interfaces for Podcast History
-export interface PodcastScriptItem {
-    text: string;
-    speaker: string;
-    segment_label?: string | null;
-}
 
-export interface PodcastDetailResponse {
-    id: number;
-    title: string;
-    date: string;
-    description: string;
-    script: PodcastScriptItem[];
-}
-
-export interface PodcastListItemResponse {
-    id: number;
-    title: string;
-    date: string;
-    description_snippet: string;
-}
 
 // Interfaces for Papers Page
-export interface PaperApiResponse {
-  id: number;
-  title: string;
-  abstract: string;
-  date: string;
-  date_run: string;
-  score?: number | null; // Legacy paper score (use profile_score for profile-specific scores)
-  rationale?: string | null; // Legacy rationale
-  related?: boolean | null; // Legacy related flag
-  cosine_similarity?: number | null; // Cosine similarity score
-  url: string;
-  embedding_model: string;
-  keywords?: string[];
-  similarity_score?: number; // Semantic similarity score when returned from similarity search
-  profile_score?: number; // Profile-specific relevance score
-  semantic_score?: number; // Semantic similarity score in hybrid search
-  keyword_score?: number; // Keyword matching score in hybrid search
-  hybrid_score?: number; // Combined hybrid search score
-}
 
-export interface PaginatedPapersResponse {
-  items: PaperApiResponse[];
-  total_items: number;
-  total_pages: number;
-  current_page: number;
-  nextPage: number | null;
-}
-
-export interface SimilarPapersResponse {
-    reference_paper: PaperApiResponse;
-    similar_papers: PaperApiResponse[];
-    total_similar: number;
-}
-
-export interface HybridSearchResponse {
-    query_text: string;
-    results: PaperApiResponse[];
-    total_results: number;
-    total_pages: number;
-    current_page: number;
-    semantic_weight: number;
-    keyword_weight: number;
-}
 
 // Podcast History API functions
 export const podcastHistoryApi = {
@@ -1229,127 +1345,7 @@ export const papersApi = {
 };
 
 // Research Agent Interfaces
-export interface ResearchTaskRequest {
-  research_question: string;
-  mode?: 'single' | 'multi';
-  config?: {
-    search_config?: {
-      local_limit?: number;
-      external_limit?: number;
-    };
-    evidence_config?: {
-      min_evidence_threshold?: number;
-      quality_threshold?: number;
-    };
-    compression_config?: {
-      compression_ratio?: number;
-      max_tokens?: number;
-    };
-    answer_config?: {
-      citation_style?: 'academic' | 'numbered' | 'apa';
-      include_methodology?: boolean;
-      include_limitations?: boolean;
-    };
-    synthesis_config?: {
-      strategy?: 'weighted_consensus' | 'evidence_based' | 'confidence_weighted';
-      confidence_threshold?: number;
-    };
-  };
-  save_to_library?: boolean;
-}
 
-export interface ResearchTaskResponse {
-  task_id: string;
-  status: string;
-  created_at: string;
-  research_question: string;
-  mode: 'single' | 'multi';
-}
-
-export interface ResearchTaskStatus {
-  task_id: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  mode?: 'single' | 'multi';
-  progress?: any;
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-  error_message?: string;
-}
-
-export interface ResearchTaskResult {
-  task_id: string;
-  status: string;
-  research_question: string;
-  mode: 'single' | 'multi';
-  final_answer?: string;
-  generation_summary?: string;
-  statistics?: {
-    research_loops: number;
-    total_sources_found: number;
-    selected_sources: number;
-    evidence_pieces: number;
-    evidence_sufficient: boolean;
-    compression_used: boolean;
-    agents_used?: number;
-    synthesis_confidence?: number;
-  };
-  sub_queries: string[];
-  sources_gathered: any[];
-  judged_sources: any[];
-  evidence: string[];
-  compressed_notes: string;
-  workflow_messages: any[];
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-  error_message?: string;
-}
-
-export interface ResearchHistoryItem {
-  task_id: string;
-  research_question: string;
-  status: string;
-  mode?: 'single' | 'multi';
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-  statistics?: {
-    research_loops: number;
-    total_sources_found: number;
-    selected_sources: number;
-    evidence_pieces: number;
-    evidence_sufficient: boolean;
-    compression_used: boolean;
-    agents_used?: number;
-    synthesis_confidence?: number;
-  };
-}
-
-export interface ResearchModeResponse {
-  current_mode: 'single' | 'multi';
-  validation: {
-    valid: boolean;
-    issues: string[];
-    has_single_config: boolean;
-    has_multi_config: boolean;
-  };
-  success: boolean;
-  message: string;
-}
-
-export interface ResearchConfigResponse {
-  current_mode: 'single' | 'multi';
-  single_agent_config: any;
-  multi_agent_config: any;
-  validation: {
-    valid: boolean;
-    issues: string[];
-    has_single_config: boolean;
-    has_multi_config: boolean;
-  };
-  available_modes: string[];
-}
 
 export interface ResearchWebSocketMessage {
   type: 'status_update' | 'task_completed';
@@ -1399,21 +1395,6 @@ export interface MindMapData {
   generation_timestamp: string;
 }
 
-export interface MindMapExpandRequest {
-  paper_id?: string;
-  topic_id?: number;
-  k?: number;
-  similarity_threshold?: number;
-  layout_algorithm?: 'force' | 'circular' | 'hierarchical';
-  model_config_override?: any;
-  expansion_order?: number;
-  max_nodes_per_order?: number;
-}
-
-export interface MindMapExpandResponse {
-  task_id: string;
-  message: string;
-}
 
 export interface MindMapPDFParseRequest {
   paper_ids: string[];
@@ -1430,10 +1411,6 @@ export interface MindMapSeedSearchRequest {
   limit?: number;
 }
 
-export interface MindMapSeedSearchResponse {
-  papers: PaperApiResponse[];
-  total_results: number;
-}
 
 export interface MindMapWebSocketMessage {
   type: 'progress_update' | 'task_completed' | 'task_failed';
@@ -1452,95 +1429,10 @@ export interface MindMapWebSocketMessage {
 }
 
 // Mind-Map Reports interfaces
-export interface MindMapReport {
-  id: number;
-  title: string;
-  description?: string;
-  seed_paper_id: number;
-  seed_paper_title: string;
-  parameters: Record<string, any>;
-  mindmap_data: MindMapData;
-  statistics: Record<string, any>;
-  created_at: string;
-}
 
-export interface MindMapReportSaveRequest {
-  title: string;
-  description?: string;
-  mindmap_data: MindMapData;
-  parameters: Record<string, any>;
-}
-
-export interface MindMapReportSaveResponse {
-  id: number;
-  title: string;
-  message: string;
-}
-
-export interface MindMapReportListResponse {
-  reports: MindMapReport[];
-  total_count: number;
-}
 
 // === Trends API Interfaces ===
 
-export interface TopicApiResponse {
-  id: number;
-  label: string;
-  keywords: string[];
-  embedding_model?: string;
-  created_at: string;
-  updated_at: string;
-  latest_doc_count?: number;
-  latest_growth_rate?: number;
-  total_papers?: number;
-  forecast_1m?: number;
-  forecast_3m?: number;
-  forecast_6m?: number;
-}
-
-export interface TopicMetricResponse {
-  id: number;
-  topic_id: number;
-  period_start: string;
-  period_end: string;
-  period_type: string;
-  doc_count: number;
-  avg_score?: number;
-  growth_rate?: number;
-  forecast_1m?: number;
-  forecast_3m?: number;
-  forecast_6m?: number;
-  created_at: string;
-}
-
-export interface TopicDetailResponse {
-  topic: TopicApiResponse;
-  timeline: TopicMetricResponse[];
-  representative_papers: PaperApiResponse[];
-  total_papers: number;
-}
-
-export interface TrendsListResponse {
-  topics: TopicApiResponse[];
-  total_topics: number;
-  total_papers_with_topics: number;
-  period_type: string;
-  duration_months: number;
-}
-
-export interface TrendsSearchResponse {
-  query: string;
-  topics: TopicApiResponse[];
-  total_results: number;
-}
-
-export interface TopicPapersResponse {
-  topic_id: number;
-  topic_label: string;
-  papers: PaperApiResponse[];
-  total_papers: number;
-}
 
 export interface ResearchInterestPapersResponse {
     research_interest_id: number;
@@ -1711,43 +1603,6 @@ export type EntityDetailResponse = TopicDetailResponse | ResearchInterestDetailR
 
 // === Research Timeline Visualization Types ===
 
-export interface TimelineKeyPaper {
-  id: number;
-  title: string;
-  date: string;
-  score?: number;
-  relevance_score?: number;
-}
-
-export interface TimelinePeriodData {
-  period_start: string;
-  period_end: string;
-  period_type: string;
-  doc_count: number;
-  growth_rate?: number;
-  phase: 'emerging' | 'growth' | 'stable' | 'declining';
-  key_papers?: TimelineKeyPaper[];
-  forecast_1m?: number;
-  forecast_3m?: number;
-  forecast_6m?: number;
-  is_forecast: boolean;
-}
-
-export interface TopicTimelineData {
-  topic_id: number;
-  topic_label: string;
-  keywords: string[];
-  total_papers: number;
-  periods: TimelinePeriodData[];
-}
-
-export interface TimelineDataResponse {
-  topics: TopicTimelineData[];
-  date_range: { start: string; end: string };
-  period_type: string;
-  available_zoom_levels: string[];
-  total_topics: number;
-}
 
 export interface GetTimelineDataParams {
   topic_ids?: string;
@@ -1771,20 +1626,7 @@ export function isResearchInterestDetailResponse(response: EntityDetailResponse)
 }
 
 // Performance Configuration interfaces
-export interface PerformanceConfig {
-  max_cores: number;
-  max_memory_gb: number;
-  hdbscan_n_jobs: number;
-  clustering_batch_size: number;
-  embedding_batch_size: number;
-  auto_tune_batch_size?: boolean;
-  vector_processing_workers: number;
-  enable_memory_mapping: boolean;
-  cache_embeddings: boolean;
-  aggressive_garbage_collection: boolean;
-  development_mode: boolean;
-  development_max_papers: number;
-}
+
 
 export interface SystemInfo {
   cpu_count_physical: number;

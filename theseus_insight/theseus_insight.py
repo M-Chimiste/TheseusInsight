@@ -22,6 +22,7 @@ from theseus_insight.communication import GmailCommunication, construct_email_bo
 from theseus_insight.data_processing import ArxivDataProcessor, Paper, Newsletter, Podcast
 from theseus_insight.pipeline.checkpoints import CheckpointAdapter
 from theseus_insight.pipeline.model_loading import load_inference_model
+from theseus_insight.pipeline.stages import download as download_stage
 from theseus_insight.pdf.markdown_extraction import (
     download_pdf_to_temp_file, pdf_to_markdown,
 )
@@ -1777,49 +1778,11 @@ Theseus Insight Team
             await self._init_checkpoint_manager()
             
             # -----------
-            # Stage 1: Download Papers
+            # Stage 1: Download Papers (pipeline/stages/download.py, B9)
             # -----------
-            if progress_callback:
-                progress_callback("download", 0, "Starting paper download", {"papers_discovered": 0})
-                
-            if not start_from:
-                # no stage specified, do we have an existing checkpoint for 'papers_downloaded'?
-                data_df = self._load_checkpoint('papers_downloaded')
-                if self.verbose:
-                    if data_df is None:
-                        print("No 'papers_downloaded' checkpoint. Starting fresh: downloading papers.")
-                    else:
-                        print(f"⚠️ DEBUG: Loaded 'papers_downloaded' checkpoint with {len(data_df) if hasattr(data_df, '__len__') else 'unknown'} papers")
-                
-                if data_df is None:
-                    process_data = ArxivDataProcessor(start_date=self.start_date, end_date=self.end_date)
-                    data_df = process_data.download_and_process_data()
-                    
-                    # Check if no papers were found and handle gracefully
-                    if data_df.empty:
-                        self._handle_no_papers_found()
-                        return  # Exit early since there's nothing to process
-                    
-                    self._save_checkpoint('papers_downloaded', data_df)
-            else:
-                # If we have a forced stage, see if the user wants to skip some
-                if start_from == 'papers_downloaded':
-                    data_df = self._load_checkpoint('papers_downloaded')
-                    if data_df is None:
-                        if self.verbose:
-                            print("Forcing download stage.")
-                        process_data = ArxivDataProcessor(start_date=self.start_date, end_date=self.end_date)
-                        data_df = process_data.download_and_process_data()
-                        
-                        # Check if no papers were found and handle gracefully
-                        if data_df.empty:
-                            self._handle_no_papers_found()
-                            return  # Exit early since there's nothing to process
-                        
-                        self._save_checkpoint('papers_downloaded', data_df)
-
-            if progress_callback:
-                progress_callback("download", 10, "Paper download complete", {"papers_discovered": len(data_df)})
+            data_df, exit_early = await download_stage.run(self, start_from, progress_callback)
+            if exit_early:
+                return
 
             # -----------
             # Stage 2: Embed Papers

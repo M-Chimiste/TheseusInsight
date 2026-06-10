@@ -26,6 +26,7 @@ from theseus_insight.pipeline.stages import download as download_stage
 from theseus_insight.pipeline.stages import email as email_stage
 from theseus_insight.pipeline.stages import rank as rank_stage
 from theseus_insight.pipeline.stages import newsletter_content as newsletter_content_stage
+from theseus_insight.pipeline.stages import podcast as podcast_stage
 from theseus_insight.pdf.markdown_extraction import (
     download_pdf_to_temp_file, pdf_to_markdown,
 )
@@ -2319,116 +2320,9 @@ Theseus Insight Team
             )
 
             # -----------
-            # Stage 7: Generate Podcast (if generate_podcast=True)
+            # Stage 7: Podcast (pipeline/stages/podcast.py, B9)
             # -----------
-            if progress_callback:
-                progress_callback("podcast", 90, "Starting podcast generation")
-            if self.generate_podcast:
-                # Part A: Generate Podcast Script + Audio
-                podcast_content = await self._load_checkpoint_async('podcast_script')
-                if podcast_content is None:
-                    # If we haven't built any script yet, let's do it
-                    if self.verbose:
-                        print("Generating podcast script & audio...")
-
-                    if top_n_df is None:
-                        top_n_df = await self._load_checkpoint_async('papers_ranked')
-                        if top_n_df is None:
-                            raise ValueError("Cannot generate podcast: no ranked papers found.")
-                    if sections_data is None:
-                        sections_data = await self._load_checkpoint_async('newsletter_sections')
-                        if sections_data is None:
-                            raise ValueError("Cannot generate podcast: no newsletter sections found.")
-
-                    podcast_content = self.podcast_generator.generate_podcast(
-                        pdf_paths=list(top_n_df['pdf_url']),
-                        output_format=self.output_format,
-                        output_dir=self.output_dir,
-                        prefix=self.prefix,
-                        final_filename=self.final_filename,
-                        verbose=self.verbose,
-                        visualizer=False  # We'll do visualization in next step
-                    )
-                    await self._save_checkpoint_async('podcast_script', podcast_content)
-
-                # Part B: Visualization (if visualizer=True)
-                visualized_podcast = await self._load_checkpoint_async('podcast_visualized')
-                if self.visualizer and visualized_podcast is None:
-                    if self.verbose:
-                        print("Generating podcast visualization...")
-
-                    # We re-run generate_podcast with visualizer=True
-                    # so it merges the final audio with the animation
-                    podcast_content = self.podcast_generator.generate_podcast(
-                        pdf_paths=list(top_n_df['pdf_url']),
-                        output_format=self.output_format,
-                        output_dir=self.output_dir,
-                        prefix=self.prefix,
-                        final_filename=self.final_filename,
-                        verbose=self.verbose,
-                        visualizer=True,
-                        resolution=self.resolution,
-                        fps=self.fps,
-                        matrix_count=self.matrix_count,
-                        matrix_head_color=self.matrix_head_color,
-                        matrix_tail_color=self.matrix_tail_color,
-                        matrix_char_size=self.matrix_char_size,
-                        head_step_time=self.head_step_time,
-                        random_x_jitter=self.random_x_jitter,
-                        fade_time=self.fade_time,
-                        head_glow_passes=self.head_glow_passes,
-                        head_glow_alpha_decay=self.head_glow_alpha_decay,
-                        head_spawn_delay_range=self.head_spawn_delay_range,
-                        head_saw_period=self.head_saw_period,
-                        wave_color=self.wave_color,
-                        trail_colors=self.trail_colors,
-                        glow_passes=self.glow_passes,
-                        glow_alpha_decay=self.glow_alpha_decay,
-                        line_width=self.line_width,
-                        font_path=self.font_path
-                    )
-                    await self._save_checkpoint_async('podcast_visualized', podcast_content)
-                
-                # Save the final script / transcript in DB and optional JSON
-                if podcast_content:
-                    if self.save_dialogue:
-                        if self.verbose:
-                            print("Saving podcast dialogue to JSON...")
-                        dialogue_path = os.path.join(self.output_dir, f"{self.prefix}_dialogue.json")
-                        with open(dialogue_path, "w", encoding="utf-8") as f:
-                            json.dump({
-                                "dialogue": podcast_content['dict_transcript'],
-                                "description": podcast_content['description']
-                            }, f, ensure_ascii=False, indent=2)
-
-                    # Insert a record in the DB for the final podcast
-                    if self.db_saving:
-                        podcast = Podcast(
-                            title=self.final_filename,
-                            date=TODAY.strftime('%Y-%m-%d'),
-                            script=json.dumps(podcast_content['dict_transcript']),
-                            description=podcast_content['description']
-                        )
-                        PodcastRepository.insert(podcast)
-
-                    # Part C: Publish to YouTube if requested
-                    if self.publish_podcast:
-                        video_path = (podcast_content['visualizer_path']
-                                      if self.visualizer else
-                                      podcast_content['final_podcast_path'])
-                        if self.verbose:
-                            print("Publishing to YouTube, this may take a while...")
-                        try:
-                            upload_video(
-                                video_path,
-                                title=self.final_filename,
-                                description=podcast_content['description']
-                            )
-                        except Exception as up_e:
-                            self._log_error(500, up_e)
-                            raise
-            if progress_callback:
-                progress_callback("podcast", 100, "Podcast generation complete")
+            await podcast_stage.run(self, top_n_df, sections_data, progress_callback)
 
             # -----------
             # Final Step: Mark completion, purge + cleanup

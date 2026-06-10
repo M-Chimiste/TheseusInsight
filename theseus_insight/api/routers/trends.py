@@ -38,6 +38,7 @@ from ..tasks import task_manager, TaskStatus
 from ..helpers.profile_filtering import (
     merge_id_filters, parse_id_csv, parse_tag_csv, resolve_tag_profile_ids
 )
+from ..helpers.serialization import isoformat_fields
 from ...prompt.system_prompts import TRENDS_LEGEND_LABEL_SYSTEM_PROMPT
 from LLMFactory import LLMModelFactory
 
@@ -71,15 +72,7 @@ def _get_profile_timeline_data(
 
 def _convert_timestamps(data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
-    converted = data.copy()
-    
-    # Convert timestamp fields
-    for field in ['created_at', 'updated_at', 'period_start', 'period_end']:
-        if field in converted and converted[field] is not None:
-            if isinstance(converted[field], (datetime, date)):
-                converted[field] = converted[field].isoformat()
-    
-    return converted
+    return isoformat_fields(data, ('created_at', 'updated_at', 'period_start', 'period_end'))
 
 
 def _format_topic_response(topic_data: dict) -> TopicApiResponse:

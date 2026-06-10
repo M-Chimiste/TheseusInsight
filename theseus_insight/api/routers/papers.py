@@ -18,18 +18,11 @@ from ...data_access.profiles import ProfileScoreRepository
 from ..helpers.profile_filtering import (
     merge_id_filters, parse_id_csv, parse_tag_csv, resolve_tag_profile_ids
 )
+from ..helpers.serialization import isoformat_fields
 
 def _convert_paper_timestamps(paper_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
-    converted = paper_data.copy()
-    
-    # Convert date fields
-    if 'date' in converted and isinstance(converted['date'], (datetime, date)):
-        converted['date'] = converted['date'].isoformat()
-    if 'date_run' in converted and isinstance(converted['date_run'], (datetime, date)):
-        converted['date_run'] = converted['date_run'].isoformat()
-        
-    return converted
+    return isoformat_fields(paper_data, ('date', 'date_run'))
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
 

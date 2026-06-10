@@ -18,6 +18,7 @@ from ...data_access import (
     TaskRepository,
 )
 from ..tasks import task_manager, TaskStatus
+from ..helpers.serialization import isoformat_fields
 from ...theseus_insight import TheseusInsight
 
 router = APIRouter(tags=["newsletters-and-podcasts"])
@@ -450,17 +451,12 @@ async def generate_podcast_pipeline(
         raise HTTPException(status_code=500, detail=f"Internal server error processing podcast request: {str(e)}")
 
 def _convert_podcast_timestamps(podcast_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert PostgreSQL datetime objects to ISO format strings for API responses."""
-    converted = podcast_data.copy()
-    
-    # Convert date field if it's a datetime/date object
-    if 'date' in converted and hasattr(converted['date'], 'strftime'):
-        converted['date'] = converted['date'].strftime('%Y-%m-%d')
-    elif 'date' in converted and converted['date'] is not None:
-        # Ensure it's a string
-        converted['date'] = str(converted['date'])
-    
-    return converted
+    """Convert PostgreSQL datetime objects to ISO format strings for API responses.
+
+    The podcasts.date column is DATE, so isoformat() equals the old
+    strftime('%Y-%m-%d') output.
+    """
+    return isoformat_fields(podcast_data, ('date',))
 
 @router.get("/api/podcasts/history", response_model=List[PodcastListItemResponse])
 async def get_podcast_history_list():

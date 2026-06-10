@@ -4,20 +4,13 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from ...data_access import LogsRepository, TaskRepository
+from ..helpers.serialization import isoformat_fields
 
 router = APIRouter(prefix="/api", tags=["logs"])
 
 def _convert_task_timestamps(task_dict: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for Pydantic models."""
-    task_copy = task_dict.copy()
-    
-    # Handle datetime fields - PostgreSQL returns datetime objects directly
-    for field in ['start_time', 'end_time', 'datetime_run']:
-        if task_copy.get(field):
-            if isinstance(task_copy[field], datetime):
-                task_copy[field] = task_copy[field].isoformat()
-    
-    return task_copy
+    return isoformat_fields(task_dict, ('start_time', 'end_time', 'datetime_run'))
 
 # Pydantic model for Log entries
 class LogEntry(BaseModel):

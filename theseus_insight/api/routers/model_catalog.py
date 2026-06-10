@@ -11,6 +11,7 @@ from ..models import (
     ModelCatalogSearchResponse
 )
 from ...data_access import ModelCatalogRepository
+from ..helpers.serialization import isoformat_fields
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +20,7 @@ router = APIRouter(prefix="/api/model-catalog", tags=["model-catalog"])
 
 def _convert_model_timestamps(model_dict: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for Pydantic models."""
-    model_copy = model_dict.copy()
-    
-    # Handle datetime fields - PostgreSQL returns datetime objects directly
-    for field in ['created_at', 'updated_at']:
-        if model_copy.get(field):
-            if isinstance(model_copy[field], datetime):
-                model_copy[field] = model_copy[field].isoformat()
-    
-    return model_copy
+    return isoformat_fields(model_dict, ('created_at', 'updated_at'))
 
 @router.post("/", response_model=ModelCatalogEntry)
 async def create_model(model_data: ModelCatalogCreateRequest):

@@ -23,28 +23,14 @@ from ...data_access.settings import SettingsRepository
 from ...data_access.star_map import ProfileStarMapRepository
 from ..tasks import task_manager, TaskStatus
 from ..helpers.profile_filtering import parse_id_csv, parse_tag_csv
+from ..helpers.serialization import decode_json_fields, isoformat_fields
 from ...theseus_insight import TheseusInsight
 
 
 def _convert_profile_timestamps(profile_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
-    converted = profile_data.copy()
-    
-    # Convert datetime fields
-    for field in ['created_at', 'updated_at']:
-        if field in converted and isinstance(converted[field], datetime):
-            converted[field] = converted[field].isoformat()
-    
-    # Parse JSON fields
-    for field in ['tags', 'email_recipients', 'arxiv_filters']:
-        if field in converted and converted[field] is not None:
-            if isinstance(converted[field], str):
-                try:
-                    converted[field] = json.loads(converted[field])
-                except (json.JSONDecodeError, TypeError):
-                    converted[field] = None
-    
-    return converted
+    converted = isoformat_fields(profile_data, ('created_at', 'updated_at'))
+    return decode_json_fields(converted, ('tags', 'email_recipients', 'arxiv_filters'))
 
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
@@ -1235,12 +1221,4 @@ async def estimate_bulk_judge_run(
 
 def _convert_paper_timestamps(paper_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
-    converted = paper_data.copy()
-    
-    # Convert date fields
-    for field in ['date', 'date_run', 'created_at', 'updated_at']:
-        if field in converted and converted[field] is not None:
-            if hasattr(converted[field], 'isoformat'):
-                converted[field] = converted[field].isoformat()
-    
-    return converted 
+    return isoformat_fields(paper_data, ('date', 'date_run', 'created_at', 'updated_at')) 

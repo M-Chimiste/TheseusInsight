@@ -1187,3 +1187,70 @@ class BulkDataCheckResponse(BaseModel):
     start_date: str
     end_date: str
     has_all_embeddings: bool
+
+
+# --- Bulk-operations request/response models (moved from the router in B7) ---
+class HarvestJudgeRequest(BaseModel):
+    date_from: str = Field(..., description="Start date in YYYY-MM-DD format")
+    date_to: str = Field(..., description="End date in YYYY-MM-DD format")
+    top_n: int = Field(5, description="Number of top papers to select")
+    cosine_threshold: float = Field(0.5, description="Cosine similarity threshold")
+    update_existing: bool = Field(False, description="Whether to update existing papers")
+    batch_size: int = Field(100, description="Batch size for processing")
+    max_workers: int = Field(10, description="Maximum number of workers")
+    rate_limit_requests: int = Field(5, description="Rate limit requests per second")
+    
+class BulkJudgeRequest(BaseModel):
+    # Profile selection
+    profile_ids: Optional[List[str]] = Field(None, description="List of profile IDs to judge")
+    all_profiles: bool = Field(False, description="Judge all profiles")
+
+    # Paper filtering
+    limit: Optional[int] = Field(None, description="Limit number of papers to judge")
+    start_date: Optional[str] = Field(None, description="Start date for papers")
+    end_date: Optional[str] = Field(None, description="End date for papers")
+    use_profile_arxiv_filters: bool = Field(True, description="Use arXiv category filters from selected profiles (if available)")
+
+    # Multi-server configuration
+    use_multi_server: bool = Field(False, description="Use multiple Ollama servers for distributed processing")
+    server_ids: Optional[List[int]] = Field(None, description="Specific server IDs to use (if not provided, uses all enabled servers)")
+    request_timeout_sec: Optional[int] = Field(None, description="Request timeout in seconds (uses global default if not provided)")
+    max_retries: Optional[int] = Field(None, description="Max retries per error type (uses global default if not provided)")
+
+    # Scheduler and job management
+    suspend_scheduled_tasks: bool = Field(True, description="Suspend background scheduled tasks during bulk job")
+    overwrite_existing: bool = Field(False, description="Overwrite existing scores instead of skipping")
+
+    # Processing configuration
+    batch_size: int = Field(100, description="Batch size for processing")
+    
+class BackfillEmbeddingsRequest(BaseModel):
+    limit: Optional[int] = Field(None, description="Limit number of papers to process")
+    batch_size: int = Field(100, description="Batch size for processing")
+    start_date: Optional[str] = Field(None, description="Start date for papers")
+    end_date: Optional[str] = Field(None, description="End date for papers")
+    
+class BackfillKeywordsRequest(BaseModel):
+    limit: Optional[int] = Field(None, description="Limit number of papers to process")
+    batch_size: int = Field(100, description="Batch size for processing")
+    start_date: Optional[str] = Field(None, description="Start date for papers")
+    end_date: Optional[str] = Field(None, description="End date for papers")
+
+# Response models
+class JobStartResponse(BaseModel):
+    job_id: UUID
+    job_type: str
+    status: str
+    message: str
+    
+class JobStatusResponse(BaseModel):
+    job_id: UUID
+    job_type: str
+    status: str
+    progress_current: int
+    progress_total: Optional[int]
+    progress_percent: float
+    error_message: Optional[str]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    last_checkpoint_at: Optional[datetime]

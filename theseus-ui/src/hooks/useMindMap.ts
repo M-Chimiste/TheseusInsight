@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { mindMapApi, createWebSocket } from '../services/api';
+import { mindMapApi } from '../services/api';
+import { TaskChannel } from '../services/taskChannel';
 import type { 
   PaperApiResponse, 
   MindMapExpandRequest, 
@@ -36,7 +37,7 @@ export const useMindMap = (): UseMindMapReturn => {
     seedPaper: null,
   });
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const channelRef = useRef<TaskChannel | null>(null);
   // Flag to indicate whether the current operation is an incremental expand (merge) rather than a full regeneration
   const mergeModeRef = useRef<boolean>(false);
   const generationColorRef = useRef<number>(0);
@@ -44,9 +45,9 @@ export const useMindMap = (): UseMindMapReturn => {
 
   // Cleanup WebSocket connection
   const cleanupWebSocket = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (channelRef.current) {
+      channelRef.current.disconnect();
+      channelRef.current = null;
     }
     currentTaskIdRef.current = null;
   }, []);
@@ -223,28 +224,26 @@ export const useMindMap = (): UseMindMapReturn => {
       // Add a small delay to ensure backend task is ready
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Setup WebSocket connection for progress updates
-      const ws = createWebSocket(taskId, 'mindmap');
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('✅ Mind-map WebSocket connected with task ID:', taskId);
-      };
-
-      ws.onmessage = handleWebSocketMessage;
-
-      ws.onclose = (_event) => {
-        cleanupWebSocket();
-      };
-
-      ws.onerror = (error) => {
-        console.error('Mind-map WebSocket error:', error);
-        setState(prevState => ({
-          ...prevState,
-          isLoading: false,
-          error: 'Connection error during mind-map generation',
-        }));
-      };
+      // Setup the progress channel (TaskChannel owns the WS lifecycle, F4)
+      const channel = new TaskChannel('mindmap', taskId, {
+        onOpen: () => {
+          console.log('✅ Mind-map WebSocket connected with task ID:', taskId);
+        },
+        onMessage: (_payload, event) => handleWebSocketMessage(event),
+        onClose: () => {
+          cleanupWebSocket();
+        },
+        onError: (error) => {
+          console.error('Mind-map WebSocket error:', error);
+          setState(prevState => ({
+            ...prevState,
+            isLoading: false,
+            error: 'Connection error during mind-map generation',
+          }));
+        },
+      }, { storage: null });
+      channelRef.current = channel;
+      channel.connect();
 
     } catch (error) {
       console.error('Error starting mind-map generation:', error);
@@ -330,27 +329,25 @@ export const useMindMap = (): UseMindMapReturn => {
         // Wait briefly then open websocket for updates
         await new Promise(res => setTimeout(res, 100));
 
-        const ws = createWebSocket(taskId, 'mindmap');
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          console.log('✅ Incremental expand WebSocket connected', taskId);
-        };
-
-        ws.onmessage = handleWebSocketMessage;
-
-        ws.onclose = () => {
-          cleanupWebSocket();
-        };
-
-        ws.onerror = (err) => {
-          console.error('Incremental expand WS error', err);
-          setState(prev => ({
-            ...prev,
-            isLoading: false,
-            error: 'Connection error during node expansion',
-          }));
-        };
+        const channel = new TaskChannel('mindmap', taskId, {
+          onOpen: () => {
+            console.log('✅ Incremental expand WebSocket connected', taskId);
+          },
+          onMessage: (_payload, event) => handleWebSocketMessage(event),
+          onClose: () => {
+            cleanupWebSocket();
+          },
+          onError: (err) => {
+            console.error('Incremental expand WS error', err);
+            setState(prev => ({
+              ...prev,
+              isLoading: false,
+              error: 'Connection error during node expansion',
+            }));
+          },
+        }, { storage: null });
+        channelRef.current = channel;
+        channel.connect();
       } catch (err) {
         console.error('Error starting incremental expansion', err);
         mergeModeRef.current = false;

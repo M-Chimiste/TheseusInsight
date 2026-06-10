@@ -21,6 +21,7 @@ import uuid
 from theseus_insight.communication import GmailCommunication, construct_email_body, upload_video
 from theseus_insight.data_processing import ArxivDataProcessor, Paper, Newsletter, Podcast
 from theseus_insight.pipeline.checkpoints import CheckpointAdapter
+from theseus_insight.pipeline.model_loading import load_inference_model
 from theseus_insight.pdf.markdown_extraction import (
     download_pdf_to_temp_file, pdf_to_markdown,
 )
@@ -379,55 +380,17 @@ class TheseusInsight:
         host=None,
         request_timeout_sec=None,
     ):
-        """Load the appropriate inference model based on model type."""
+        """Load the appropriate inference model (pipeline/model_loading.py, B8)."""
         try:
-            if model_type == "anthropic":
-                if ANTHROPIC_API_KEY is None:
-                    raise ValueError("Anthropic API key is not set.")
-                from LLMFactory.providers import AnthropicInference
-                return AnthropicInference(model_name, max_new_tokens, temperature)
-
-            elif model_type == "openai":
-                if OPENAI_API_KEY is None:
-                    raise ValueError("OpenAI API key is not set.")
-                from LLMFactory.providers import OpenAIInference
-                return OpenAIInference(model_name, max_new_tokens, temperature)
-
-            elif model_type == "gemini":
-                if GOOGLE_API_KEY is None:
-                    raise ValueError("Google API key is not set.")
-                from LLMFactory.providers import GeminiInference
-                return GeminiInference(model_name, max_new_tokens, temperature)
-
-            elif model_type == "ollama":
-                from LLMFactory.providers import OllamaInference
-                ollama_url = host or OLLAMA_URL
-                kwargs = {
-                    'model_name': model_name,
-                    'max_new_tokens': max_new_tokens,
-                    'temperature': temperature,
-                    'url': ollama_url
-                }
-                if num_ctx is not None:
-                    kwargs['num_ctx'] = num_ctx
-                return OllamaInference(**kwargs)
-
-            elif model_type == "lmstudio":
-                from theseus_insight.utils.lmstudio_client import get_lmstudio_client
-                # LMStudio needs host parameter instead of url
-                # Respect explicit config first, then env, then localhost default
-                lmstudio_host = host or os.getenv('LMSTUDIO_HOST', 'localhost:1234')
-                return get_lmstudio_client(
-                    model_name=model_name,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    host=lmstudio_host,
-                    context_length=num_ctx,
-                    request_timeout_sec=request_timeout_sec,
-                )
-
-            else:
-                raise ValueError(f"Invalid model type: {model_type}")
+            return load_inference_model(
+                model_type,
+                model_name,
+                max_new_tokens,
+                temperature,
+                num_ctx=num_ctx,
+                host=host,
+                request_timeout_sec=request_timeout_sec,
+            )
         except Exception as e:
             self._log_error(500, e)
             raise

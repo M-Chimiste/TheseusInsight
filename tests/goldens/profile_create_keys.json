@@ -1,0 +1,14 @@
+[
+  "arxiv_filters",
+  "color",
+  "created_at",
+  "description",
+  "email_recipients",
+  "id",
+  "is_active",
+  "is_default",
+  "name",
+  "tags",
+  "total_papers",
+  "updated_at"
+]

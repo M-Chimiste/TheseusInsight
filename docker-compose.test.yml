@@ -1,0 +1,20 @@
+# Ephemeral PostgreSQL for the characterization-test suite (make test-db).
+# Mirrors the production image in docker-compose.yml; port 5434 avoids both
+# the default 5432 and db-external's 5433. Data is tmpfs — wiped on restart.
+services:
+  test-db:
+    image: pgvector/pgvector:pg14
+    container_name: theseus_test_db
+    environment:
+      POSTGRES_USER: theseus
+      POSTGRES_PASSWORD: theseus
+      POSTGRES_DB: theseus_test
+    ports:
+      - "5434:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U theseus -d theseus_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15

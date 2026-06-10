@@ -1,0 +1,9 @@
+[
+  "cpu_count_logical",
+  "cpu_count_physical",
+  "gpu_available",
+  "gpu_name",
+  "memory_available_gb",
+  "memory_total_gb",
+  "recommended_config"
+]

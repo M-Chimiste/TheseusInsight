@@ -1,0 +1,19 @@
+[
+  "arxiv_filters",
+  "average_score",
+  "color",
+  "created_at",
+  "description",
+  "email_recipients",
+  "id",
+  "interest_count",
+  "is_active",
+  "is_default",
+  "name",
+  "relevant_papers",
+  "research_interests",
+  "tags",
+  "total_papers",
+  "total_scored_papers",
+  "updated_at"
+]

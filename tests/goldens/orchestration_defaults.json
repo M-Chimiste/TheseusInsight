@@ -1,0 +1,193 @@
+{
+  "content_extraction_model": {
+    "context_length": null,
+    "gpu_offload": null,
+    "host": null,
+    "max_new_tokens": 16000,
+    "model_name": "qwen3.6-35b-a3b-mtp",
+    "model_type": "lmstudio",
+    "num_ctx": 262144,
+    "temperature": 1.0,
+    "trust_remote_code": null
+  },
+  "embedding_model": {
+    "context_length": null,
+    "gpu_offload": null,
+    "host": null,
+    "max_new_tokens": null,
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
+    "model_type": "sentence-transformers",
+    "num_ctx": null,
+    "temperature": null,
+    "trust_remote_code": true
+  },
+  "judge_model": {
+    "context_length": null,
+    "gpu_offload": null,
+    "host": null,
+    "max_new_tokens": 4096,
+    "model_name": "lfm2.5-8b-a1b",
+    "model_type": "lmstudio",
+    "num_ctx": 131072,
+    "temperature": 0.1,
+    "trust_remote_code": null
+  },
+  "mind_map_config": {
+    "expansion_order": 2,
+    "k": 15,
+    "layout_algorithm": "force",
+    "max_nodes_per_order": 20,
+    "similarity_threshold": 0.3,
+    "summarization_model": {
+      "context_length": null,
+      "gpu_offload": null,
+      "host": null,
+      "max_new_tokens": 512,
+      "model_name": "granite-4.0-h-micro",
+      "model_type": "lmstudio",
+      "num_ctx": 8192,
+      "temperature": 0.3,
+      "trust_remote_code": null
+    }
+  },
+  "newsletter_intro_model": {
+    "context_length": null,
+    "gpu_offload": null,
+    "host": null,
+    "max_new_tokens": 16000,
+    "model_name": "qwen3.6-35b-a3b-mtp",
+    "model_type": "lmstudio",
+    "num_ctx": 262144,
+    "temperature": 1.0,
+    "trust_remote_code": null
+  },
+  "newsletter_sections_model": {
+    "context_length": null,
+    "gpu_offload": null,
+    "host": null,
+    "max_new_tokens": 16000,
+    "model_name": "qwen3.6-35b-a3b-mtp",
+    "model_type": "lmstudio",
+    "num_ctx": 262144,
+    "temperature": 1.0,
+    "trust_remote_code": null
+  },
+  "podcast_model": {
+    "context_length": null,
+    "gpu_offload": null,
+    "host": null,
+    "max_new_tokens": 4096,
+    "model_name": "gemini-flash-latest",
+    "model_type": "gemini",
+    "num_ctx": 131072,
+    "temperature": 0.2,
+    "trust_remote_code": null
+  },
+  "research_agent_model_config": {
+    "answer_generator_model": {
+      "context_length": null,
+      "gpu_offload": null,
+      "host": null,
+      "max_new_tokens": 4096,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "num_ctx": null,
+      "temperature": 0.3,
+      "trust_remote_code": null
+    },
+    "arxiv_rate_limit": 3.0,
+    "boss_model": {
+      "context_length": null,
+      "gpu_offload": null,
+      "host": null,
+      "max_new_tokens": 4096,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "num_ctx": null,
+      "temperature": 0.1,
+      "trust_remote_code": null
+    },
+    "compress_to_ratio": 0.2,
+    "compression_model": {
+      "context_length": null,
+      "gpu_offload": null,
+      "host": null,
+      "max_new_tokens": 4096,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "num_ctx": null,
+      "temperature": 0.1,
+      "trust_remote_code": null
+    },
+    "default_worker": "summary",
+    "evidence_selector_model": {
+      "context_length": null,
+      "gpu_offload": null,
+      "host": null,
+      "max_new_tokens": 2048,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "num_ctx": null,
+      "temperature": 0.1,
+      "trust_remote_code": null
+    },
+    "initial_rerank_top_k": 40,
+    "max_research_context_tokens": 15000,
+    "max_research_loops": 3,
+    "max_retries": 3,
+    "query_planner_model": {
+      "context_length": null,
+      "gpu_offload": null,
+      "host": null,
+      "max_new_tokens": 1024,
+      "model_name": "gpt-4",
+      "model_type": "openai",
+      "num_ctx": null,
+      "temperature": 0.1,
+      "trust_remote_code": null
+    },
+    "worker_models": {
+      "analysis": {
+        "context_length": null,
+        "gpu_offload": null,
+        "host": null,
+        "max_new_tokens": 2048,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "num_ctx": null,
+        "temperature": 0.1,
+        "trust_remote_code": null
+      },
+      "search": {
+        "context_length": null,
+        "gpu_offload": null,
+        "host": null,
+        "max_new_tokens": 1024,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "num_ctx": null,
+        "temperature": 0.1,
+        "trust_remote_code": null
+      },
+      "summary": {
+        "context_length": null,
+        "gpu_offload": null,
+        "host": null,
+        "max_new_tokens": 2048,
+        "model_name": "gpt-4",
+        "model_type": "openai",
+        "num_ctx": null,
+        "temperature": 0.1,
+        "trust_remote_code": null
+      }
+    }
+  },
+  "tts_model": {
+    "speaker_1_speed": 1.0,
+    "speaker_1_voice": "sage",
+    "speaker_2_speed": 1.0,
+    "speaker_2_voice": "ash",
+    "tts_model_name": "tts-1",
+    "tts_provider": "openai"
+  }
+}

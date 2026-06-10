@@ -6,6 +6,20 @@
 
 ## Recent Changes
 
+### Ship of Theseus Refactor — B7 complete + F2 (2026-06-10, session 3)
+
+**B7 part 3 — newsletter service:** `services/newsletter_run_service.py` owns the custom newsletter run (profile/recipient resolution — tag ids UNION explicit ids, unlike papers/trends intersect; cross-thread progress callback; orchestration-config load; multi-server job creation; TheseusInsight run). Router endpoint keeps validation + enqueue (581 → 379 lines).
+
+**B7 part 4 — bulk-operations services:** router 2,734 → 1,387 lines. 24 functions moved: `services/harvest_service.py` (arXiv download-for-range, embedding preflight, profile-filter merging, backfill tasks), `services/bulk_judge_service.py` (submission core incl. the nested download+embed+judge pipeline, worker subprocess launch/monitor/signals, conflict checks), `services/scheduling.py` (APScheduler suspend/restore). Six Pydantic request/response models moved to api/models.py. **Preserved contracts:** papers.py imports `_start_bulk_judge_operation` + `BulkJudgeRequest` from the router; websockets.py imports `get_job_metrics` — all re-exported and verified. Function names kept verbatim (underscores included) for a mechanical diff.
+
+**B7 part 5 — 500→400 fix:** the pinned bugs are fixed — get_papers and get_trending_topics now have `except HTTPException: raise` guards so the intended 400 for malformed profile_ids reaches clients; characterization tests updated to assert 400.
+
+**F2 — OpenAPI→TypeScript codegen:** `scripts/dump_openapi.py` (offline spec dump; needs reachable DB), checked-in `theseus-ui/openapi.json` + `src/services/generated/schema.d.ts` (`npm run generate:api`), `generated/types.ts` re-export shim. **28 of 94 hand-written api.ts types are now generated-type aliases**; 23 name-matching types conflicted under strict tsc and are kept hand-written under a `TODO(codegen)` block in api.ts — re-alias as backend models tighten (Research*/MindMap* families need real Pydantic models instead of Dict[str,Any]; several request models mark defaulted fields required in the schema). **Drift bug found:** Settings.tsx `auto_tune_batch_size` doesn't exist in backend PerformanceConfig — UI toggle silently dropped (spawned as separate task).
+
+Suite: 44 backend tests green; frontend tsc-strict 0 errors, vitest 4/4, eslint at baseline.
+
+**Next per roadmap:** F3 (Settings.tsx 2,974 → ~300 via components/settings/*), then B8–B9 (god-class decomposition — checkpoint formats frozen, kill-and-resume tests gate it), F4–F5, B10.
+
 ### Ship of Theseus Refactor — B4–B6 + B7 parts 1–2 (2026-06-10, session 2)
 
 **B4 — async bridge:** `db/async_bridge.py` (`run_repo` = asyncio.to_thread wrapper) adopted on the heaviest read paths: papers DB-level pagination, trends dashboard/timeline fetches. `db/README.md` documents the pool policy (sync psycopg canonical; asyncpg confined to the checkpoint/jobs island — no new users).

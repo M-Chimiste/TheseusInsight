@@ -35,6 +35,9 @@ from ...data_access import (
     ProfilePaperInterestsRepository, ProfileInterestMetricsRepository, ProfileInterestsRepository
 )
 from ..tasks import task_manager, TaskStatus
+from ..helpers.profile_filtering import (
+    merge_id_filters, parse_id_csv, parse_tag_csv, resolve_tag_profile_ids
+)
 from ...prompt.system_prompts import TRENDS_LEGEND_LABEL_SYSTEM_PROMPT
 from LLMFactory import LLMModelFactory
 
@@ -176,32 +179,18 @@ async def get_trending_topics(
             raise HTTPException(status_code=400, detail="Invalid duration_months. Must be 1, 3, 6, 12, or 24")
         
         # Handle profile filtering
-        resolved_profile_ids = None
-        
-        # Parse profile_ids from comma-separated string
-        if profile_ids:
-            try:
-                resolved_profile_ids = [int(pid.strip()) for pid in profile_ids.split(',')]
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid profile_ids format. Must be comma-separated integers.")
-        
+        resolved_profile_ids = parse_id_csv(
+            profile_ids,
+            detail="Invalid profile_ids format. Must be comma-separated integers.",
+            skip_blank=False,  # original raised 400 on blank segments like "1,"
+        )
+
         # Handle tag-based profile filtering
         if profile_tag or profile_tags:
-            tag_list = []
-            if profile_tag:
-                tag_list.append(profile_tag)
-            if profile_tags:
-                tag_list.extend([tag.strip() for tag in profile_tags.split(',')])
-            
-            # Get profiles with these tags
-            profiles_with_tags = ProfileRepository.get_by_tags(tag_list)
-            tag_based_profile_ids = [p['id'] for p in profiles_with_tags]
-            
-            # Combine with explicit profile IDs if provided
-            if resolved_profile_ids:
-                resolved_profile_ids = list(set(resolved_profile_ids) & set(tag_based_profile_ids))
-            else:
-                resolved_profile_ids = tag_based_profile_ids
+            tag_list = parse_tag_csv(profile_tag, profile_tags)
+            resolved_profile_ids = merge_id_filters(
+                resolved_profile_ids, resolve_tag_profile_ids(tag_list)
+            )
         
         # Get dashboard data using the requested period type (which may be aggregated from weekly data)
         dashboard_data = TrendsRepository.get_dashboard_data(
@@ -307,20 +296,14 @@ async def get_timeline_data(
             )
 
         # Parse profile_ids if provided
-        parsed_profile_ids: Optional[List[int]] = None
-        if profile_ids:
-            try:
-                parsed_profile_ids = [int(pid.strip()) for pid in profile_ids.split(",") if pid.strip()]
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid profile_ids format. Use comma-separated integers.")
+        parsed_profile_ids = parse_id_csv(
+            profile_ids, detail="Invalid profile_ids format. Use comma-separated integers."
+        )
 
         # Parse topic_ids if provided
-        parsed_ids: Optional[List[int]] = None
-        if topic_ids:
-            try:
-                parsed_ids = [int(tid.strip()) for tid in topic_ids.split(",") if tid.strip()]
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid topic_ids format. Use comma-separated integers.")
+        parsed_ids = parse_id_csv(
+            topic_ids, detail="Invalid topic_ids format. Use comma-separated integers."
+        )
 
         # If no IDs specified, get top trending items based on source
         if not parsed_ids:

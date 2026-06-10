@@ -17,3 +17,44 @@ def test_trends_system_info_keys(client, empty_db, golden):
 def test_trends_research_interests_empty(client, empty_db):
     resp = client.get("/api/trends/research-interests")
     assert resp.status_code == 200
+
+
+def test_trends_profile_filters_accepted(client, seeded_data):
+    """Exercise the id/tag filter resolution paths (extracted in B2)."""
+    by_ids = client.get(
+        "/api/trends", params={"profile_ids": str(seeded_data["test_profile_id"])}
+    )
+    assert by_ids.status_code == 200
+
+    by_tag = client.get("/api/trends", params={"profile_tag": "ml"})
+    assert by_tag.status_code == 200
+
+    both = client.get(
+        "/api/trends",
+        params={"profile_ids": str(seeded_data["test_profile_id"]), "profile_tags": "ml"},
+    )
+    assert both.status_code == 200
+
+
+def test_trends_invalid_profile_ids_response(client, empty_db):
+    """CURRENT behavior: like papers, the intended 400 is swallowed by the
+    endpoint's blanket `except Exception` and re-raised as 500. Pinned as-is;
+    fix deliberately in a later phase together with the papers one."""
+    resp = client.get("/api/trends", params={"profile_ids": "abc"})
+    assert resp.status_code == 500
+    assert "Invalid profile_ids format" in resp.json()["detail"]
+
+
+def test_papers_profile_tag_filter(client, seeded_data):
+    """Tag filter resolves to the Test Profile and its scored papers."""
+    resp = client.get("/api/papers", params={"profile_tag": "ml"})
+    assert resp.status_code == 200
+    titles = sorted(p["title"] for p in resp.json()["items"])
+    assert titles == ["Alpha Paper", "Beta Paper"]
+
+    # CURRENT behavior: a tag matching no profiles resolves to an empty id
+    # list, which the repository layer treats as "no filter" — all papers
+    # come back. Pinned as-is (matches pre-refactor semantics).
+    none = client.get("/api/papers", params={"profile_tag": "no-such-tag"})
+    assert none.status_code == 200
+    assert len(none.json()["items"]) == 3

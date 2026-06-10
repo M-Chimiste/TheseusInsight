@@ -22,6 +22,7 @@ from ...data_access.papers import PaperRepository
 from ...data_access.settings import SettingsRepository
 from ...data_access.star_map import ProfileStarMapRepository
 from ..tasks import task_manager, TaskStatus
+from ..helpers.profile_filtering import parse_id_csv, parse_tag_csv
 from ...theseus_insight import TheseusInsight
 
 
@@ -1161,14 +1162,10 @@ async def estimate_bulk_judge_run(
     - Total scoring operations
     """
     try:
-        # Parse profile IDs and tags
-        profile_id_list = []
-        if profile_ids:
-            profile_id_list = [int(id.strip()) for id in profile_ids.split(',') if id.strip()]
-        
-        profile_tag_list = []
-        if profile_tags:
-            profile_tag_list = [tag.strip() for tag in profile_tags.split(',') if tag.strip()]
+        # Parse profile IDs and tags (no detail= : a bad value propagates to
+        # this endpoint's blanket handler, as before)
+        profile_id_list = parse_id_csv(profile_ids) or []
+        profile_tag_list = parse_tag_csv(None, profile_tags)
         
         # Create mock request for estimation
         mock_request = BulkJudgeRunRequest(

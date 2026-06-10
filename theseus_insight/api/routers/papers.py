@@ -15,6 +15,9 @@ from ...data_access import (
     PaperRepository, SettingsRepository
 )
 from ...data_access.profiles import ProfileScoreRepository
+from ..helpers.profile_filtering import (
+    merge_id_filters, parse_id_csv, parse_tag_csv, resolve_tag_profile_ids
+)
 
 def _convert_paper_timestamps(paper_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
@@ -86,41 +89,25 @@ async def get_papers(
     try:
         # Parse profile filtering parameters
         profile_filter_params = {}
-        
+
         # Handle profile ID filtering
         if profile_id is not None:
             profile_filter_params['profile_ids'] = [profile_id]
         elif profile_ids is not None:
-            # Parse comma-separated profile IDs
-            try:
-                profile_filter_params['profile_ids'] = [
-                    int(id.strip()) for id in profile_ids.split(',') if id.strip()
-                ]
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid profile IDs format")
-        
+            # `is not None` on purpose: an explicit empty string filters to
+            # nothing (original behavior), unlike trends which ignores it.
+            profile_filter_params['profile_ids'] = (
+                parse_id_csv(profile_ids, detail="Invalid profile IDs format") or []
+            )
+
         # Handle profile tag filtering - need to resolve tags to profile IDs
         if profile_tag is not None or profile_tags is not None:
-            from ...data_access.profiles import ProfileRepository
-            
-            tags_to_search = []
-            if profile_tag:
-                tags_to_search.append(profile_tag)
-            if profile_tags:
-                tags_to_search.extend([tag.strip() for tag in profile_tags.split(',') if tag.strip()])
-            
+            tags_to_search = parse_tag_csv(profile_tag, profile_tags)
             if tags_to_search:
-                tag_profiles = ProfileRepository.get_by_tags(tags_to_search)
-                tag_profile_ids = [p['id'] for p in tag_profiles if p['is_active']]
-                
-                # Merge with existing profile IDs if any
-                existing_profile_ids = profile_filter_params.get('profile_ids', [])
-                if existing_profile_ids:
-                    # Intersection - only profiles that match both criteria
-                    profile_filter_params['profile_ids'] = list(set(existing_profile_ids) & set(tag_profile_ids))
-                else:
-                    # Union - all profiles with the specified tags
-                    profile_filter_params['profile_ids'] = tag_profile_ids
+                profile_filter_params['profile_ids'] = merge_id_filters(
+                    profile_filter_params.get('profile_ids', []),
+                    resolve_tag_profile_ids(tags_to_search),
+                )
         
         # Add profile score filtering
         if min_profile_score is not None:

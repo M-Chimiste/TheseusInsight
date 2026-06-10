@@ -35,8 +35,6 @@ import type { PerformanceConfig, SystemInfo } from '../services/api';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import SpeedIcon from '@mui/icons-material/Speed';
 import MemoryIcon from '@mui/icons-material/Memory';
 import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
@@ -52,23 +50,9 @@ import { ScheduledTasksSettings } from '../components/ScheduledTasksSettings';
 import OllamaServersSettings from '../components/OllamaServersSettings';
 import { TabPanel } from '../components/settings/TabPanel';
 import { ModelNameAutocomplete } from '../components/settings/ModelNameAutocomplete';
+import { CredentialsSettings } from '../components/settings/CredentialsSettings';
 import type { ModelCatalogOption } from '../components/settings/ModelNameAutocomplete';
 
-const CREDENTIAL_KEYS = [
-  'GOOGLE_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'GMAIL_SENDER_ADDRESS',
-  'GMAIL_APP_PASSWORD',
-  'OLLAMA_URL',
-  'CLIENT_ID',
-  'PROJECT_ID',
-  'CLIENT_SECRET',
-  'CUSTOM_OAI_BASE_URL',
-  'CUSTOM_OAI_API_KEY',
-  'KAGGLE_USERNAME',
-  'KAGGLE_KEY',
-];
 
 const MODEL_TABS = [
   { key: 'embedding_model', label: 'Embedding Model', tooltip: 'Used for vector search and similarity.' },
@@ -251,22 +235,6 @@ const Settings: React.FC = () => {
       setSuccess('Multi-agent configuration updated successfully');
     },
     onError: (error: any) => setError(error.message || 'Failed to update multi-agent configuration'),
-  });
-
-  const [appPasswordFailed, setAppPasswordFailed] = useState(false);
-
-  const { data: credentials } = useQuery({
-    queryKey: ['credentials'],
-    queryFn: () => settingsApi.getCredentials().then(res => res.data),
-  });
-
-  const updateCredentialsMutation = useMutation({
-    mutationFn: (data: any) => settingsApi.updateCredentials(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['credentials'] });
-      setSuccess('Credentials updated');
-    },
-    onError: (error: any) => setError(error.message),
   });
 
   const exportDatabaseMutation = useMutation({
@@ -456,8 +424,6 @@ const Settings: React.FC = () => {
     onError: (error: any) => setImportError(error.message || 'Failed to start database import'),
   });
 
-  const [credValues, setCredValues] = useState<Record<string, string>>({});
-  const [showCreds, setShowCreds] = useState<Record<string, boolean>>({});
 
   // Performance Configuration State
   const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig | null>(null);
@@ -518,12 +484,6 @@ const Settings: React.FC = () => {
       updatePerformanceConfigMutation.mutate(performanceConfig);
     }
   };
-
-  useEffect(() => {
-    if (credentials) {
-      setCredValues(credentials);
-    }
-  }, [credentials]);
 
   const handleModelConfigChange = (modelKey: string, field: string, value: any) => {
     // Handle regular orchestration config
@@ -1594,12 +1554,6 @@ const Settings: React.FC = () => {
         </Alert>
       </Snackbar>
 
-      {appPasswordFailed && (
-        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setAppPasswordFailed(false)}>
-          Gmail authentication failed. Your application password didn't work. Please enter your credentials again.
-        </Alert>
-      )}
-
       {dbTaskState.exportError && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setExportError(null)}>
           Export Error: {dbTaskState.exportError}
@@ -2185,43 +2139,7 @@ const Settings: React.FC = () => {
       </Box>
 
       {/* API Credentials Section */}
-      <Accordion sx={{ mb: 4 }}>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography variant="h5" fontWeight={600}>
-            API Credentials
-          </Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 700 }}>
-            {CREDENTIAL_KEYS.map((key) => (
-              <TextField
-                key={key}
-                label={key}
-                type={(key === 'OLLAMA_URL' || key === 'CUSTOM_OAI_BASE_URL') ? 'text' : (showCreds[key] ? 'text' : 'password')}
-                value={credValues[key] || ''}
-                onChange={e => setCredValues({ ...credValues, [key]: e.target.value })}
-                InputProps={{
-                  endAdornment:
-                    (key === 'OLLAMA_URL' || key === 'CUSTOM_OAI_BASE_URL') ? null : (
-                      <IconButton onClick={() => setShowCreds({ ...showCreds, [key]: !showCreds[key] })}>
-                        {showCreds[key] ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                      </IconButton>
-                    )
-                }}
-              />
-            ))}
-            <Box sx={{ mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={() => updateCredentialsMutation.mutate(credValues)}
-                disabled={updateCredentialsMutation.isPending}
-              >
-                Apply Credentials
-              </Button>
-            </Box>
-          </Box>
-        </AccordionDetails>
-      </Accordion>
+      <CredentialsSettings />
 
       {/* Database Management Section */}
       <Card sx={{ mb: 4 }}>

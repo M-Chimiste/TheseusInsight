@@ -6,6 +6,20 @@
 
 ## Recent Changes
 
+### Ship of Theseus Refactor — F4 + F5 + B10: ROADMAP COMPLETE (2026-06-10, session 7)
+
+**F4 — task-channel unification:**
+- `services/taskChannel.ts` — framework-free WS channel (URL construction, connect/retry-to-max, JSON parse, last-message persistence under the frozen `ws_last_message_${taskId}` keys with the 10-minute restore window). 7 vitest cases incl. retry cancellation and the storage opt-out.
+- `useWebSocket` rebuilt as a thin React adapter over TaskChannel — public API unchanged, zero call-site churn for the Newsletter/Podcast/Visualizer pages (which consume it via useTaskState).
+- `useMindMap` keeps its domain logic (merge mode, generation colors, multi-channel expand) but both of its hand-rolled WS sites now ride TaskChannel (persistence disabled, as before).
+- **Scope note:** useTaskState and useDatabaseTaskState remain separate hooks on purpose — one models a single WS-driven task with stuck-task detection, the other a poll-driven export/import pair. The duplication F4 targeted was connection plumbing, now unified in TaskChannel. Optional follow-ups: ProfileStarMap.tsx and ResearchAgent.tsx still call api.ts's raw createWebSocket (same mechanical swap as useMindMap if desired).
+
+**F5 — Papers react-query:** `hooks/usePapersQuery.ts` (useInfiniteQuery; hybrid-vs-regular branch verbatim; FilterState/SortCriterion live here now). Papers.tsx 1,213 → 1,114 lines, 23 → 15 useState; server state fully in react-query (pagination resets via query key, edits patch the cache, scroll observer calls fetchNextPage). **Deferred F5 stragglers:** ResearchTimeline/RunHistory/Visualizer manual-fetch → useQuery conversions and the FilterPanel extraction (small mechanical items, same pattern).
+
+**B10 — config:** `theseus_insight/config.py` with load_orchestration_config() / get_orchestration_config() (DB → file → {}); task handlers route through it. Deliberately uncached (Settings UI updates the stored config at runtime; caching needs invalidation plumbing = behavior change). Sites with their own missing-config semantics (papers 500s, harvest scripts' raise-on-missing-file) keep them — converting those two-liners is optional polish.
+
+**THE SHIP OF THESEUS REFACTOR ROADMAP IS COMPLETE.** All ten phases landed: Phase 0 (52 backend tests + goldens), B1–B10, F0–F5. Headline numbers: TheseusInsight 3,827 → 708-line facade; bulk_operations router 2,734 → 1,387; api/tasks.py 1,933 → 441; Settings.tsx 2,974 → 213; trends.py 2,015 → 4-module package; ~900 lines of dead code deleted (incl. 3 latent bugs found and fixed: always-False validate_database_connection, crash-on-call search_by_keywords, 500-instead-of-400 profile_ids). Optional polish backlog: ranking-path unification (now module-local in pipeline/ranking.py), remaining codegen TODO types in api.ts, F5 stragglers, inline config-parse two-liners, raw createWebSocket in two pages.
+
 ### Ship of Theseus Refactor — B8–B9 COMPLETE: TheseusInsight is a facade (2026-06-10, session 6)
 
 **TheseusInsight: 3,827 → 708 lines.** The class now holds: the frozen 40-param `__init__`, the ~120-line run_async orchestrator calling the seven stage modules, signature-exact delegates, and small helpers (_log_error, _clear_judge_model_cache, _cleanup_temp_data). All four public entry points unchanged.

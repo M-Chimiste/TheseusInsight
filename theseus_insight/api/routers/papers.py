@@ -390,6 +390,10 @@ async def get_papers(
             current_page=page, 
             nextPage=page + 1 if papers_data['has_next_page'] else None
         )
+    except HTTPException:
+        # Let intended client errors (e.g. 400 invalid profile_ids) through
+        # instead of re-wrapping them as 500s.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

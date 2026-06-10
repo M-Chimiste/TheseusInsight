@@ -36,13 +36,12 @@ def test_trends_profile_filters_accepted(client, seeded_data):
     assert both.status_code == 200
 
 
-def test_trends_invalid_profile_ids_response(client, empty_db):
-    """CURRENT behavior: like papers, the intended 400 is swallowed by the
-    endpoint's blanket `except Exception` and re-raised as 500. Pinned as-is;
-    fix deliberately in a later phase together with the papers one."""
+def test_trends_invalid_profile_ids_is_400(client, empty_db):
+    """Fixed in B7: the blanket `except Exception` used to swallow this
+    HTTPException and re-raise it as a 500."""
     resp = client.get("/api/trends", params={"profile_ids": "abc"})
-    assert resp.status_code == 500
-    assert "Invalid profile_ids format" in resp.json()["detail"]
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid profile_ids format. Must be comma-separated integers."
 
 
 def test_papers_profile_tag_filter(client, seeded_data):

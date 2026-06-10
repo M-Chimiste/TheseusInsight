@@ -38,16 +38,12 @@ def test_date_range_filter(client, seeded_data):
     assert titles == ["Beta Paper"]
 
 
-def test_invalid_profile_ids_response(client, seeded_data):
-    """CURRENT behavior: the intended 400 is swallowed by get_papers' blanket
-    `except Exception` (papers.py:409 has no `except HTTPException: raise`
-    guard) and re-raised as 500. Pinned as-is; fixing the status code is a
-    deliberate behavior change for the B2 helper-extraction phase — update
-    this test in that commit.
-    """
+def test_invalid_profile_ids_is_400(client, seeded_data):
+    """Fixed in B7: get_papers' blanket `except Exception` used to swallow
+    this HTTPException and re-raise it as a 500."""
     resp = client.get("/api/papers", params={"profile_ids": "abc"})
-    assert resp.status_code == 500
-    assert "Invalid profile IDs format" in resp.json()["detail"]
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid profile IDs format"
 
 
 def test_profile_score_join(client, seeded_data):

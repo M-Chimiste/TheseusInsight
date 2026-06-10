@@ -217,7 +217,11 @@ async def get_trending_topics(
             period_type=period_type,
             duration_months=duration_months
         )
-        
+
+    except HTTPException:
+        # Let intended client errors (e.g. 400 invalid profile_ids) through
+        # instead of re-wrapping them as 500s.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get trending topics: {str(e)}")
 

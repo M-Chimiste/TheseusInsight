@@ -1,8 +1,10 @@
-import os
-from .tasks import task_manager
+"""Shared API constants.
 
-# PostgreSQL default instead of SQLite
-DB_URL = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
+This module used to carry dead database helpers (get_database_url,
+validate_database_connection) whose import target no longer existed;
+they were removed in the refactor cleanup. Only CREDENTIAL_KEYS is
+consumed (main.py, routers/settings.py).
+"""
 
 # List of credential environment variable names
 CREDENTIAL_KEYS = [
@@ -20,18 +22,3 @@ CREDENTIAL_KEYS = [
     "KAGGLE_USERNAME",
     "KAGGLE_KEY",
 ]
-
-def get_database_url() -> str:
-    """Get validated database URL."""
-    return DB_URL
-
-def validate_database_connection() -> bool:
-    """Validate PostgreSQL connection."""
-    try:
-        # Import here to avoid circular dependencies
-        from ..storage.repositories import get_cursor
-        with get_cursor() as cursor:
-            cursor.execute("SELECT 1")
-            return True
-    except Exception:
-        return False 

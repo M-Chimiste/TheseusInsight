@@ -6,6 +6,22 @@
 
 ## Recent Changes
 
+### Ship of Theseus Refactor — B4–B6 + B7 parts 1–2 (2026-06-10, session 2)
+
+**B4 — async bridge:** `db/async_bridge.py` (`run_repo` = asyncio.to_thread wrapper) adopted on the heaviest read paths: papers DB-level pagination, trends dashboard/timeline fetches. `db/README.md` documents the pool policy (sync psycopg canonical; asyncpg confined to the checkpoint/jobs island — no new users).
+
+**B5 — trends split:** `data_access/trends.py` (2,015 lines, 10 classes) → `data_access/trends/` package (topics, trend_metrics, research_interests, profile_interests) with a re-exporting `__init__` — no caller changes. `_profile_filters.profile_filter_clause` collapsed the 7 triplicated three-way profile-filter SQL branches; the unfiltered dashboard variants' JOIN-omission shape is preserved. **Deleted `TopicsRepository.search_by_keywords`**: zero callers and its SQL raised UndefinedFunction on every call (dead since inception — found by new SQL-validity tests that execute every composed query in all 3 filter modes).
+
+**B6 — TaskManager split:** `api/tasks.py` 1,933 → 441 lines (queue/worker infra, status tracking, TaskStatus, singleton). Nine `run_*_task` bodies → `api/task_handlers/` as free `async (task_manager, task_id)` functions + `HANDLERS` registry keyed by task_type. TaskManager keeps lazy-importing thin delegates so the bound-method references routers pass to `enqueue_task` are unchanged (eager imports would be circular — handlers import TaskStatus from tasks.py). **Fixed during extraction:** config-file fallback in `_common.get_orchestration_config` needed `parents[3]` from the new module depth; both fallback branches now pinned by tests.
+
+**B7 part 1:** the 165-line recursive research-agent serializer moved to `api/helpers/serialization.py` as `serialize_research_object` (router keeps an alias import; smoke-tested incl. cycle detection).
+
+**B7 part 2:** `response_model` annotations on 21 previously-untyped endpoints across actions, embedding_service, database, runs_and_tasks, settings, papers + new generic models (TaskQueuedResponse, StatusMessageResponse, etc.) in api/models.py. **This unblocks F2 codegen.** Route-set golden unchanged. Genuinely-dynamic payloads typed `Dict[str, Any]` honestly; FileResponse endpoints left unannotated.
+
+**B7 REMAINING (next session):** service-layer extraction for `bulk_operations.py` (2,734 lines → services/bulk_jobs_service + harvest_service + scheduling) and `newsletters_and_podcasts.py` (→ services/newsletter_run_service owning TheseusInsight instantiation + event-loop juggling). One router per commit; OpenAPI golden must stay identical. Also still pinned-not-fixed: the 500-instead-of-400 invalid profile_ids responses (papers + trends).
+
+Suite: 44 backend tests green.
+
 ### Ship of Theseus Refactor — Phase 0 + B1–B3 + F0–F1 (2026-06-10)
 
 **What changed:** Started the incremental full-stack refactor (plan at

@@ -43,7 +43,11 @@ from theseus_insight.prompt import (
 )
 from theseus_insight.utils import cosine_similarity, purge_ollama_cache
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+from theseus_insight.utils.harvest_common import (
+    OLLAMA_URL, _checkpoint_path, clear_judge_cache, get_paper_count,
+    load_checkpoint, load_inference_model, save_checkpoint,
+    should_skip_database_checks,
+)
 
 
 # ---------------------------------------------------------------
@@ -58,50 +62,8 @@ def check_paper_exists(paper_data: tuple) -> bool:
     return exists_by_url or exists_by_title
 
 
-def get_paper_count() -> int:
-    """
-    Get the total number of papers in the database.
-    
-    Returns:
-        int: Number of papers in database
-    """
-    try:
-        papers = PaperRepository.get_all()
-        return len(papers)
-    except Exception:
-        return -1  # Return -1 to indicate error/unknown
 
 
-def should_skip_database_checks(verbose: bool = True) -> bool:
-    """
-    Determine if we should skip database existence checks.
-    
-    Args:
-        verbose: Whether to print status messages
-    
-    Returns:
-        bool: True if database checks should be skipped
-    """
-    try:
-        paper_count = get_paper_count()
-        
-        if paper_count == 0:
-            if verbose:
-                print("📊 Database is empty - skipping existence checks")
-            return True
-        elif paper_count < 100:
-            if verbose:
-                print(f"📊 Database has only {paper_count} papers - skipping existence checks for speed")
-            return True
-        else:
-            if verbose:
-                print(f"📊 Database has {paper_count} papers - performing existence checks")
-            return False
-            
-    except Exception as e:
-        if verbose:
-            print(f"⚠️ Could not check database size: {e} - performing existence checks")
-        return False
 
 
 def check_existing_papers_parallel(
@@ -154,113 +116,18 @@ def check_existing_papers_parallel(
 # Helper functions for checkpoints
 # ---------------------------------------------------------------
 
-def _checkpoint_path(checkpoint_dir: str, stage: str) -> Path:
-    return Path(checkpoint_dir) / f"{stage}.pkl"
 
 
-def save_checkpoint(checkpoint_dir: str, stage: str, data: Any, verbose: bool = True) -> None:
-    """
-    Saves checkpoint data to a file.
-
-    This function creates a checkpoint directory if it doesn't exist, and saves the checkpoint data to a file.
-    The checkpoint data includes the data itself, the timestamp of the checkpoint, and the stage name.
-    """
-    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-    cp = {
-        "data": data,
-        "timestamp": time.time(),
-        "stage": stage,
-    }
-    with open(_checkpoint_path(checkpoint_dir, stage), "wb") as f:
-        pickle.dump(cp, f)
-    if verbose:
-        print(f"✅ Checkpoint saved: {stage}")
 
 
-def load_checkpoint(checkpoint_dir: str, stage: str, verbose: bool = True):
-    """
-    Loads checkpoint data from a file.
-
-    This function checks if a checkpoint file exists for the specified stage, and if it does, it loads the checkpoint data from the file.
-    The checkpoint data includes the data itself, the timestamp of the checkpoint, and the stage name.
-    """
-    path = _checkpoint_path(checkpoint_dir, stage)
-    if path.exists():
-        with open(path, "rb") as f:
-            cp = pickle.load(f)
-        if verbose:
-            print(f"📂 Loaded checkpoint '{stage}' from {time.ctime(cp['timestamp'])}")
-        return cp["data"]
-    return None
 
 
 # ---------------------------------------------------------------
 # Model loader helper
 # ---------------------------------------------------------------
 
-def load_inference_model(cfg: Dict[str, Any], verbose: bool = True):
-    """
-    Loads an inference model based on the configuration.
-
-    This function loads an inference model based on the configuration provided. It supports Ollama, OpenAI, Anthropic, and Gemini models.
-    """
-    model_type = cfg.get("model_type")
-    model_name = cfg.get("model_name")
-    max_new_tokens = cfg.get("max_new_tokens", 4096)
-    temperature = cfg.get("temperature", 0.1)
-    num_ctx = cfg.get("num_ctx")
-    
-    if verbose:
-        print(f"🤖 Loading {model_type} model: {model_name}")
-    
-    if model_type == "ollama":
-        kwargs = {
-            "model_name": model_name,
-            "max_new_tokens": max_new_tokens,
-            "temperature": temperature,
-            "url": OLLAMA_URL,
-        }
-        if num_ctx is not None:
-            kwargs["num_ctx"] = num_ctx
-        return OllamaInference(**kwargs)
-    if model_type == "openai":
-        return OpenAIInference(model_name, max_new_tokens, temperature)
-    if model_type == "anthropic":
-        return AnthropicInference(model_name, max_new_tokens, temperature)
-    if model_type == "gemini":
-        return GeminiInference(model_name, max_new_tokens, temperature)
-    if model_type == "lmstudio":
-        # LMStudio needs host parameter instead of url
-        host = cfg.get('host')
-        if not host:
-            host = os.getenv('LMSTUDIO_HOST', 'localhost:1234')
-        kwargs = {
-            'model_type': 'lmstudio',
-            'model_name': model_name,
-            'max_new_tokens': max_new_tokens,
-            'temperature': temperature,
-            'host': host
-        }
-        if num_ctx is not None:
-            kwargs['context_length'] = num_ctx
-        return LLMModelFactory.create_model(**kwargs)
-    raise ValueError(f"Unsupported model type: {model_type}")
 
 
-def clear_judge_cache(inference, model_name: str, verbose: bool = True):
-    """
-    Clears the cache for a judge model.
-
-    This function checks if the judge model is an Ollama model and purges its cache if it is.
-    """
-    try:
-        if hasattr(inference, "provider") and inference.provider == "ollama":
-            if verbose:
-                print(f"🧹 Clearing Ollama cache for {model_name}")
-            purge_ollama_cache(OLLAMA_URL, model_name)
-    except Exception as e:
-        if verbose:
-            print(f"⚠️ Failed to purge cache for {model_name}: {e}")
 
 
 # ---------------------------------------------------------------

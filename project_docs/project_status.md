@@ -6,6 +6,21 @@
 
 ## Recent Changes
 
+### Ship of Theseus Refactor — B8–B9 COMPLETE: TheseusInsight is a facade (2026-06-10, session 6)
+
+**TheseusInsight: 3,827 → 708 lines.** The class now holds: the frozen 40-param `__init__`, the ~120-line run_async orchestrator calling the seven stage modules, signature-exact delegates, and small helpers (_log_error, _clear_judge_model_cache, _cleanup_temp_data). All four public entry points unchanged.
+
+Session 6 lifts (all verbatim, all with delegates):
+- `pipeline/profiles_pipeline.py` (372) + `pipeline/embedding_pipeline.py` (404) — **deliberately NOT unified with pipeline/stages/**: their download/embed blocks differ for real (Kaggle forcing, arxiv category config, existing-papers short-circuit returning a result dict, batched embedding with skip_existing).
+- `pipeline/ranking.py` (~700) — all five ranking entry points (historical-scores / single-server / multi-server paths). Kept as separate implementations; the "80% overlap" unification claim needs module-local verification before any merge (optional future work, low priority now that they're isolated).
+- `pipeline/profile_scoring.py` (~530) — get_profile_papers, get_and_score_profile_papers, store_papers_without_scoring, handle_no_papers_found (notification email template preserved byte-exact).
+
+The `pipeline/` package now: checkpoints (frozen-contract adapter + compat tests), model_loading, ranking, profile_scoring, profiles_pipeline, embedding_pipeline, stages/{download,embed,rank,newsletter_sections,newsletter_content,email,podcast}.
+
+Suite: 51 backend tests green after every one of the 6 commits.
+
+**Refactor roadmap remaining:** F4 (taskChannel + useTask hook unification — preserve sessionStorage/localStorage keys; useMindMap keeps domain logic), F5 (Papers.tsx useInfiniteQuery + FilterPanel + ResearchTimeline/RunHistory/Visualizer conversions), B10 (config consolidation: single cached orchestration parse, canonical ModelConfig).
+
 ### Ship of Theseus Refactor — B8 + B9 run_async decomposition (2026-06-10, session 5)
 
 **God class: 3,827 → 2,662 lines; run_async (1,007 lines) fully decomposed.**

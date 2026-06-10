@@ -23,6 +23,7 @@ from theseus_insight.data_processing import ArxivDataProcessor, Paper, Newslette
 from theseus_insight.pipeline.checkpoints import CheckpointAdapter
 from theseus_insight.pipeline.model_loading import load_inference_model
 from theseus_insight.pipeline.stages import download as download_stage
+from theseus_insight.pipeline.stages import email as email_stage
 from theseus_insight.pdf.markdown_extraction import (
     download_pdf_to_temp_file, pdf_to_markdown,
 )
@@ -2498,53 +2499,11 @@ Theseus Insight Team
                 progress_callback("newsletter", 80, "Newsletter content generation complete")
 
             # -----------
-            # Stage 6: Send Email (if generate_email=True)
+            # Stage 6: Send Email (pipeline/stages/email.py, B9)
             # -----------
-            if progress_callback:
-                progress_callback("newsletter", 85, "Starting newsletter email sending")
-            if self.generate_email:
-                if newsletter_content is None:
-                    newsletter_content = await self._load_checkpoint_async('newsletter_content')
-                    if newsletter_content is None:
-                        raise ValueError("Cannot send email: no newsletter content found.")
-
-                if sections_data is None:
-                    sections_data = await self._load_checkpoint_async('newsletter_sections')
-                    if sections_data is None:
-                        raise ValueError("No sections data found to build email links.")
-
-                if self.verbose:
-                    print("Sending newsletter email...")
-
-                # Construct a simple bulleted list of links
-                if len(sections_data['urls_and_titles']) > 0:
-                    urls_and_titles_bulleted = "\n".join(
-                        f"{i+1}. {title}" for i, title in enumerate(sections_data['urls_and_titles'])
-                    )
-                else:
-                    urls_and_titles_bulleted = "No new papers found for this period."
-                email_body = construct_email_body(
-                    newsletter_content,
-                    self.start_date.strftime('%Y-%m-%d'),
-                    self.end_date.strftime('%Y-%m-%d'),
-                    urls_and_titles_bulleted
-                )
-                try:
-                    self.communication.compose_message(email_body, self.start_date, self.end_date)
-                    self.communication.send_email()
-                    # Log successful email
-                    LogsRepository.upsert(
-                        task_id=self.task_id, 
-                        status=f"EMAIL_SUCCESS: Successfully sent newsletter to {self.receiver_address}",
-                        datetime_run=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    )
-                except Exception as e:
-                    self._log_error(500, e)
-                    raise
-            if progress_callback and not self.generate_podcast:
-                progress_callback("newsletter", 100, "Newsletter email sending complete")
-            if progress_callback and self.generate_podcast:
-                progress_callback("newsletter", 90, "Newsletter email sending complete")
+            newsletter_content, sections_data = await email_stage.run(
+                self, newsletter_content, sections_data, progress_callback
+            )
 
             # -----------
             # Stage 7: Generate Podcast (if generate_podcast=True)

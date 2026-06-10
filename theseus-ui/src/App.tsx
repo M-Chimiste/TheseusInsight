@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { LayoutProvider } from './contexts/LayoutContext';
 import { ProfileProvider } from './contexts/ProfileContext';
+import { SnackbarProvider } from './contexts/SnackbarContext';
 import Layout from './components/Layout';
 import React from 'react';
 
@@ -40,6 +41,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <LayoutProvider>
+          <SnackbarProvider>
           <ProfileProvider>
             <Router>
               <Layout>
@@ -69,6 +71,7 @@ function App() {
               </Layout>
             </Router>
           </ProfileProvider>
+          </SnackbarProvider>
         </LayoutProvider>
       </ThemeProvider>
     </QueryClientProvider>

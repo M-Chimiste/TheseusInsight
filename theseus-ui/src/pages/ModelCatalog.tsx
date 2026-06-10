@@ -11,8 +11,6 @@ import {
   FormControl,
   InputLabel,
   Button,
-  Alert,
-  Snackbar,
   CircularProgress,
   Container,
   Grid,
@@ -50,6 +48,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { modelCatalogApi, settingsApi, ollamaServersApi } from '../services/api';
 import { useLayout } from '../contexts/LayoutContext';
+import { useSnackbar } from '../contexts/SnackbarContext';
+import { useDialogState } from '../hooks/useDialogState';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 
 interface ModelCatalogEntry {
   id: number;
@@ -96,8 +97,7 @@ const MODEL_TYPES = [
 const ModelCatalog: React.FC = () => {
   const queryClient = useQueryClient();
   const { headerHeight } = useLayout(); // Get dynamic header height
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const { showSuccess, showError } = useSnackbar();
   
   // View and filter state
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -109,13 +109,12 @@ const ModelCatalog: React.FC = () => {
   const [favoriteFilter, setFavoriteFilter] = useState<boolean | null>(null);
   const [page, setPage] = useState(1);
   
-  // Dialog state
-  const [isCreateEditDialogOpen, setIsCreateEditDialogOpen] = useState(false);
-  const [editingModel, setEditingModel] = useState<ModelCatalogEntry | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [modelToDelete, setModelToDelete] = useState<ModelCatalogEntry | null>(null);
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ModelCatalogEntry | null>(null);
+  // Dialog state (useDialogState replaces the boolean+payload pairs)
+  const editDialog = useDialogState<ModelCatalogEntry>();
+  const deleteDialog = useDialogState<ModelCatalogEntry>();
+  const detailDialog = useDialogState<ModelCatalogEntry>();
+  const editingModel = editDialog.data;
+  const selectedModel = detailDialog.data;
   
   // Form state
   const [formData, setFormData] = useState<CreateEditModelData>({
@@ -366,9 +365,9 @@ const ModelCatalog: React.FC = () => {
       const errorMsg = (modelsError as any)?.response?.data?.detail || 
                       (modelsError as any)?.message || 
                       'Failed to fetch models';
-      setError(`Models error: ${errorMsg}`);
+      showError(`Models error: ${errorMsg}`);
     }
-  }, [modelsError]);
+  }, [modelsError, showError]);
 
   React.useEffect(() => {
     if (providersError) {
@@ -376,9 +375,9 @@ const ModelCatalog: React.FC = () => {
       const errorMsg = (providersError as any)?.response?.data?.detail || 
                       (providersError as any)?.message || 
                       'Failed to fetch providers';
-      setError(`Providers error: ${errorMsg}`);
+      showError(`Providers error: ${errorMsg}`);
     }
-  }, [providersError]);
+  }, [providersError, showError]);
 
   // Mutations
   const createModelMutation = useMutation({
@@ -388,15 +387,15 @@ const ModelCatalog: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['modelCatalog'] });
-      setSuccess('Model created successfully');
-      setIsCreateEditDialogOpen(false);
+      showSuccess('Model created successfully');
+      editDialog.close();
       resetForm();
     },
     onError: (error: any) => {
       console.error('Create model error:', error);
       console.error('Error response:', error?.response);
       console.error('Error data:', error?.response?.data);
-      setError(`Failed to create model: ${error?.response?.status} ${error?.response?.statusText || ''} - ${error?.response?.data?.detail || error?.message || 'Unknown error'}`);
+      showError(`Failed to create model: ${error?.response?.status} ${error?.response?.statusText || ''} - ${error?.response?.data?.detail || error?.message || 'Unknown error'}`);
     },
   });
 
@@ -405,23 +404,21 @@ const ModelCatalog: React.FC = () => {
       modelCatalogApi.updateModel(modelId, model),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['modelCatalog'] });
-      setSuccess('Model updated successfully');
-      setIsCreateEditDialogOpen(false);
+      showSuccess('Model updated successfully');
+      editDialog.close();
       resetForm();
-      setEditingModel(null);
     },
-    onError: (error: any) => setError(error?.response?.data?.detail || 'Failed to update model'),
+    onError: (error: any) => showError(error?.response?.data?.detail || 'Failed to update model'),
   });
 
   const deleteModelMutation = useMutation({
     mutationFn: (modelId: number) => modelCatalogApi.deleteModel(modelId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['modelCatalog'] });
-      setSuccess('Model deleted successfully');
-      setDeleteDialogOpen(false);
-      setModelToDelete(null);
+      showSuccess('Model deleted successfully');
+      deleteDialog.close();
     },
-    onError: (error: any) => setError(error?.response?.data?.detail || 'Failed to delete model'),
+    onError: (error: any) => showError(error?.response?.data?.detail || 'Failed to delete model'),
   });
 
   const toggleFavoriteMutation = useMutation({
@@ -429,7 +426,7 @@ const ModelCatalog: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['modelCatalog'] });
     },
-    onError: (error: any) => setError(error?.response?.data?.detail || 'Failed to toggle favorite'),
+    onError: (error: any) => showError(error?.response?.data?.detail || 'Failed to toggle favorite'),
   });
 
   const resetForm = () => {
@@ -451,8 +448,7 @@ const ModelCatalog: React.FC = () => {
 
   const openCreateDialog = () => {
     resetForm();
-    setEditingModel(null);
-    setIsCreateEditDialogOpen(true);
+    editDialog.openEmpty();
   };
 
   const openEditDialog = (model: ModelCatalogEntry) => {
@@ -470,8 +466,7 @@ const ModelCatalog: React.FC = () => {
       tags: model.tags || [],
       is_favorite: model.is_favorite || false
     });
-    setEditingModel(model);
-    setIsCreateEditDialogOpen(true);
+    editDialog.openWith(model);
   };
 
   const handleSave = () => {
@@ -483,19 +478,17 @@ const ModelCatalog: React.FC = () => {
   };
 
   const handleDelete = (model: ModelCatalogEntry) => {
-    setModelToDelete(model);
-    setDeleteDialogOpen(true);
+    deleteDialog.openWith(model);
   };
 
   const confirmDelete = () => {
-    if (modelToDelete) {
-      deleteModelMutation.mutate(modelToDelete.id);
+    if (deleteDialog.data) {
+      deleteModelMutation.mutate(deleteDialog.data.id);
     }
   };
 
   const openDetailView = (model: ModelCatalogEntry) => {
-    setSelectedModel(model);
-    setDetailDialogOpen(true);
+    detailDialog.openWith(model);
   };
 
   const getDescriptionSnippet = (description: string, maxLength: number = 100) => {
@@ -657,28 +650,6 @@ const ModelCatalog: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ pt: `${headerHeight + 32}px`, pb: 4 }}>
-      <Snackbar
-        open={Boolean(error)}
-        autoHideDuration={4000}
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-      >
-        <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
-          {error}
-        </Alert>
-      </Snackbar>
-
-      <Snackbar
-        open={Boolean(success)}
-        autoHideDuration={4000}
-        onClose={() => setSuccess(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-      >
-        <Alert onClose={() => setSuccess(null)} severity="success" sx={{ width: '100%' }}>
-          {success}
-        </Alert>
-      </Snackbar>
-
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="h1">
@@ -849,8 +820,8 @@ const ModelCatalog: React.FC = () => {
 
       {/* Create/Edit Dialog */}
       <Dialog 
-        open={isCreateEditDialogOpen} 
-        onClose={() => setIsCreateEditDialogOpen(false)}
+        open={editDialog.open} 
+        onClose={editDialog.close}
         maxWidth="md"
         fullWidth
         disableEscapeKeyDown={false}
@@ -860,7 +831,7 @@ const ModelCatalog: React.FC = () => {
         <DialogTitle id="model-dialog-title">
           {editingModel ? 'Edit Model' : 'Add New Model'}
           <IconButton
-            onClick={() => setIsCreateEditDialogOpen(false)}
+            onClick={editDialog.close}
             sx={{ position: 'absolute', right: 8, top: 8 }}
             aria-label="Close dialog"
           >
@@ -1109,7 +1080,7 @@ const ModelCatalog: React.FC = () => {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setIsCreateEditDialogOpen(false)}>
+          <Button onClick={editDialog.close}>
             Cancel
           </Button>
           <Button 
@@ -1124,8 +1095,8 @@ const ModelCatalog: React.FC = () => {
 
       {/* Model Detail Dialog */}
       <Dialog
-        open={detailDialogOpen}
-        onClose={() => setDetailDialogOpen(false)}
+        open={detailDialog.open}
+        onClose={detailDialog.close}
         maxWidth="md"
         fullWidth
         aria-labelledby="detail-dialog-title"
@@ -1147,7 +1118,7 @@ const ModelCatalog: React.FC = () => {
               />
             </Box>
             <IconButton
-              onClick={() => setDetailDialogOpen(false)}
+              onClick={detailDialog.close}
               aria-label="Close dialog"
             >
               <CloseIcon />
@@ -1341,14 +1312,14 @@ const ModelCatalog: React.FC = () => {
         </DialogContent>
 
         <DialogActions>
-          <Button onClick={() => setDetailDialogOpen(false)}>
+          <Button onClick={detailDialog.close}>
             Close
           </Button>
           {selectedModel && (
             <>
               <Button
                 onClick={() => {
-                  setDetailDialogOpen(false);
+                  detailDialog.close();
                   openEditDialog(selectedModel);
                 }}
                 startIcon={<EditIcon />}
@@ -1357,7 +1328,7 @@ const ModelCatalog: React.FC = () => {
               </Button>
               <Button
                 onClick={() => {
-                  setDetailDialogOpen(false);
+                  detailDialog.close();
                   handleDelete(selectedModel);
                 }}
                 color="error"
@@ -1371,25 +1342,16 @@ const ModelCatalog: React.FC = () => {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog 
-        open={deleteDialogOpen} 
-        onClose={() => setDeleteDialogOpen(false)}
-        aria-labelledby="delete-dialog-title"
-        keepMounted={false}
-      >
-        <DialogTitle id="delete-dialog-title">Delete Model</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Are you sure you want to delete "{modelToDelete?.alias}"? This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button onClick={confirmDelete} color="error" variant="contained">
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog
+        open={deleteDialog.open}
+        title="Delete Model"
+        message={`Are you sure you want to delete "${deleteDialog.data?.alias ?? ''}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        confirmColor="error"
+        loading={deleteModelMutation.isPending}
+        onConfirm={confirmDelete}
+        onCancel={deleteDialog.close}
+      />
     </Container>
   );
 };

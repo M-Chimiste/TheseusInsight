@@ -1,10 +1,42 @@
 # Theseus Insight Project Status
 
-## Last Updated: March 14, 2026
+## Last Updated: June 10, 2026
 
 ---
 
 ## Recent Changes
+
+### Ship of Theseus Refactor — Phase 0 + B1–B3 + F0–F1 (2026-06-10)
+
+**What changed:** Started the incremental full-stack refactor (plan at
+`~/.claude/plans/atomic-dazzling-pearl.md`). Behavior-preserving; every
+commit gated on a green characterization suite.
+
+**Phase 0 — test safety net (new, zero prod-code changes):**
+- `docker-compose.test.yml`: ephemeral pgvector pg14 test DB on port 5434 (tmpfs). `make test` brings it up and runs pytest; `make test-down` removes it. Docker runtime is colima + standalone docker-compose on this machine.
+- `tests/` — 33 characterization tests: migration chain 000–016 on a fresh DB (idempotency, staging tables, Default profile), OpenAPI surface golden (181 routes — fails on any route add/remove/rename), papers list/filter/sort semantics, profile CRUD, orchestration defaults golden, secret-setting XOR ciphertext golden, trends envelopes, pgvector similarity ordering with a fake embedder, pure-function goldens, json_repair judge-response contract.
+- Critical mechanics documented in `tests/conftest.py`: DATABASE_URL must be set before any theseus_insight import; the test DB must be up before importing main (import-time DB calls in api/tasks.py and research_agent.py); TestClient used WITHOUT `with` so the lifespan (scheduler + judge_worker kill in startup_cleanup.py) never runs in tests.
+
+**B1 — dead code removed:**
+- `inference/llm_legacy.py` (786 lines, zero importers), stray real `.py` sources under `inference/__pycache__/mindmap/`, empty vestigial dirs (`storage/`, `api/background_tasks/`, `api/job_management/`, `api/routers/bulk_operations_core/`).
+- `api/dependencies.py` trimmed to CREDENTIAL_KEYS; its `validate_database_connection` imported a nonexistent module (always returned False) and had no callers.
+
+**B2 — cross-cutting helpers:**
+- `api/helpers/profile_filtering.py`: parse_id_csv / parse_tag_csv / resolve_tag_profile_ids / merge_id_filters replace the copies in papers, trends (×2), profiles routers. Per-site 400-detail strings and blank-segment strictness preserved via flags. Note: get_by_tags filters is_active in SQL, so papers.py's re-check was redundant.
+- `api/helpers/serialization.py`: isoformat_fields / decode_json_fields; the seven per-router `_convert_*_timestamps` are now one-line delegates.
+- `data_access/base.py`: build_set_clause(updates, extra=...) replaced 8 hand-rolled dynamic-UPDATE builders (scheduled_tasks ×3, tasks, model_catalog, research ×2, trends topics).
+- KNOWN PINNED BUGS (intentionally unfixed, tests document them): GET /api/papers and /api/trends return 500 instead of 400 for invalid profile_ids (blanket `except Exception` swallows the HTTPException) — fix deliberately in B7; a tag matching no profiles resolves to an empty id list which repos treat as "no filter" (all rows returned).
+
+**B3 — harvest dedup:**
+- `utils/harvest_common.py`: 7 helpers shared by harvest_and_judge.py and paperswithcode_harvest_and_judge.py (verified identical by AST diff modulo docstrings). The two existence-checkers stay per-script (bulk-set vs per-row implementations). `{stage}.pkl` checkpoint format pinned by tests, including legacy-checkpoint loading.
+
+**F0–F1 — frontend foundation:**
+- vitest + @testing-library/react + jsdom (`npm test`), scoped to hooks/services/utils.
+- SnackbarProvider + useSnackbar (mounted in App.tsx), ConfirmDialog, useDialogState<T>. Pilot: ModelCatalog.tsx converted (dropped 2 Snackbars, 3 dialog boolean/payload pairs, hand-rolled delete dialog).
+
+**Next steps (per plan):** B4 async bridge → B5 trends.py package split → B6 TaskManager handler split → B7 router service extraction + response_model annotations → F2 openapi-typescript codegen → F3 Settings.tsx decomposition → B8–B9 god-class decomposition (checkpoint formats frozen) → F4–F5 task-hook unification + Papers react-query → B10 config consolidation.
+
+**Verification:** `make test` (backend, 33 tests), `cd theseus-ui && npm run build && npm test` (frontend). OpenAPI golden must stay byte-identical through router refactors; update deliberately only when B7 adds response_model annotations.
 
 ### SMTP DNS Fallback For Gmail Delivery (2026-03-14)
 

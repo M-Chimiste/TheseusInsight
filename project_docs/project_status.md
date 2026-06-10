@@ -6,6 +6,24 @@
 
 ## Recent Changes
 
+### Ship of Theseus Refactor — B8 + B9 run_async decomposition (2026-06-10, session 5)
+
+**God class: 3,827 → 2,662 lines; run_async (1,007 lines) fully decomposed.**
+
+**B8 (peripherals):**
+- `pipeline/checkpoints.py` — CheckpointAdapter, byte-compatible with the original methods ({stage}_checkpoint.pkl pickle wrapper, newsletter_generation job_type, {'dataframe': records} encoding, always-dual-write). God class keeps same-name delegates (~48 call sites unchanged). Compat tests: legacy checkpoints load through the adapter and vice versa.
+- `pdf/markdown_extraction.py` — streaming download, spawn-subprocess parse runner with timeout/terminate/kill ladder, Docling→MarkItDown fallback, both workers (module-level for spawn pickling).
+- `pipeline/model_loading.py` — all five providers; env read at call time.
+
+**B9 (stage extraction):** all seven run_async stages now live in `pipeline/stages/` as `async def run(ti, ...)` taking the TheseusInsight instance as context: download (with exit_early flag for the no-papers path), embed (3 early exits converted to the flag; bulk dedupe + threshold filtering verbatim), rank (incl. the empty-checkpoint poisoning guard and embeddings memory release), newsletter_sections (concurrent PDF pool with rolling submission), newsletter_content (intro retry/backoff + json_repair fallback), email, podcast (visualizer re-run + YouTube publish). run_async is a ~90-line orchestrator. Stage tests cover download resume/early-exit/skip paths without network.
+
+**B8/B9 REMAINING (next session):**
+- Ranking unification (rank_papers_with_historical_scores 152 lines vs _rank_papers_single_server 382 — claimed 80% overlap needs verification before merging; both still in the god class along with _rank_papers_multi_server).
+- run_profiles_pipeline (372 lines) and run_embedding_only_pipeline (404) decomposition — their Stage 1/2/store blocks are near-copies of the extracted stages; reuse pipeline/stages/ where the code genuinely matches.
+- Final facade pass: __init__ is still 279 lines; get_and_score_profile_papers (239) and _handle_no_papers_found (128) still inline.
+
+Suite: 51 backend tests green (incl. new checkpoint-compat + stage tests).
+
 ### Ship of Theseus Refactor — F3 Settings decomposition (2026-06-10, session 4)
 
 **Settings.tsx: 2,974 → 213 lines.** The page is now a shell holding only the three shared queries (model catalog, providers, inference-server hosts) and the theme toggle. Seven section components under `theseus-ui/src/components/settings/`, each owning its queries/mutations/state and using the shared snackbar context:

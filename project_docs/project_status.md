@@ -6,6 +6,20 @@
 
 ## Recent Changes
 
+### Ship of Theseus Refactor — F3 Settings decomposition (2026-06-10, session 4)
+
+**Settings.tsx: 2,974 → 213 lines.** The page is now a shell holding only the three shared queries (model catalog, providers, inference-server hosts) and the theme toggle. Seven section components under `theseus-ui/src/components/settings/`, each owning its queries/mutations/state and using the shared snackbar context:
+- `ModelConfigurationSettings` (613) — orchestration model tabs; ONE generic renderModelConfigFields drives all nine MODEL_TABS keys; inference-servers tab embeds OllamaServersSettings; owns orchestrationConfig query+mutation.
+- `ResearchAgentSettings` (695) — single/multi mode config; the two byte-identical 90-line renderModelFields closures (verified by diff) deduplicated into makeModelFieldsRenderer(configType).
+- `DatabaseTransferSettings` (898) — export/import incl. WebSocket progress; sole mount point of useDatabaseTaskState (F4 replaces this hook). Export/import error alerts render above this card now, not page-top.
+- `PerformanceSettings` (386), `CredentialsSettings` (98), `ModelNameAutocomplete` (126), `TabPanel` (23).
+- Dead state removed: `appPasswordFailed` was never set true — its warning Alert could never render.
+- Props threading: modelCatalogData/modelProviders/getHostsByProvider flow from the page into ModelConfiguration + ResearchAgent sections (shared queries stay deduped via react-query cache).
+
+Verified: tsc strict 0 errors, vite build, vitest 4/4, eslint at baseline (291 pre-existing).
+
+**Next per roadmap:** B8–B9 — the god-class decomposition (pipeline/ package, checkpoint formats frozen, one stage per commit, kill-and-resume tests). Then F4–F5, B10.
+
 ### Ship of Theseus Refactor — B7 complete + F2 (2026-06-10, session 3)
 
 **B7 part 3 — newsletter service:** `services/newsletter_run_service.py` owns the custom newsletter run (profile/recipient resolution — tag ids UNION explicit ids, unlike papers/trends intersect; cross-thread progress callback; orchestration-config load; multi-server job creation; TheseusInsight run). Router endpoint keeps validation + enqueue (581 → 379 lines).

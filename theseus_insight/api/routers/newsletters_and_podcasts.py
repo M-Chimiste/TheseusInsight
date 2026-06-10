@@ -17,9 +17,9 @@ from ...data_access import (
     PodcastRepository,
     TaskRepository,
 )
-from ..tasks import task_manager, TaskStatus
+from ..tasks import task_manager
 from ..helpers.serialization import isoformat_fields
-from ...theseus_insight import TheseusInsight
+from ...services import newsletter_run_service
 
 router = APIRouter(tags=["newsletters-and-podcasts"])
 
@@ -128,215 +128,14 @@ async def run_newsletter_pipeline_endpoint(
                 raise HTTPException(status_code=404, detail=f"No profiles found with tags: {tag_list}")
     
     task_id = str(uuid.uuid4())
-    run_db_path = os.getenv("DATABASE_URL", "postgresql://theseus:theseus@localhost:5432/theseusdb")
     loop = asyncio.get_event_loop()
 
-    def pipeline_progress_callback(
-        stage: str, 
-        progress_val: float, 
-        message: str = "",
-        metadata: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Updates the task status with the current pipeline progress.
-
-        This function is a callback for the pipeline progress. It updates the task status
-        with the current stage, progress percentage, and a message describing the progress.
-
-        Args:
-            stage (str): The current stage of the pipeline.
-            progress_val (float): The progress percentage of the current stage.
-            message (str): A message describing the current progress.
-            metadata (dict, optional): Structured data for enhanced UI display.
-        """
-        status_detail = f"Stage: {stage} - {message} ({progress_val:.2f}%)"
-        overall_status_for_tm = TaskStatus.PROCESSING
-        if stage.lower() == "newsletter_complete" and progress_val >= 100.0:
-            overall_status_for_tm = TaskStatus.COMPLETED
-
-        async def update_status_async():
-            """
-            Updates the task status with the current pipeline progress.
-
-            This function is a callback for the pipeline progress. It updates the task status
-            with the current stage, progress percentage, and a message describing the progress.
-            """
-            await task_manager.update_task_status(
-                task_id,
-                overall_status_for_tm,
-                message=status_detail,
-                progress=progress_val,
-                current_step=stage,
-                metadata=metadata
-            )
-
-        # Check if we are in the same loop
-        try:
-            running_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            running_loop = None
-
-        if running_loop is loop:
-            # If we are in the main event loop, create_task is the correct way
-            asyncio.create_task(update_status_async())
-        else:
-            # If we are in a different thread/loop (e.g. the background thread's loop),
-            # use run_coroutine_threadsafe with the captured main loop
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(update_status_async(), loop)
-            else:
-                print("Error: Main event loop is not running, cannot update task status")
-
-    async def background_pipeline_run():
-        """
-        Initiates the background pipeline run for newsletters and podcasts.
-
-        This function orchestrates the background processing of newsletters and podcasts.
-        It creates a new task for the pipeline, updates the task status, and initiates the pipeline run.
-        The pipeline progress is tracked and updated through a callback function.
-
-        Raises:
-            Exception: If an error occurs during the pipeline run, it is caught and handled.
-        """
-        try:
-            await task_manager.create_task(
-                task_id=task_id,
-                task_type="custom_newsletter_run",
-                config=params.dict()
-            )
-            await task_manager.update_task_status(
-                task_id,
-                TaskStatus.PENDING,
-                message="Pipeline initialized.",
-                current_step="initializing",
-            )
-
-            # Resolve profile IDs for TheseusInsight
-            resolved_profile_ids = None
-            final_email_recipients = params.email_recipients
-            
-            if params.profile_id or params.profile_ids or params.profile_tag or params.profile_tags:
-                from ...data_access import ProfileRepository
-                
-                # Resolve profile IDs from tags if provided
-                if params.profile_tag or params.profile_tags:
-                    tag_list = []
-                    if params.profile_tag:
-                        tag_list.append(params.profile_tag)
-                    if params.profile_tags:
-                        tag_list.extend(params.profile_tags)
-                    
-                    tag_profiles = ProfileRepository.get_by_tags(tag_list)
-                    tag_profile_ids = [p['id'] for p in tag_profiles]
-                    
-                    if params.profile_ids:
-                        # Combine explicit profile_ids with tag-resolved IDs
-                        resolved_profile_ids = list(set(params.profile_ids + tag_profile_ids))
-                    else:
-                        resolved_profile_ids = tag_profile_ids
-                elif params.profile_ids:
-                    resolved_profile_ids = params.profile_ids
-                elif params.profile_id:
-                    resolved_profile_ids = [params.profile_id]
-                
-                # Use profile-specific email recipients if requested
-                if params.use_profile_recipients and resolved_profile_ids:
-                    profile_recipients = []
-                    for pid in resolved_profile_ids:
-                        profile = ProfileRepository.get_by_id(pid)
-                        if profile and profile.get('email_recipients'):
-                            profile_recipients.extend(profile['email_recipients'])
-                    
-                    # Remove duplicates while preserving order
-                    profile_recipients = list(dict.fromkeys(profile_recipients))
-                    
-                    # Use profile recipients if available, otherwise fall back to params
-                    if profile_recipients:
-                        final_email_recipients = profile_recipients
-
-            # Load orchestration config from database settings
-            from ...data_access.settings import SettingsRepository
-            orchestration_config_json = SettingsRepository.get("orchestration")
-            if orchestration_config_json:
-                orchestration_config = json.loads(orchestration_config_json)
-            else:
-                # Fallback to config file if not in database
-                orchestration_config = "config/orchestration.json"
-
-            # Create newsletter job if using multi-server judge
-            newsletter_job_id = None
-            judge_servers = None
-            if params.use_multi_server_judge:
-                from ...data_access.newsletters import NewsletterJobRepository
-
-                # Validate server IDs if provided
-                if params.judge_server_ids:
-                    from ...data_access.inference_servers import InferenceServersRepository
-                    servers = InferenceServersRepository.get_by_ids(params.judge_server_ids)
-                    enabled_servers = [s for s in servers if s.enabled]
-                    if not enabled_servers:
-                        raise HTTPException(status_code=400, detail="No enabled servers found in selection")
-                    judge_servers = enabled_servers
-
-                # Create newsletter job record
-                newsletter_job_id = NewsletterJobRepository.create_job(
-                    profile_ids=resolved_profile_ids or [],
-                    use_multi_server=True,
-                    server_ids=params.judge_server_ids,
-                    research_interests=params.research_interests,
-                    date_range_start=params.start_date,
-                    date_range_end=params.end_date
-                )
-
-            ti_instance = TheseusInsight(
-                research_interests_override=params.research_interests,
-                start_date_override=params.start_date,
-                end_date_override=params.end_date,
-                receiver_address_override=final_email_recipients,
-                profile_ids_override=resolved_profile_ids,
-                orchestration_config=orchestration_config,  # Pass config from database
-                generate_podcast=params.generate_podcast_run,
-                top_n=params.num_sections or 5,
-                db_saving=True,
-                data_path=run_db_path,
-                verbose=True,
-                task_id=task_id,
-                # Multi-server judge parameters
-                use_multi_server_judge=params.use_multi_server_judge,
-                judge_server_ids=[s.id for s in judge_servers] if judge_servers else None,
-                newsletter_job_id=newsletter_job_id,
-                judge_request_timeout_sec=params.judge_request_timeout_sec,
-                judge_max_retries=params.judge_max_retries
-            )
-            # Run in a separate thread to avoid blocking the main event loop
-            # The run() method uses asyncio.run() internally to create a new loop for the pipeline
-            await asyncio.to_thread(
-                ti_instance.run,
-                progress_callback=pipeline_progress_callback,
-            )
-            
-            # Always mark as completed if we reach here successfully
-            # The progress callback may have already marked it completed, which is fine
-            await task_manager.update_task_status(
-                task_id,
-                TaskStatus.COMPLETED,
-                message="Pipeline finished processing.",
-                current_step="newsletter_complete",
-            )
-
-        except Exception as e:
-            error_message = f"Error in newsletter pipeline for task {task_id}: {type(e).__name__} - {str(e)}"
-            if task_manager:
-                await task_manager.update_task_status(
-                    task_id,
-                    TaskStatus.FAILED,
-                    error=error_message,
-                    message=error_message,
-                    current_step="newsletter_failed",
-                )
-            print(error_message) # Log to server console as well
-
-    await task_manager.enqueue_task(lambda _tid: background_pipeline_run(), task_id)
+    # Business logic lives in services/newsletter_run_service.py (B7);
+    # this endpoint keeps only validation (above) and enqueueing.
+    await task_manager.enqueue_task(
+        lambda _tid: newsletter_run_service.run_custom_newsletter(params, task_id, loop),
+        task_id,
+    )
     return {"task_id": task_id, "message": "Newsletter generation process has been initiated."}
 
 # Podcast endpoints

@@ -6,7 +6,7 @@ from datetime import datetime, date, timedelta
 import json
 
 from ..db import get_cursor
-from .base import to_pgvector
+from .base import build_set_clause, to_pgvector
 
 
 class TopicsRepository:
@@ -63,21 +63,13 @@ class TopicsRepository:
         if not updates:
             return
         
-        fields: List[str] = []
-        params: List[Any] = []
-        
-        for key, value in updates.items():
-            if key == "centroid_embedding":
-                value = to_pgvector(value)
-            fields.append(f"{key} = %s")
-            params.append(value)
-        
-        fields.append("updated_at = now()")
-        params.append(topic_id)
-        
-        sql = f"UPDATE topics SET {', '.join(fields)} WHERE id = %s"
+        columns = {
+            key: to_pgvector(value) if key == "centroid_embedding" else value
+            for key, value in updates.items()
+        }
+        set_sql, params = build_set_clause(columns, extra=("updated_at = now()",))
         with get_cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(f"UPDATE topics SET {set_sql} WHERE id = %s", [*params, topic_id])
 
     @staticmethod
     def delete(topic_id: int) -> None:

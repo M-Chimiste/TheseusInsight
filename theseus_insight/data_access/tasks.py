@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 import json
 
 from ..db import get_cursor
+from .base import build_set_clause
 
 
 class TaskRepository:
@@ -64,33 +65,19 @@ class TaskRepository:
         end_time: str | None = None,
         metadata: Dict[str, Any] | None = None,
     ) -> None:
-        fields = ["status = %s"]
-        params: List[Any] = [status]
-        if progress is not None:
-            fields.append("progress = %s")
-            params.append(progress)
-        if current_step is not None:
-            fields.append("current_step = %s")
-            params.append(current_step)
-        if message is not None:
-            fields.append("message = %s")
-            params.append(message)
-        if error is not None:
-            fields.append("error = %s")
-            params.append(error)
-        if result_json is not None:
-            fields.append("result_json = %s")
-            params.append(json.dumps(result_json))
-        if end_time is not None:
-            fields.append("end_time = %s")
-            params.append(end_time)
-        if metadata is not None:
-            fields.append("metadata = %s")
-            params.append(json.dumps(metadata))
-        params.append(task_id)
-        sql = f"UPDATE tasks SET {', '.join(fields)} WHERE task_id = %s"
+        candidates = {
+            "progress": progress,
+            "current_step": current_step,
+            "message": message,
+            "error": error,
+            "result_json": json.dumps(result_json) if result_json is not None else None,
+            "end_time": end_time,
+            "metadata": json.dumps(metadata) if metadata is not None else None,
+        }
+        updates = {"status": status, **{k: v for k, v in candidates.items() if v is not None}}
+        set_sql, params = build_set_clause(updates)
         with get_cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(f"UPDATE tasks SET {set_sql} WHERE task_id = %s", [*params, task_id])
 
     # ------------------------------------------------------------------
     # Queries

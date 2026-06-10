@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import json
 from ..db import get_cursor
+from .base import build_set_clause
 
 
 class ScheduledTasksRepository:
@@ -112,59 +113,28 @@ class ScheduledTasksRepository:
         next_run_at: Optional[datetime] = None
     ) -> bool:
         """Update a scheduled task."""
-        update_fields = []
-        update_values = []
-        
-        if name is not None:
-            update_fields.append("name = %s")
-            update_values.append(name)
-            
-        if is_enabled is not None:
-            update_fields.append("is_enabled = %s")
-            update_values.append(is_enabled)
-            
-        if frequency is not None:
-            update_fields.append("frequency = %s")
-            update_values.append(frequency)
-            
-        if hour is not None:
-            update_fields.append("hour = %s")
-            update_values.append(hour)
-            
-        if minute is not None:
-            update_fields.append("minute = %s")
-            update_values.append(minute)
-            
-        if day_of_week is not None:
-            update_fields.append("day_of_week = %s")
-            update_values.append(day_of_week)
-            
-        if day_of_month is not None:
-            update_fields.append("day_of_month = %s")
-            update_values.append(day_of_month)
-            
-        if timezone is not None:
-            update_fields.append("timezone = %s")
-            update_values.append(timezone)
-            
-        if config is not None:
-            update_fields.append("config = %s")
-            update_values.append(json.dumps(config))
-            
-        if next_run_at is not None:
-            update_fields.append("next_run_at = %s")
-            update_values.append(next_run_at)
-        
-        if not update_fields:
+        candidates = {
+            "name": name,
+            "is_enabled": is_enabled,
+            "frequency": frequency,
+            "hour": hour,
+            "minute": minute,
+            "day_of_week": day_of_week,
+            "day_of_month": day_of_month,
+            "timezone": timezone,
+            "config": json.dumps(config) if config is not None else None,
+            "next_run_at": next_run_at,
+        }
+        updates = {k: v for k, v in candidates.items() if v is not None}
+        if not updates:
             return True
-        
+
+        set_sql, values = build_set_clause(updates)
         with get_cursor() as cursor:
-            update_values.append(task_id)
-            cursor.execute(f"""
-                UPDATE scheduled_tasks 
-                SET {', '.join(update_fields)}
-                WHERE id = %s
-            """, update_values)
+            cursor.execute(
+                f"UPDATE scheduled_tasks SET {set_sql} WHERE id = %s",
+                [*values, task_id],
+            )
             return cursor.rowcount > 0
     
     @staticmethod
@@ -185,30 +155,26 @@ class ScheduledTasksRepository:
         increment_error_count: bool = False
     ):
         """Update run information for a scheduled task."""
+        updates = {
+            "last_run_at": last_run_at,
+            "last_run_task_id": last_run_task_id,
+            "last_run_status": last_run_status,
+        }
+        if next_run_at is not None:
+            updates["next_run_at"] = next_run_at
+
+        extra = []
+        if increment_run_count:
+            extra.append("run_count = run_count + 1")
+        if increment_error_count:
+            extra.append("error_count = error_count + 1")
+
+        set_sql, values = build_set_clause(updates, extra=extra)
         with get_cursor() as cursor:
-            query_parts = [
-                "last_run_at = %s",
-                "last_run_task_id = %s",
-                "last_run_status = %s"
-            ]
-            params = [last_run_at, last_run_task_id, last_run_status]
-            
-            if next_run_at is not None:
-                query_parts.append("next_run_at = %s")
-                params.append(next_run_at)
-            
-            if increment_run_count:
-                query_parts.append("run_count = run_count + 1")
-                
-            if increment_error_count:
-                query_parts.append("error_count = error_count + 1")
-            
-            params.append(task_id)
-            cursor.execute(f"""
-                UPDATE scheduled_tasks 
-                SET {', '.join(query_parts)}
-                WHERE id = %s
-            """, params)
+            cursor.execute(
+                f"UPDATE scheduled_tasks SET {set_sql} WHERE id = %s",
+                [*values, task_id],
+            )
     
     @staticmethod
     def get_enabled_tasks() -> List[Dict[str, Any]]:
@@ -251,33 +217,20 @@ class ScheduledTaskRunsRepository:
         result: Optional[Dict[str, Any]] = None
     ):
         """Update a task run record."""
-        update_fields = []
-        update_values = []
-        
-        if completed_at is not None:
-            update_fields.append("completed_at = %s")
-            update_values.append(completed_at)
-            
-        if status is not None:
-            update_fields.append("status = %s")
-            update_values.append(status)
-            
-        if error_message is not None:
-            update_fields.append("error_message = %s")
-            update_values.append(error_message)
-            
-        if result is not None:
-            update_fields.append("result = %s")
-            update_values.append(json.dumps(result))
-        
-        if update_fields:
-            update_values.append(run_id)
+        candidates = {
+            "completed_at": completed_at,
+            "status": status,
+            "error_message": error_message,
+            "result": json.dumps(result) if result is not None else None,
+        }
+        updates = {k: v for k, v in candidates.items() if v is not None}
+        if updates:
+            set_sql, values = build_set_clause(updates)
             with get_cursor() as cursor:
-                cursor.execute(f"""
-                    UPDATE scheduled_task_runs
-                    SET {', '.join(update_fields)}
-                    WHERE id = %s
-                """, update_values)
+                cursor.execute(
+                    f"UPDATE scheduled_task_runs SET {set_sql} WHERE id = %s",
+                    [*values, run_id],
+                )
     
     @staticmethod
     def get_by_task_id(scheduled_task_id: int, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:

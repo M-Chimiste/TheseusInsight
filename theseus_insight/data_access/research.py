@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 import json
 
 from ..db import get_cursor
+from .base import build_set_clause
 
 
 class ResearchRunRepository:
@@ -54,21 +55,17 @@ class ResearchRunRepository:
         completed_at: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        fields = ["status = %s"]
-        params: List[Any] = [status]
-        if started_at is not None:
-            fields.append("started_at = %s")
-            params.append(started_at)
-        if completed_at is not None:
-            fields.append("completed_at = %s")
-            params.append(completed_at)
-        if error_message is not None:
-            fields.append("error_message = %s")
-            params.append(error_message)
-        params.append(task_id)
-        sql = f"UPDATE research_runs SET {', '.join(fields)} WHERE task_id = %s"
+        candidates = {
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "error_message": error_message,
+        }
+        updates = {"status": status, **{k: v for k, v in candidates.items() if v is not None}}
+        set_sql, params = build_set_clause(updates)
         with get_cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(
+                f"UPDATE research_runs SET {set_sql} WHERE task_id = %s", [*params, task_id]
+            )
 
     @staticmethod
     def update_research_run_status(
@@ -88,8 +85,6 @@ class ResearchRunRepository:
     ) -> None:
         if not payload:
             return
-        fields: List[str] = []
-        params: List[Any] = []
         json_cols = {
             "statistics": "statistics_json",
             "sub_queries": "sub_queries_json",
@@ -98,20 +93,17 @@ class ResearchRunRepository:
             "evidence": "evidence_json",
             "workflow_messages": "workflow_messages_json",
         }
+        updates: Dict[str, Any] = {}
         for key, value in payload.items():
             if value is None:
                 continue
             column = json_cols.get(key, key)
-            if column.endswith("_json"):
-                fields.append(f"{column} = %s")
-                params.append(json.dumps(value))
-            else:
-                fields.append(f"{column} = %s")
-                params.append(value)
-        params.append(task_id)
-        sql = f"UPDATE research_runs SET {', '.join(fields)} WHERE task_id = %s"
+            updates[column] = json.dumps(value) if column.endswith("_json") else value
+        set_sql, params = build_set_clause(updates)
         with get_cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(
+                f"UPDATE research_runs SET {set_sql} WHERE task_id = %s", [*params, task_id]
+            )
 
     @staticmethod
     def update_research_run_results(task_id: str, **payload: Any) -> None:

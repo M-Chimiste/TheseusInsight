@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 import json
 
 from ..db import get_cursor
+from .base import build_set_clause
 
 
 class ModelCatalogRepository:
@@ -40,21 +41,16 @@ class ModelCatalogRepository:
     def update(model_id: int, updates: Dict[str, Any]) -> None:
         if not updates:
             return
-        fields: List[str] = []
-        params: List[Any] = []
-        for key, value in updates.items():
-            if key == "tags":
-                value = json.dumps(value)
-                column = "tags_json"
-            else:
-                column = key
-            fields.append(f"{column} = %s")
-            params.append(value)
-        fields.append("updated_at = now()")
-        params.append(model_id)
-        sql = f"UPDATE model_catalog SET {', '.join(fields)} WHERE id = %s"
+        columns = {
+            ("tags_json" if key == "tags" else key):
+                (json.dumps(value) if key == "tags" else value)
+            for key, value in updates.items()
+        }
+        set_sql, params = build_set_clause(columns, extra=("updated_at = now()",))
         with get_cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(
+                f"UPDATE model_catalog SET {set_sql} WHERE id = %s", [*params, model_id]
+            )
 
     @staticmethod
     def toggle_favorite(model_id: int) -> None:

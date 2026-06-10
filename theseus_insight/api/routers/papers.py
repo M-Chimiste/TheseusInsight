@@ -19,6 +19,7 @@ from ..helpers.profile_filtering import (
     merge_id_filters, parse_id_csv, parse_tag_csv, resolve_tag_profile_ids
 )
 from ..helpers.serialization import isoformat_fields
+from ...db.async_bridge import run_repo
 
 def _convert_paper_timestamps(paper_data: dict) -> dict:
     """Convert PostgreSQL datetime objects to ISO strings for API response."""
@@ -323,8 +324,9 @@ async def get_papers(
                 'has_next_page': has_next_page
             }
         else:
-            # Use regular database-level pagination
-            papers_data = PaperRepository.paginate(
+            # Use regular database-level pagination (bridged off the event loop)
+            papers_data = await run_repo(
+                PaperRepository.paginate,
                 page=page,
                 page_size=page_size,
                 min_score=score,

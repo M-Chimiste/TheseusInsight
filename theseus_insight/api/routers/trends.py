@@ -39,6 +39,7 @@ from ..helpers.profile_filtering import (
     merge_id_filters, parse_id_csv, parse_tag_csv, resolve_tag_profile_ids
 )
 from ..helpers.serialization import isoformat_fields
+from ...db.async_bridge import run_repo
 from ...prompt.system_prompts import TRENDS_LEGEND_LABEL_SYSTEM_PROMPT
 from LLMFactory import LLMModelFactory
 
@@ -186,12 +187,13 @@ async def get_trending_topics(
             )
         
         # Get dashboard data using the requested period type (which may be aggregated from weekly data)
-        dashboard_data = TrendsRepository.get_dashboard_data(
-            limit=limit, 
+        dashboard_data = await run_repo(
+            TrendsRepository.get_dashboard_data,
+            limit=limit,
             period_type=period_type,
             duration_months=duration_months,
             profile_id=profile_id,
-            profile_ids=resolved_profile_ids
+            profile_ids=resolved_profile_ids,
         )
         
         # Format topics for response
@@ -302,10 +304,11 @@ async def get_timeline_data(
         if not parsed_ids:
             if source == "profile_interests" and parsed_profile_ids:
                 # Get interests from profile_interest_metrics for specified profiles
-                dashboard_data = ProfileInterestMetricsRepository.get_dashboard_data(
+                dashboard_data = await run_repo(
+                    ProfileInterestMetricsRepository.get_dashboard_data,
                     profile_ids=parsed_profile_ids,
                     limit=limit,
-                    period_type=period_type if period_type != "year" else "quarter"
+                    period_type=period_type if period_type != "year" else "quarter",
                 )
                 parsed_ids = [i["profile_interest_id"] for i in dashboard_data.get("trending_interests", [])]
             elif source == "research_interests":
@@ -313,10 +316,11 @@ async def get_timeline_data(
                 interests = ResearchInterestsRepository.get_all()
                 parsed_ids = [i["id"] for i in interests[:limit]]
             else:
-                trending = TopicMetricsRepository.get_trending_topics(
+                trending = await run_repo(
+                    TopicMetricsRepository.get_trending_topics,
                     period_type=period_type if period_type != "year" else "quarter",
                     limit=limit,
-                    min_doc_count=1
+                    min_doc_count=1,
                 )
                 parsed_ids = [t["topic_id"] for t in trending]
 
@@ -343,7 +347,8 @@ async def get_timeline_data(
         # Use appropriate repository based on source
         if source == "profile_interests":
             # Use new profile-aware metrics
-            timeline_data = _get_profile_timeline_data(
+            timeline_data = await run_repo(
+                _get_profile_timeline_data,
                 interest_ids=parsed_ids,
                 period_type=effective_period_type,
                 start_date=parsed_start_date,
@@ -352,7 +357,8 @@ async def get_timeline_data(
                 include_key_papers=include_key_papers
             )
         elif source == "research_interests":
-            timeline_data = ResearchInterestMetricsRepository.get_timeline_with_papers(
+            timeline_data = await run_repo(
+                ResearchInterestMetricsRepository.get_timeline_with_papers,
                 interest_ids=parsed_ids,
                 period_type=effective_period_type,
                 start_date=parsed_start_date,
@@ -361,7 +367,8 @@ async def get_timeline_data(
                 include_key_papers=include_key_papers
             )
         else:
-            timeline_data = TopicMetricsRepository.get_timeline_with_papers(
+            timeline_data = await run_repo(
+                TopicMetricsRepository.get_timeline_with_papers,
                 topic_ids=parsed_ids,
                 period_type=effective_period_type,
                 start_date=parsed_start_date,

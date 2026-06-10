@@ -24,7 +24,7 @@ import requests
 # Local application imports
 from theseus_insight.communication import GmailCommunication, construct_email_body, upload_video
 from theseus_insight.data_processing import ArxivDataProcessor, Paper, Newsletter, Podcast
-from theseus_insight.data_processing.checkpoint_manager import CheckpointManager
+from theseus_insight.pipeline.checkpoints import CheckpointAdapter
 from theseus_insight.data_access import (
     PaperRepository, LogsRepository, NewsletterRepository, 
     PodcastRepository, SettingsRepository
@@ -194,12 +194,12 @@ class TheseusInsight:
         self.send_error_notifications = send_error_notifications
         self.error_notified = False
         
-        # Initialize checkpoint manager if using database checkpoints
-        self.checkpoint_manager = None
-        self.job_id = None
-        if use_database_checkpoints:
-            # We'll initialize this lazily in async context
-            pass
+        # Checkpoint persistence (file + optional DB) — see pipeline/checkpoints.py
+        self._checkpoints = CheckpointAdapter(
+            self.checkpoint_dir,
+            use_database_checkpoints=use_database_checkpoints,
+            verbose=verbose,
+        )
         
         # Email/Communication
         final_receiver_address = None
@@ -639,116 +639,34 @@ class TheseusInsight:
 
     async def _init_checkpoint_manager(self):
         """Initialize the checkpoint manager and create/resume job."""
-        if self.checkpoint_manager is None and self.use_database_checkpoints:
-            # Get database connection pool and initialize checkpoint manager
-            pool = await get_connection_pool()
-            self.checkpoint_manager = CheckpointManager(pool)
-            
-            # Create job configuration
-            config = {
-                "start_date": str(self.start_date),
-                "end_date": str(self.end_date),
-                "top_n": self.top_n,
-                "cosine_threshold": self.cosine_similarity_threshold,
-                "profile_ids": self.profile_ids_override,
-                "task_id": self.task_id
-            }
-            
-            # Create new job (simplified - we don't need resumable jobs for newsletter generation)
-            self.job_id = await self.checkpoint_manager.create_job("newsletter_generation", config)
-            if self.verbose:
-                print(f"📝 Created new newsletter job {self.job_id}")
+        await self._checkpoints.init_db_job({
+            "start_date": str(self.start_date),
+            "end_date": str(self.end_date),
+            "top_n": self.top_n,
+            "cosine_threshold": self.cosine_similarity_threshold,
+            "profile_ids": self.profile_ids_override,
+            "task_id": self.task_id
+        })
 
+    # Checkpoint mechanics live in pipeline/checkpoints.py (B8); these
+    # delegates keep the ~48 internal call sites unchanged.
     async def _save_checkpoint_async(self, stage: str, data: any):
-        """Save a checkpoint using the database checkpoint manager."""
-        if self.checkpoint_manager and self.job_id:
-            # Convert data to serializable format
-            checkpoint_data = data
-            if isinstance(data, pd.DataFrame):
-                checkpoint_data = {'dataframe': data.to_dict('records')}
-            
-            await self.checkpoint_manager.save_checkpoint(
-                self.job_id,
-                stage,
-                checkpoint_data,
-                item_count=len(data) if hasattr(data, '__len__') else 1,
-                update_state={"current_stage": stage}
-            )
-            if self.verbose:
-                print(f"✅ Saved database checkpoint for stage: {stage}")
-        
-        # Always save file checkpoint as fallback
-        self._save_checkpoint(stage, data)
+        await self._checkpoints.save_async(stage, data)
 
     def _save_checkpoint(self, stage: str, data: any):
-        """Save a file-based checkpoint for the given pipeline stage."""
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
-        checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
-        checkpoint_data = {
-            'data': data,
-            'timestamp': datetime.datetime.now().isoformat(),
-            'stage': stage
-        }
-        with open(checkpoint_path, 'wb') as f:
-            pickle.dump(checkpoint_data, f)
-        if self.verbose and not self.use_database_checkpoints:
-            print(f"Saved file checkpoint for stage: {stage}")
+        self._checkpoints.save(stage, data)
 
     async def _load_checkpoint_async(self, stage: str) -> any:
-        """Load a checkpoint using the database checkpoint manager."""
-        if self.checkpoint_manager and self.job_id:
-            checkpoint = await self.checkpoint_manager.get_latest_checkpoint(self.job_id, stage)
-            if checkpoint:
-                data = checkpoint['checkpoint_data']
-                # Reconstruct DataFrame if needed
-                if 'dataframe' in data:
-                    data = pd.DataFrame(data['dataframe'])
-                if self.verbose:
-                    print(f"✅ Loaded database checkpoint for stage: {stage}")
-                return data
-        
-        # Fall back to file checkpoint
-        return self._load_checkpoint(stage)
+        return await self._checkpoints.load_async(stage)
 
     def _load_checkpoint(self, stage: str) -> any:
-        """Load a file-based checkpoint for the given pipeline stage."""
-        checkpoint_path = os.path.join(self.checkpoint_dir, f"{stage}_checkpoint.pkl")
-        if os.path.exists(checkpoint_path):
-            try:
-                with open(checkpoint_path, 'rb') as f:
-                    checkpoint = pickle.load(f)
-                if self.verbose and not self.use_database_checkpoints:
-                    print(f"Loaded file checkpoint for stage: {stage} from {checkpoint['timestamp']}")
-                return checkpoint['data']
-            except Exception as e:
-                if self.verbose:
-                    print(f"Error loading file checkpoint for stage {stage}: {str(e)}")
-                return None
-        if self.verbose and not self.use_database_checkpoints:
-            print(f"No file checkpoint found for stage: {stage}")
-        return None
+        return self._checkpoints.load(stage)
 
     async def _cleanup_checkpoints_async(self):
-        """Mark job as completed and clean up file checkpoints."""
-        # Mark job as completed in database
-        if self.checkpoint_manager and self.job_id:
-            await self.checkpoint_manager.complete_job(self.job_id)
-            if self.verbose:
-                print("✅ Marked job as completed in database")
-        
-        # Clean up file checkpoints
-        self._cleanup_checkpoints()
+        await self._checkpoints.cleanup_async()
 
     def _cleanup_checkpoints(self):
-        """Remove all checkpoint files after successful completion."""
-        if os.path.exists(self.checkpoint_dir):
-            try:
-                shutil.rmtree(self.checkpoint_dir)
-                if self.verbose and not self.use_database_checkpoints:
-                    print("Cleaned up all file checkpoints")
-            except Exception as e:
-                if self.verbose:
-                    print(f"Error cleaning up file checkpoints: {str(e)}")
+        self._checkpoints.cleanup()
 
     def _cleanup_temp_data(self):
         """Clean up temp_data folder (if it exists)."""
@@ -3036,12 +2954,11 @@ Theseus Insight Team
 
         except Exception as e:
             # Mark job as failed if using database checkpoints
-            if self.checkpoint_manager and self.job_id:
-                try:
-                    await self.checkpoint_manager.fail_job(self.job_id, str(e))
-                except Exception as checkpoint_error:
-                    if self.verbose:
-                        print(f"Failed to mark job as failed: {checkpoint_error}")
+            try:
+                await self._checkpoints.fail_job(str(e))
+            except Exception as checkpoint_error:
+                if self.verbose:
+                    print(f"Failed to mark job as failed: {checkpoint_error}")
             
             self._log_error(500, e)
             raise

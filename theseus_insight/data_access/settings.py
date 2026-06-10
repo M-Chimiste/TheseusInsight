@@ -130,6 +130,17 @@ class SettingsRepository:
     def set_visualizer_settings(settings: Dict[str, Any]):
         SettingsRepository.set('visualizer_settings', json.dumps(settings))
 
+    @staticmethod
+    def get_performance_config() -> Dict[str, Any]:
+        val = SettingsRepository.get('performance_config')
+        if not val:
+            return {}
+        try:
+            return json.loads(val)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse performance config: {e}")
+            return {}
+
     # Enhanced dual-mode research agent configuration management
     
     @staticmethod

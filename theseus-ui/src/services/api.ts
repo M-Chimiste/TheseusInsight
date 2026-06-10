@@ -31,6 +31,7 @@ import type {
     TimelinePeriodData,
     TopicTimelineData,
     TimelineDataResponse,
+    PerformanceConfig,
 } from './generated/types';
 export type {
     ModelConfig,
@@ -61,12 +62,12 @@ export type {
     TimelinePeriodData,
     TopicTimelineData,
     TimelineDataResponse,
+    PerformanceConfig,
 };
 
 // TODO(codegen): the following types conflict with the generated schema
-// (required-vs-optional request fields, Dict[str,Any] backend models, or
-// genuine drift like PerformanceConfig.auto_tune_batch_size not existing
-// server-side). Re-alias them as backend models tighten.
+// (required-vs-optional request fields or Dict[str,Any] backend models).
+// Re-alias them as backend models tighten.
 
 export interface ProfileAwareIngestRequest {
   start_date?: string;
@@ -364,22 +365,6 @@ export interface InferenceServerUpdate {
   };
   notes?: string;
 }
-
-export interface PerformanceConfig {
-  max_cores: number;
-  max_memory_gb: number;
-  hdbscan_n_jobs: number;
-  clustering_batch_size: number;
-  embedding_batch_size: number;
-  auto_tune_batch_size?: boolean;
-  vector_processing_workers: number;
-  enable_memory_mapping: boolean;
-  cache_embeddings: boolean;
-  aggressive_garbage_collection: boolean;
-  development_mode: boolean;
-  development_max_papers: number;
-}
-
 
 import type { AxiosResponse } from 'axios';
 

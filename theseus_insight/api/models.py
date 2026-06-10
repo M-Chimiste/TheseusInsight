@@ -764,7 +764,8 @@ class PerformanceConfig(BaseModel):
     clustering_batch_size: int = Field(default=50000, ge=1000, le=1000000, description="Batch size for clustering operations")
     
     # Embedding & Vector Operations
-    embedding_batch_size: int = Field(default=512, ge=32, le=2048, description="Embedding batch size")
+    embedding_batch_size: int = Field(default=512, ge=32, le=2048, description="Embedding batch size (used when auto-tuning is disabled)")
+    auto_tune_batch_size: bool = Field(default=True, description="Auto-tune embedding batch size for the hardware on first run")
     vector_processing_workers: int = Field(default=8, ge=1, le=64, description="Workers for vector processing")
     
     # Memory Management
@@ -784,6 +785,7 @@ class PerformanceConfig(BaseModel):
                 "hdbscan_n_jobs": -1,
                 "clustering_batch_size": 100000,
                 "embedding_batch_size": 1024,
+                "auto_tune_batch_size": True,
                 "vector_processing_workers": 16,
                 "enable_memory_mapping": True,
                 "cache_embeddings": True,

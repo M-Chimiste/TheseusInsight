@@ -6,6 +6,21 @@
 
 ## Recent Changes
 
+### Codegen-drift fix: `auto_tune_batch_size` wired end-to-end (2026-06-10, session 8)
+
+The F2 drift bug is resolved by **adding the field to the backend and honoring it** (chosen over removing the UI toggle because the auto-tune capability genuinely exists in `services/embedding_service.py` and the toggle's tooltip describes it accurately — only the plumbing was missing):
+
+- `api/models.py` — `PerformanceConfig.auto_tune_batch_size: bool = True` (next to `embedding_batch_size`, whose description now notes it applies when auto-tuning is off). POST/GET `/api/trends/performance-config` now persist and return it; old persisted configs default to `True`.
+- `data_access/settings.py` — new `SettingsRepository.get_performance_config()` helper (JSON-safe, `{}` on missing/corrupt); the GET endpoint and harvest service both use it. Side effect: a corrupt stored config now falls back to recommended defaults instead of 500ing.
+- `services/harvest_service.py` — embedding preflight reads the persisted performance config instead of hardcoding `auto_tune_batch_size=True`; when auto-tune is off, the user's `embedding_batch_size` is passed as `gpu_batch_size`.
+- `services/embedding_service.py` — `_load_embedding_model` branch order fixed so auto-tune=False honors the configured batch size on **all** devices (previously MPS forced 256 unconditionally, which would have kept the toggle dead on Apple Silicon). Auto-tune-on behavior unchanged (MPS still pins 256; CUDA/CPU tune on first run).
+- Frontend: `openapi.json` + `schema.d.ts` regenerated; `PerformanceConfig` is now a generated-type alias in api.ts (hand-written interface deleted, TODO(codegen) drift mention removed). The generated shape matches exactly — all fields required, including the new boolean.
+- New characterization test: `test_performance_config_roundtrip` (POST→GET preserves `auto_tune_batch_size`/`embedding_batch_size`).
+
+Suite: 52 backend tests green; frontend build clean, vitest 11/11.
+
+**Note:** the rest of `PerformanceConfig` (max_cores, hdbscan_n_jobs, clustering_batch_size, etc.) is still persisted-but-unconsumed — no pipeline code reads those fields. `auto_tune_batch_size`/`embedding_batch_size` are the first honored fields.
+
 ### Ship of Theseus Refactor — F4 + F5 + B10: ROADMAP COMPLETE (2026-06-10, session 7)
 
 **F4 — task-channel unification:**

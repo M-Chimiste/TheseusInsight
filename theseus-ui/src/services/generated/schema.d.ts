@@ -5802,6 +5802,7 @@ export interface components {
          * @description Performance configuration for computationally intensive operations.
          * @example {
          *       "aggressive_garbage_collection": false,
+         *       "auto_tune_batch_size": true,
          *       "cache_embeddings": true,
          *       "clustering_batch_size": 100000,
          *       "development_max_papers": 5000,
@@ -5821,6 +5822,12 @@ export interface components {
              * @default false
              */
             aggressive_garbage_collection: boolean;
+            /**
+             * Auto Tune Batch Size
+             * @description Auto-tune embedding batch size for the hardware on first run
+             * @default true
+             */
+            auto_tune_batch_size: boolean;
             /**
              * Cache Embeddings
              * @description Cache embeddings in memory
@@ -5847,7 +5854,7 @@ export interface components {
             development_mode: boolean;
             /**
              * Embedding Batch Size
-             * @description Embedding batch size
+             * @description Embedding batch size (used when auto-tuning is disabled)
              * @default 512
              */
             embedding_batch_size: number;

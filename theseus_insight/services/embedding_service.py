@@ -206,20 +206,20 @@ class StreamingEmbeddingService:
             
             # Auto-tune batch size if enabled
             # For Metal GPU, use more conservative settings to avoid memory errors
-            if self.config.auto_tune_batch_size and device != "mps":
-                if self._optimal_batch_size is None:
-                    logger.info("🎯 Running GPU batch size auto-tuning (first run)...")
-                    self._optimal_batch_size = self._auto_tune_batch_size()
-                    logger.info(f"✅ Auto-tuned optimal batch size: {self._optimal_batch_size}")
-                else:
-                    logger.info(f"📌 Using cached optimal batch size: {self._optimal_batch_size}")
+            if not self.config.auto_tune_batch_size:
+                # Auto-tuning disabled: honor the configured batch size on any device
+                self._optimal_batch_size = self.config.gpu_batch_size
+                logger.info(f"📐 Auto-tuning disabled: using configured batch size: {self._optimal_batch_size}")
             elif device == "mps":
                 # Metal GPU: use fixed conservative batch size (auto-tuning can be unreliable)
                 self._optimal_batch_size = 256
                 logger.info(f"🍎 Metal GPU detected: using conservative batch size: {self._optimal_batch_size}")
+            elif self._optimal_batch_size is None:
+                logger.info("🎯 Running GPU batch size auto-tuning (first run)...")
+                self._optimal_batch_size = self._auto_tune_batch_size()
+                logger.info(f"✅ Auto-tuned optimal batch size: {self._optimal_batch_size}")
             else:
-                # Use configured default
-                self._optimal_batch_size = self.config.gpu_batch_size
+                logger.info(f"📌 Using cached optimal batch size: {self._optimal_batch_size}")
         
         return self.embedding_model
     

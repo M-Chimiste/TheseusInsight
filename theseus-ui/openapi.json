@@ -3456,6 +3456,7 @@
         "description": "Performance configuration for computationally intensive operations.",
         "example": {
           "aggressive_garbage_collection": false,
+          "auto_tune_batch_size": true,
           "cache_embeddings": true,
           "clustering_batch_size": 100000,
           "development_max_papers": 5000,
@@ -3472,6 +3473,12 @@
             "default": false,
             "description": "Force garbage collection between stages",
             "title": "Aggressive Garbage Collection",
+            "type": "boolean"
+          },
+          "auto_tune_batch_size": {
+            "default": true,
+            "description": "Auto-tune embedding batch size for the hardware on first run",
+            "title": "Auto Tune Batch Size",
             "type": "boolean"
           },
           "cache_embeddings": {
@@ -3504,7 +3511,7 @@
           },
           "embedding_batch_size": {
             "default": 512,
-            "description": "Embedding batch size",
+            "description": "Embedding batch size (used when auto-tuning is disabled)",
             "maximum": 2048.0,
             "minimum": 32.0,
             "title": "Embedding Batch Size",

@@ -67,14 +67,23 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     # Use streaming service for memory-efficient processing
     from ...services import StreamingEmbeddingService, EmbeddingServiceConfig
     
+    performance_config = SettingsRepository.get_performance_config()
+    auto_tune = performance_config.get('auto_tune_batch_size', True)
+
+    embedding_kwargs = {}
+    if not auto_tune and performance_config.get('embedding_batch_size'):
+        embedding_kwargs['gpu_batch_size'] = int(performance_config['embedding_batch_size'])
+        logger.info(f"📐 Auto-tuning disabled: using configured batch size {embedding_kwargs['gpu_batch_size']}")
+
     config = EmbeddingServiceConfig(
         # chunk_size uses default (5000) for Metal GPU compatibility
-        # gpu_batch_size will be auto-tuned, capped at max_batch_size for Metal GPU
+        # gpu_batch_size is auto-tuned unless disabled in the performance config
         model_name=model_name,
         trust_remote_code=trust_remote_code,
-        auto_tune_batch_size=True,
+        auto_tune_batch_size=auto_tune,
         db_flush_interval=1000,
-        verbose=True
+        verbose=True,
+        **embedding_kwargs
     )
     
     service = StreamingEmbeddingService(config)

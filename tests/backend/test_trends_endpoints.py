@@ -14,6 +14,22 @@ def test_trends_system_info_keys(client, empty_db, golden):
     golden("trends_system_info_keys", sorted(resp.json().keys()))
 
 
+def test_performance_config_roundtrip(client, empty_db):
+    """POST persists every field — including auto_tune_batch_size, which the
+    backend model silently dropped before it was added (codegen drift fix)."""
+    posted = client.get("/api/trends/performance-config").json()
+    posted["auto_tune_batch_size"] = False
+    posted["embedding_batch_size"] = 128
+
+    resp = client.post("/api/trends/performance-config", json=posted)
+    assert resp.status_code == 200
+    assert resp.json()["config"]["auto_tune_batch_size"] is False
+
+    fetched = client.get("/api/trends/performance-config").json()
+    assert fetched["auto_tune_batch_size"] is False
+    assert fetched["embedding_batch_size"] == 128
+
+
 def test_trends_research_interests_empty(client, empty_db):
     resp = client.get("/api/trends/research-interests")
     assert resp.status_code == 200

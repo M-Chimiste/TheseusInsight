@@ -501,6 +501,7 @@ async def get_system_info() -> SystemInfoResponse:
             hdbscan_n_jobs=min(cpu_count_logical, 24),  # HDBSCAN parallelization
             clustering_batch_size=min(100000, int(memory_total_gb * 10000)),  # Scale with memory
             embedding_batch_size=min(2048, max(256, int(memory_total_gb * 20))),  # Scale embedding batch
+            auto_tune_batch_size=True,
             vector_processing_workers=min(cpu_count_logical, 16),
             enable_memory_mapping=True,
             cache_embeddings=memory_total_gb > 32,  # Enable caching for high-memory systems
@@ -526,9 +527,8 @@ async def get_system_info() -> SystemInfoResponse:
 async def get_performance_config() -> PerformanceConfig:
     """Get current performance configuration."""
     try:
-        config_json = SettingsRepository.get("performance_config")
-        if config_json:
-            config_dict = json.loads(config_json)
+        config_dict = SettingsRepository.get_performance_config()
+        if config_dict:
             return PerformanceConfig(**config_dict)
         else:
             # Return system-recommended defaults

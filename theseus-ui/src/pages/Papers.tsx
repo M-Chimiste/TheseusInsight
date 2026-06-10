@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { usePapersInfiniteQuery, papersQueryKey } from '../hooks/usePapersQuery';
+import type { FilterState, SortCriterion } from '../hooks/usePapersQuery';
 import { useSearchParams } from 'react-router-dom';
 import {
   Box,
@@ -56,7 +59,6 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 // import type { SelectChangeEvent } from '@mui/material'; // Commented out as unused
-import { papersApi } from '../services/api';
 import type { PaperApiResponse } from '../services/api';
 import PaperCard from './PaperCard'; // Assuming PaperCard.tsx is in the same directory
 import PaperRowCard from './PaperRowCard'; // Import the new PaperRowCard
@@ -69,26 +71,7 @@ const DEFAULT_PAGE_SIZE = 18; // 6 cards per row, 3 rows for grid view - increas
 
 type ViewMode = 'grid' | 'list' | 'similarity';
 
-interface FilterState {
-  minScore: number;
-  maxScore: number;
-  fromDate: Date | null;
-  toDate: Date | null;
-  search: string;
-  topicId: number | null;
-  profileInterestId: number | null;  // For timeline navigation
-  // Profile-aware filters (only available when profiles are selected)
-  minProfileScore: number;
-  maxProfileScore: number;
-  relevanceFilter: 'all' | 'relevant' | 'not_relevant';
-}
-
-// Multi-criteria sorting system
-interface SortCriterion {
-  id: string;
-  field: 'score' | 'profile_score' | 'date';
-  direction: 'asc' | 'desc';
-}
+// FilterState/SortCriterion moved to hooks/usePapersQuery.ts (F5).
 
 const SORT_FIELD_LABELS = {
   score: 'Overall Score',
@@ -237,14 +220,7 @@ const Papers: React.FC = () => {
   );
 
   // Keep track of all fetched papers for infinite scroll
-  const [allPapers, setAllPapers] = useState<PaperApiResponse[]>([]); 
-  const [loading, setLoading] = useState<boolean>(true);
-  const [loadingMore, setLoadingMore] = useState<boolean>(false); // Separate state for additional loads
-  const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize] = useState<number>(DEFAULT_PAGE_SIZE);
-  const [hasNextPage, setHasNextPage] = useState<boolean>(true); // Track if more pages are available
-  const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
+  const pageSize = DEFAULT_PAGE_SIZE;
   const [viewMode, setViewMode] = useState<ViewMode>('grid'); // Updated to include similarity
   
   // Multi-criteria sorting state
@@ -297,6 +273,29 @@ const Papers: React.FC = () => {
   const [semanticWeight, setSemanticWeight] = useState<number>(0.6);
   const [keywordWeight, setKeywordWeight] = useState<number>(0.4);
 
+  // Server data via useInfiniteQuery (F5): the query key carries every
+  // filter/sort/profile input, so changes reset pagination automatically.
+  const queryClient = useQueryClient();
+  const papersQueryParams = {
+    appliedFilters, sortCriteria, useHybridSearch,
+    semanticWeight, keywordWeight, selectedProfileIds, pageSize,
+  };
+  const {
+    data: papersData,
+    isLoading: loading,
+    isFetchingNextPage: loadingMore,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+    error: papersQueryError,
+  } = usePapersInfiniteQuery(papersQueryParams);
+  const allPapers = useMemo(
+    () => papersData ? papersData.pages.flatMap(page => page.items) : [],
+    [papersData],
+  );
+  const error = papersQueryError ? 'Failed to fetch papers. Please try again.' : null;
+  const initialLoadComplete = !loading;
+
   const loader = useRef<HTMLDivElement>(null); // For Intersection Observer
 
   // Track if we've handled the initial URL params to avoid re-triggering on every render.
@@ -325,111 +324,10 @@ const Papers: React.FC = () => {
       setShowFilters(true);
       // Update both filters and appliedFilters.
       setFilters(newFilters);
-      // Force a fresh fetch by resetting state before setting new filters.
-      setAllPapers([]);
-      setCurrentPage(1);
-      setHasNextPage(true);
-      setInitialLoadComplete(false);
+      // Applying new filters changes the query key, which resets pagination.
       setAppliedFilters(newFilters);
     }
   }, [searchParams, getInitialFilters]);
-
-  const fetchPapers = useCallback(async (page: number, size: number, isInitialLoad: boolean = false) => {
-    if (!hasNextPage && !isInitialLoad) return; // Don't fetch if no more pages, unless it's the very first load
-    
-    // Set appropriate loading state
-    if (isInitialLoad) {
-      setLoading(true);
-    } else {
-      setLoadingMore(true);
-    }
-    setError(null);
-    
-    // Parse sort option
-    const getSortFieldAndDirection = (sortOption: SortCriterion): [string, string] => {
-      switch (sortOption.field) {
-        case 'score':
-          return ['score', sortOption.direction];
-        case 'profile_score':
-          return ['profile_score', sortOption.direction];
-        case 'date':
-          return ['date', sortOption.direction];
-        default:
-          return ['score', 'desc'];
-      }
-    };
-
-    // Use only the first sort criterion for API call (backend limitation)
-    const [sortField, sortDirection] = getSortFieldAndDirection(sortCriteria[0]);
-    
-    try {
-      let data;
-      if (useHybridSearch && appliedFilters.search) {
-        // Use hybrid search when enabled and search query exists
-        const hybridData = await papersApi.hybridSearch(
-          appliedFilters.search,
-          page,
-          size,
-          semanticWeight,
-          keywordWeight,
-          0.3, // similarity threshold
-          appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
-          appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
-          appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
-          appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined
-        );
-        data = {
-          items: hybridData.results,
-          current_page: hybridData.current_page,
-          nextPage: hybridData.current_page < hybridData.total_pages ? hybridData.current_page + 1 : null
-        };
-      } else {
-        // Use regular search/filtering
-        data = await papersApi.getPapers(
-          page,
-          size,
-          sortField,
-          sortDirection,
-          appliedFilters.minScore > 0 ? appliedFilters.minScore : undefined,
-          appliedFilters.maxScore < 10 ? appliedFilters.maxScore : undefined,
-          appliedFilters.fromDate ? appliedFilters.fromDate.toISOString().split('T')[0] : undefined,
-          appliedFilters.toDate ? appliedFilters.toDate.toISOString().split('T')[0] : undefined,
-          appliedFilters.search || undefined,
-          appliedFilters.topicId || undefined,
-          selectedProfileIds.length > 0 ? selectedProfileIds : undefined,
-          // Profile-aware parameters
-          selectedProfileIds.length > 0 && appliedFilters.minProfileScore > 0 ? appliedFilters.minProfileScore : undefined,
-          selectedProfileIds.length > 0 && appliedFilters.maxProfileScore < 10 ? appliedFilters.maxProfileScore : undefined,
-          // Fixed profile relevance filtering logic
-          selectedProfileIds.length > 0 && appliedFilters.relevanceFilter === 'relevant' ? true : undefined,
-          // Profile interest ID (from timeline navigation)
-          appliedFilters.profileInterestId || undefined
-        );
-      }
-      setAllPapers(prevPapers => isInitialLoad ? data.items : [...prevPapers, ...data.items]);
-      setCurrentPage(data.current_page + 1); // Prepare for the next page
-      setHasNextPage(data.nextPage !== null);
-      if (!initialLoadComplete) setInitialLoadComplete(true);
-    } catch (err) {
-      console.error("Error fetching papers:", err);
-      setError('Failed to fetch papers. Please try again.');
-    }
-    
-    // Clear appropriate loading state
-    if (isInitialLoad) {
-      setLoading(false);
-    } else {
-      setLoadingMore(false);
-    }
-      }, [hasNextPage, initialLoadComplete, appliedFilters, useHybridSearch, semanticWeight, keywordWeight, selectedProfileIds, sortCriteria]);
-
-  // Reset papers when filters change
-  const resetAndFetch = useCallback(() => {
-    setAllPapers([]);
-    setCurrentPage(1);
-    setHasNextPage(true);
-    setInitialLoadComplete(false);
-  }, []);
 
   // Smart sorting: automatically switch to profile-aware sorting when profiles are selected
   useEffect(() => {
@@ -454,17 +352,6 @@ const Papers: React.FC = () => {
     }
   }, [selectedProfileIds]);
 
-  // Initial fetch
-  useEffect(() => {
-    resetAndFetch();
-  }, [pageSize, appliedFilters, selectedProfileIds, sortCriteria, resetAndFetch]);
-
-  useEffect(() => {
-    if(!initialLoadComplete) {
-        fetchPapers(1, pageSize, true);
-    }
-  }, [pageSize, fetchPapers, initialLoadComplete]);
-
   // Intersection Observer for infinite scrolling with improved performance
   useEffect(() => {
     let isRequestInProgress = false;
@@ -485,14 +372,14 @@ const Papers: React.FC = () => {
             requestTimeout = setTimeout(() => {
               if (!isRequestInProgress) {
                 isRequestInProgress = true;
-                fetchPapers(currentPage, pageSize).finally(() => {
+                fetchNextPage().finally(() => {
                   isRequestInProgress = false;
                 });
               }
             }, 300);
           } else {
             isRequestInProgress = true;
-            fetchPapers(currentPage, pageSize).finally(() => {
+            fetchNextPage().finally(() => {
               isRequestInProgress = false;
             });
           }
@@ -515,7 +402,7 @@ const Papers: React.FC = () => {
         observer.unobserve(currentLoader);
       }
     };
-  }, [loading, loadingMore, hasNextPage, currentPage, pageSize, fetchPapers, initialLoadComplete, isScrolling]);
+  }, [loading, loadingMore, hasNextPage, fetchNextPage, initialLoadComplete, isScrolling]);
 
   // Scroll event handler to detect rapid scrolling
   useEffect(() => {
@@ -586,13 +473,23 @@ const Papers: React.FC = () => {
 
   // Update handler to sync edits into the list
   const handlePaperUpdated = useCallback((updated: PaperApiResponse) => {
-    setAllPapers(prev => prev.map(p => p.id === updated.id ? { 
-      ...p, 
-      score: updated.score, 
-      related: updated.related,
-      profile_score: (updated as any).profile_score !== undefined ? (updated as any).profile_score : p.profile_score
-    } : p));
-  }, []);
+    queryClient.setQueryData(papersQueryKey(papersQueryParams), (old: any) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page: any) => ({
+          ...page,
+          items: page.items.map((p: PaperApiResponse) => p.id === updated.id ? {
+            ...p,
+            score: updated.score,
+            related: updated.related,
+            profile_score: (updated as any).profile_score !== undefined ? (updated as any).profile_score : p.profile_score
+          } : p),
+        })),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient, JSON.stringify(papersQueryKey(papersQueryParams))]);
 
   const handleApplyFilters = () => {
     setAppliedFilters({ ...filters });
@@ -695,7 +592,7 @@ const Papers: React.FC = () => {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>
-        <Button onClick={() => fetchPapers(1, pageSize, true)} sx={{ mt: 2 }}>Retry Initial Load</Button>
+        <Button onClick={() => refetch()} sx={{ mt: 2 }}>Retry Initial Load</Button>
       </Box>
     );
   }

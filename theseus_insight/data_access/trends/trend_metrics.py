@@ -7,6 +7,7 @@ import json
 
 from ...db import get_cursor
 from ..base import build_set_clause, to_pgvector
+from ._profile_filters import profile_filter_clause
 
 
 
@@ -17,11 +18,23 @@ class TrendsRepository:
     def get_dashboard_data(limit: int = 20, period_type: str = "month", duration_months: int = 6, 
                           profile_id: Optional[int] = None, profile_ids: Optional[List[int]] = None) -> Dict[str, Any]:
         """Get comprehensive dashboard data for trends page with duration filtering, optionally filtered by profile(s)."""
+        filter_sql, filter_params = profile_filter_clause(profile_id, profile_ids)
+        # The unfiltered query historically omitted the topics JOIN in the
+        # paper-counts CTE; keep that shape.
+        if filter_sql:
+            paper_counts_cte = f"""
+                SELECT pt.topic_id, COUNT(*) as total_papers
+                FROM paper_topics pt
+                JOIN topics t ON pt.topic_id = t.id
+                WHERE 1=1{filter_sql}
+                GROUP BY pt.topic_id"""
+        else:
+            paper_counts_cte = """
+                SELECT pt.topic_id, COUNT(*) as total_papers
+                FROM paper_topics pt
+                GROUP BY pt.topic_id"""
         with get_cursor() as cur:
-            # Build SQL query with proper parameter handling
-            if profile_ids:
-                placeholders = ','.join(['%s'] * len(profile_ids))
-                query = f"""
+            query = f"""
                 WITH latest_metrics AS (
                     SELECT DISTINCT ON (tm.topic_id) 
                         tm.id, tm.topic_id, tm.period_start, tm.period_end, tm.period_type,
@@ -29,15 +42,10 @@ class TrendsRepository:
                         tm.created_at, t.label, t.keywords, t.profile_id
                     FROM topic_metrics tm
                     JOIN topics t ON tm.topic_id = t.id
-                    WHERE tm.period_type = %s AND t.profile_id IN ({placeholders})
+                    WHERE tm.period_type = %s{filter_sql}
                     ORDER BY tm.topic_id, tm.period_start DESC
                 ),
-                topic_paper_counts AS (
-                    SELECT pt.topic_id, COUNT(*) as total_papers
-                    FROM paper_topics pt
-                    JOIN topics t ON pt.topic_id = t.id
-                    WHERE t.profile_id IN ({placeholders})
-                    GROUP BY pt.topic_id
+                topic_paper_counts AS ({paper_counts_cte}
                 )
                 SELECT 
                     lm.id,
@@ -64,132 +72,32 @@ class TrendsRepository:
                 ORDER BY lm.doc_count DESC, lm.growth_rate DESC NULLS LAST
                 LIMIT %s
                 """
-                params = [period_type] + profile_ids + profile_ids + [limit]
-            elif profile_id:
-                query = """
-                WITH latest_metrics AS (
-                    SELECT DISTINCT ON (tm.topic_id) 
-                        tm.id, tm.topic_id, tm.period_start, tm.period_end, tm.period_type,
-                        tm.doc_count, tm.avg_score, tm.growth_rate, tm.forecast_1m, tm.forecast_3m, tm.forecast_6m,
-                        tm.created_at, t.label, t.keywords, t.profile_id
-                    FROM topic_metrics tm
-                    JOIN topics t ON tm.topic_id = t.id
-                    WHERE tm.period_type = %s AND t.profile_id = %s
-                    ORDER BY tm.topic_id, tm.period_start DESC
-                ),
-                topic_paper_counts AS (
-                    SELECT pt.topic_id, COUNT(*) as total_papers
-                    FROM paper_topics pt
-                    JOIN topics t ON pt.topic_id = t.id
-                    WHERE t.profile_id = %s
-                    GROUP BY pt.topic_id
-                )
-                SELECT 
-                    lm.id,
-                    lm.topic_id,
-                    lm.period_start,
-                    lm.period_end,
-                    lm.period_type,
-                    lm.doc_count,
-                    lm.avg_score,
-                    lm.growth_rate,
-                    lm.forecast_1m,
-                    lm.forecast_3m,
-                    lm.forecast_6m,
-                    lm.created_at,
-                    lm.label,
-                    lm.keywords,
-                    lm.profile_id,
-                    COALESCE(tpc.total_papers, 0) as total_papers,
-                    lm.doc_count as latest_doc_count,
-                    lm.growth_rate as latest_growth_rate
-                FROM latest_metrics lm
-                LEFT JOIN topic_paper_counts tpc ON lm.topic_id = tpc.topic_id
-                WHERE lm.doc_count > 0
-                ORDER BY lm.doc_count DESC, lm.growth_rate DESC NULLS LAST
-                LIMIT %s
-                """
-                params = [period_type, profile_id, profile_id, limit]
-            else:
-                query = """
-                WITH latest_metrics AS (
-                    SELECT DISTINCT ON (tm.topic_id) 
-                        tm.id, tm.topic_id, tm.period_start, tm.period_end, tm.period_type,
-                        tm.doc_count, tm.avg_score, tm.growth_rate, tm.forecast_1m, tm.forecast_3m, tm.forecast_6m,
-                        tm.created_at, t.label, t.keywords, t.profile_id
-                    FROM topic_metrics tm
-                    JOIN topics t ON tm.topic_id = t.id
-                    WHERE tm.period_type = %s
-                    ORDER BY tm.topic_id, tm.period_start DESC
-                ),
-                topic_paper_counts AS (
-                    SELECT pt.topic_id, COUNT(*) as total_papers
-                    FROM paper_topics pt
-                    GROUP BY pt.topic_id
-                )
-                SELECT 
-                    lm.id,
-                    lm.topic_id,
-                    lm.period_start,
-                    lm.period_end,
-                    lm.period_type,
-                    lm.doc_count,
-                    lm.avg_score,
-                    lm.growth_rate,
-                    lm.forecast_1m,
-                    lm.forecast_3m,
-                    lm.forecast_6m,
-                    lm.created_at,
-                    lm.label,
-                    lm.keywords,
-                    lm.profile_id,
-                    COALESCE(tpc.total_papers, 0) as total_papers,
-                    lm.doc_count as latest_doc_count,
-                    lm.growth_rate as latest_growth_rate
-                FROM latest_metrics lm
-                LEFT JOIN topic_paper_counts tpc ON lm.topic_id = tpc.topic_id
-                WHERE lm.doc_count > 0
-                ORDER BY lm.doc_count DESC, lm.growth_rate DESC NULLS LAST
-                LIMIT %s
-                """
-                params = [period_type, limit]
-            
+            params = [period_type, *filter_params, *filter_params, limit] if filter_sql \
+                else [period_type, limit]
+
             cur.execute(query, params)
             trending_topics = cur.fetchall()
 
             # Get overall statistics with profile filtering
-            if profile_ids:
-                placeholders = ','.join(['%s'] * len(profile_ids))
-                cur.execute(f"SELECT COUNT(*) as total_topics FROM topics WHERE profile_id IN ({placeholders})", profile_ids)
-            elif profile_id:
-                cur.execute("SELECT COUNT(*) as total_topics FROM topics WHERE profile_id = %s", (profile_id,))
-            else:
-                cur.execute("SELECT COUNT(*) as total_topics FROM topics")
+            topics_filter_sql, topics_filter_params = profile_filter_clause(
+                profile_id, profile_ids, column="profile_id", prefix=" WHERE ")
+            cur.execute(
+                f"SELECT COUNT(*) as total_topics FROM topics{topics_filter_sql}",
+                topics_filter_params,
+            )
             total_topics = cur.fetchone()["total_topics"]
 
             # Count papers with topics, filtered by profile
-            if profile_ids:
-                placeholders = ','.join(['%s'] * len(profile_ids))
+            if filter_sql:
                 cur.execute(
                     f"""
                     SELECT COUNT(*) as total_papers_with_topics 
                     FROM (SELECT DISTINCT pt.paper_id 
                           FROM paper_topics pt 
                           JOIN topics t ON pt.topic_id = t.id 
-                          WHERE t.profile_id IN ({placeholders})) pt
+                          WHERE 1=1{filter_sql}) pt
                     """,
-                    profile_ids
-                )
-            elif profile_id:
-                cur.execute(
-                    """
-                    SELECT COUNT(*) as total_papers_with_topics 
-                    FROM (SELECT DISTINCT pt.paper_id 
-                          FROM paper_topics pt 
-                          JOIN topics t ON pt.topic_id = t.id 
-                          WHERE t.profile_id = %s) pt
-                    """,
-                    (profile_id,)
+                    filter_params,
                 )
             else:
                 cur.execute(

@@ -78,3 +78,23 @@ async def test_download_stage_skipped_for_later_start_from(tmp_path):
     out, exit_early = await download.run(ti, "papers_ranked", None)
     assert out is None
     assert exit_early is False
+
+
+def test_no_module_level_self_params():
+    """Regression for the B9 lift bug where a multiline signature kept its
+    `self` parameter while the body had been rewritten to use `ti`
+    (NameError at runtime in get_and_score_profile_papers). Module-level
+    functions in the refactored packages must never take `self`."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "theseus_insight"
+    offenders = []
+    for rel in ["pipeline", "services", "api/task_handlers", "api/helpers"]:
+        for path in (root / rel).rglob("*.py"):
+            tree = ast.parse(path.read_text())
+            for node in tree.body:  # module level only; class methods are fine
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if any(a.arg == "self" for a in node.args.args):
+                        offenders.append(f"{path.name}:{node.lineno} {node.name}")
+    assert offenders == [], f"module-level functions with self param: {offenders}"

@@ -89,7 +89,7 @@ def get_profile_papers(ti, profile_ids: List[int], min_score: float = 0.5) -> pd
 
 
 def get_and_score_profile_papers(
-    self,
+    ti,
     profile_ids: List[int],
     embedded_df: pd.DataFrame = None,
     progress_callback: Optional[Callable[[str, float, str, dict], None]] = None

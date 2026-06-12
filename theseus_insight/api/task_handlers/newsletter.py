@@ -41,7 +41,7 @@ async def run(task_manager: "TaskManager", task_id: str):
         profile_recipients = None
 
         if profile_id or profile_ids or profile_tag or profile_tags:
-            from ..data_access import ProfileRepository
+            from ...data_access import ProfileRepository
 
             # Resolve profile IDs from tags if provided
             if profile_tag or profile_tags:

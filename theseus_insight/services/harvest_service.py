@@ -53,7 +53,7 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     logger.info(f"🔍 Preflight: {count} papers missing embeddings in range {date_from}..{date_to}")
     
     # Get embedding model config from settings
-    from ...data_access import SettingsRepository
+    from ..data_access import SettingsRepository
     import json
     
     orchestration_config = SettingsRepository.get_orchestration_config()
@@ -65,7 +65,7 @@ async def _ensure_embeddings_for_range(date_from: Optional[str], date_to: Option
     logger.info(f"📋 Using embedding model from settings: {model_name}")
     
     # Use streaming service for memory-efficient processing
-    from ...services import StreamingEmbeddingService, EmbeddingServiceConfig
+    from ..services import StreamingEmbeddingService, EmbeddingServiceConfig
     
     performance_config = SettingsRepository.get_performance_config()
     auto_tune = performance_config.get('auto_tune_batch_size', True)
@@ -117,7 +117,7 @@ def _merge_profile_arxiv_filters(profile_ids: List[int]) -> Optional[Dict[str, A
     Merge arXiv filters from multiple profiles.
     Returns merged filters with union of all categories, or None if no filters found.
     """
-    from ...data_access.profiles import ProfileRepository
+    from ..data_access.profiles import ProfileRepository
     import json
     
     all_categories = set()

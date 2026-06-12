@@ -68,7 +68,7 @@ async def run(task_manager: "TaskManager", task_id: str):
 
         # Check for existing papers if skip_existing is enabled
         if skip_existing:
-            from ..data_access.papers import PaperRepository
+            from ...data_access.papers import PaperRepository
             existing_papers = PaperRepository.get_papers_in_date_range(start_date, end_date)
             existing_count = len(existing_papers)
             embedded_count = sum(1 for p in existing_papers if p.get('embedding_model') is not None)

@@ -43,7 +43,7 @@ async def run_bulk_judge_task(
     print(f"🎯 Background task started: run_bulk_judge_task for job {job_id}")
     try:
         # Get orchestration config for judge model
-        from ...data_access import SettingsRepository
+        from ..data_access import SettingsRepository
         import json
         
         orch_json = SettingsRepository.get("orchestration")
@@ -200,7 +200,7 @@ async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeo
     try:
         # Get global defaults if not provided
         if request_timeout_sec is None or max_retries is None:
-            from ...data_access.settings import SettingsRepository
+            from ..data_access.settings import SettingsRepository
             if request_timeout_sec is None:
                 request_timeout_sec = SettingsRepository.get_int("ollama_request_timeout_sec", 30)
             if max_retries is None:
@@ -301,8 +301,8 @@ async def _launch_worker_processes(job_id: UUID, selected_servers, request_timeo
 async def _monitor_multi_server_job(job_id: UUID, checkpoint_manager: CheckpointManager):
     """Monitor multi-server job progress until completion."""
     import asyncio
-    from ...data_access.judge_task_queue import JudgeTaskQueueRepository
-    from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
+    from ..data_access.judge_task_queue import JudgeTaskQueueRepository
+    from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
 
     logger.info(f"🎯 Monitor started for job {job_id}")
 
@@ -534,7 +534,7 @@ async def _start_bulk_judge_operation(
             )
         
         # Validate that judge model is Ollama-compatible (multi-server supports Ollama and LMStudio)
-        from ...data_access import SettingsRepository
+        from ..data_access import SettingsRepository
         import json
         
         orch_json = SettingsRepository.get("orchestration")
@@ -694,7 +694,7 @@ async def _is_multi_server_job(job_id: UUID, pool) -> bool:
 async def _signal_workers_pause(job_id: UUID):
     """Signal workers to pause processing."""
     try:
-        from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
+        from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
         heartbeat_repo = WorkerHeartbeatsRepository()
 
         # Update worker status to paused
@@ -710,7 +710,7 @@ async def _signal_workers_pause(job_id: UUID):
 async def _signal_workers_resume(job_id: UUID):
     """Signal workers to resume processing."""
     try:
-        from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
+        from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
         heartbeat_repo = WorkerHeartbeatsRepository()
 
         # Update worker status to active
@@ -729,7 +729,7 @@ async def _signal_workers_cancel(job_id: UUID):
     import signal
     
     try:
-        from ...data_access.worker_heartbeats import WorkerHeartbeatsRepository
+        from ..data_access.worker_heartbeats import WorkerHeartbeatsRepository
         heartbeat_repo = WorkerHeartbeatsRepository()
 
         # Update worker status to canceled in database

@@ -27,7 +27,7 @@ def get_profile_papers(ti, profile_ids: List[int], min_score: float = 0.5) -> pd
             print(f"Min score: {min_score}")
             print("="*60)
 
-        from .db import get_cursor
+        from ..db import get_cursor
 
         # Get papers with profile scores
         papers_data = []
@@ -112,8 +112,8 @@ def get_and_score_profile_papers(
             print(f"Date range: {ti.start_date} to {ti.end_date}")
             print("="*60)
 
-        from .data_access import ProfileRepository, ProfileInterestsRepository
-        from .db import get_cursor
+        from ..data_access import ProfileRepository, ProfileInterestsRepository
+        from ..db import get_cursor
 
         # Get research interests for the profile
         research_interests_list = []
@@ -238,7 +238,7 @@ def get_and_score_profile_papers(
 
         # Save ALL scored papers to paper_profile_scores table (not just top_n)
         if ti.db_saving and not all_scored_df.empty:
-            from .data_access.profiles import ProfileScoreRepository
+            from ..data_access.profiles import ProfileScoreRepository
 
             if ti.verbose:
                 print(f"💾 Saving profile scores for {len(profile_ids)} profile(s)...")

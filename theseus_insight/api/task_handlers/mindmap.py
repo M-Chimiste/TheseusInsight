@@ -55,7 +55,7 @@ async def run_expand(task_manager: "TaskManager", task_id: str):
             raise ValueError("Paper ID is required for mind-map expansion")
 
         # Import the mind-map workflow
-        from ..mindmap.workflow import create_mindmap_workflow
+        from ...mindmap.workflow import create_mindmap_workflow
 
         # Get configuration from database or fallback file
         orchestration_json = SettingsRepository.get("orchestration")
@@ -184,7 +184,7 @@ async def run_expand(task_manager: "TaskManager", task_id: str):
         if topic_id and mindmap_data:
             try:
                 print(f"DEBUG: Auto-saving mind-map for topic {topic_id}")
-                from ..data_access import TopicsRepository, MindmapReportRepository
+                from ...data_access import TopicsRepository, MindmapReportRepository
 
                 # Get topic details for report title
                 topic_data = TopicsRepository.get(topic_id)
@@ -304,7 +304,7 @@ async def run_pdf_parse(task_manager: "TaskManager", task_id: str):
         )
 
         # Import PDF processing utilities
-        from ..pdf.processing import MarkitdownDocProcessor
+        from ...pdf.processing import MarkitdownDocProcessor
         from LLMFactory import LLMModelFactory
 
         # Get embedding model configuration with proper fallback hierarchy: DB -> config file -> defaults

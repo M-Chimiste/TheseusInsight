@@ -48,7 +48,7 @@ async def run(task_manager: "TaskManager", task_id: str):
         final_video_path = os.path.join(output_dir, final_video_filename)
 
         # Import locally to avoid circular dependencies if any, and keep generator specific
-        from ..podcast.generator import generate_visualizer_video
+        from ...podcast.generator import generate_visualizer_video
 
         # Convert visualizer_params_dict to appropriate arguments for generate_visualizer_video
         # The generate_visualizer_video function expects individual arguments.

@@ -46,7 +46,7 @@ def rank_papers_with_historical_scores(ti, data_df, return_all_scored=False, pro
         profile_score_map: dict = {}
         using_profile_scores = bool(getattr(ti, 'profile_ids_override', None))
         if using_profile_scores:
-            from .data_access.profiles import ProfileScoreRepository
+            from ..data_access.profiles import ProfileScoreRepository
             profile_score_map = ProfileScoreRepository.get_aggregated_scores_for_profiles(
                 ti.profile_ids_override
             )
@@ -575,7 +575,7 @@ def rank_papers_single_server(ti, data_df, progress_callback=None):
                 if existing_paper:
                     # Save scores to paper_profile_scores for each selected profile
                     try:
-                        from .db import get_cursor
+                        from ..db import get_cursor
                         with get_cursor() as cur:
                             # Update date_run in papers table
                             cur.execute("""
@@ -662,7 +662,7 @@ def rank_papers_single_server(ti, data_df, progress_callback=None):
                         if inserted_paper:
                             # Save scores to paper_profile_scores for each profile
                             try:
-                                from .db import get_cursor
+                                from ..db import get_cursor
                                 with get_cursor() as cur:
                                     profile_ids = ti.profile_ids_override or []
                                     for profile_id in profile_ids:

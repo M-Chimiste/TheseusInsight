@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 async def run_export(task_manager: "TaskManager", task_id: str):
     """Run the database export task with progress tracking."""
     try:
-        from ..utils.db_migration.db_export import DatabaseExporter
+        from ...utils.db_migration.db_export import DatabaseExporter
 
         task = TaskRepository.get_task(task_id)
         if not task:
@@ -145,7 +145,7 @@ async def run_import(task_manager: "TaskManager", task_id: str):
         task_config = task.get("config_json", {})
         print(f"DEBUG: Task config: {task_config}")
 
-        from ..utils.db_migration.db_import import DatabaseImporter
+        from ...utils.db_migration.db_import import DatabaseImporter
 
         archive_path = task_config.get("archive_path")
         import_mode = task_config.get("import_mode", "merge")

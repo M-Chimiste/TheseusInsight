@@ -173,7 +173,7 @@ data preparation where scoring will be done later."""
                     print("="*40)
 
                 # Create job checkpoint for UI tracking
-                from .services.embedding_service import EmbeddingJobCheckpoint
+                from ..services.embedding_service import EmbeddingJobCheckpoint
                 from uuid import uuid4
                 job_id = uuid4()
                 checkpoint_mgr = EmbeddingJobCheckpoint()

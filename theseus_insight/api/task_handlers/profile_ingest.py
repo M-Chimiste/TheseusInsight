@@ -53,7 +53,7 @@ async def run(task_manager: "TaskManager", task_id: str):
         )
 
         # Resolve target profiles
-        from ..data_access.profiles import ProfileRepository
+        from ...data_access.profiles import ProfileRepository
         target_profiles = []
 
         if profile_ids:
@@ -92,7 +92,7 @@ async def run(task_manager: "TaskManager", task_id: str):
         )
 
         # Get existing paper IDs before ingestion to track what's new
-        from ..data_access.papers import PaperRepository
+        from ...data_access.papers import PaperRepository
         existing_paper_ids = set(PaperRepository.get_paper_ids_in_date_range(start_date, end_date))
 
         await task_manager.update_task_status(
@@ -200,7 +200,7 @@ async def run(task_manager: "TaskManager", task_id: str):
             except Exception as e:
                 print(f"Warning: Could not load embedding model for optimizations: {e}")
 
-        from ..data_access.bulk_judge import BulkJudgeRunner
+        from ...data_access.bulk_judge import BulkJudgeRunner
         bulk_judge = BulkJudgeRunner(
             judge_config, 
             verbose=True,
@@ -209,7 +209,7 @@ async def run(task_manager: "TaskManager", task_id: str):
         )
 
         # Create bulk judge request
-        from ..api.models import BulkJudgeRunRequest
+        from ...api.models import BulkJudgeRunRequest
         judge_request = BulkJudgeRunRequest(
             profile_ids=profile_ids if profile_ids else None,
             profile_tags=profile_tags if profile_tags else None,

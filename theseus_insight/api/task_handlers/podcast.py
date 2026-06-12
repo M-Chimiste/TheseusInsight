@@ -33,7 +33,7 @@ async def run(task_manager: "TaskManager", task_id: str):
         if not podcast_model_configuration:
             raise ValueError("Podcast model configuration (podcast_model_config) is missing from task config.")
 
-        from ..podcast.generator import PodcastGenerator
+        from ...podcast.generator import PodcastGenerator
         podcast_gen = PodcastGenerator(
             text_model=podcast_model_configuration, # Use the correct key here
             tts_provider=config.get("tts_model_config", {}).get("tts_provider", "openai"),

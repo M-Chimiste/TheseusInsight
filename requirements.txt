@@ -1,7 +1,10 @@
 # Core ML & Deep Learning
 torch
 transformers
-numpy
+# numpy capped at 2.2.x: numba (via umap-learn, star map) rejects numpy>=2.3.
+# scipy>=1.16 needed on macOS 27+ (older wheels fail dyld __thread_bss checks).
+numpy>=2.0,<2.3
+scipy>=1.16
 
 # NLP & Text Processing
 spacy
